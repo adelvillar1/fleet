@@ -33,15 +33,15 @@ or clone failure → the ordinary path, named.
 
 ## Acceptance criteria
 
-- [ ] C0: A destructive-flagged bash call in a git-repo cwd produces an
+- [x] C0: A destructive-flagged bash call in a git-repo cwd produces an
   experiment report (status + diff from the isolated clone) as its tool
   result, and the real repo's status is byte-identical before and after.
-- [ ] C1: A destructive-flagged bash call outside a git repo, or with
+- [x] C1: A destructive-flagged bash call outside a git repo, or with
   the setting off, takes the ordinary approval path unchanged — pinned
   by a test.
-- [ ] C2: A clone failure or an over-size repo skips the experiment
+- [x] C2: A clone failure or an over-size repo skips the experiment
   with a named reason and takes the ordinary path.
-- [ ] C3: The experiment command runs under a bounded timeout with
+- [x] C3: The experiment command runs under a bounded timeout with
   bounded captured output, and the clone is removed after the report is
   captured.
 
@@ -57,6 +57,14 @@ or clone failure → the ordinary path, named.
 - Host-path commands outside git repos (no sandbox) — the ordinary gate
 - Non-bash tools; the layerfs child path (its own sandbox already)
 - Unattended auto-apply — the real run always crosses the gate
+
+## Delivered (2026-11-10, same day)
+
+All four criteria built and tested (the experiments suite x3 stable;
+gate green 2,355); shipped as **0.6.26** through the runbook — tag
+gated on `9b8ff69`, assets + latest.json uploaded, the feed read back
+naming 0.6.26 (after the documented redirect lag), and `fleet update`
+deployed it in place.
 
 ## Verification
 
