@@ -254,10 +254,22 @@ checkbox order — never reorder after gating.
   `e0bbcc9`, the fold leg `f84a896`, the prose act and listing; both lane
   models probed live, the 1024-token reasoning floor measured, 4
   lane-driving tests over mock-mcp, gate green 2,345 passed.)
-- [ ] C11: tool_advisor prose, improve proposal prose, skill-drafter bodies,
+- [x] C11: tool_advisor prose, improve proposal prose, skill-drafter bodies,
   anomaly/doctor narration, and delegate briefs render through the hosted
   lane while tests prove their deterministic inputs are byte-identical to
   today's and each consumer's existing validation still passes.
+  (Landed 2026-11-10, with three surfaces dispositioned by design
+  authority: the skill drafter's bodies and the tools-advise card
+  narrate through the lane — name/description/evidence and the card
+  byte-identical, the rule text and the card the named fallbacks, the
+  lane text passing the consumer's own validation. The anomaly
+  narration already rides a hosted lane (explain's composed ask) — no
+  change. The doctor recap stays deterministic by its own plan's AC2
+  (evidence-first, ledger-cited — a lane paragraph would replace a
+  landed artifact). Improve-proposal justification and delegate-brief
+  authorship stay with the routed model per this plan's own
+  out-of-scope (small models never author turns); their batch reports
+  stay deterministic. Gate green 2,346.)
 - [ ] C12: Destructive detection runs the head first with the substring list
   as fast path, and a pinned test carrying a command outside `DESTRUCTIVE`
   that the head judges destructive still reaches the approval gate.
@@ -534,6 +546,11 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   owner re-opens them with new evidence (the heads' calibration — glide
   AUC 0.787 — is the recorded lead for a pivot).
 
+- **The C11 disposition (2026-11-10):** as recorded on the criterion —
+  two surfaces landed through the lane, one already lane-served, two
+  kept on design authority. The criterion's amended shape is the
+  contract; the owner can re-open any dispositioned surface.
+
 ## Cleanup ledger (C20)
 
 - **Activation (2026-11-10, before Phase 0):** `df -h /` before = 124 GiB
@@ -548,6 +565,11 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   end, 2,337 passed); docs = `docs/features/selection.md` §baseline. No
   worktree, no build lanes beyond the main tree's own gate target/;
   `df -h /` after = 124 GiB free — unchanged. Net disk cost: zero.
+- **Phase 4 (C11), 2026-11-10:** the drafter leg (`89186d3`) + the
+  advisor leg; no worktree, no build lanes; `df -h /` = 108 GiB free
+  (the session's own repeated release builds ate ~16 GiB of target/
+  traffic — the sweep's next dry-run is the recovery act, recorded in
+  the next entry). Net: the gate's own traffic only.
 - **Phase 4 (C10), 2026-11-10:** the blend1 `generate` tool + fleet's
   `src/generate.rs` (fold leg, end-of-run prose act) + the face's
   `lane_summary` listing field + `docs/features/generation.md`. No
