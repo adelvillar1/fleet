@@ -225,6 +225,43 @@ pub fn narrate_sync(
     narrate_with_spec(&spec, system, facts, max_tokens, validate)
 }
 
+/// The C19 form-filler: a validation-failed structured emission
+/// re-authors through the hosted small model behind the caller's own
+/// re-validation. `Some(repaired)` only when the lane answered AND the
+/// repaired text passed `validate` — anything else is `None`, and the
+/// caller falls to the existing error-result loop.
+pub async fn reform(
+    spec: &crate::mcp::ServerSpec,
+    tool: &str,
+    raw: &str,
+    error: &str,
+    validate: impl Fn(&str) -> Result<(), String>,
+) -> Option<String> {
+    let answer = text(
+        spec,
+        &format!(
+            "The `{tool}` call's raw arguments:\n{raw}\n\nThe validation failure:\n{error}\n\nReturn ONLY the corrected JSON object."
+        ),
+        Some(
+            "You repair a tool call's JSON arguments so they pass the tool's own \
+             validation. Return only the corrected JSON object — no markdown fence, \
+             no commentary. Keep every field's meaning; fix shape, types, and \
+             required fields."
+        ),
+        1024,
+    )
+    .await
+    .ok()?;
+    let repaired = answer.text.trim();
+    let repaired = repaired
+        .strip_prefix("```json")
+        .or_else(|| repaired.strip_prefix("```"))
+        .unwrap_or(repaired);
+    let repaired = repaired.strip_suffix("```").unwrap_or(repaired).trim();
+    validate(repaired).ok()?;
+    Some(repaired.to_string())
+}
+
 /// The end-of-run prose act (Phase 4's C10): a finished main-surface run
 /// asks the small model for the session's title and one-sentence archive
 /// summary, writing both sidecars. The owner's own title always wins

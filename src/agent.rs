@@ -4857,7 +4857,7 @@ impl<'a> Agent<'a> {
                 ))));
                 continue;
             }
-            prepared.push(Some(self.prepare_call(call)?));
+            prepared.push(Some(self.prepare_call_checked(call).await?));
         }
         // The resolution ledger: one row per call, computed after the
         // gate so a refusal is recorded as one. The log write happens
@@ -6061,6 +6061,119 @@ impl<'a> Agent<'a> {
         }
         self.note_withdrawal(&lane, &outcome.withdrawn)?;
         Ok((outcome.text, outcome.truncated))
+    }
+
+    /// Grounded-selection C19's seam: remember and improve emissions
+    /// that fail their own validation — the JSON shape here, the fact
+    /// schema or the change block at the Work layer — re-author through
+    /// the hosted small model once, behind the full validation as the
+    /// gate, before the ordinary path runs. Every other tool passes
+    /// straight through; a failed repair runs the ordinary path too,
+    /// which is the error-result loop the plan keeps as the last rung.
+    async fn prepare_call_checked(&mut self, call: &ToolCall) -> Result<Prepared, AgentError> {
+        let is_remember = call.function.name == tools::REMEMBER_TOOL;
+        let is_improve = call.function.name == tools::IMPROVE_TOOL;
+        if !(is_remember || is_improve) {
+            return self.prepare_call(call);
+        }
+        let parsed = serde_json::from_str::<serde_json::Value>(&call.function.arguments);
+        let schema_error: Option<String> = match &parsed {
+            Err(error) => Some(error.to_string()),
+            Ok(value) => match (is_remember, value) {
+                (true, value) => crate::memory::Remember::parse(value)
+                    .err()
+                    .map(|error| error.to_string()),
+                (false, value) => crate::improve::parse_change(value)
+                    .err()
+                    .map(|error| error.to_string()),
+            },
+        };
+        eprintln!(
+            "fleet-debug: checked {} parsed_ok={} schema_error={schema_error:?}",
+            call.function.name,
+            parsed.is_ok()
+        );
+        if parsed.is_ok() && schema_error.is_none() {
+            return self.prepare_call(call);
+        }
+        let error_text = parsed
+            .err()
+            .map(|error| error.to_string())
+            .or(schema_error)
+            .unwrap_or_else(|| "unknown validation failure".to_string());
+        let validate = |text: &str| {
+            let value: serde_json::Value =
+                serde_json::from_str(text).map_err(|error| error.to_string())?;
+            if is_remember {
+                crate::memory::Remember::parse(&value)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            } else {
+                crate::improve::parse_change(&value)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            }
+        };
+        match self
+            .reform_arguments(
+                &call.function.name,
+                &call.function.arguments,
+                &error_text,
+                validate,
+            )
+            .await
+        {
+            Some(repaired) => {
+                let repaired = ToolCall {
+                    id: call.id.clone(),
+                    kind: call.kind.clone(),
+                    function: crate::api::FunctionCall {
+                        name: call.function.name.clone(),
+                        arguments: repaired,
+                    },
+                };
+                self.prepare_call(&repaired)
+            }
+            None => {
+                let _ = writeln!(
+                    self.progress,
+                    "\u{2192} the small-model repair did not take; the ordinary path answers the call"
+                );
+                let _ = self.progress.flush();
+                self.prepare_call(call)
+            }
+        }
+    }
+
+    /// Grounded-selection C19: a validation-failed structured emission
+    /// (remember, improve) re-authors through the hosted small model
+    /// behind the caller's own re-validation. `None` — no lane, prose
+    /// off, or a repair that still fails validation — sends the caller
+    /// to the existing error-result loop unchanged.
+    async fn reform_arguments(
+        &mut self,
+        tool: &str,
+        raw: &str,
+        error: &str,
+        validate: impl Fn(&str) -> Result<(), String>,
+    ) -> Option<String> {
+        if !self.options.lane_prose {
+            return None;
+        }
+        let spec = self
+            .options
+            .lane_specs
+            .as_ref()?
+            .get(crate::generate::BLEND1_LANE)?
+            .clone();
+        let repaired = crate::generate::reform(&spec, tool, raw, error, validate).await?;
+        let _ = writeln!(
+            self.progress,
+            "\u{2192} {tool} re-authored by the small-model leg: {}",
+            repaired.chars().take(200).collect::<String>()
+        );
+        let _ = self.progress.flush();
+        Some(repaired)
     }
 
     /// Grounded-selection C17: grade rendered gen1 images through
@@ -11220,6 +11333,191 @@ mod tests {
         let _ = sys1_child.kill();
         let _ = sys1_child.wait();
         let _ = std::fs::remove_dir_all(&sys1_scratch);
+    }
+
+    #[tokio::test]
+    async fn a_failed_remember_emission_reauthors_through_the_lane() {
+        // Grounded-selection C19: a remember call whose arguments fail
+        // the fact schema re-authors through the hosted small model once,
+        // behind the full validation as the gate — the repaired emission
+        // lands, and the progress line names the leg. The Work layer's
+        // own parse is still the final word: a lane that answers garbage
+        // sends the call to the ordinary error-result loop.
+        let m = fold_mock("unused");
+        let (mut lane_child, script, lane_scratch) = lane_mock(
+            r#"{"status":"ok","model":"lfm3-1.7b","text":"{\"name\":\"lane-repaired-fact\",\"description\":\"the lane repaired this emission\",\"type\":\"fact\",\"date\":\"2026-11-10\",\"basis\":\"inferred\",\"shape\":\"build\",\"tier\":\"durable\",\"body\":\"the lane re-authored these arguments and they passed\"}"}"#,
+        );
+        let home = scratch("reform-remember");
+        let root = home.join("memory");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let memory = std::sync::Arc::new(Memory::load_with(
+            &root,
+            Box::new(crate::memory::KeywordOnly),
+        ));
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            capped: false,
+            health_note: false,
+            lane_prose: true,
+            ui_tx: None,
+            lane_specs: Some(
+                [(
+                    crate::generate::BLEND1_LANE.to_string(),
+                    blend1_spec(&script),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: Some(memory),
+            scope: None,
+            improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        agent
+            .execute_call(&call(
+                "r1",
+                "remember",
+                r#"{"description":"no name, no body — the shape the lane must repair"}"#,
+            ))
+            .await
+            .unwrap();
+        drop(agent);
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let output = records
+            .iter()
+            .find_map(|record| match record {
+                Record::ToolResult {
+                    call_id, output, ..
+                } if call_id == "r1" => Some(output.clone()),
+                _ => None,
+            })
+            .expect("the call's result");
+        assert!(
+            !output.starts_with("error"),
+            "the repaired emission landed: {output}"
+        );
+        let text = String::from_utf8_lossy(progress);
+        assert!(
+            text.contains("remember re-authored by the small-model leg"),
+            "{text}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = lane_child.kill();
+        let _ = lane_child.wait();
+        let _ = std::fs::remove_dir_all(&lane_scratch);
+    }
+
+    #[tokio::test]
+    async fn a_lane_that_cannot_repair_sends_the_emission_to_the_error_loop() {
+        // The last rung holds: the lane answers garbage, the full
+        // validation refuses it, and the emission runs the ordinary
+        // path — the schema error the model would have read anyway.
+        let m = fold_mock("unused");
+        let (mut lane_child, script, lane_scratch) =
+            lane_mock(r#"{"status":"ok","model":"lfm3-1.7b","text":"not json at all"}"#);
+        let home = scratch("reform-fallback");
+        let root = home.join("memory");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let memory = std::sync::Arc::new(Memory::load_with(
+            &root,
+            Box::new(crate::memory::KeywordOnly),
+        ));
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            capped: false,
+            health_note: false,
+            lane_prose: true,
+            ui_tx: None,
+            lane_specs: Some(
+                [(
+                    crate::generate::BLEND1_LANE.to_string(),
+                    blend1_spec(&script),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: Some(memory),
+            scope: None,
+            improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        agent
+            .execute_call(&call(
+                "r2",
+                "remember",
+                r#"{"description":"no name, no body — the shape the lane must repair"}"#,
+            ))
+            .await
+            .unwrap();
+        drop(agent);
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let output = records
+            .iter()
+            .find_map(|record| match record {
+                Record::ToolResult {
+                    call_id, output, ..
+                } if call_id == "r2" => Some(output.clone()),
+                _ => None,
+            })
+            .expect("the call's result");
+        assert!(
+            output.starts_with("error"),
+            "the ordinary path answered: {output}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = lane_child.kill();
+        let _ = lane_child.wait();
+        let _ = std::fs::remove_dir_all(&lane_scratch);
     }
 
     #[tokio::test]
