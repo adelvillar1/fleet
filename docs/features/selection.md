@@ -53,6 +53,66 @@ keeps: the heads are calibrated (glide margin AUC 0.787), liquid d1 is
 the wrong head for selection (28.6%, AUC 0.568), and Phase 5's seams
 are different tasks with their own gates.
 
+## The verdict ledger: fix, improve, reject
+
+**FIX** — broken, with an evidence-backed repair in reach:
+
+- **The declaration tax** — 8,028 tokens (~11%) ride every request, and
+  `retrieved` resolutions are 2 of 20,821: the deferral machinery exists
+  and never fires. Tighten the per-workload declaration budget with the
+  existing tiering; the gate is C0's own numbers (wrong-tool must not
+  rise). No selection head needed.
+- **KI-515** — the three stale blend1 corpus tests (unpack 4 of a
+  5-value contract): update them; mechanical.
+- **KI-516** — the layerfs coherence test's schedule flake: its own
+  stub log, or the AMBIENT_LOCK held across the assertions.
+- **The silent doc debt** — TECHNICAL-DOCUMENTATION and
+  FUNCTIONAL-SPECIFICATIONS still owe the seams' sections (the plan's
+  linked artifacts); the recap step closes it.
+- **The plan-gate's dead chain** (jev 402) — still blocking every
+  future plan's gate; the re-pin or the credit is an owner act, still
+  pending since morning.
+
+**IMPROVE** — working, with a measured next step:
+
+- **The composed selection family** (weed-then-verify 54.6%, the
+  conditioned pipeline 55.5%/79.0%) — the verifier measurement on the
+  corrupted-call corpus decides whether it earns the runtime build
+  (C4's re-open). The last unmeasured shape.
+- **The destructive head (C12)** — live; the vendor's gate-cookbook
+  framing is the upgrade path (state.policy + state.goal beside the
+  command), and its thresholds learn from the approval outcomes the
+  stream already records.
+- **The vision QC (C17) and the form-filler (C19)** — landed behind
+  stub tests; one live pass each grounds them (a real gen1 image
+  graded; a real repair rate on the corrupted corpus).
+- **The end-of-run prose (C10)** — the cost table is estimated; one
+  live fold + title + summary through the real lane measures it.
+- **The C14-C16 fixtures** — the extraction is buildable now so the
+  owner's labeling is copy-and-judge; each labeled fixture unlocks its
+  seam's build-or-kill.
+
+**REJECT** — abandoned on measurement, not opinion:
+
+- **Selection replacement** (C2, C3, C7 and every question shape aimed
+  at it) — eight shapes, three vendors, two framings; the task is
+  under-determined from intent alone. The plan's own kill stands.
+- **Score fan-out at catalog size** — the 27-head collapse is measured;
+  per-item separate calls would be 27 requests per turn for a worse
+  ranking than the weed's own.
+- **LFM3 as selector or re-ranker** — 20-30% measured; its home is
+  prose and form-fills (C10/C19, landed).
+- **Cross-vendor score transplant** — identical to control on both
+  mixes; cross-vendor ensembles need an arbitrating call nobody has
+  justified yet.
+- **Hard narrowing on invented taxonomies** — conditioning dominates it
+  in every measured pair.
+- **d1 for selection** — 28.6%; its measured strengths (vision_qc,
+  needs_generation) are where it already serves.
+- **C8 speculative pre-warm as designed** — it fed off head selection;
+  only a verifier-shaped variant (pre-checking the model's own emitted
+  call) survives, and only if the verifier lands.
+
 ## The failure review: every miss, and what it taught about asking
 
 Ten shapes measured across three vendors on the same 120 turns. Each
