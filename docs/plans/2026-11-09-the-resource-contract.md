@@ -189,6 +189,39 @@ declared, because the environment has already been telling us.
       `expected` before a breach counts against it), and that grading is
       readable by the fit rule.
 
+## The next slice, in build order
+
+The deterministic core is in `src/footprint.rs` (`admit`, `settle`,
+`Env`/`appetite`/`reserve_kib`, six tests). The rest is wiring, in this order —
+each step lands with its own test, and only the sys1 arm needs the model:
+
+1. **C2 — the release path settles.** `scripts/release.sh`'s `preflight_disk`
+   already measures and refuses; replace its hardcoded floor with the reserve
+   `fleet footprint` derives, and after the assets upload compare the lane's
+   size delta against the estimate the admission used. Over → the
+   `.failed-build` marker, the diagnosis window, then the existing clean.
+2. **C1 at the seams.** Boundary pairs: `admit` at exactly the reserve
+   (equal → refused), `settle` at exactly the budget (equal → not a runaway).
+3. **C3 — the run loop measures.** `src/agent.rs` already has the turn boundary
+   (the context-budget check). Admit before the first turn when a folder is
+   granted; re-measure there (`statvfs` + `parse_ps`), stopping through the same
+   path a seat denial uses and writing the numbers as a `Record`. Test the
+   cadence: every turn may be too often; every fifth is the guess to measure.
+4. **C5 — the rows.** `calib.rs`'s row writer takes a shape-typed record; add
+   `op=footprint` with the work class, estimate, settled delta, reserve at
+   admission, verdict. The demand map already reads rows by `op`.
+5. **C4 — the sys1 arm**, last because it needs rows to grade it: one bounded
+   ask through the existing lane client, fed the numbers and the run's recent
+   tool calls; `runaway` stops, `expected` raises that run's recorded budget,
+   and a refused answer is `expected` and records itself.
+6. **C8/C9 — the learning.** The estimate is the median of the last ten settles
+   per work class; the judge's grading rides `delegate.rs`'s
+   outcome-evidence pattern. Both are pure reads over rows, testable without a
+   lane.
+7. **C6 — the runaway proof.** One integration test: a scratch folder filled
+   past the run's budget, asserting the stop, the transcript's numbers, and the
+   cleanup after the marker's grace.
+
 ## Not in scope
 
 - Predicting a run's write volume (unknowable; the per-turn measurement is the
