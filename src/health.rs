@@ -65,6 +65,12 @@ pub fn probe(home: &Path, fast_only: bool) -> HealthReport {
     if !fast_only {
         services.push(docker_probe());
         services.push(lanes_probe());
+        // The auto-update channel's supply: only where a checkout
+        // resolves — an installed machine without the repo has
+        // nothing to cut, and names nothing.
+        if let Some(release) = release_probe() {
+            services.push(release);
+        }
     }
     HealthReport {
         services,
@@ -198,6 +204,97 @@ fn docker_probe() -> ServiceHealth {
     }
 }
 
+/// The release feed — GitHub's, pinned (the owner's 2026-11-09 ruling:
+/// updates come from GitHub, never locally; no override, the same URL
+/// the updater polls and `scripts/release.sh` reads back).
+pub const RELEASE_FEED: &str =
+    "https://github.com/adelvillar1/fleet/releases/latest/download/latest.json";
+
+/// The auto-update channel's supply (the 2026-11-10 lesson: 0.6.22
+/// and 0.6.23 were installed locally and never cut, so no installed
+/// app could have updated to them). A build whose version has no
+/// release tag, or whose published feed names an older version, will
+/// never reach an installed app — the updater reads GitHub's feed and
+/// nothing else. `None` when no checkout resolves.
+fn release_probe() -> Option<ServiceHealth> {
+    let services = crate::lanes::services_root().ok()?;
+    let root = services.parent()?;
+    if !root.join(".git").exists() {
+        return None;
+    }
+    let version = env!("CARGO_PKG_VERSION");
+    let tag = format!("v{version}");
+    let listed = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["tag", "-l", &tag])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let tagged = String::from_utf8_lossy(&listed.stdout).trim() == tag;
+    // The feed half speaks only once the tag half has: an untagged
+    // build is the whole finding, and the read costs a round trip.
+    let feed = if tagged { read_feed_version() } else { None };
+    Some(release_verdict(version, tagged, feed.as_deref()))
+}
+
+/// The published feed's version, read anonymously the way an
+/// installed app would. A read that fails says nothing — the tag
+/// half's verdict stands alone.
+fn read_feed_version() -> Option<String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(5))
+        .build();
+    let body = agent.get(RELEASE_FEED).call().ok()?.into_string().ok()?;
+    serde_json::from_str::<serde_json::Value>(&body)
+        .ok()?
+        .get("version")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// The verdict from the two halves: an untagged build is uncut; a
+/// tagged build whose published feed names an older version is
+/// half-cut (the tag exists, the assets never published — KI-503's
+/// shape); anything else is serving. Pure, so the shapes are pinned
+/// without a network or a repository.
+pub fn release_verdict(version: &str, tagged: bool, feed: Option<&str>) -> ServiceHealth {
+    if !tagged {
+        return ServiceHealth::down(
+            "release",
+            format!(
+                "v{version} is built but has no release tag — the auto-update \
+                 channel will never serve this build"
+            ),
+        );
+    }
+    match feed {
+        Some(published) if version_lt(published, version) => ServiceHealth::down(
+            "release",
+            format!(
+                "the release feed names {published} while this build is {version} — \
+                 the tag exists but the assets never published"
+            ),
+        ),
+        _ => ServiceHealth::up("release"),
+    }
+}
+
+/// `a < b` over dotted numeric versions. An unparseable side compares
+/// as not-less: a feed the reader cannot parse is not a finding.
+fn version_lt(a: &str, b: &str) -> bool {
+    let parse = |v: &str| -> Option<Vec<u64>> {
+        v.trim_start_matches('v')
+            .split('.')
+            .map(|part| part.parse::<u64>().ok())
+            .collect()
+    };
+    match (parse(a), parse(b)) {
+        (Some(left), Some(right)) => left < right,
+        _ => false,
+    }
+}
+
 /// The repair map, one line per service: what the face paints, what
 /// the repair note quotes, what the main session attempts. An
 /// owner-action wording for what no command can self-repair.
@@ -206,6 +303,10 @@ pub fn repair_for(name: &str) -> &'static str {
         "layerfs" => "fleet install (re-provisions the worker and re-records the endpoint)",
         "lanes" => "fleet install (rebuilds the lane venvs)",
         "docker" => "start Docker Desktop",
+        "release" => {
+            "scripts/release.sh tag v<version>, then scripts/release.sh assets v<version> \
+             — the cut is the delivery; a local install is not"
+        }
         "api" => "set DEEPSEEK_API_KEY in the environment or ~/.fleet/.env",
         _ => "fleet doctor names the repair",
     }
@@ -321,6 +422,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch home");
         dir
+    }
+
+    /// The auto-update channel's supply, pinned without a network or a
+    /// repository: an untagged build is uncut, a tagged build behind
+    /// its own feed is half-cut, and everything else is serving.
+    #[test]
+    fn an_uncut_or_half_cut_build_names_itself_and_the_cut() {
+        // Built, never tagged: the 0.6.22 shape.
+        let uncut = release_verdict("0.6.24", false, None);
+        assert!(!uncut.up);
+        assert!(uncut
+            .note
+            .contains("v0.6.24 is built but has no release tag"));
+        assert!(uncut.note.contains("auto-update"));
+        assert!(uncut.repair.contains("scripts/release.sh tag"));
+        // Tagged, but the feed still names the previous cut: the
+        // assets never published (KI-503's shape).
+        let half = release_verdict("0.6.24", true, Some("0.6.23"));
+        assert!(!half.up);
+        assert!(half
+            .note
+            .contains("the release feed names 0.6.23 while this build is 0.6.24"));
+        // Tagged and the feed names this build: serving.
+        assert!(release_verdict("0.6.24", true, Some("0.6.24")).up);
+        // A feed ahead of this build is an update waiting, not a fault.
+        assert!(release_verdict("0.6.24", true, Some("0.6.25")).up);
+        // A feed that could not be read says nothing: the tag half
+        // stands alone.
+        assert!(release_verdict("0.6.24", true, None).up);
+        // An unparseable feed is not a finding.
+        assert!(release_verdict("0.6.24", true, Some("not-a-version")).up);
+    }
+
+    #[test]
+    fn versions_compare_numerically_not_lexically() {
+        assert!(
+            version_lt("0.6.9", "0.6.21"),
+            "9 < 21, not the string order"
+        );
+        assert!(version_lt("0.6.23", "0.7.0"));
+        assert!(version_lt("v0.6.23", "0.6.24"), "a leading v is tolerated");
+        assert!(!version_lt("0.6.24", "0.6.24"));
+        assert!(!version_lt("0.6.25", "0.6.24"));
     }
 
     #[test]

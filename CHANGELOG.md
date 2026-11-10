@@ -12,6 +12,24 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.24 — 2026-11-10
+
+The auto-update channel's supply gets a guard.
+
+- **The health loop names an uncut build** (KI-512). The Tauri updater
+  reads GitHub's `latest.json` and nothing else, so a version installed
+  locally but never cut through `scripts/release.sh` is invisible to
+  every installed app — 0.6.22 and 0.6.23 both shipped that way before
+  they were cut retroactively. The loop's slow tier now carries a
+  **release** line: a build whose version has no release tag reads
+  DOWN with the cut as its repair, and a tagged build whose published
+  feed names an older version reads DOWN as half-cut (the tag exists,
+  the assets never published). The face paints it beside the other
+  services, so the gap is visible the moment it exists.
+- **The changelog's sections are in descending version order** — a
+  section anchored below parallel cuts had put 0.6.22 under 0.6.19 and
+  made the release script refuse its own notes.
+
 ## v0.6.23 — 2026-11-10
 
 Two live-surface defects, found by the owner's own eyes on the
