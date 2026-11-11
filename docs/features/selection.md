@@ -98,9 +98,10 @@ for selection, d1 for selection, the declaration-tax "fix".
 - **The silent doc debt** — TECHNICAL-DOCUMENTATION and
   FUNCTIONAL-SPECIFICATIONS still owe the seams' sections (the plan's
   linked artifacts); the recap step closes it.
-- **The plan-gate's dead chain** (jev 402) — still blocking every
-  future plan's gate; the re-pin or the credit is an owner act, still
-  pending since morning.
+- ~~The plan-gate's dead chain~~ — **downgraded 2026-11-10**: the
+  interim pin `plan_gate = "drex,jev"` answers through drex (verified
+  live: 4/4 coverage, PASS). Only the jev tail is dead; buying TypeSafe
+  credits is optional, nothing is blocked.
 
 **IMPROVE** — working, with a measured next step:
 

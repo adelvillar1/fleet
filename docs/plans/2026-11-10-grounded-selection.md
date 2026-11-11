@@ -566,9 +566,11 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   definitions, per C1 to prove); local weights for the heads (owner set
   aside 2026-11-10 — memory-constrained machine; revisit when hardware
   changes); waiting for a new vendor (all families are already vendored).
-- The plan-gate's default chain is dead (jev → HTTP 402, no TypeSafe credits
-  — recorded 2026-11-10); this draft was gated with `--provider glide`
-  instead, which answers.
+- The plan-gate's chain (CORRECTED 2026-11-10 evening): the interim pin
+  `plan_gate = "drex,jev"` (~/.config/sys1/config.toml:9) makes the gate
+  answer through **drex** — measured live: 4/4 coverage, PASS. Only the
+  chain's jev tail is dead (HTTP 402, no TypeSafe credits); nothing is
+  blocked. This draft was gated with `--provider glide` before the pin.
 - dev-decisions plan-gate caps were raised this session (section 2000→4000
   chars; a plan-state budget sized for a 20-criterion plan) — D-001's
   truncation-reporting half remains open in that skill's ledger.
