@@ -377,7 +377,12 @@ pub fn reconcile_state(source: &Path, installed: &Path) -> Result<Reconciliation
 /// delivered in the ordinary case — a worktree's
 /// `target/release/fleet install` delivers itself.
 pub fn source_beside_home(home: &Path) -> Option<PathBuf> {
-    let projects = home.parent()?.parent()?.join("Projects");
+    // One parent, not two: the doc above names `<home>/../Projects/<checkout>`,
+    // and `~/.fleet`'s parent is `~`. Two parents landed on `/Users` and made
+    // `/Users/Projects`, so the walk never found the owner's checkout and every
+    // "no build beside this home" report was a path that could not exist. The
+    // test below pins this layout rather than restating the arithmetic.
+    let projects = home.parent()?.join("Projects");
     let entries = std::fs::read_dir(projects).ok()?;
     let mut found: Vec<PathBuf> = entries
         .flatten()
@@ -963,18 +968,18 @@ gui/501/com.fleet.gui = {
         let root = std::env::temp_dir().join(format!("fleet-beside-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         // Layout: <root>/Projects/<checkout>/target/release/fleet
-        // with the home at <root>/home/.fleet.
+        // with the home at <root>/.fleet — one parent above the home is the
+        // owner's home, which is where Projects lives.
         let checkout = root.join("Projects/a-checkout/target/release");
         std::fs::create_dir_all(&checkout).unwrap();
         a_built_binary(&checkout, "fleet", b"a real build");
-        let home = root.join("home/.fleet");
+        let home = root.join(".fleet");
         std::fs::create_dir_all(&home).unwrap();
         let found = source_beside_home(&home).expect("the build beside the home");
         assert_eq!(std::fs::read(&found).unwrap(), b"a real build");
-        // No Projects beside this home: no fallback, rather than a path
-        // that would fail later where the failure is harder to read.
-        // It needs its OWN root: `<root>/nothing-here/.fleet` still
-        // walks up to `<root>`, which is where the build just was.
+        // No Projects beside this home: no fallback, rather than a path that
+        // would fail later where the failure is harder to read. It needs its
+        // OWN root, since the walk now reads exactly one parent.
         let bare = std::env::temp_dir().join(format!("fleet-bare-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&bare);
         let elsewhere = bare.join("home/.fleet");

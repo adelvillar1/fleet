@@ -4279,6 +4279,17 @@ fn doctor_checks() -> ExitCode {
     failed |= !shell_check.ok;
     println!("{}", doctor::render(&shell_check));
 
+    // Is the copy the LaunchAgent runs the one that was built? KI-412's lesson
+    // made visible where the owner looks: a rebuild keeps the same
+    // `CARGO_PKG_VERSION`, so `GET /api/version` cannot tell a stale install
+    // from a fresh build — the files' bytes can.
+    let binary_check = doctor::evaluate_binary(
+        built_binary_beside_home().as_deref(),
+        &fleet::reload::installed_in_home(&fleet_home().unwrap_or_default()),
+    );
+    failed |= !binary_check.ok;
+    println!("{}", doctor::render(&binary_check));
+
     // The delegated-workspaces layer: the one opt-in knob beside the
     // CLI it drives. Off is the default and reads ok; a knob turned on
     // over a machine that cannot answer is a broken layer, named here
@@ -5001,7 +5012,11 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
     let window = contract_rows();
     if options.estimate {
         let class = options.class.as_deref().unwrap_or_default();
-        let (estimate, source) = fleet::calib::estimate_for_with_prior(class, &window, reading.admission(class).needed_kib);
+        let (estimate, source) = fleet::calib::estimate_for_with_prior(
+            class,
+            &window,
+            reading.admission(class).needed_kib,
+        );
         let doc = serde_json::json!({
             "measured": fleet::calib::stamp(),
             "work_class": class,
@@ -5022,7 +5037,11 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
         let class = options.class.as_deref().unwrap_or_default();
         // The budget the work declared is the estimate that admitted it: the
         // learned one, so a class pays for its own history and not a constant.
-        let (budget_kib, source) = fleet::calib::estimate_for_with_prior(class, &window, reading.admission(class).needed_kib);
+        let (budget_kib, source) = fleet::calib::estimate_for_with_prior(
+            class,
+            &window,
+            reading.admission(class).needed_kib,
+        );
         let admission = reading.admission(class);
         let settlement = fleet::footprint::settle(before_kib, reading.available_kib, budget_kib);
         let verdict = if settlement.runaway {
@@ -5070,7 +5089,11 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
     }
     if options.record {
         let class = options.class.as_deref().unwrap_or_default();
-        let (budget_kib, source) = fleet::calib::estimate_for_with_prior(class, &window, reading.admission(class).needed_kib);
+        let (budget_kib, source) = fleet::calib::estimate_for_with_prior(
+            class,
+            &window,
+            reading.admission(class).needed_kib,
+        );
         let admission = reading.admission(class);
         let verdict = if admission.ok {
             fleet::calib::FOOTPRINT_ADMITTED
@@ -5189,6 +5212,14 @@ fn record_contract_row(row: fleet::calib::FootprintRow) -> Result<(), String> {
     // explicit flush makes the wait visible rather than incidental.
     stream.flush();
     Ok(())
+}
+
+/// The release build beside the home, when the owner's checkout is where it
+/// usually is. `doctor` compares this against the installed copy, so a rebuild
+/// nobody delivered reads as `stale` rather than as "same version, fine".
+fn built_binary_beside_home() -> Option<std::path::PathBuf> {
+    let home = fleet_home().ok()?;
+    fleet::reload::source_beside_home(&home)
 }
 
 fn shell_probe() -> Result<&'static str, String> {

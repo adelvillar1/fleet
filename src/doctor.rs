@@ -24,6 +24,100 @@ pub fn render(check: &Check) -> String {
     format!("{:12} {}  {}", check.name, verdict, check.detail)
 }
 
+/// The `binary` line: is the copy the LaunchAgent runs the one that was just
+/// built?
+///
+/// KI-412's own reasoning, applied where the owner actually looks. A rebuild
+/// carries the same `CARGO_PKG_VERSION`, so `GET /api/version` agrees across a
+/// stale install and a fresh build — which is exactly how a console older than
+/// the code gets browsed with no signal. The comparison is therefore the files'
+/// **bytes** (`reload::reconcile_state`, the same call the reconcile and reload
+/// paths use), and the detail names the remedy rather than a state word a
+/// reader has to decode.
+///
+/// `None` when there is no built copy to compare against — a machine running
+/// only the installed binary has no worktree, which is the ordinary laptop, not
+/// a fault.
+pub fn evaluate_binary(source: Option<&std::path::Path>, installed: &std::path::Path) -> Check {
+    let Some(source) = source else {
+        return Check {
+            name: "binary",
+            ok: true,
+            detail: format!(
+                "no build beside this home; {} is what runs",
+                installed.display()
+            ),
+        };
+    };
+    match crate::reload::reconcile_state(source, installed) {
+        Ok(state) => {
+            let detail = match state {
+                crate::reload::Reconciliation::Current => format!(
+                    "the installed copy IS this build ({}, built {})",
+                    byte_len(source),
+                    modified(source)
+                ),
+                crate::reload::Reconciliation::Absent => format!(
+                    "nothing installed at {} \u{2014} `fleet install` delivers this build",
+                    installed.display()
+                ),
+                crate::reload::Reconciliation::Stale => format!(
+                    "the installed copy is NOT this build \u{2014} {} is from {} ({}), while {} was built {}; `fleet reload --from {}` delivers it and proves the face came back",
+                    installed.display(),
+                    modified(installed),
+                    byte_len(installed),
+                    source.display(),
+                    modified(source),
+                    source.display()
+                ),
+            };
+            Check {
+                name: "binary",
+                // Only the stale state is a fault: absent is a first install and
+                // current is the ordinary case.
+                ok: state != crate::reload::Reconciliation::Stale,
+                detail,
+            }
+        }
+        Err(error) => Check {
+            name: "binary",
+            ok: false,
+            detail: format!("the installed copy could not be compared: {error}"),
+        },
+    }
+}
+
+/// A file's size, for the stale line: two builds of the same version differ in
+/// bytes, and the size is the cheapest honest witness that they are not the
+/// same file.
+fn byte_len(path: &std::path::Path) -> String {
+    match std::fs::metadata(path) {
+        Ok(meta) => format!("{} bytes", meta.len()),
+        Err(_) => "unreadable".to_string(),
+    }
+}
+
+/// A file's mtime as a short UTC-ish stamp, for the stale line.
+fn modified(path: &std::path::Path) -> String {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return "unknown".to_string();
+    };
+    let Ok(modified) = meta.modified() else {
+        return "unknown".to_string();
+    };
+    let Ok(age) = modified.elapsed() else {
+        return "just now".to_string();
+    };
+    let secs = age.as_secs();
+    if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86_400)
+    }
+}
+
 /// The credentials check from a resolved `DEEPSEEK_API_KEY` (after the
 /// `.env` fallback). The detail masks everything but the last four
 /// characters.
@@ -2191,6 +2285,70 @@ mod tests {
             "{}",
             unread.detail
         );
+    }
+
+    /// The `binary` line's three states, from real files: KI-412's lesson is
+    /// that a version string cannot tell a stale install from a fresh build, so
+    /// the check has to be the bytes — and the line has to be a FAIL with the
+    /// remedy named, because a silent ok here is how a stale console gets
+    /// browsed for thirteen hours.
+    #[test]
+    fn the_binary_line_reports_the_three_states_and_names_the_remedy_when_stale() {
+        let root = std::env::temp_dir().join(format!("fleet-binline-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("target/release/fleet");
+        let installed = root.join("home/.fleet/bin/fleet");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"the new build").unwrap();
+
+        // Absent: nothing installed yet. Not a fault — it is a first install.
+        let absent = evaluate_binary(Some(&source), &installed);
+        assert_eq!(absent.name, "binary");
+        assert!(absent.ok, "{}", absent.detail);
+        assert!(
+            absent.detail.contains("nothing installed"),
+            "{}",
+            absent.detail
+        );
+        assert!(absent.detail.contains("fleet install"), "{}", absent.detail);
+
+        // Stale: the exact defect — bytes differ, and the remedy is on the line.
+        std::fs::write(&installed, b"the old build").unwrap();
+        let stale = evaluate_binary(Some(&source), &installed);
+        assert!(!stale.ok, "a stale install must FAIL: {}", stale.detail);
+        assert!(stale.detail.contains("NOT this build"), "{}", stale.detail);
+        assert!(
+            stale.detail.contains("fleet reload --from"),
+            "{}",
+            stale.detail
+        );
+        assert!(
+            stale.detail.contains(&source.display().to_string()),
+            "the remedy names the build to deliver: {}",
+            stale.detail
+        );
+
+        // Current: same bytes.
+        std::fs::write(&installed, b"the new build").unwrap();
+        let current = evaluate_binary(Some(&source), &installed);
+        assert!(current.ok, "{}", current.detail);
+        assert!(
+            current.detail.contains("IS this build"),
+            "{}",
+            current.detail
+        );
+
+        // No build beside the home: nothing to compare, and not a fault.
+        let none = evaluate_binary(None, &installed);
+        assert!(none.ok);
+        assert!(
+            none.detail.contains("no build beside this home"),
+            "{}",
+            none.detail
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
