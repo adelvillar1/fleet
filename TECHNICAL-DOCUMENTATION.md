@@ -67,6 +67,39 @@ derives the row's id from the table while the ledger's sibling lock is
 held — the run-time append path, concurrent-safe by the same lock the
 diagnosis filing uses.
 
+**The decision and generation seams.** Four boundaries added by the
+grounded-selection program (0.6.25/0.6.26), each with its own contract:
+
+- **`sys1_classify`** (the judgment seam). A `task` name or an inline
+  `task_spec` (id + typed heads: choice 2-255 options, noul yes/no,
+  score), the payload as `text`, optional `images` (data URLs, the
+  `vision_qc` task's arm). Answers come back per provider with `label`,
+  `noul`, `score`, `confidence` (= the margin), and `probabilities`.
+  Fleet calls it through the lane roster as `classify` (the namespace
+  strips the `sys1_` prefix). The envelope that matters: two to three
+  heads per call is the measured-comfortable range; 27 ordinal heads in
+  one request collapse to identical answers.
+- **blend1's `generate`** (the prose seam). One bounded chat completion
+  on the hosted Liquid text legs — `lfm3-1.7b` (default) or
+  `lfm2.5-24b-a2b`, the probed list. `prompt`, optional `system`,
+  optional `max_tokens` (16384 ceiling, clamped to a **1024 floor**:
+  both models reason, and a smaller budget dies inside the reasoning).
+  Every failure is the leg's own named JSON error; fleet's
+  `src/generate.rs` turns it into a named `Err` so the caller falls back.
+- **The destructive experiment gate.** A destructive-flagged bash call
+  in a git repo runs in an isolated clone (`git clone --local` plus the
+  working tree carried in: tracked diff applied, untracked copied), and
+  the report — exit, bounded output, `git status`, `git diff` — rides
+  the tool result. Boundaries: 2 GiB repo cap, 120 s, named skips (no
+  git, over size, clone failure), setting `experiments.destructive`
+  (default on). The real repo is untouched until the ordinary approval
+  gate.
+- **The repair leg** (`experiments.repair_leg`, default **off**). A
+  validation-failed emission can be re-authored once through `generate`
+  behind the tool's own schema as the guard. Off by measurement: LFM3
+  recovery 29.3% against the error-result loop's 54.2%
+  (`scripts/c-recovery-measure.py`).
+
 **The face's HTTP surface.** Hand-rolled HTTP/1.1 on loopback
 (`127.0.0.1:3080` by default); the address alone opens it and a
 non-loopback host is refused by name. The routes: `/api/run`,

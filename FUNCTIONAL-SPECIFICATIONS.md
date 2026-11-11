@@ -579,6 +579,21 @@ agent continuation, conversation fold, two-turn tool loop, subagent
 delegation, memory recall, delegation-loop close — and `fleet eval`
 prints house cards and lands one `eval_corpus` row (`docs/features/eval.md`).
 
+## What the new seams tell the owner
+
+Beyond the error table above, four behaviours are owner-visible:
+
+| You see | What happened |
+|---|---|
+| `fold served by the hosted small model (lfm3-1.7b)` | the context fold ran on the small model instead of the flagship; the fallback line right below names the routed path when the lane could not answer |
+| a session title and one-sentence archive summary you did not write | the end-of-run prose act named the session; your own title always wins and is never overwritten |
+| `EXPERIMENT — the command ran in an isolated clone of this repo` | a destructive command was run in a sandbox first; the report shows what it changed, and the real run still crosses the approval gate |
+| `the destructive head flags this command; the gate will ask` | a command the substring list cannot see was flagged by the decision head, so the gate asks rather than auto-running it |
+| `vision qc: yes (confidence 0.9) — generated/image-0.png` | a rendered image was graded against its brief, and the verdict is a calibration row |
+
+The off-switches, both in `config.json` under `experiments`: `destructive`
+and `repair_leg`.
+
 ## Known gaps
 
 | Area | Status | Source |
