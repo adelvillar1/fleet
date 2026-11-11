@@ -12,6 +12,33 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.31 — 2026-11-11
+
+The armada bedrock: fleet knows its own identity, and every run acts for a
+principal.
+
+**Part of the armada vision** — layer L1 (identity), the first brick of the
+bottom-up build. The decomposition, choices, and contracts live in
+`docs/plans/ARMADA-*.md`; the plan is
+`docs/plans/2026-11-11-armada-l1-identity.md`.
+
+- **The install-id** — every install mints a stable id once (`fleet install`,
+  `<home>/install-id`), idempotent across re-runs; a fresh home is a fresh
+  install. `fleet identity` prints it. The corpus cursor, the roster, and
+  deployment will key on it.
+- **The principal** — every run acts for a principal; lane 1 is the owner.
+  The principal rides the run, and a delegated child inherits its parent's,
+  recorded on the child's start record so the run's authority is
+  reconstructable from its log. Principal-agnostic from the first cut, so the
+  org multiplies principals without code change.
+- **Device→principal** — pairing links a device to the owner; an unlinked
+  device resolves to no principal, never a silent fallback.
+- **Surfaces** — `fleet identity`, the install mint, and the settings identity
+  card beside the SOUL slot.
+
+Carries identity only — grants nothing, refuses nothing; the uniform guard is
+the next layer (L3). Single-owner behavior is unchanged.
+
 ## v0.6.30 — 2026-11-11
 
 The first armada-vision increment: fleet pulls knowledge from other harnesses.
