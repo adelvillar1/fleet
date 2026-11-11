@@ -862,7 +862,12 @@ fn row_id(line: &str) -> Option<String> {
 /// issue, evidence, status, next action), trimmed. `None` when the
 /// line is not a six-cell row — a header, a separator, prose.
 fn row_cells(line: &str) -> Option<Vec<&str>> {
-    let mut cells: Vec<&str> = line.split('|').map(str::trim).collect();
+    // Split on the pipes that are SEPARATORS, not the ones a cell escaped:
+    // the ledger writes `\|` inside a cell (KI-331's evidence does), and
+    // `scripts/ki_ledger.py`'s `split_cells` skips those. A plain `split('|')`
+    // gives such a row seven cells, so this reader dropped the whole row —
+    // the same defect the checker exists to catch, one seam over.
+    let mut cells: Vec<&str> = split_cells(line).into_iter().map(str::trim).collect();
     // A row is `| a | b | … |`: the split opens and closes on the
     // pipes, so the first and last cells are empty.
     if cells.first().is_some_and(|cell| cell.is_empty()) {
@@ -872,6 +877,36 @@ fn row_cells(line: &str) -> Option<Vec<&str>> {
         cells.pop();
     }
     (cells.len() == 6).then_some(cells)
+}
+
+/// Split a table row on the pipes that are not backslash-escaped, the rule
+/// `scripts/ki_ledger.py`'s `split_cells` applies: the leading and trailing
+/// pipes delimit the row and are not separators, and `\|` is a literal pipe
+/// inside a cell.
+fn split_cells(line: &str) -> Vec<&str> {
+    let body = line.trim();
+    let body = body.strip_prefix('|').unwrap_or(body);
+    let body = match body.strip_suffix('|') {
+        Some(stripped) if !body.ends_with("\\|") => stripped,
+        _ => body,
+    };
+    let mut cells = Vec::new();
+    let mut start = 0;
+    let bytes = body.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if bytes.get(index + 1) == Some(&b'|') => index += 2,
+            b'|' => {
+                cells.push(&body[start..index]);
+                start = index + 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    cells.push(&body[start..]);
+    cells
 }
 
 /// One ledger row's text, in the ledger's own six-column shape, with
@@ -1212,7 +1247,13 @@ pub fn open_items(text: &str) -> Vec<OpenItem> {
     text.lines()
         .filter_map(row_cells)
         .filter(|cells| cells[0].starts_with("KI-"))
-        .filter(|cells| cells[4].eq_ignore_ascii_case("open"))
+        // The status cell's leading WORD, not the whole cell: the ledger writes
+        // `open — reason`, `**open — reason**` and `open (deferred)` as readily
+        // as bare `open`, and `scripts/ki_ledger.py` reads all of them as open
+        // (`status_word`). Comparing the whole cell meant this reader reported
+        // "0 open action items" on a ledger the checker called "open: 8" — two
+        // readers of one file disagreeing, which is worse than either.
+        .filter(|cells| status_word(cells[4]).eq_ignore_ascii_case("open"))
         .map(|cells| OpenItem {
             id: cells[0].to_string(),
             severity: cells[1].to_string(),
@@ -2435,6 +2476,45 @@ mod tests {
         // the detail says floor rather than reserving the word.
         let floor = evaluate_disk_against(Some(121 * 1024 * 1024), None);
         assert!(floor.detail.contains("floor 20 GiB"), "{}", floor.detail);
+    }
+
+    /// The reader and the checker must agree about what is open. Both halves
+    /// of this pin are defects this session found: a status cell carrying its
+    /// reason ("open — …") was invisible to a whole-cell comparison, and a cell
+    /// carrying an escaped pipe ("`\|`") shifted the row to seven cells so the
+    /// row was dropped outright. A ledger whose own reader cannot see its open
+    /// rows is worse than the rows themselves.
+    #[test]
+    fn the_open_reader_sees_a_status_with_a_reason_and_a_cell_with_an_escaped_pipe() {
+        // The em dashes are real characters here, as the ledger writes them.
+        let ledger = "\
+| ID | Severity | Issue | Evidence | Status | Next action |
+|---|---|---|---|---|---|
+| KI-001 | defect | a plain row | e | open | act |
+| KI-002 | defect | a reasoned row | e | open \u{2014} the reason | act |
+| KI-003 | defect | an emphasised row | e | **open \u{2014} the reason** | act |
+| KI-004 | defect | a deferred row | e | open (deferred) | act |
+| KI-005 | gap | a row whose evidence escapes a pipe | `a \\| b` | open \u{2014} reasoned | act |
+| KI-006 | improvement | a closed row with a reason | e | closed \u{2014} fixed | done |
+| KI-007 | defect | a noted row | e | noted (recovered) | none |
+";
+        let items = open_items(ledger);
+        let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["KI-001", "KI-002", "KI-003", "KI-004", "KI-005"],
+            "every open shape is open, and no closed or noted row is: {ids:?}"
+        );
+        // The escaped-pipe row keeps its six cells and its real status, rather
+        // than being dropped for having seven.
+        let escaped = items.iter().find(|item| item.id == "KI-005").unwrap();
+        assert_eq!(escaped.severity, "gap");
+        assert_eq!(escaped.next_action, "act");
+        // And the cell splitter agrees with the checker's rule on the shapes
+        // the table actually writes.
+        assert_eq!(split_cells("| a | b |").len(), 2);
+        assert_eq!(split_cells("| a \\| b | c |").len(), 2);
+        assert_eq!(split_cells("| KI-1 | x | y | z | w | v |").len(), 6);
     }
 
     #[test]
