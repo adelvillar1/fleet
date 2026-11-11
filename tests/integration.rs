@@ -11996,7 +11996,18 @@ async fn a_layerfs_child_walks_the_coherence_sequence() {
     // the branch directly, ONE bash call walks the whole cadence
     // around its exec, and the read comes after the command's
     // checkpoint — the sequence the wire findings demanded.
-    let calls = std::fs::read_to_string(&argv).expect("the stub was called");
+    let raw = std::fs::read_to_string(&argv).expect("the stub was called");
+    // KI-516: the sequence is the CHILD's, so the search starts where
+    // the child first touches its branch. The parent's own folder
+    // registration walks the working tree through the same stub before
+    // the child ever runs, and a whole-log `find` matched those reads —
+    // `unmount < fs read` then failed on traffic this test never meant
+    // to assert. Slicing from the first `fleet-child-` line scopes the
+    // assertion to the delegation it is about.
+    let calls = match raw.lines().position(|line| line.contains("fleet-child-")) {
+        Some(start) => raw.lines().skip(start).collect::<Vec<_>>().join("\n"),
+        None => raw.clone(),
+    };
     let at = |needle: &str| {
         calls
             .find(needle)
