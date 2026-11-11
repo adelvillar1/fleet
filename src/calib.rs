@@ -1025,7 +1025,24 @@ fn settled_of<'a>(rows: &'a [FootprintRow], class: &'a str) -> impl Iterator<Ite
 /// nobody has declared is still admitted against *some* bound, and the run
 /// budget is the contract's floor for that.
 pub fn estimate_for(class: &str, rows: &[FootprintRow]) -> (u64, &'static str) {
-    let prior = crate::footprint::estimate_kib(class).unwrap_or(crate::footprint::RUN_BUDGET_KIB);
+    estimate_for_with_prior(
+        class,
+        rows,
+        crate::footprint::estimate_kib(class).unwrap_or(crate::footprint::RUN_BUDGET_KIB),
+    )
+}
+
+/// [`estimate_for`] with the class's prior supplied by the caller, for the work
+/// whose cost is not declarable — a run, whose prior is not a constant once a
+/// profile exists but the appetite's bounded share of the volume (the plan's
+/// C10: "no number in this contract is a code constant once a profile
+/// exists"). A settlement still outranks the prior, so this changes what a
+/// first run is admitted against and nothing about what history teaches.
+pub fn estimate_for_with_prior(
+    class: &str,
+    rows: &[FootprintRow],
+    prior: u64,
+) -> (u64, &'static str) {
     let settlements: Vec<u64> = settled_of(rows, class).collect();
     let recent: Vec<u64> = settlements
         .iter()
@@ -4741,6 +4758,38 @@ mod tests {
             decided_by: decided_by.to_string(),
             judge_words: String::new(),
         }
+    }
+
+    #[test]
+    fn a_caller_supplied_prior_replaces_the_constant_and_history_still_outranks_it() {
+        // The plan's C10: "no number in this contract is a code constant once a
+        // profile exists". A run's prior is the appetite's bounded share of the
+        // volume, so the caller supplies it where the volume is known.
+        let run = crate::footprint::CLASS_RUN;
+        let derived = 5 * 1024 * 1024;
+        assert_eq!(estimate_for_with_prior(run, &[], derived), (derived, "prior"));
+        // The constant would have said 2 GiB; the supplied prior wins.
+        assert_ne!(estimate_for(run, &[]).0, derived);
+        // Three settlements still outrank any prior, supplied or not — the
+        // change is what a first run is admitted against, not what history teaches.
+        let row = |settled: u64| FootprintRow {
+            ts: "2026-11-11T00:00:00Z".to_string(),
+            class: run.to_string(),
+            estimate_kib: derived,
+            reserve_kib: 0,
+            reserve_source: "inferred".to_string(),
+            available_kib: 0,
+            headroom_kib: 0,
+            settled_kib: settled,
+            verdict: crate::calib::FOOTPRINT_CLEAN.to_string(),
+            decided_by: "bounds".to_string(),
+            judge_words: String::new(),
+        };
+        let rows = vec![row(3 * 1024 * 1024), row(3 * 1024 * 1024), row(3 * 1024 * 1024)];
+        assert_eq!(
+            estimate_for_with_prior(run, &rows, derived),
+            (3 * 1024 * 1024, "settled")
+        );
     }
 
     #[test]

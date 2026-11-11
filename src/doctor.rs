@@ -136,6 +136,32 @@ pub fn evaluate_disk(free_kib: Option<u64>) -> Check {
     evaluate_disk_against(free_kib, None)
 }
 
+/// The disk line with the contract's **whole** environment beside it: the
+/// reserve and the sentence that produced it — the machine, the standing share,
+/// the spread, the fill rate, and whether the owner declared the grade. This is
+/// the plan's C11 on the doctor's own surface: a refusal here reads as a
+/// decision because the evidence that produced the number is on the line.
+pub fn evaluate_environment(
+    free_kib: Option<u64>,
+    volume_kib: u64,
+    env: &crate::footprint::Env,
+    declared: crate::footprint_history::Declared,
+) -> Check {
+    let reading = crate::footprint::Reading::with_floor(
+        Vec::new(),
+        volume_kib,
+        free_kib.unwrap_or(0),
+        env,
+        declared.appetite,
+        declared.reserve_kib(),
+    );
+    let mut check = evaluate_disk_against(free_kib, Some(reading.reserve_kib));
+    if free_kib.is_some() {
+        check.detail = format!("{} \u{2014} {}", check.detail, reading.environment_clause());
+    }
+    check
+}
+
 /// The disk line with the contract's reserve beside it, when the caller could
 /// read one. The floor is the fallback the report has always used; the reserve
 /// is what the same reading derives, and naming both is what keeps the doctor
@@ -2159,6 +2185,58 @@ mod tests {
         assert!(tight.detail.contains("build lanes"), "{}", tight.detail);
         // An unreadable volume is named, never a silent pass.
         let unread = evaluate_disk(None);
+        assert!(!unread.ok);
+        assert!(
+            unread.detail.contains("could not be read"),
+            "{}",
+            unread.detail
+        );
+    }
+
+    #[test]
+    fn the_environment_line_carries_the_profile_the_reserve_came_from() {
+        // The plan's C11 on the doctor's surface: the reserve alone is a
+        // number; the machine, the standing share and the fill rate beside it
+        // make the number a decision.
+        let env = crate::footprint::Env {
+            free_fractions: vec![0.05, 0.06, 0.05, 0.06, 0.05],
+            fill_gib_per_day: 1.4,
+            volume_kib: 460 * 1024 * 1024,
+            laptop: true,
+            memory_used_share: Some(0.72),
+        };
+        let check = evaluate_environment(
+            Some(60 * 1024 * 1024),
+            460 * 1024 * 1024,
+            &env,
+            crate::footprint_history::Declared::default(),
+        );
+        assert!(check.ok, "{}", check.detail);
+        for expected in [
+            "reserve",
+            "laptop",
+            "5% free",
+            "filling 1.4 GiB/day",
+            "memory 72% used",
+            "inferred",
+        ] {
+            assert!(
+                check.detail.contains(expected),
+                "{expected} missing from: {}",
+                check.detail
+            );
+        }
+        // The owner's declaration is named as theirs.
+        let declared = crate::footprint_history::Declared {
+            appetite: Some(crate::footprint::Appetite::Roomy),
+            reserve_gib: Some(80),
+        };
+        let mine = evaluate_environment(Some(100 * 1024 * 1024), 460 * 1024 * 1024, &env, declared);
+        assert!(mine.detail.contains("declared floor"), "{}", mine.detail);
+        assert!(mine.detail.contains("reserve 80 GiB"), "{}", mine.detail);
+        // An unreadable volume still reads: the clause is added to a graded
+        // line, never in place of one.
+        let unread = evaluate_environment(None, 460 * 1024 * 1024, &env, declared);
         assert!(!unread.ok);
         assert!(
             unread.detail.contains("could not be read"),

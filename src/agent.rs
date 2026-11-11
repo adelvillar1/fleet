@@ -3682,12 +3682,15 @@ impl<'a> Agent<'a> {
             FileAccess::Folder(root) => Some(root.clone()),
             _ => None,
         };
+        // The class's budget, not the constant: with a profile the run budget
+        // is the appetite's bounded share of the volume, and only a machine with
+        // no history falls back to the declared 2 GiB (the plan's C10).
         let work =
             crate::contract::Work::for_run(folder.as_deref(), crate::footprint::RUN_BUDGET_KIB);
         if !work.governed() {
             return Ok(());
         }
-        let Some(root) = folder else {
+        let Some(root) = folder.clone() else {
             return Ok(());
         };
         let Some(readout) = crate::contract::reading_of(&root) else {
@@ -3702,27 +3705,39 @@ impl<'a> Agent<'a> {
             let _ = self.progress.flush();
             return Ok(());
         };
-        let env = match self.options.improve_home.as_deref() {
-            Some(home) => crate::contract::env_from_history(home),
-            None => crate::contract::Env::default(),
+        // The profile and the owner's declaration from the one reader the CLI
+        // and the doctor also use. Without a home there is no history and no
+        // declaration, which is a fresh machine's shape.
+        let (env, declared) = match self.options.improve_home.as_deref() {
+            Some(home) => (
+                crate::footprint_history::profile(home),
+                crate::footprint_history::declared(home),
+            ),
+            None => (
+                crate::contract::Env::default(),
+                crate::footprint_history::Declared::default(),
+            ),
         };
-        let reading = crate::footprint::Reading::new(
+        let reading = crate::footprint::Reading::with_floor(
             Vec::new(),
             readout.volume_kib,
             readout.available_kib,
             &env,
-            None,
+            declared.appetite,
+            declared.reserve_kib(),
         );
+        // The run is admitted against the budget the profile derives for the
+        // class it has no estimate for, which is what the oversight then grades.
+        let work = crate::contract::Work::for_run(folder.as_deref(), reading.run_budget_kib);
         let admission = work.admitting(&reading);
         let budget_kib = work.budget_kib;
         let class = work.class.clone();
         if !admission.ok {
             let clause = format!(
-                "the resource contract refused this run: {:.2} GiB of headroom above a {:.2} GiB reserve ({}, inferred) against a {:.2} GiB budget",
+                "the resource contract refused this run: {:.2} GiB of headroom against a {:.2} GiB budget, with {}",
                 admission.headroom_kib as f64 / 1024.0 / 1024.0,
-                reading.reserve_kib as f64 / 1024.0 / 1024.0,
-                reading.appetite.word(),
                 admission.needed_kib as f64 / 1024.0 / 1024.0,
+                reading.environment_clause(),
             );
             let _ = writeln!(self.progress, "\u{2192} {clause}");
             let _ = self.progress.flush();
@@ -3769,11 +3784,11 @@ impl<'a> Agent<'a> {
         ));
         let _ = writeln!(
             self.progress,
-            "\u{2192} resource contract: {:.2} GiB budget, {:.2} GiB of headroom above a {:.2} GiB reserve ({})",
+            "\u{2192} resource contract: {:.2} GiB budget, {:.2} GiB of headroom, measuring every {} turns \u{2014} {}",
             budget_kib as f64 / 1024.0 / 1024.0,
             admission.headroom_kib as f64 / 1024.0 / 1024.0,
-            reading.reserve_kib as f64 / 1024.0 / 1024.0,
-            reading.appetite.word(),
+            reading.cadence_turns,
+            reading.environment_clause(),
         );
         let _ = self.progress.flush();
         Ok(())
@@ -3838,17 +3853,13 @@ impl<'a> Agent<'a> {
                         }
                         None => budget_kib,
                     };
-                    let reading = crate::footprint::Reading {
-                        lines: Vec::new(),
+                    let reading = crate::footprint::Reading::bare(
                         volume_kib,
-                        available_kib: now.available_kib,
+                        now.available_kib,
                         reserve_kib,
                         reserve_source,
                         appetite,
-                        standing_free: None,
-                        fill_gib_per_day: 0.0,
-                        records: 0,
-                    };
+                    );
                     self.land_contract_row(
                         &class,
                         raised,
@@ -3897,17 +3908,16 @@ impl<'a> Agent<'a> {
                     }
                     None => budget_kib,
                 };
-                let reading = crate::footprint::Reading {
-                    lines: Vec::new(),
+                // The readings the run was admitted against, not a re-derived
+                // profile: a row that re-inferred would let the record disagree
+                // with the admission that produced it.
+                let reading = crate::footprint::Reading::bare(
                     volume_kib,
-                    available_kib: now.available_kib,
+                    now.available_kib,
                     reserve_kib,
                     reserve_source,
                     appetite,
-                    standing_free: None,
-                    fill_gib_per_day: 0.0,
-                    records: 0,
-                };
+                );
                 self.land_contract_row(
                     &class,
                     raised,

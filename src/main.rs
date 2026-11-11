@@ -161,9 +161,10 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Devices { revoke }) => devices_command(revoke.as_deref()),
         Ok(Command::Channels(options)) => channels_command(&options),
         Ok(Command::Plugins(options)) => plugins_command(&options),
-        Ok(Command::Settings { set }) => settings_command(
+        Ok(Command::Settings { set, unset }) => settings_command(
             set.as_ref()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
+            unset.as_deref(),
         ),
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Hygiene) => hygiene_command(),
@@ -3784,7 +3785,7 @@ fn sessions_command(
 /// through the same writer the TUI pane calls. A write that the file's
 /// own validation refuses names its reason and changes nothing — the
 /// CLI is not a way around the rules the loader enforces.
-fn settings_command(set: Option<(&str, &str)>) -> ExitCode {
+fn settings_command(set: Option<(&str, &str)>, unset: Option<&str>) -> ExitCode {
     let home = match fleet_home() {
         Ok(home) => home,
         Err(message) => {
@@ -3792,6 +3793,35 @@ fn settings_command(set: Option<(&str, &str)>) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if let Some(key) = unset {
+        // The revert the GUI has always had: remove the override, and the code's
+        // own fallback is what the next run reads.
+        return match fleet::settings::unset(&home, key) {
+            Ok(()) => {
+                let state = fleet::settings::states(&home)
+                    .into_iter()
+                    .find(|state| state.key == key);
+                match state {
+                    Some(state) if state.value.is_none() => {
+                        println!(
+                            "`{key}` reverted \u{2014} the code's own default is what a run reads"
+                        );
+                    }
+                    Some(state) => println!(
+                        "`{key}` still reads `{}` from {} \u{2014} the override is gone from the file",
+                        state.rendered(),
+                        state.source()
+                    ),
+                    None => println!("`{key}` reverted"),
+                }
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if let Some((key, value)) = set {
         // The list-shaped surfaces arrive as a tagged key: the writer's
         // scalar path handles the plain ones, and the two list actions
@@ -4216,15 +4246,24 @@ fn doctor_checks() -> ExitCode {
     // The reserve the same reading derives, so this line and `fleet footprint`
     // name one number (the plan's C7). A home with no history yet derives
     // nothing, and the declared floor stands in — named as the floor.
-    let reserve_kib = match fleet_home() {
+    // The whole environment, not the reserve alone: the line names the machine,
+    // the standing share and the fill rate the number came from, so a refusal
+    // reads as a decision (the plan's C11).
+    let disk_check = match fleet_home() {
         Ok(home) => {
-            let env = read_env(&home).0;
-            volume_facts(&volume)
-                .map(|(_, total)| fleet::footprint::reserve_kib(total, &env, declared_appetite()).0)
+            let env = fleet::footprint_history::profile(&home);
+            let declared = fleet::footprint_history::declared(&home);
+            match volume_facts(&volume) {
+                Some((_free, total)) => {
+                    doctor::evaluate_environment(free_kib(&volume), total, &env, declared)
+                }
+                // No volume read: the disk half is still graded, with no
+                // profile claim riding on a number that was not measured.
+                None => doctor::evaluate_disk(free_kib(&volume)),
+            }
         }
-        Err(_) => None,
+        Err(_) => doctor::evaluate_disk(free_kib(&volume)),
     };
-    let disk_check = doctor::evaluate_disk_against(free_kib(&volume), reserve_kib);
     failed |= !disk_check.ok;
     println!("{}", doctor::render(&disk_check));
 
@@ -4837,90 +4876,6 @@ fn volume_facts(_path: &std::path::Path) -> Option<(u64, u64)> {
     None
 }
 
-/// The environment's history: one `footprint-history.jsonl` line per
-/// `scripts/footprint.sh --record`, read into the [`Env`] the appetite is
-/// inferred from. A line that does not parse is skipped rather than guessed
-/// at, and a record with no volume is not a reading of zero.
-fn read_env(home: &std::path::Path) -> (fleet::footprint::Env, u64) {
-    let history = std::fs::read_to_string(home.join("footprint-history.jsonl")).unwrap_or_default();
-    let mut env = fleet::footprint::Env::default();
-    let mut volume_kib = 0u64;
-    let mut samples: Vec<(String, u64, u64)> = Vec::new();
-    for line in history.lines() {
-        let doc: serde_json::Value = match serde_json::from_str(line) {
-            Ok(doc) => doc,
-            Err(_) => continue,
-        };
-        let volume = doc.get("volume_kib").and_then(|v| v.as_u64()).unwrap_or(0);
-        let free = doc.get("free_kib").and_then(|v| v.as_u64()).unwrap_or(0);
-        if volume == 0 {
-            continue;
-        }
-        volume_kib = volume;
-        env.free_fractions.push(free as f64 / volume as f64);
-        samples.push((
-            doc.get("at")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            volume,
-            free,
-        ));
-    }
-    env.fill_gib_per_day = fill_rate_gib_per_day(&samples);
-    (env, volume_kib)
-}
-
-/// The volume's fill rate from the history, GiB per day. Zero when the history
-/// cannot answer: it needs at least two records on different days, and a series
-/// that is not filling reports zero rather than a negative rate the caller
-/// would have to remember to clamp.
-fn fill_rate_gib_per_day(samples: &[(String, u64, u64)]) -> f64 {
-    let parsed: Vec<(f64, f64)> = samples
-        .iter()
-        .filter_map(|(at, _volume, free)| {
-            let days = day_number(at)?;
-            Some((days, *free as f64 / 1024.0 / 1024.0))
-        })
-        .collect();
-    let (Some(first), Some(last)) = (parsed.first(), parsed.last()) else {
-        return 0.0;
-    };
-    let span = last.0 - first.0;
-    if span <= 0.0 {
-        return 0.0;
-    }
-    let per_day = (first.1 - last.1) / span;
-    if per_day > 0.0 {
-        per_day
-    } else {
-        0.0
-    }
-}
-
-/// One record's UTC timestamp as a day ordinal, so a fill rate is a span in
-/// days rather than a count of records. `None` for a stamp that does not open
-/// with `YYYY-MM-DD`.
-fn day_number(at: &str) -> Option<f64> {
-    let date = at.get(..10)?;
-    let mut parts = date.split('-');
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: i64 = parts.next()?.parse().ok()?;
-    let day: i64 = parts.next()?.parse().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    // Days from the civil epoch (Howard Hinnant's algorithm) — exact for every
-    // date the history can hold, and no dependency for one subtraction.
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some((era * 146097 + doe - 719468) as f64)
-}
-
 /// `fleet footprint` — the resource awareness the owner asked for
 /// (2026-11-09): what this process tree holds right now (memory, processes)
 /// and what the volume has left, each graded deterministically against a
@@ -5008,10 +4963,20 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
     let procs = fleet::footprint::parse_ps(&text);
     let tree = fleet::footprint::tree_of(std::process::id(), &procs);
     let lines = fleet::footprint::evaluate_tree(&tree);
-    let (env, history_volume) = match fleet_home() {
-        Ok(home) => read_env(&home),
-        Err(_) => (fleet::footprint::Env::default(), 0),
+    // The profile and the declaration come from `footprint_history`, the one
+    // reader `fleet doctor` and the agent loop also use: two readers that
+    // disagree about the reserve is the same defect as two reserve formulas.
+    let (env, declared) = match fleet_home() {
+        Ok(home) => (
+            fleet::footprint_history::profile(&home),
+            fleet::footprint_history::declared(&home),
+        ),
+        Err(_) => (
+            fleet::footprint::Env::default(),
+            fleet::footprint_history::Declared::default(),
+        ),
     };
+    let history_volume = env.volume_kib;
     // The volume measured here, not the one the history remembers: the reserve
     // is a fraction of the disk the work will actually fill.
     let (available_kib, volume_kib) = match volume_facts(&volume) {
@@ -5022,15 +4987,21 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
         Some((free, _)) => (free, history_volume),
         None => (0, history_volume),
     };
-    let reading =
-        fleet::footprint::Reading::new(lines, volume_kib, available_kib, &env, declared_appetite());
+    let reading = fleet::footprint::Reading::with_floor(
+        lines,
+        volume_kib,
+        available_kib,
+        &env,
+        declared.appetite,
+        declared.reserve_kib(),
+    );
     // The contract's own reads over its history: the learned estimate (C8),
     // the settlement of a finished unit (C2), and the row that records it
     // (C5). All three need the class, which the CLI already refused to omit.
     let window = contract_rows();
     if options.estimate {
         let class = options.class.as_deref().unwrap_or_default();
-        let (estimate, source) = fleet::calib::estimate_for(class, &window);
+        let (estimate, source) = fleet::calib::estimate_for_with_prior(class, &window, reading.admission(class).needed_kib);
         let doc = serde_json::json!({
             "measured": fleet::calib::stamp(),
             "work_class": class,
@@ -5051,7 +5022,7 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
         let class = options.class.as_deref().unwrap_or_default();
         // The budget the work declared is the estimate that admitted it: the
         // learned one, so a class pays for its own history and not a constant.
-        let (budget_kib, source) = fleet::calib::estimate_for(class, &window);
+        let (budget_kib, source) = fleet::calib::estimate_for_with_prior(class, &window, reading.admission(class).needed_kib);
         let admission = reading.admission(class);
         let settlement = fleet::footprint::settle(before_kib, reading.available_kib, budget_kib);
         let verdict = if settlement.runaway {
@@ -5099,7 +5070,7 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
     }
     if options.record {
         let class = options.class.as_deref().unwrap_or_default();
-        let (budget_kib, source) = fleet::calib::estimate_for(class, &window);
+        let (budget_kib, source) = fleet::calib::estimate_for_with_prior(class, &window, reading.admission(class).needed_kib);
         let admission = reading.admission(class);
         let verdict = if admission.ok {
             fleet::calib::FOOTPRINT_ADMITTED
@@ -5159,17 +5130,16 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
         failed |= !line.ok();
         println!("{}", fleet::footprint::render(line));
     }
-    let share = reading.standing_free.map(|s| format!("{:.0}%", s * 100.0));
+    // The inference and its evidence beside the number it produced (the plan's
+    // C11/C12), plus the numbers the profile derives — so a refusal on the next
+    // line reads as a decision rather than an arbitrary bar.
+    println!("environment  {}", reading.environment_clause());
     println!(
-        "environment  {} \u{2014} reserve {} GiB of {} GiB ({}; {} record(s){})",
+        "             {} cadence every {} turn(s), {:.2} GiB per run, upkeep every {} day(s)",
         reading.appetite.word(),
-        reading.reserve_kib / 1024 / 1024,
-        reading.volume_kib / 1024 / 1024,
-        reading.reserve_source,
-        reading.records,
-        share
-            .map(|s| format!(", standing {s} free"))
-            .unwrap_or_default(),
+        reading.cadence_turns,
+        reading.run_budget_kib as f64 / 1024.0 / 1024.0,
+        reading.upkeep_days,
     );
     if let Some(class) = options.class.as_deref() {
         let admission = reading.admission(class);
@@ -5219,21 +5189,6 @@ fn record_contract_row(row: fleet::calib::FootprintRow) -> Result<(), String> {
     // explicit flush makes the wait visible rather than incidental.
     stream.flush();
     Ok(())
-}
-
-/// The owner's declared risk appetite, when `fleet settings` carries one. It
-/// wins over the inferred appetite everywhere the reserve is derived — which is
-/// the whole point of declaring it (the plan's closing frame).
-fn declared_appetite() -> Option<fleet::footprint::Appetite> {
-    let home = fleet_home().ok()?;
-    let config = std::fs::read_to_string(home.join("config.json")).ok()?;
-    let doc: serde_json::Value = serde_json::from_str(&config).ok()?;
-    match doc.get("appetite").and_then(|v| v.as_str())? {
-        "tight" => Some(fleet::footprint::Appetite::Tight),
-        "balanced" => Some(fleet::footprint::Appetite::Balanced),
-        "roomy" => Some(fleet::footprint::Appetite::Roomy),
-        _ => None,
-    }
 }
 
 fn shell_probe() -> Result<&'static str, String> {

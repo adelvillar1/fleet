@@ -50,6 +50,23 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LOG="${FLEET_MAINTENANCE_LOG:-$HOME/Library/Logs/fleet-maintenance.log}"
 TMP_DAYS="${FLEET_TMP_DAYS:-14}"
 
+# The build lane's retention window, derived from the resource contract rather
+# than declared here (the plan's C10: "the upkeep cadence follows the fill
+# rate"). `fleet footprint --json` answers `upkeep_days`: the headroom above the
+# reserve divided by the volume's own fill rate, capped by the appetite in
+# force — so a machine losing 2 GiB a day at 25 GiB free revisits its caches
+# sooner than one losing nothing at 200 GiB. The owner's explicit
+# FLEET_LANE_KEEP_DAYS wins, and a binary that cannot answer keeps the old
+# constant rather than failing the leg.
+LANE_DAYS="${FLEET_LANE_KEEP_DAYS:-}"
+if [ -z "$LANE_DAYS" ]; then
+    LANE_DAYS=$("${FLEET_BIN:-$HOME/.fleet/bin/fleet}" footprint --json 2>/dev/null \
+        | tr ',' '\n' | sed -n 's/.*"upkeep_days"[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -1)
+    case "${LANE_DAYS:-}" in
+        ''|*[!0-9]*) LANE_DAYS=3 ;;
+    esac
+fi
+
 say() {
     printf '%s %s\n' "$(date -u '+%FT%TZ')" "$*" >>"$LOG"
 }

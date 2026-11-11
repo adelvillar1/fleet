@@ -37,9 +37,16 @@ pub enum Command {
     /// retention — the last 20 turns per session under a 5 GiB store
     /// cap — and the report naming what went and what it freed.
     Hygiene,
-    /// The settings surface: list every knob, or write one.
+    /// The settings surface: list every knob, write one, or revert one to its
+    /// compiled default.
+    ///
+    /// `unset` is the writer's own revert (`settings::unset`), which the GUI
+    /// has always called and the CLI never offered — so an owner who declared a
+    /// contract number in the terminal had no terminal path back to inference,
+    /// and had to edit `config.json` by hand. One key, one command.
     Settings {
         set: Option<(String, String)>,
+        unset: Option<String>,
     },
     /// Probe the four vendored lanes' health.
     Lanes,
@@ -982,12 +989,13 @@ usage:
                                 never a second verdict. --dry-run resolves the
                                 row and checks the artifact only: no ask, no
                                 row, no file
-  fleet settings [set <key> <value>]
+  fleet settings [set <key> <value> | unset <key>]
   fleet settings provider add '<json>' | remove <id> [--force]
   fleet settings workload set <name> \"<provider/model,...>\"
   fleet settings workload remove <name> [--force]
-                                every configurable surface as cards, or
-                                write one — the same writer the TUI calls
+                                every configurable surface as cards, write
+                                one, or revert one to its default — the same
+                                writer the TUI and the face call
   fleet install [--lanes]        create the home layout (sessions, memories,
                                 skills, cron, proposals) and the config
                                 scaffold, then run the doctor gate — the
@@ -1319,6 +1327,7 @@ fn parse_compact(args: &[String]) -> Result<Command, String> {
 /// rather than written where nothing reads it.
 fn parse_settings(args: &[String]) -> Result<Command, String> {
     let mut set: Option<(String, String)> = None;
+    let mut unset: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -1328,6 +1337,21 @@ fn parse_settings(args: &[String]) -> Result<Command, String> {
                 let key = take_value(args, &mut index, "set")?;
                 let value = take_value(args, &mut index, "set")?;
                 set = Some((key, value));
+            }
+            // The revert: one key, no value. `fleet settings` then reads it as
+            // `unset`/`default`, and the code's own fallback is what a run sees.
+            "unset" => {
+                let key = take_value(args, &mut index, "unset")?;
+                if args
+                    .get(index + 1)
+                    .is_some_and(|next| !next.starts_with('-'))
+                {
+                    return Err(
+                        "`unset` takes one key and no value; `fleet settings unset <key>` reverts it"
+                            .to_string(),
+                    );
+                }
+                unset = Some(key);
             }
             // The list-shaped surfaces: a provider override and a
             // workload preference are added and removed rather than
@@ -1395,7 +1419,7 @@ fn parse_settings(args: &[String]) -> Result<Command, String> {
         }
         index += 1;
     }
-    Ok(Command::Settings { set })
+    Ok(Command::Settings { set, unset })
 }
 
 fn parse_calib(args: &[String]) -> Result<Command, String> {
@@ -3764,6 +3788,41 @@ mod tests {
         assert!(parse(&args(&["devices", "--revoke"])).is_err());
         assert!(parse(&args(&["devices", "--revoke", "a", "--revoke", "b"])).is_err());
         assert!(parse(&args(&["devices", "stray"])).is_err());
+    }
+
+    #[test]
+    fn settings_takes_a_write_and_a_revert_and_refuses_a_value_on_the_revert() {
+        // The write, unchanged.
+        assert_eq!(
+            parse(&args(&["settings", "set", "appetite", "tight"])).unwrap(),
+            Command::Settings {
+                set: Some(("appetite".to_string(), "tight".to_string())),
+                unset: None,
+            }
+        );
+        // The revert: one key, no value. It was the writer's own call the GUI
+        // has always made and the CLI never offered, so an owner who declared a
+        // number in the terminal had to edit config.json to undo it.
+        assert_eq!(
+            parse(&args(&["settings", "unset", "appetite"])).unwrap(),
+            Command::Settings {
+                set: None,
+                unset: Some("appetite".to_string()),
+            }
+        );
+        // A value on the revert is refused by name rather than silently dropped:
+        // `unset appetite tight` would leave the owner thinking they set one.
+        let error = parse(&args(&["settings", "unset", "appetite", "tight"]))
+            .expect_err("a two-argument revert must refuse");
+        assert!(error.contains("unset"), "{error}");
+        // A bare `settings` is the listing, exactly as before.
+        assert_eq!(
+            parse(&args(&["settings"])).unwrap(),
+            Command::Settings {
+                set: None,
+                unset: None,
+            }
+        );
     }
 
     #[test]

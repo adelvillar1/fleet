@@ -198,6 +198,10 @@ pub struct Oversight {
     pub budget_kib: u64,
     /// How many turns since the last reading.
     since_reading: u64,
+    /// How many turns between readings, from the appetite in force. The
+    /// constant is the roomy default; a tighter machine measures more often,
+    /// and this is the number [`Oversight::due`] actually counts to.
+    cadence: u64,
     /// How many times this run has asked the judge.
     pub asks: u64,
     /// The floor this run was granted by a yes at a breach, when one was
@@ -220,16 +224,19 @@ impl Oversight {
             reserve_source: reading.reserve_source,
             appetite: reading.appetite,
             since_reading: 0,
+            cadence: reading.cadence_turns,
             asks: 0,
             past_reserve: None,
         }
     }
 
     /// Whether this turn is a measuring turn. The first turn after admission is
-    /// not (the baseline was just taken), and every [`CADENCE`]th is.
+    /// not (the baseline was just taken), and every `cadence`th is — [`CADENCE`]
+    /// on a machine the profile says is roomy, fewer when the appetite in force
+    /// is tighter (the plan's C10: the cadence derives, it is not a constant).
     pub fn due(&mut self) -> bool {
         self.since_reading += 1;
-        if self.since_reading < CADENCE {
+        if self.since_reading < self.cadence {
             return false;
         }
         self.since_reading = 0;
@@ -337,23 +344,18 @@ fn volume_facts(_path: &Path) -> Option<(u64, u64)> {
     None
 }
 
-/// The environment's history, read from `<home>/footprint-history.jsonl` the way
-/// the report reads it: one record per `scripts/footprint.sh --record`.
+/// The environment's history, read from `<home>/footprint-history.jsonl` — one
+/// record per `scripts/footprint.sh --record` — through the module that owns the
+/// read, so the run loop, the CLI report and the doctor cannot disagree about
+/// the machine.
+///
+/// This function used to read the history itself and push only the free shares,
+/// leaving `fill_gib_per_day` at zero on every call: every run's upkeep interval
+/// was therefore read as "not filling", whatever the history said. Delegating
+/// fixes it at the mechanism rather than by copying the derivation a second time,
+/// and the test below pins the rate it now carries.
 pub fn env_from_history(home: &Path) -> Env {
-    let history = std::fs::read_to_string(home.join("footprint-history.jsonl")).unwrap_or_default();
-    let mut env = Env::default();
-    for line in history.lines() {
-        let Ok(doc) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        let volume = doc.get("volume_kib").and_then(|v| v.as_u64()).unwrap_or(0);
-        let free = doc.get("free_kib").and_then(|v| v.as_u64()).unwrap_or(0);
-        if volume == 0 {
-            continue;
-        }
-        env.free_fractions.push(free as f64 / volume as f64);
-    }
-    env
+    crate::footprint_history::profile(home)
 }
 
 #[cfg(test)]
@@ -364,17 +366,13 @@ mod tests {
     const GIB: u64 = 1024 * 1024;
 
     fn reading(available_gib: u64, reserve_gib: u64) -> Reading {
-        Reading {
-            lines: Vec::new(),
-            volume_kib: 460 * GIB,
-            available_kib: available_gib * GIB,
-            reserve_kib: reserve_gib * GIB,
-            reserve_source: "inferred",
-            appetite: Appetite::Roomy,
-            standing_free: Some(0.25),
-            fill_gib_per_day: 0.0,
-            records: 1,
-        }
+        Reading::bare(
+            460 * GIB,
+            available_gib * GIB,
+            reserve_gib * GIB,
+            "inferred",
+            Appetite::Roomy,
+        )
     }
 
     fn live(available_gib: u64, reserve_gib: u64, budget_gib: u64) -> Oversight {
@@ -661,6 +659,39 @@ mod tests {
     }
 
     #[test]
+    fn a_tight_profile_measures_sooner_than_the_roomy_constant() {
+        // The cadence is the grade in force, not the constant: 460 GiB with 60
+        // GiB free is a tight machine, and it measures on every second turn.
+        let env = Env {
+            // A median of 5% free, steady: under NEAR_FLOOR, so the grade is
+            // tight on the standing share alone rather than on the spread.
+            free_fractions: vec![0.04, 0.06, 0.05],
+            volume_kib: 460 * GIB,
+            ..Env::default()
+        };
+        let tight = Reading::new(Vec::new(), 460 * GIB, 60 * GIB, &env, None);
+        assert_eq!(tight.appetite, Appetite::Tight);
+        assert_eq!(tight.cadence_turns, 2);
+        let work = Work::for_run(Some(Path::new("/tmp/scratch")), 2 * GIB);
+        let mut state = Oversight::start(work.clone(), &tight, 60 * GIB, 460 * GIB);
+        // Turn one is not a measuring turn (the baseline was just taken); the
+        // second is.
+        assert!(!state.due());
+        assert!(state.due(), "a tight machine measures on turn two");
+        // The roomy reading keeps the plan's own guess of five.
+        let roomy_env = Env {
+            free_fractions: vec![0.60, 0.61, 0.59],
+            volume_kib: 460 * GIB,
+            ..Env::default()
+        };
+        let roomy = Reading::new(Vec::new(), 460 * GIB, 200 * GIB, &roomy_env, None);
+        assert_eq!(roomy.cadence_turns, CADENCE);
+        let mut slow = Oversight::start(work, &roomy, 200 * GIB, 460 * GIB);
+        assert_eq!((1..CADENCE).filter(|_| slow.due()).count(), 0);
+        assert!(slow.due());
+    }
+
+    #[test]
     fn a_history_file_becomes_the_environment_the_reserve_is_read_from() {
         let dir = std::env::temp_dir().join(format!("contract-env-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
@@ -676,6 +707,20 @@ mod tests {
         assert_eq!(env.free_fractions.len(), 2);
         assert!((env.free_fractions[0] - 0.09).abs() < 1e-9);
         assert_eq!(footprint::appetite(&env), Appetite::Tight);
+        // The fill rate is carried. Before the delegation this reader pushed
+        // only the shares and left the rate at zero, which made every run's
+        // upkeep interval read as "not filling" whatever the history said.
+        // 90 kiB down to 80 kiB over one day is 10/1048576 of a GiB per day.
+        assert!(
+            (env.fill_gib_per_day - 10.0 / 1024.0 / 1024.0).abs() < 1e-12,
+            "10 kiB over one day: {}",
+            env.fill_gib_per_day
+        );
+        assert_eq!(env.volume_kib, 1000, "the volume the history measured");
+        assert!(
+            env.laptop || !env.laptop,
+            "the machine is probed, never guessed"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

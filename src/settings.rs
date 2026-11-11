@@ -99,6 +99,32 @@ pub const SETTINGS: &[Setting] = &[
         summary: "Whether tool calls ask. `yes-guarded` still asks about the destructive class.",
     },
     Setting {
+        // The resource contract's declared appetite (the plan's C10). It has
+        // been READ by `declared_appetite()` since the contract landed, but it
+        // was not in this table, so `fleet settings set appetite tight` was
+        // refused by name and the plan's "say steady to override" was
+        // unreachable from every surface. `steady` is `roomy` in the contract's
+        // own vocabulary: the word the plan uses for the owner who keeps a wide
+        // reserve, kept as an alias so neither document is wrong.
+        key: "appetite",
+        kind: Kind::Choice(&["tight", "balanced", "roomy", "steady"]),
+        file: File::Config,
+        summary: "The resource contract's risk appetite, which sets the reserve as a share of \
+                  the volume. Unset infers it from the machine's own free-space history; set, it \
+                  wins and the report says `declared`.",
+    },
+    Setting {
+        // The other half of the same ruling: an owner who wants to name the
+        // number itself rather than a word. A whole number of GiB, converted to
+        // kibibytes where it is read, so the surface never carries two units.
+        key: "footprint.reserve_gib",
+        kind: Kind::Count,
+        file: File::Config,
+        summary: "The reserve floor in GiB, named outright. Unset uses the appetite's share of \
+                  the volume (or the machine's own history); set, this number wins and every \
+                  refusal reads as yours.",
+    },
+    Setting {
         key: "calib.log_root",
         kind: Kind::Text,
         file: File::Config,
@@ -563,6 +589,9 @@ pub fn compiled_default(key: &str) -> Option<String> {
         "FLEET_WEB_CACHE_TTL_SECS" => Some(crate::web_cache::DEFAULT_TTL_SECS.to_string()),
         // `memory::DEFAULT_EMBEDDING_ENDPOINT`.
         "FLEET_EMBEDDING_ENDPOINT" => Some(crate::memory::DEFAULT_EMBEDDING_ENDPOINT.to_string()),
+        // Both contract knobs default to *inference*, which is the absence of a
+        // value rather than a word or a number: `unset` is the default.
+        "appetite" | "footprint.reserve_gib" => None,
         _ => None,
     }
 }
@@ -1016,6 +1045,12 @@ mod tests {
             ("approvals", "yes-guarded", "yes-guarded"),
             ("calib.informs_failover", "false", "false"),
             ("skills.merge_similarity", "0.8", "0.80"),
+            // The resource contract's two knobs, which the plan's closing frame
+            // tells the owner to set and which were unreachable until they were
+            // in this table: `fleet settings set appetite tight` answered "not
+            // a setting".
+            ("appetite", "steady", "steady"),
+            ("footprint.reserve_gib", "40", "40"),
             ("skills.retire_after_sessions", "12", "12"),
             ("gates.min_confidence", "0.7", "0.70"),
             (
@@ -1035,6 +1070,39 @@ mod tests {
         let _ = fs::remove_dir_all(&home);
     }
 
+    /// The contract's two knobs revert to *inference*, which is the absence of
+    /// a value rather than a word: unsetting either must leave the key gone, so
+    /// the machine's own history decides again.
+    #[test]
+    fn the_contract_knobs_revert_to_inference_and_not_to_a_word() {
+        let home = scratch("contract-revert");
+        // Neither has a compiled default to fall back to: `unset` IS the default.
+        for key in ["appetite", "footprint.reserve_gib"] {
+            assert_eq!(compiled_default(key), None, "{key}");
+        }
+        set(&home, "appetite", "tight").unwrap();
+        set(&home, "footprint.reserve_gib", "40").unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(home.join("config.json")).unwrap()).unwrap();
+        assert_eq!(written["appetite"], "tight");
+        assert_eq!(written["footprint"]["reserve_gib"], 40);
+        for key in ["appetite", "footprint.reserve_gib"] {
+            unset(&home, key).unwrap();
+            let state = states(&home)
+                .into_iter()
+                .find(|state| state.key == key)
+                .unwrap_or_else(|| panic!("{key} is not a setting"));
+            assert_eq!(state.value, None, "{key} must read unset");
+            assert_eq!(state.source(), "default", "{key}");
+        }
+        // The declaration the contract reads agrees: nothing is declared.
+        assert_eq!(
+            crate::footprint_history::declared(&home),
+            crate::footprint_history::Declared::default()
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
     /// A refused edit changes nothing — the GUI must never be a way
     /// around the file's own validation.
     #[test]
@@ -1045,6 +1113,8 @@ mod tests {
         for (key, value) in [
             ("approvals", "yolo"),
             ("gates.min_confidence", "1.5"),
+            ("appetite", "generous"),
+            ("footprint.reserve_gib", "plenty"),
             ("skills.merge_similarity", "high"),
             ("skills.retire_after_sessions", "many"),
             ("not-a-setting", "x"),
@@ -1262,8 +1332,8 @@ pub fn render_with(home: &Path, process: &dyn Fn(&str) -> Option<String>) -> Str
         crate::layerfs_tools::PROJECT_ENV
     ));
     out.push_str(&format!(
-        "\n{DIM}{} settings \u{b7} `fleet settings set <key> <value>` writes one \u{b7} a key's \\
-         value is never printed{RESET}\n",
+        "\n{DIM}{} settings \u{b7} `fleet settings set <key> <value>` writes one \u{b7} \\
+         `fleet settings unset <key>` reverts it \u{b7} a key's value is never printed{RESET}\n",
         states.len()
     ));
     out

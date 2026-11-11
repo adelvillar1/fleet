@@ -12,7 +12,15 @@
 #   scripts/footprint.sh --json     the same numbers as one JSON document
 #   scripts/footprint.sh --record   also write ~/.fleet/footprint.json, which
 #                                   `fleet doctor` reads (a doctor that walks
-#                                   15 GiB on every call is not a doctor)
+#                                   15 GiB on every call is not a doctor),
+#                                   and append the day's reading to
+#                                   ~/.fleet/footprint-history.jsonl
+#
+# The STORES' budgets below are declared; the machine's own numbers — the
+# reserve, the run budget, the turn cadence and the upkeep interval — are
+# DERIVED, by `fleet footprint` from the history this script records (the
+# resource contract's C10/C12). `--record` is what keeps that derivation fresh:
+# skip it for a week and the appetite is inferred from a week-old machine.
 #
 # The budgets are GiB and CLOSED: a new store gets a line here before it gets
 # bytes on disk. Env overrides exist for a machine with a different shape
@@ -38,6 +46,35 @@ case "${1:-}" in
 esac
 
 kib() { du -sk "$1" 2>/dev/null | awk '{print $1}'; }
+
+# Memory pressure, the profile's other measured half (the plan's C10): how much
+# of the machine's RAM is in use, in kibibytes, and how much it has. macOS
+# answers from vm_stat — active + wired + compressed, the three buckets that are
+# really holding memory; free and inactive pages are not pressure — and Linux
+# from MemTotal/MemAvailable. A host that answers neither prints 0, which the
+# reader treats as "not measured" rather than as an idle machine.
+memory_kib() {
+    if [ -r /proc/meminfo ]; then
+        total=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+        avail=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+        if [ -n "${total:-}" ] && [ -n "${avail:-}" ]; then
+            printf '%s %s\n' "$((total - avail))" "$total"
+            return
+        fi
+    fi
+    page=$(vm_stat 2>/dev/null | awk -F'page size of ' '/page size of/ {split($2,a," "); print a[1]}')
+    if [ -n "${page:-}" ]; then
+        used=0
+        for bucket in "Pages active" "Pages wired down" "Pages occupied by compressor"; do
+            count=$(vm_stat 2>/dev/null | awk -v k="$bucket" '$0 ~ "^" k {gsub(/\./,"",$NF); print $NF}')
+            used=$((used + ${count:-0}))
+        done
+        total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+        printf '%s %s\n' "$((used * page / 1024))" "$((total_bytes / 1024))"
+        return
+    fi
+    printf '0 0\n'
+}
 gib1() { awk -v kb="${1:-0}" 'BEGIN { printf "%.1f", kb/1048576 }'; }
 
 target_kb=$(kib "$REPO/target")
@@ -85,8 +122,15 @@ if [ "$MODE" = "json" ] || [ "$MODE" = "record" ]; then
     # and one good day after a cleanup must not read as a roomy machine.
     vol_kib=$(df -k "$REPO" | awk 'NR==2 {print $2}')
     free_kib=$(df -k "$REPO" | awk 'NR==2 {print $4}')
-    printf '{"at":"%s","volume_kib":%s,"free_kib":%s}\n' \
+    # The memory half rides the same row: the profile is one history, so the
+    # appetite and the pressure are never read from two series that disagree
+    # about the day they describe.
+    set -- $(memory_kib)
+    mem_used_kib="${1:-0}"
+    mem_total_kib="${2:-0}"
+    printf '{"at":"%s","volume_kib":%s,"free_kib":%s,"mem_used_kib":%s,"mem_total_kib":%s}\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${vol_kib:-0}" "${free_kib:-0}" \
+      "${mem_used_kib:-0}" "${mem_total_kib:-0}" \
       >> "$HOME_DIR/footprint-history.jsonl"
     tail -n 90 "$HOME_DIR/footprint-history.jsonl" > "$HOME_DIR/footprint-history.tmp" \
       && mv "$HOME_DIR/footprint-history.tmp" "$HOME_DIR/footprint-history.jsonl"
