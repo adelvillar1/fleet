@@ -16898,11 +16898,29 @@ mod tests {
             state: Arc::clone(&bridge.state),
             events: bridge.events.clone(),
         });
+        // Pin both runs to the stand-in pair so the route is the mock's
+        // without a sys1 judgment: this test pins concurrency, not routing.
+        // A provider/model pin skips the judgment (route::select's Pinned
+        // arm); an unpinned run spawns the sys1 lane to judge, which is fast
+        // alone but slow under the full suite's parallel load — the release
+        // gate found exactly that. Ask, not Yes: full access needs a folder.
         bridge
-            .run(&one, "the first task")
+            .run_with(
+                &one,
+                "the first task",
+                approvals::Mode::Ask,
+                Some("stand-in/auto".to_string()),
+                None,
+            )
             .expect("run one accepted");
         bridge
-            .run(&two, "the second task")
+            .run_with(
+                &two,
+                "the second task",
+                approvals::Mode::Ask,
+                Some("stand-in/auto".to_string()),
+                None,
+            )
             .expect("run two accepted");
         // Both runs end on their own `finished` event. The wait is on the
         // product's own seam (the event log), not a private clock.
