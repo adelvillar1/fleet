@@ -203,7 +203,14 @@ requires, the justification is required either way; run one
 consolidation pass; validate the corpus's sourced inferences against
 their sessions (`fleet memories --validate`, the sys1-judged dream
 pass whose `validated` basis and stamps the pane shows beside each
-fact's basis); see today's recalls and their scores.
+fact's basis); see today's recalls and their scores. Pull a project's
+facts in from another installed harness's memory store (`fleet memories
+--pull [--project <name>] [--source <harness>]`): a one-time bootstrap
+then a revision-cursor delta, imported into the substrate as ordinary
+facts — provenance-tagged, type-mapped, deduped so an owner-stated fact
+is never clobbered, an updated source fact superseded and a deleted one
+archived, never hard-deleted. The default source is zcode; `--source
+armada` names the remote-instance feeder that is not yet built.
 
 **Knowledge — skills.** The library the model can reach, arranged on the
 work rail's idiom: a rail of sections — **needs you** (the proposals that
@@ -325,6 +332,7 @@ store and its diff, and a command palette over every pane and panel
 | a provider's wire dialect set | the same op with `protocol: "chat"` or `"responses"` per entry, `model_protocols` per model for the mixed gateways — the Responses reading is dialect-only (`store: false`, the full history every turn; the conversation's state stays in Fleet's log), and an unknown value is refused by name |
 | the skills | `fleet skills` (`--proposed` for drafts awaiting the gate) |
 | a fact remembered | `fleet remember` |
+| a project's facts pulled from another harness | `fleet memories --pull [--project <name>] [--source <harness>]` — bootstrap then a revision-cursor delta into the substrate; default source zcode, `armada` the named remote stub |
 | the scheduled jobs | `fleet cron` (add/enable/disable/remove by name) |
 | the declared graph | `fleet graph` |
 | the roles | `fleet roles` |

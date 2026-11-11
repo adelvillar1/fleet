@@ -1664,10 +1664,12 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
 /// that writes nothing, because the turn path that records hits is the
 /// agent's.
 ///
-/// `--consolidate` is the one writing flag: it runs one pass of the
+/// `--consolidate` is one writing flag: it runs one pass of the
 /// cycle — the same pass the scheduled thread runs hourly in a chat or
 /// the TUI — and prints what it did before the cards, with every
-/// action's row in the calibration stream.
+/// action's row in the calibration stream. `--pull` is the other: the
+/// cross-harness feeder imports the project's foreign facts through the
+/// substrate's own writer and prints what it did instead of the cards.
 /// `fleet desk --run <slug>`: walk one deliverable through the loop on
 /// the vendored lanes — claims, coverage, outline, render, review,
 /// knowledge — the stage runner marking the store as it goes. The
@@ -1774,6 +1776,9 @@ fn run_dream_pass(root: &std::path::Path, home: &std::path::Path) -> String {
 
 fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
     let root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+    if options.pull {
+        return memories_pull_command(&root, options);
+    }
     if options.archive {
         print!("{}", fleet::memory::render_archive(&root));
         return ExitCode::SUCCESS;
@@ -1816,6 +1821,89 @@ fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
         );
     }
     ExitCode::SUCCESS
+}
+
+/// `fleet memories --pull`: the cross-harness feeder over one path —
+/// bootstrap on the first pull, revision-cursor delta after. The source
+/// defaults to zcode and the project to the working directory's own;
+/// `--source armada` reaches the remote-instance stub, which names its
+/// absence. The import lands through the substrate's own writer, and
+/// the report prints every fact's disposition. A named absence or a
+/// write that did not land exits 1; a pull that imported nothing
+/// because the revision is unchanged is a success.
+fn memories_pull_command(root: &std::path::Path, options: &cli::MemoriesOptions) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::FAILURE;
+    };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let (default_project, project_path) = default_project(&cwd);
+    let project = options.pull_project.clone().unwrap_or(default_project);
+    let harness = options.pull_source.as_deref().unwrap_or("zcode");
+    let user_home = std::env::var("HOME").ok().map(std::path::PathBuf::from);
+    // The source is the feeder's one abstraction: the local harness now,
+    // the armada instance by name. An unknown harness is the discovery's
+    // named absence, not a silent default.
+    let source: Box<dyn fleet::memory_pull::Source> = if harness == "armada" {
+        Box::new(fleet::memory_pull::RemoteInstance::new(&project))
+    } else {
+        let Some(user_home) = user_home else {
+            eprintln!("fleet: no user home known; set HOME to discover foreign memory stores");
+            return ExitCode::FAILURE;
+        };
+        match fleet::memory_pull::LocalHarness::new(harness, &project, &user_home) {
+            Ok(local) => Box::new(local.with_project_path(&project_path)),
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
+    // The corpus is loaded with the embedder waited for, the surface's
+    // own rule: an import indexes live, so the next recall in this
+    // process reads the new facts.
+    let memory = fleet::memory::Memory::load_with(
+        root,
+        fleet::memory::probed_embedder_ready(std::time::Duration::from_secs(5)),
+    );
+    let stream = {
+        let user_home = std::env::var("HOME").ok();
+        fleet::calib::Stream::open(fleet::calib::resolve_root(&home, user_home.as_deref()))
+    };
+    match fleet::memory_pull::pull(source.as_ref(), &memory, &home, Some(&stream)) {
+        Ok(report) => {
+            print!("{}", fleet::memory_pull::render(&report));
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The working directory's own project: the repo top-level's basename
+/// when git knows one, else the directory's own name — the lane's
+/// project-key rule, so the pull's default names the project the run is
+/// working. Returns the name and the path the slug hash reads.
+fn default_project(cwd: &std::path::Path) -> (String, std::path::PathBuf) {
+    let top = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .arg("rev-parse")
+        .arg("--show-toplevel")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|top| !top.is_empty())
+        .map(std::path::PathBuf::from);
+    let path = top.unwrap_or_else(|| cwd.to_path_buf());
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "default".to_string());
+    (name, path)
 }
 
 /// `fleet remember`: write one fact into the corpus, in the house card

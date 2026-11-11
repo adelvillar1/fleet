@@ -409,6 +409,17 @@ pub struct MemoriesOptions {
     /// List the facts the cycle's forget action archived, instead of
     /// the live corpus.
     pub archive: bool,
+    /// Run the cross-harness memory pull: import the project's facts
+    /// from a foreign harness's memory store into the substrate —
+    /// bootstrap on the first pull, revision-cursor delta after.
+    /// Combines with nothing.
+    pub pull: bool,
+    /// The project the pull reads (`--project`); absent means the
+    /// working directory's own project. Only meaningful with `--pull`.
+    pub pull_project: Option<String>,
+    /// The source harness the pull reads (`--source`); absent means the
+    /// default (`zcode`). Only meaningful with `--pull`.
+    pub pull_source: Option<String>,
 }
 
 /// Options for `fleet remember`. The flags are the frontmatter's own
@@ -906,11 +917,15 @@ usage:
                                 proposals, --show prints one draft, --duplicates
                                 reports near-duplicate pairs (report-only)
   fleet memories [--recall \"<instruction>\"] [--shape <name>] [--consolidate] [--archive]
+                 [--pull [--project <name>] [--source <harness>]]
                                 the durable facts as cards; --recall prints the
                                 ranked assembly for one instruction, --shape
                                 filters the cards by structure shape,
                                 --consolidate runs the consolidation cycle,
-                                --archive lists what the cycle forgot
+                                --archive lists what the cycle forgot, --pull
+                                imports the project's facts from a foreign
+                                harness's memory store (bootstrap, then a
+                                revision-cursor delta)
   fleet cron                     list the scheduled jobs: schedule, next fire,
                                 last run and outcome
   fleet cron add --name <name> --schedule \"<expr>\" --task \"<goal>\" [--tool <mcp__server__tool>] [--auto-approve]
@@ -1775,16 +1790,21 @@ fn parse_skills(args: &[String]) -> Result<Command, String> {
 /// instruction (a dry run — printing records no hit); `--shape <name>`
 /// filters the cards by structure shape; `--consolidate` runs the
 /// consolidation cycle and then cards the corpus; `--archive` lists
-/// what the cycle forgot. `--recall` and `--shape` do not combine: one
+/// what the cycle forgot; `--pull [--project <name>] [--source
+/// <harness>]` imports the project's facts from a foreign harness's
+/// memory store. `--recall` and `--shape` do not combine: one
 /// prints an assembly, the other filters cards, and a caller who
-/// wants both is asking two questions. `--archive` is its own surface
-/// and combines with nothing.
+/// wants both is asking two questions. `--archive`, `--validate`, and
+/// `--pull` are their own surfaces and combine with nothing.
 fn parse_memories(args: &[String]) -> Result<Command, String> {
     let mut recall: Option<String> = None;
     let mut shape: Option<String> = None;
     let mut consolidate = false;
     let mut validate = false;
     let mut archive = false;
+    let mut pull = false;
+    let mut pull_project: Option<String> = None;
+    let mut pull_source: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -1801,6 +1821,21 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
             "--consolidate" => consolidate = true,
             "--validate" => validate = true,
             "--archive" => archive = true,
+            "--pull" => pull = true,
+            "--project" => {
+                let value = take_value(args, &mut index, arg)?;
+                if value.trim().is_empty() {
+                    return Err("--project needs a project name".to_string());
+                }
+                pull_project = Some(value);
+            }
+            "--source" => {
+                let value = take_value(args, &mut index, arg)?;
+                if value.trim().is_empty() {
+                    return Err("--source needs a harness name".to_string());
+                }
+                pull_source = Some(value);
+            }
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown memories option `{arg}`"));
             }
@@ -1814,7 +1849,7 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
                 .to_string(),
         );
     }
-    if archive && (recall.is_some() || shape.is_some() || consolidate || validate) {
+    if archive && (recall.is_some() || shape.is_some() || consolidate || validate || pull) {
         return Err(
             "--archive lists what the cycle forgot; it is its own surface and combines with nothing"
                 .to_string(),
@@ -1826,11 +1861,20 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
                 .to_string(),
         );
     }
-    if validate && (recall.is_some() || shape.is_some() || consolidate) {
+    if validate && (recall.is_some() || shape.is_some() || consolidate || pull) {
         return Err(
             "--validate runs the dream pass and prints what it did; it combines with nothing"
                 .to_string(),
         );
+    }
+    if pull && (recall.is_some() || shape.is_some() || consolidate || validate || archive) {
+        return Err(
+            "--pull imports the foreign store and prints what it did; it combines with nothing"
+                .to_string(),
+        );
+    }
+    if !pull && (pull_project.is_some() || pull_source.is_some()) {
+        return Err("--project and --source name the pull's store; they need --pull".to_string());
     }
     Ok(Command::Memories(MemoriesOptions {
         recall,
@@ -1838,6 +1882,9 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
         consolidate,
         validate,
         archive,
+        pull,
+        pull_project,
+        pull_source,
     }))
 }
 
@@ -4634,7 +4681,10 @@ mod tests {
                 shape: None,
                 consolidate: false,
                 validate: false,
-                archive: false
+                archive: false,
+                pull: false,
+                pull_project: None,
+                pull_source: None
             })
         );
         assert_eq!(
@@ -4644,7 +4694,10 @@ mod tests {
                 shape: None,
                 consolidate: false,
                 validate: false,
-                archive: false
+                archive: false,
+                pull: false,
+                pull_project: None,
+                pull_source: None
             })
         );
         assert_eq!(
@@ -4654,7 +4707,10 @@ mod tests {
                 shape: Some("deploy".to_string()),
                 consolidate: false,
                 validate: false,
-                archive: false
+                archive: false,
+                pull: false,
+                pull_project: None,
+                pull_source: None
             })
         );
         // The cycle and the archive are the part-2 surfaces: the cycle
@@ -4666,7 +4722,10 @@ mod tests {
                 shape: None,
                 consolidate: true,
                 validate: false,
-                archive: false
+                archive: false,
+                pull: false,
+                pull_project: None,
+                pull_source: None
             })
         );
         assert_eq!(
@@ -4676,7 +4735,10 @@ mod tests {
                 shape: Some("deploy".to_string()),
                 consolidate: true,
                 validate: false,
-                archive: false
+                archive: false,
+                pull: false,
+                pull_project: None,
+                pull_source: None
             })
         );
         assert_eq!(
@@ -4686,7 +4748,10 @@ mod tests {
                 shape: None,
                 consolidate: false,
                 validate: false,
-                archive: true
+                archive: true,
+                pull: false,
+                pull_project: None,
+                pull_source: None
             })
         );
         // The dream pass parses alone, like the archive: its own
@@ -4698,7 +4763,10 @@ mod tests {
                 shape: None,
                 consolidate: false,
                 validate: true,
-                archive: false
+                archive: false,
+                pull: false,
+                pull_project: None,
+                pull_source: None
             })
         );
         assert!(parse(&args(&["memories", "--validate", "--consolidate"])).is_err());
@@ -4720,6 +4788,58 @@ mod tests {
             parse(&args(&["memories", "--help"])).unwrap(),
             Command::Help
         );
+    }
+
+    #[test]
+    fn memories_pull_parses_its_store_flags_and_combines_with_nothing() {
+        // The bare pull: the default source and the working project.
+        assert_eq!(
+            parse(&args(&["memories", "--pull"])).unwrap(),
+            Command::Memories(MemoriesOptions {
+                recall: None,
+                shape: None,
+                consolidate: false,
+                validate: false,
+                archive: false,
+                pull: true,
+                pull_project: None,
+                pull_source: None
+            })
+        );
+        // The project and the source name the store.
+        assert_eq!(
+            parse(&args(&[
+                "memories",
+                "--pull",
+                "--project",
+                "fleet",
+                "--source",
+                "zcode"
+            ]))
+            .unwrap(),
+            Command::Memories(MemoriesOptions {
+                recall: None,
+                shape: None,
+                consolidate: false,
+                validate: false,
+                archive: false,
+                pull: true,
+                pull_project: Some("fleet".to_string()),
+                pull_source: Some("zcode".to_string())
+            })
+        );
+        // The pull is its own surface: it combines with nothing.
+        assert!(parse(&args(&["memories", "--pull", "--recall", "x"])).is_err());
+        assert!(parse(&args(&["memories", "--pull", "--consolidate"])).is_err());
+        assert!(parse(&args(&["memories", "--pull", "--archive"])).is_err());
+        assert!(parse(&args(&["memories", "--pull", "--validate"])).is_err());
+        // The store flags need the pull.
+        assert!(parse(&args(&["memories", "--project", "fleet"])).is_err());
+        assert!(parse(&args(&["memories", "--source", "zcode"])).is_err());
+        // Empty values are usage errors, not silent defaults.
+        assert!(parse(&args(&["memories", "--pull", "--project", ""])).is_err());
+        assert!(parse(&args(&["memories", "--pull", "--source", ""])).is_err());
+        assert!(parse(&args(&["memories", "--pull", "--project"])).is_err());
     }
 
     #[test]

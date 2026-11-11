@@ -478,6 +478,7 @@ outcomes — never task text.
 | Module | Source |
 |---|---|
 | `memory.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md`; `docs/architecture/deep-dive-2026-11-07-memory-dreaming.md` |
+| `memory_pull.rs` | `docs/features/memory.md`; `docs/plans/2026-11-11-cross-harness-memory-pull.md`; `docs/architecture/2026-11-11-armada-direction.md` |
 | `demand.rs` | `docs/features/self-maintenance.md`; `docs/architecture/deep-dive-2026-11-07-self-improvement.md` |
 | `dream.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-11-07-memory-dreaming.md` |
 | `session_recall.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md` |
@@ -512,6 +513,26 @@ the bar retires through the real supersede path, everything else is a
 `validate` calib row and a named skip. `fleet memories --validate`
 runs one pass on demand; `spawn_homekeeping` runs the cycle and the
 pass hourly in chat, the TUI, and the face.
+
+#### `memory_pull.rs`
+The cross-harness memory pull — the shared corpus's local feeder (the
+`2026-11-11-cross-harness-memory-pull` plan). It imports a project's facts
+from other installed harnesses' memory stores into the substrate: an
+import, not a federated recall, so the memories live in the git-tracked
+corpus armada syncs. A `Source` trait yields a project's facts plus a
+revision; `LocalHarness` reads zcode's store now
+(`~/.zcode/cli/memories/projects/<slug>/memory/`, the slug
+`<name>-<sha256(path)[..16]>`), and `RemoteInstance` (armada) is a named
+stub returning `NotYetBuilt`. Discovery is read-only and project-scoped
+(the `mcp_registry::scan` precedent); an absent store is a named
+`PullError::Absent`. The revision cursor is the store's git HEAD or a
+stable content hash, kept per project per source in
+`<FLEET_HOME>/memory-pull-cursors.json`. `pull` runs bootstrap-or-delta
+through the `Remember` writer: provenance `zcode:<project>:<revision>`,
+`basis: inferred`, type mapped by lookup, deduped by name — a native
+fact is never clobbered, an imported copy is superseded on change and
+archived (never hard-deleted) on a source delete. `fleet memories --pull
+[--project <name>] [--source <harness>]` is the verb.
 
 #### `demand.rs`
 The demand map (the self-improvement plan's C0): the phantom

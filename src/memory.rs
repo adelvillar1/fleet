@@ -4168,6 +4168,15 @@ fn sanitize_line(text: &str, bound: usize) -> String {
     }
 }
 
+/// The description's sanitize-and-bound, exposed for the cross-harness
+/// feeder: an import compares a foreign fact against the copy the
+/// substrate holds, and the comparison must normalize both sides the
+/// way the writer does — a description past the bound reads as the
+/// marked cut the writer landed, not as a change on every pull.
+pub(crate) fn sanitize_description(text: &str) -> String {
+    sanitize_line(text, MAX_DESCRIPTION_CHARS)
+}
+
 /// Whether `name` is usable as a fact's file stem: lowercase letters,
 /// digits, and hyphens, bounded, with no leading or trailing hyphen.
 /// The rule is what keeps a name a key — no path separator, no `.` or
@@ -5998,8 +6007,9 @@ fn archive_target(archive: &Path, fact: &Fact) -> Result<PathBuf, std::io::Error
 /// the file stays, reversible, and out of the loader's read. A name the
 /// archive already holds takes the next serial (see
 /// [`archive_target`]), so a re-used fact name never overwrites the
-/// copy already there.
-fn archive_fact(root: &Path, fact: &Fact) -> bool {
+/// copy already there. The cross-harness feeder rides the same path for
+/// a fact deleted at its source: archive, never hard-delete.
+pub(crate) fn archive_fact(root: &Path, fact: &Fact) -> bool {
     let archive = root.join(ARCHIVE_DIR);
     if fs::create_dir_all(&archive).is_err() {
         eprintln!(

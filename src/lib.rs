@@ -69,6 +69,7 @@ pub mod mcp;
 pub mod mcp_meta;
 pub mod mcp_registry;
 pub mod memory;
+pub mod memory_pull;
 pub mod net;
 pub mod nomenclature;
 pub mod onboard;

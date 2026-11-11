@@ -912,6 +912,13 @@ fleet memories --validate                   one dream pass: the sourced
                                             named
 fleet memories --archive                    the facts the cycle's forget
                                             action archived
+fleet memories --pull [--project <name>] [--source <harness>]
+                                            the cross-harness feeder: import
+                                            the project's facts from a foreign
+                                            harness's memory store into the
+                                            substrate — bootstrap on the first
+                                            pull, a revision-cursor delta after;
+                                            every fact's disposition named
 ```
 
 `--recall` is a **dry run**: printing changes no recall-count and
@@ -936,9 +943,9 @@ card's own lines wrap to `CARD_WIDTH`; a test pins both at 80 and at
 120 columns. The block that would enter a turn's context is not a
 terminal surface, so it is not bounded to a column count. The flags do not
 combine where they answer different questions: `--recall` and `--shape`
-are two questions, `--archive` is its own surface, and `--consolidate`
-runs the cycle and then cards the corpus (optionally filtered by
-`--shape`). The corpus resolves home-first (KI-087, closing KI-074's root cause): the
+are two questions, `--archive`, `--validate`, and `--pull` are their own
+surfaces, and `--consolidate` runs the cycle and then cards the corpus
+(optionally filtered by `--shape`). The corpus resolves home-first (KI-087, closing KI-074's root cause): the
 fleet home's own `memories/` wins the moment it HOLDS facts, and only then does
 the ancestor walk from the working directory apply — so a run started outside
 any intended corpus cannot silently adopt a foreign one. In everyday use that
@@ -1068,3 +1075,61 @@ way every fact does — the history channel is the recall-count feedback
 loop, and the corpus's veterans hold the top ten until the new facts
 are used. The vector channel carries their relevance from the first
 load; the pool admits them; the top ten is earned, not granted.
+
+## The cross-harness pull
+
+The transplant was a one-time *push*; the pull is its inverse, made
+ongoing (`src/memory_pull.rs`, the
+`docs/plans/2026-11-11-cross-harness-memory-pull.md` plan). Fleet imports
+a project's facts from other installed harnesses' memory stores into its
+own substrate — durable, git-tracked, recallable as ordinary facts. It is
+an **import, not a federated recall**: a fresh armada instance working an
+existing project has no local foreign stores, so the memories must live
+in the corpus armada syncs, not behind a live read (the owner's
+portability ruling). This is the shared corpus's *local* feeder; the
+armada remote-instance feeder is the other half, a named stub today.
+
+One path, two triggers. A **bootstrap** imports all of a project's
+foreign facts once; a **revision-cursor delta** imports only what changed
+since the last pull. The cursor is a generic revision — the store's git
+HEAD where it is git-tracked, else a stable content hash (sorted file
+names, CRLF folded, trailing whitespace trimmed, so an unchanged store
+reads unchanged) — kept per project per source in a sidecar under the
+fleet home (`memory-pull-cursors.json`). zcode's store is not git-tracked,
+so its cursor is the content hash; armada's git commits ride the same
+field unchanged.
+
+The `Source` trait is the seam: it yields a project's facts plus a
+revision. `LocalHarness` reads an installed harness's store now (zcode
+first, hermes next); `RemoteInstance` (armada) is a named stub with the
+same interface — every read answers `not yet built`, never a silent
+no-op. Discovery is read-only and project-scoped, mirroring
+`mcp_registry::scan`'s "reads them and never writes them": zcode keeps one
+folder per project under `~/.zcode/cli/memories/projects/<slug>/memory/`,
+the slug `<name>-<hash>` (the hash the first 16 hex of the project path's
+SHA-256). An absent store is a named absence. The own-home ruling holds:
+knowledge only — never a foreign harness's credentials or config, and
+nothing foreign is ever written.
+
+Every import lands through the substrate's own `Remember` writer, so the
+tool path's validation is the feeder's validation. A foreign fact is
+provenance-tagged (`source: zcode:<project>:<revision>`, `basis:
+inferred` — evidence another harness produced, half-strength like a
+session fact), its `metadata.type` mapped to fleet's vocabulary by lookup
+(the two agree on user/feedback/project/reference; an unknown type rides
+the writer's default), its body carried whole. The dedup is the
+substrate's supersede semantics: a collision with a **native** fact —
+above all an owner-stated `confirmed-by` one — is named and skipped,
+never clobbered; a collision with the feeder's own imported copy is the
+update path. An updated source fact supersedes the imported copy (the old
+file stays, retired, provenance intact); a fact deleted at the source
+archives the imported copy through the cycle's own archive path — a
+rename, never a hard delete. A foreign file that does not read as a fact
+is a named skip, never garbage in the corpus.
+
+`fleet memories --pull [--project <name>] [--source <harness>]` runs the
+bootstrap-or-delta over one path; the project defaults to the working
+directory's own and the source to zcode. The report names every fact's
+disposition — added, updated, unchanged, archived, skipped — and the
+source's unreadable files. An unchanged revision imports nothing and is a
+success; a named absence or a write that did not land exits 1.
