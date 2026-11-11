@@ -4803,6 +4803,12 @@ impl Bridge {
             }
         };
         let Some(stored) = stored else {
+            // No grant at all — the chat never chose, and the owner has no
+            // default. The refusal that follows speaks once per tool call, but
+            // nothing tied it to a cause, and the transcript carried no line
+            // saying the run has no folder (KI-492). The absent arm already has
+            // its own words in `folder_event`; it simply was never reached.
+            self.folder_event(session, None, None);
             return Ok(None);
         };
         match resolve_folder(&self.cwd, &stored) {
@@ -14827,10 +14833,13 @@ mod tests {
             .expect("the run is accepted");
         let state = bridge.state(&attached);
         let events = state["events"].as_array().expect("an event log");
-        assert_eq!(events.len(), 1, "{events:?}");
-        assert_eq!(events[0]["type"], "message");
-        assert_eq!(events[0]["role"], "owner");
-        assert_eq!(events[0]["text"], "look at the router");
+        // The run start names the folder before anything else (KI-492), then
+        // the owner's message lands — still before the run's first turn.
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert_eq!(events[0]["type"], "folder");
+        assert_eq!(events[1]["type"], "message");
+        assert_eq!(events[1]["role"], "owner");
+        assert_eq!(events[1]["text"], "look at the router");
         assert_eq!(state["running"], true);
     }
 
@@ -15478,10 +15487,23 @@ mod tests {
         let second = bridge.run(&attached, "second");
         assert!(second.is_err(), "{second:?}");
         let state = bridge.state(&attached);
+        let events = state["events"].as_array().expect("an event log");
+        // The transcript is the run start's own cards — the folder card KI-492
+        // added, then the first task's owner message — and NOT a second one: the
+        // refused task left no message behind.
+        let messages: Vec<&serde_json::Value> = events
+            .iter()
+            .filter(|event| event["type"] == "message")
+            .collect();
         assert_eq!(
-            state["events"].as_array().map(Vec::len),
-            Some(1),
-            "the refused second task left no message"
+            messages.len(),
+            1,
+            "the refused second task left no message: {events:?}"
+        );
+        assert_eq!(messages[0]["text"], "first");
+        assert!(
+            events.iter().any(|event| event["type"] == "folder"),
+            "the run start names the folder, or its absence: {events:?}"
         );
     }
 
@@ -15503,8 +15525,13 @@ mod tests {
         assert!(refused.is_err(), "{refused:?}");
         let state = bridge.state(&attached);
         let events = state["events"].as_array().expect("an event log");
-        assert_eq!(events.len(), 2, "{events:?}");
-        assert_eq!(events[1]["type"], "failed");
+        // The run start's folder card (KI-492: the absent grant is named in the
+        // transcript, not left to the first refused tool), the message, then the
+        // named failure.
+        assert_eq!(events.len(), 3, "{events:?}");
+        assert_eq!(events[0]["type"], "folder");
+        assert_eq!(events[1]["type"], "message");
+        assert_eq!(events[2]["type"], "failed");
         assert_eq!(state["running"], false);
     }
 
@@ -16250,7 +16277,14 @@ mod tests {
         }
         let state = bridge.state(&attached);
         assert_eq!(state["running"], false);
-        assert_eq!(state["events"][1]["type"], "failed");
+        // The failure is the transcript's last word, after the run start's
+        // folder card and the owner's message (KI-492 put the folder card first).
+        let events = state["events"].as_array().expect("an event log");
+        assert_eq!(
+            events.last().map(|event| event["type"].clone()),
+            Some(serde_json::json!("failed")),
+            "{events:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -16475,11 +16509,12 @@ mod tests {
         );
 
         // The owner's message landed in one's log and not in two's.
-        let events = bridge.state(&one)["events"]
-            .as_array()
-            .expect("a log")
-            .len();
-        assert_eq!(events, 1, "one event in one's log");
+        let one_state = bridge.state(&one);
+        let one_events = one_state["events"].as_array().expect("a log");
+        // The run start's folder card and the owner's message — both in one's
+        // own log, and the assertion that matters is that two's stays empty.
+        assert_eq!(one_events.len(), 2, "one's own cards: {one_events:?}");
+        assert!(one_events.iter().any(|event| event["type"] == "message"));
         assert_eq!(
             bridge.state(&two)["events"]
                 .as_array()
@@ -17829,6 +17864,40 @@ mod tests {
             "a dead session's folder is still pruned"
         );
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_chat_with_no_grant_at_all_says_so_in_its_own_log() {
+        // KI-492: the none arm returned Ok(None) without emitting a folder
+        // event, so the transcript carried no line saying the run has no folder
+        // and the refusal that follows spoke for a cause nothing displayed.
+        let home =
+            std::env::temp_dir().join(format!("fleet-gui-absent-grant-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let (mut bridge, _sources) =
+            Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
+        let _door = bridge.connect();
+        let resolved = bridge
+            .run_folder("bare-chat", None)
+            .expect("a chat with no grant still resolves");
+        assert!(resolved.is_none(), "no grant is no folder");
+        // The event is recorded, and it says what the run has and why.
+        let events = bridge.state("bare-chat")["events"].clone();
+        let events = events.as_array().expect("an event log");
+        let folder = events
+            .iter()
+            .find(|event| event["type"] == "folder")
+            .unwrap_or_else(|| panic!("the absent grant is named: {events:?}"));
+        assert!(folder["path"].is_null(), "{folder}");
+        assert!(
+            folder["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("no working folder"),
+            "the note names the absence: {folder}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test(flavor = "multi_thread")]

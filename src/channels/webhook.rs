@@ -574,7 +574,14 @@ mod tests {
         // its log and the bridge's own session untouched.
         let state = driver.bridge().state(&session);
         assert_eq!(state["running"], true);
-        assert_eq!(state["events"][0]["text"], "run the tests");
+        // The run start's folder card leads (KI-492); the task follows it.
+        let events = state["events"].as_array().expect("an event log");
+        assert_eq!(events[0]["type"], "folder", "{events:?}");
+        let message = events
+            .iter()
+            .find(|event| event["type"] == "message")
+            .expect("the peer's task landed");
+        assert_eq!(message["text"], "run the tests");
         let launch = driver.bridge().state("session-test");
         assert!(
             launch["events"]

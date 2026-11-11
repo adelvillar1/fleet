@@ -1589,9 +1589,16 @@ mod tests {
         assert_ne!(session, "session-test");
         let state = driver.bridge().state(&session);
         assert_eq!(state["running"], true, "the run is in flight in it");
-        assert_eq!(state["events"][0]["type"], "message");
-        assert_eq!(state["events"][0]["role"], "owner");
-        assert_eq!(state["events"][0]["text"], "run the tests");
+        // The run start's folder card comes first (KI-492: the grant or its
+        // absence is named in the transcript), then the peer's task.
+        let events = state["events"].as_array().expect("an event log");
+        assert_eq!(events[0]["type"], "folder", "{events:?}");
+        let message = events
+            .iter()
+            .find(|event| event["type"] == "message")
+            .expect("the peer's task landed");
+        assert_eq!(message["role"], "owner");
+        assert_eq!(message["text"], "run the tests");
         // And the bridge's own session is untouched by the delivery.
         let launch = driver.bridge().state("session-test");
         assert!(

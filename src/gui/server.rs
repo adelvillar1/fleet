@@ -4397,7 +4397,17 @@ mod tests {
     /// A bridge with no agent thread behind it, for the tests that need
     /// a server to exist at all.
     fn bridge() -> Arc<Bridge> {
-        let home = std::env::temp_dir().join(format!("fleet-gui-bind-{}", std::process::id()));
+        // A per-CALL home, not one path per process: this helper is shared by
+        // several tests that run in parallel, so a pid-only name let one test's
+        // `remove_dir_all` delete another's home mid-test — found live as
+        // "a temp home: Os { code: 17, AlreadyExists }" in
+        // a_host_that_is_not_loopback_is_refused_by_name. The serial makes each
+        // call its own directory, so neither can collide with nor delete the
+        // other's.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let home =
+            std::env::temp_dir().join(format!("fleet-gui-bind-{}-{serial}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a temp home");
         let (bridge, _sources) = Bridge::detached(

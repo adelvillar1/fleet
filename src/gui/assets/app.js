@@ -10247,6 +10247,25 @@
   // The working folder: its basename when the chat has one, "no folder"
   // when it does not. The full path rides the title, because the field
   // is one value wide in a crowded row.
+  // The folder the NEXT run will use, read for the chat the face is showing —
+  // the same `/api/state` field the replay paints, without replaying anything
+  // else (KI-492: the bar used to keep the previous chat's grant on screen while
+  // the new run had none, and the filesystem refusals named no cause the owner
+  // could see).
+  function readFolder() {
+    var asked = face.session
+      ? '/api/state?session=' + encodeURIComponent(face.session)
+      : '/api/state';
+    return fetch(asked, { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.status === 200 ? reply.json() : null; })
+      .then(function (state) {
+        if (!state) return;
+        face.folder = state.folder || null;
+        paintFolder();
+      })
+      .catch(function () { });
+  }
+
   function paintFolder() {
     if (!el.runFolder) return;
     el.runFolder.textContent = face.folder ? face.folder.name : 'no folder';
@@ -14413,6 +14432,11 @@
         face.session = reply.body.id;
         storeOpenSession(reply.body.id);
         readSessions(true);
+        // The run bar paints the folder the NEXT run will use (KI-492): without
+        // this it kept the previous chat's folder on screen while the new run had
+        // none. Only the folder is read — a full `load()` would replay the state
+        // and re-render the transcript over the welcome this press just showed.
+        readFolder();
         return reply.body.id;
       }
       return null;
