@@ -12,6 +12,29 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.32 — 2026-11-11
+
+The second armada bedrock: a durable, total-ordered event journal.
+
+**Part of the armada vision** — layer L2 (the journal), the home the security
+audit, the communication bus, the workspace events, and the control plane's
+tracing all ride. The plan is `docs/plans/2026-11-11-armada-l2-journal.md`.
+
+- **The journal** — day-partitioned append-only JSONL with a global monotonic
+  sequence number that survives restart; every event carries the install-id
+  and, when there is one, the principal and session.
+- **Durable named consumers** — a consumer persists a cursor and resumes
+  exactly where it stopped; a lagged or restarted consumer never loses an
+  event.
+- **A responsible citizen** — a retention budget curtails old day-files by
+  name, never a silent drop. The advisory calib stream and the session log
+  are untouched; JSONL before SQLite, no new dependency.
+- **The face hook** — `record()` journals every event additively beside the
+  broadcast, so the seat/control/finished events that died on crash now
+  survive. The stream is unchanged.
+- **Surface** — `fleet journal` prints the trail, the last sequence number,
+  and each consumer's cursor.
+
 ## v0.6.31 — 2026-11-11
 
 The armada bedrock: fleet knows its own identity, and every run acts for a
