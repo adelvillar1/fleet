@@ -16961,7 +16961,12 @@ mod tests {
                 .as_array()
                 .is_some_and(|events| events.iter().any(|e| e["type"] == "finished"))
         };
-        for _ in 0..1200 {
+        // A generous bound: each run loads the whole skills library before
+        // its first model call, and under the release gate's full-suite
+        // parallel load that can outlast a tight window — the runs finish,
+        // just slowly (the gate found a 12s bound flaking twice). The loop
+        // breaks the moment both end, so the common case pays nothing.
+        for _ in 0..6000 {
             if ended(&one) && ended(&two) {
                 break;
             }
