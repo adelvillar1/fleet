@@ -849,9 +849,12 @@ pub fn seed_task(project: &str) -> String {
          sources_removed (the source-set delta since the stored manifest), and — when \
          the default set resolves to nothing — reason, the cwd it failed against. Then \
          record the run's state fact with remember, named canonically: \
-         corpus-{project}-<YYYY-MM-DD>.md — corpus at the head, a dashed date at the tail \
-         (that spelling is what the tree's ignore rule finds, so a snapshot can never be \
-         committed by accident; KI-386)."
+         corpus-{project}-<YYYY-MM-DD> — corpus at the head, a dashed date at the tail, \
+         and no .md in the NAME (the remember grammar is lowercase letters, digits and \
+         hyphens, so a dotted name is refused). The substrate writes the fact to the file \
+         corpus-{project}-<YYYY-MM-DD>.md — one file per fact — and that FILE spelling is \
+         what the tree's ignore rule finds, so a snapshot can never be committed by \
+         accident; KI-386, KI-466)."
     )
 }
 
@@ -2932,6 +2935,19 @@ mod tests {
         // ignore rule by construction — a spelling can never decide
         // what gets committed again.
         assert!(task.contains("corpus-fleet-<YYYY-MM-DD>.md"), "{task}");
+        // KI-466: the NAME the remember call uses is dotless — the grammar
+        // refuses a dot — and the .md is the FILE the substrate writes,
+        // which the ignore rule matches. The task must instruct the dotless
+        // name, not the dotted file spelling, or every refresh hits the
+        // refusal once and writes the fact dotless anyway.
+        assert!(
+            task.contains("named canonically: corpus-fleet-<YYYY-MM-DD> —"),
+            "the fact name is instructed dotless: {task}"
+        );
+        assert!(
+            task.contains("no .md in the NAME"),
+            "the task names the dotless grammar: {task}"
+        );
     }
 
     #[test]

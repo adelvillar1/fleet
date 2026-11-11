@@ -8838,11 +8838,29 @@ fn sessions_read(
             // The dynamic title ladder — the rungs and their order in
             // `title_ladder`, where the pins live.
             let goal = session_goal(home, &entry.id);
+            // A house word ("warmup") names no task: when the first message
+            // is a greeting, the run's own summary titles the row instead,
+            // so a long conversation is not named by its opener (KI-480).
+            // The greeting still serves when no summary exists — a title
+            // beats none.
+            let first = match entry.first_text.clone() {
+                Some(text) if crate::session_recall::is_house_word(&text) => summaries
+                    .get(&entry.id)
+                    .map(|summary| {
+                        let line = summary
+                            .lines()
+                            .find(|line| !line.trim().is_empty())
+                            .unwrap_or(summary.as_str());
+                        line.chars().take(120).collect::<String>()
+                    })
+                    .or(Some(text)),
+                other => other,
+            };
             let (title, title_from) = title_ladder(
                 titles.get(&entry.id).cloned(),
                 goal.clone(),
                 entry.last_plan.clone(),
-                entry.first_text.clone(),
+                first,
             );
             json!({
                 "id": entry.id,

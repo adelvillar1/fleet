@@ -195,20 +195,68 @@ fn fact_for(id: &str, path: &Path, records: &[Record], count: u64) -> memory::Fa
     }
 }
 
-/// The session's task: the first `user` record's content, bounded to
-/// the description bound the facts writer enforces. A session with no
+/// Whether a message is a house word — a greeting or session-opener that
+/// names no task ("warmup", "hi", "hello"). A conversation that opens with
+/// one is named by its first substantive instruction, not the greeting:
+/// the owner's resource-responsibility assessment sat titled `warmup`
+/// because the first message was the house word and no other rung fired
+/// (KI-480). The check is the first line, lowercased and stripped of
+/// trailing punctuation, against a closed set — a long instruction that
+/// merely begins with "hi" is not a house word, only a bare greeting is.
+pub(crate) fn is_house_word(text: &str) -> bool {
+    let line = text
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    let line = line.trim_end_matches(['.', '!', '?', ',']).trim();
+    matches!(
+        line,
+        "warmup"
+            | "warm up"
+            | "hi"
+            | "hi there"
+            | "hello"
+            | "hello there"
+            | "hey"
+            | "hey there"
+            | "yo"
+            | "hiya"
+            | "howdy"
+            | "sup"
+            | "greetings"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+            | "morning"
+            | "evening"
+    )
+}
+
+/// The session's task: the first substantive `user` record's content,
+/// bounded to the description bound the facts writer enforces. House
+/// words are fallen past — a greeting names no task, so the first real
+/// instruction serves instead (KI-480); if every message is a house word,
+/// the first still serves rather than inventing one. A session with no
 /// user message — an unattended job whose task rode a frame — has no
 /// task text, and its description is empty rather than invented.
 fn task_text(records: &[Record]) -> String {
-    records
+    let users: Vec<&str> = records
         .iter()
-        .find_map(|record| match record {
-            Record::User { content } => {
-                Some(cut(&sanitized(content), memory::MAX_DESCRIPTION_CHARS))
-            }
+        .filter_map(|record| match record {
+            Record::User { content } => Some(content.as_str()),
             _ => None,
         })
-        .unwrap_or_default()
+        .collect();
+    let chosen = users
+        .iter()
+        .copied()
+        .find(|content| !is_house_word(content))
+        .or_else(|| users.first().copied())
+        .unwrap_or("");
+    cut(&sanitized(chosen), memory::MAX_DESCRIPTION_CHARS)
 }
 
 /// The session's day: the `start` record's `created` field, read at
@@ -359,6 +407,30 @@ fn digest(records: &[Record], task: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
     if !task.is_empty() {
         lines.push(format!("task: {task}"));
+    }
+    // The owner's own words and the compaction summaries carry the
+    // conversation's intent — the words a recall query asks for. They ride
+    // ahead of the calls so they survive the cut: a long session was
+    // findable only by its tool calls, and the assessment that filed
+    // KI-477/478/479 ranked below scheduled corpus-refresh runs because
+    // "memory, cpu, disk" and "good citizen" lived in owner messages and
+    // fold summaries the digest never read (KI-480).
+    for record in records {
+        match record {
+            Record::User { content } => {
+                let said = sanitized(content);
+                if !said.trim().is_empty() {
+                    lines.push(format!("user: {said}"));
+                }
+            }
+            Record::Compaction { summary, .. } => {
+                let said = sanitized(summary);
+                if !said.trim().is_empty() {
+                    lines.push(format!("summary: {said}"));
+                }
+            }
+            _ => {}
+        }
     }
     for record in records {
         if let Record::Assistant { tool_calls, .. } = record {
@@ -1072,6 +1144,79 @@ mod tests {
         fn vector_info(&self) -> Option<(String, usize)> {
             Some(("scripted".to_string(), self.dims))
         }
+    }
+
+    #[test]
+    fn a_house_word_opener_is_fallen_past_and_the_digest_reads_the_conversation() {
+        // KI-480: a conversation that opens with "warmup" is named by its
+        // first substantive instruction, and its digest carries the owner's
+        // words and the fold summaries, so a recall query finds it by the
+        // content the tool-call-only digest never read.
+        let home = scratch("house-word");
+        let dir = crate::home::ensure_sessions_dir(&home).unwrap();
+        let mut records = vec![
+            start(),
+            Record::User {
+                content: "warmup".to_string(),
+            },
+            Record::User {
+                content: "let's work on the open KI ledger items".to_string(),
+            },
+        ];
+        records.extend(exchange(
+            "c1",
+            "bash",
+            "{\"command\":\"fleet calib\"}",
+            "ok",
+        ));
+        records.push(Record::Compaction {
+            summary:
+                "the day's resource-responsibility assessment: memory, cpu and disk; a good citizen"
+                    .to_string(),
+            first_turn: 1,
+            last_turn: 40,
+            tokens_before: 90000,
+            tokens_after: 8000,
+            survival: None,
+        });
+        records.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 41,
+            served_model: None,
+        });
+        write_session(&dir, "20261108T044316Z-house", &records);
+
+        let facts = facts_from_sessions(&home);
+        let fact = facts
+            .iter()
+            .find(|fact| fact.name == "20261108T044316Z-house")
+            .expect("the session is facted");
+        // The description fell past the house word to the real instruction.
+        assert_eq!(fact.description, "let's work on the open KI ledger items");
+        // The digest carries the owner's words and the fold summary — the
+        // words a recall query asks for.
+        assert!(
+            fact.body
+                .contains("user: let's work on the open KI ledger items"),
+            "{}",
+            fact.body
+        );
+        assert!(fact.body.contains("memory, cpu and disk"), "{}", fact.body);
+        assert!(fact.body.contains("good citizen"), "{}", fact.body);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn house_words_are_a_closed_set_of_bare_greetings() {
+        assert!(is_house_word("warmup"));
+        assert!(is_house_word("Warmup."));
+        assert!(is_house_word("  hi there! "));
+        assert!(is_house_word("hello"));
+        assert!(!is_house_word("let's work on the open KI ledger items"));
+        // A long instruction that merely begins with a greeting is not a
+        // house word — only a bare greeting is.
+        assert!(!is_house_word("hi, can you wire the recall surface"));
+        assert!(!is_house_word(""));
     }
 
     #[test]
