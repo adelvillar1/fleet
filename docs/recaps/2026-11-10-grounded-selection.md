@@ -81,6 +81,25 @@ binaries untouched), every phase's disk cost recorded in the plan.
   10,800); the 8k mean is honest cost, not waste. The ledger corrected
   itself.
 
+## The triage close (late evening)
+
+The owner's direction — kill what proved no value, keep what proved
+value, further-evaluate the inconclusive — executed:
+
+- **Killed**: C2/C3/C5/C6/C7/C8 (selection replacement + dependents),
+  and the repair leg's authorship — the recovery measurement (58
+  calls) put LFM3 repair at **29.3% vs the loop's 54.2%**; the leg is
+  demoted to `experiments.repair_leg` opt-in, detection (0.983 AUC)
+  kept and shipped.
+- **Kept**: C4-detection, C9's judgment rows, C10/C11, C12, C17, C19,
+  C20 — all shipped in 0.6.25/0.6.26.
+- **Further evaluation** (the named backlog on the plan):
+  C13-mention/silent, C14, C15's per-item variant, C16 — gated on the
+  owner's fixture labels — plus the live-grounding passes.
+- **Plans closed**: grounded-selection → completed (every box resolved
+  on measurement, `plan_check` green); experimentation-over-refusal →
+  completed (shipped as 0.6.26).
+
 ## Open
 
 - **C2-C9** — killed by C1's gate; the owner re-opens with new evidence
