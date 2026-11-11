@@ -104,13 +104,24 @@ links to its conversation, its deliverable, the bot that did it, and the
 lesson it taught — one workspace, not a drawer of silos.
 ([docs/architecture/surfaces.md](docs/architecture/surfaces.md))
 
-### A machine it respects
+### A responsible citizen on your machine
 
-The run loop measures what it uses, refuses work the machine cannot host,
-settles what the work actually took, and learns its estimates from those
-settlements. A store has a number it stays under; work is refused *before*
-it starts rather than rescued after. A breach is arithmetic, not a judgment
-call — the numbers go in front of you, and the run continues only on a yes.
+Most agents treat the host as infinite — they fill the disk, spawn processes
+without count, and tidy up afterwards if they remember. Fleet takes the
+opposite posture: it is a *responsible* citizen, not merely a good one. A
+good citizen cleans up after itself; a responsible one has a budget it stays
+under and refuses work *before* it starts rather than rescuing it after.
+
+Every unit of work moves through four beats: **measure** the machine (free
+space, the process tree, a reserve derived from the environment's own
+history), **admit or refuse** against the headroom — deterministic, so "six
+gigabytes of room, eight of work" needs no judgment — **work**, then
+**settle and curtail**: re-measure, and a delta past the budget is an overage
+while a delta past the reserve is a *breach* that pauses the run and puts the
+numbers in front of you. The numbers derive from the machine's learned
+profile, not constants, and the harness is aware at all times of what it
+holds — disk, memory, its own process tree. A call that keeps the environment
+from crashing is worth its cost; a runaway is curtailed, not rescued.
 ([docs/features/resource-contract.md](docs/features/resource-contract.md))
 
 ## How it stays trustworthy
