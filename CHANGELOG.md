@@ -12,6 +12,32 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.33 — 2026-11-11
+
+The armada authorization layer: a principal-agnostic security substrate.
+
+**Part of the armada vision** — layer L3 (security), the owner's example of a
+layer fitted into fleet that exposes well-defined contracts armada consumes.
+The plan is `docs/plans/2026-11-11-armada-l3-security.md`.
+
+- **The grant** — `(principal, dimension, scope, action-class)` with closed
+  sets; the folder grant is the first row. Default-deny: an ungranted action
+  is refused by name.
+- **The uniform guard** — checks the grant at the one choke point every call
+  crosses. Lane 1's owner holds a wildcard, so nothing the owner does today
+  is refused; every decision is audited to the journal.
+- **The declaration filter** — a principal sees only the tools it is granted;
+  an ungranted tool is not even declared.
+- **Step-up** — a destructive/governance action needs fresh human proof:
+  lane 1's in-turn approval, or a signed Ed25519 assertion the agent cannot
+  forge (the org-scale form, issued by the flagship at L8).
+- **Governance** — the grant store and identity registry are immutable to the
+  agent; grant-making is the owner's act, refused by name.
+- **Surfaces** — `fleet grants` and the settings grants card.
+
+Principal-agnostic from the first cut: the org multiplies principals and
+leaves this code unchanged. Single-owner behavior is unchanged.
+
 ## v0.6.32 — 2026-11-11
 
 The second armada bedrock: a durable, total-ordered event journal.
