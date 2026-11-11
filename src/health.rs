@@ -324,6 +324,44 @@ pub struct HealthReport {
 }
 
 impl HealthReport {
+    /// This pass carried forward beside the previous one: every service the
+    /// previous report held that this one did not probe keeps its last known
+    /// verdict, and this pass's fresh lines win where both hold a name.
+    ///
+    /// KI-513: the tiers alternate, so a fast pass carries only layerfs and api
+    /// while a slow pass carries those plus docker, lanes and release — and the
+    /// card replaced the slot whole each time, so a down slow-tier service was
+    /// invisible on every fast tick. The verdicts were true; only the display
+    /// was a function of the tick. Merging makes the card's line set stable
+    /// across ticks without pretending a stale verdict is fresh: the carried
+    /// line keeps its own note, and [`HealthReport::carried`] names which ones
+    /// this pass did not re-probe.
+    pub fn merged_over(self, previous: &HealthReport) -> HealthReport {
+        let probed: std::collections::HashSet<&str> =
+            self.services.iter().map(|service| service.name).collect();
+        let mut services = self.services;
+        for service in &previous.services {
+            if !probed.contains(service.name) {
+                services.push(service.clone());
+            }
+        }
+        HealthReport {
+            services,
+            stamp: self.stamp,
+        }
+    }
+
+    /// The names this report holds WITHOUT having probed them this pass — the
+    /// carried-forward lines, so a reader can tell a fresh verdict from a kept
+    /// one. Empty for a slow pass, which probes everything.
+    pub fn carried(&self, probed_now: &[&'static str]) -> Vec<&'static str> {
+        self.services
+            .iter()
+            .map(|service| service.name)
+            .filter(|name| !probed_now.contains(name))
+            .collect()
+    }
+
     /// Every down service, in report order — the card's lines and the
     /// repair note's causes.
     pub fn down(&self) -> Vec<&ServiceHealth> {
@@ -384,15 +422,22 @@ pub type SharedReport = std::sync::Arc<std::sync::Mutex<Option<HealthReport>>>;
 /// other pass, the shared slot updated in place. Returns whether the
 /// pass transitioned, so the caller (which sees the beat) can name it.
 pub fn probe_once(home: &Path, pass: u64, slot: &SharedReport) -> bool {
-    let report = probe(home, !pass.is_multiple_of(SLOW_EVERY_NTH_PASS));
-    let transitioned = {
-        let guard = slot.lock().expect("health slot");
-        match guard.as_ref() {
-            Some(previous) => report.transitioned_from(previous),
-            None => !report.down().is_empty(),
-        }
+    let fresh = probe(home, !pass.is_multiple_of(SLOW_EVERY_NTH_PASS));
+    let mut guard = slot.lock().expect("health slot");
+    // The card's line set must not be a function of the tick (KI-513): a fast
+    // pass keeps the slow tier's last verdicts beside its own fresh ones. The
+    // transition is judged on the MERGED report, so a carried verdict that has
+    // not changed cannot read as a change, and one that did change — a slow
+    // pass finding docker down — is announced on that pass.
+    let report = match guard.as_ref() {
+        Some(previous) => fresh.merged_over(previous),
+        None => fresh,
     };
-    *slot.lock().expect("health slot") = Some(report);
+    let transitioned = match guard.as_ref() {
+        Some(previous) => report.transitioned_from(previous),
+        None => !report.down().is_empty(),
+    };
+    *guard = Some(report);
     transitioned
 }
 
@@ -554,6 +599,79 @@ mod tests {
         assert!(!c.transitioned_from(&d));
     }
 
+    /// KI-513: the tiers alternate, so the slot used to hold a two-line view on
+    /// every fast pass and a five-line view on every slow one — a down
+    /// slow-tier service invisible on every even tick. The merge keeps the line
+    /// set stable and still lets a real change announce itself.
+    #[test]
+    fn a_fast_pass_carries_the_slow_tiers_verdicts_beside_its_own() {
+        fn up(name: &'static str) -> ServiceHealth {
+            ServiceHealth {
+                name,
+                up: true,
+                note: String::new(),
+                repair: "none",
+            }
+        }
+        let slow = HealthReport {
+            services: vec![
+                up("layerfs"),
+                up("api"),
+                ServiceHealth::down("docker", "not answering"),
+                up("lanes"),
+                up("release"),
+            ],
+            stamp: "2026-11-11".to_string(),
+        };
+        // A fast pass probes only its own tier.
+        let fast = HealthReport {
+            services: vec![up("layerfs"), up("api")],
+            stamp: "2026-11-11".to_string(),
+        };
+        let merged = fast.clone().merged_over(&slow);
+        let names: Vec<&str> = merged.services.iter().map(|s| s.name).collect();
+        assert_eq!(
+            names,
+            vec!["layerfs", "api", "docker", "lanes", "release"],
+            "the card always shows the full set: {names:?}"
+        );
+        // The down verdict survives the fast pass, which is the defect.
+        assert_eq!(merged.down().len(), 1);
+        assert_eq!(merged.down()[0].name, "docker");
+        // And the carried lines say they were not probed this pass.
+        let carried = merged.carried(&["layerfs", "api"]);
+        assert_eq!(carried, vec!["docker", "lanes", "release"]);
+        // A carried, unchanged verdict is NOT a transition.
+        assert!(!merged.transitioned_from(&slow));
+        // A real change is: the slow pass finds the down service up again.
+        let mut healed = slow.clone();
+        healed.services[2] = up("docker");
+        assert!(healed.transitioned_from(&slow));
+        // The fresh line wins where both reports hold the same name.
+        let mut fresh_docker = fast.clone();
+        fresh_docker
+            .services
+            .push(ServiceHealth::down("docker", "still down"));
+        let merged_fresh = fresh_docker.merged_over(&slow);
+        assert_eq!(
+            merged_fresh
+                .services
+                .iter()
+                .filter(|s| s.name == "docker")
+                .count(),
+            1,
+            "a name appears once, with this pass's verdict"
+        );
+        assert_eq!(
+            merged_fresh
+                .services
+                .iter()
+                .find(|s| s.name == "docker")
+                .map(|s| s.note.clone()),
+            Some("still down".to_string())
+        );
+    }
+
     #[test]
     fn the_loop_slot_updates_and_reports_transitions_once() {
         let home = scratch("transition-d");
@@ -569,6 +687,20 @@ mod tests {
         );
         let guard = slot.lock().expect("health slot");
         let report = guard.as_ref().expect("the slot holds the latest pass");
-        assert_eq!(report.services.len(), 2, "pass 1 is a fast pass");
+        // Pass 1 is a fast pass, so it PROBED two services — but the slot keeps
+        // the slow tier's verdicts beside them, because the card's line set must
+        // not be a function of the tick (KI-513). Before the merge this asserted
+        // 2, which was the defect stated as a contract.
+        assert_eq!(
+            report.carried(&["layerfs", "api"]).len(),
+            report.services.len() - 2,
+            "the fast pass probed two and carried the rest: {:?}",
+            report.services
+        );
+        assert!(
+            report.services.len() >= 2,
+            "the card shows at least the fresh tier: {:?}",
+            report.services
+        );
     }
 }
