@@ -104,9 +104,21 @@ def c14_skills(limit=10):
             text = d.read_text(errors="replace")
         except OSError:
             continue
-        m = re.search(r"^description:\s*(.+)$", text, re.M)
-        if m:
-            skills.append((d.parent.name, m.group(1).strip()[:200]))
+        m = re.search(r"^description:\s*(.*)$", text, re.M)
+        if not m:
+            continue
+        first = m.group(1).strip()
+        if first in (">", "|", ">-", "|-", "") :
+            # a YAML block scalar: the text is the following indented lines
+            rest = text[m.end():].splitlines()
+            collected = []
+            for line in rest:
+                if line.strip() and not line.startswith((" ", "\t")):
+                    break
+                if line.strip():
+                    collected.append(line.strip())
+            first = " ".join(collected)
+        skills.append((d.parent.name, first[:200]))
     # candidate pairs: the closest by token overlap (a real curation shortlist)
     pairs = []
     for i, (a, da) in enumerate(skills):
@@ -194,12 +206,14 @@ def c16_queues():
         ("graph", "is this handoff ready?", "ready / not"),
         ("improve", "high or low priority?", "high / low"),
     ]
+    counter = 0
     for verb, question, key in surfaces:
         rows = cards(fleet(verb))
         blocks.append(f"## {verb} — {question}\n\nLabel each: **{key}**.\n\n"
                       f"| # | row | state | your call |\n|---|---|---|---|")
-        for i, (name, state) in enumerate(rows, 1):
-            blocks.append(f"| {i} | `{name}` | {state} | |")
+        for name, state in rows:
+            counter += 1
+            blocks.append(f"| {counter} | `{name}` | {state} | |")
             total += 1
     (OUT / "c16-queues.md").write_text("# C16 — queue triage\n\n" + "\n".join(blocks) + "\n")
     return total

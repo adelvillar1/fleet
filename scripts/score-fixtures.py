@@ -50,9 +50,11 @@ SEAMS = {
     },
     "c16-queues.md": {
         "head": "Does this row deserve action now (high / low)?",
-        "labels": ["high", "low"],
+        # the three surfaces ask in their own words; high/low is the axis
+        "labels": ["high", "low", "worth", "stale", "ready", "not"],
         "rule": lambda text: "high" if re.search(r"pending|enabled", text) else "low",
         "text_col": 1,
+        "positive": {"high", "worth", "ready"},
     },
 }
 
@@ -92,12 +94,21 @@ def main() -> int:
             heads=[make_choice("fixture_seam", seam["labels"], id="answer")],
             description=seam["head"],
         )
+        # Cross-vocabulary seams (C16's three surfaces) compare on the
+        # positive/negative axis, not literal label strings.
+        positive = seam.get("positive")
+
+        def axis(value: str) -> str:
+            if positive:
+                return "positive" if value in positive else "negative"
+            return value
+
         head_right = rule_right = 0
         for text, label, rule in graded:
             answer = classify(provider=provider, task=task, text=text[:3000]).head("answer", provider)
             head = (answer or {}).get("label", "?")
-            head_right += int(head == label)
-            rule_right += int(rule == label)
+            head_right += int(axis(head) == axis(label))
+            rule_right += int(axis(rule) == axis(label))
         n = len(graded)
         verdict = "BUILD (head beats the rule)" if head_right > rule_right else "KILL (the rule holds)"
         print(f"{name}: {n} labeled · head {head_right}/{n} ({head_right/n*100:.0f}%) · "
