@@ -359,6 +359,55 @@ mod tests {
 
     /// The ratios the four themes actually measure, printed so a change
     /// that moves one is visible rather than silent.
+    /// KI-476's pin: the Send button's white label sits on
+    /// `--dsw-alias-gradient`, so **every stop of every theme's
+    /// gradient** must clear AA against white — the token-level fix
+    /// shipped without a measurement once, and that is how the failure
+    /// survived. The parser reads the stylesheet itself, so a future
+    /// token change is caught here rather than by a mockup.
+    #[test]
+    fn the_send_gradients_clear_aa_against_their_white_label() {
+        let css = include_str!("assets/app.css");
+        let mut gradients = 0;
+        for line in css.lines() {
+            let Some(rest) = line.trim().strip_prefix("--dsw-alias-gradient:") else {
+                continue;
+            };
+            // linear-gradient(135deg, rgb(..), rgb(..)) — scan the
+            // whole declaration for rgb(…) spans; splitting on commas
+            // would cut the triples apart.
+            let mut stops: Vec<(u8, u8, u8)> = Vec::new();
+            let mut cursor = 0;
+            while let Some(offset) = rest[cursor..].find("rgb(") {
+                let start = cursor + offset;
+                let Some(close) = rest[start..].find(')') else {
+                    break;
+                };
+                let literal = &rest[start..start + close + 1];
+                if let Some(colour) = rgb(literal) {
+                    stops.push(colour);
+                }
+                cursor = start + close + 1;
+            }
+            assert!(
+                stops.len() >= 2,
+                "a gradient with fewer than two readable stops: {line}"
+            );
+            for stop in stops {
+                let ratio = contrast((255, 255, 255), stop);
+                assert!(
+                    ratio >= MIN_TEXT,
+                    "white on {stop:?} is {ratio:.2} against a {MIN_TEXT} floor ({line})"
+                );
+            }
+            gradients += 1;
+        }
+        assert!(
+            gradients >= 4,
+            "every declared theme's gradient is measured: {gradients}"
+        );
+    }
+
     #[test]
     fn the_measured_ratios_are_reported() {
         for (name, theme) in themes() {

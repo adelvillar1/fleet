@@ -187,7 +187,7 @@
   --dsw-alias-ok: rgb(74, 190, 110);
   --dsw-alias-down: rgb(240, 106, 99);
   --dsw-alias-warn: rgb(220, 166, 66);
-  --dsw-alias-gradient: linear-gradient(135deg, rgb(96, 143, 255), rgb(66, 112, 230));
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(76, 113, 201), rgb(52, 88, 182));
   --lane-0: rgb(45, 212, 191);
   --lane-1: rgb(167, 139, 250);
   --lane-2: rgb(251, 191, 36);
@@ -219,7 +219,7 @@
   --dsw-alias-ok: rgb(74, 190, 110);
   --dsw-alias-down: rgb(240, 106, 99);
   --dsw-alias-warn: rgb(220, 166, 66);
-  --dsw-alias-gradient: linear-gradient(135deg, rgb(94, 148, 255), rgb(62, 112, 232));
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(73, 115, 199), rgb(48, 87, 181));
   --lane-0: rgb(94, 210, 190);
   --lane-1: rgb(158, 134, 240);
   --lane-2: rgb(235, 180, 60);
