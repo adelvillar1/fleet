@@ -55,6 +55,30 @@ are different tasks with their own gates.
 
 ## The verdict ledger: fix, improve, reject
 
+**Final triage (2026-11-10 evening, the owner's direction):**
+
+- **KILLED** (proved no value, recorded on the plan): C2, C3, C5, C6,
+  C7, C8-as-designed — selection replacement and its dependents — plus
+  **the repair leg's repair authorship** (LFM3 recovery 29.3% vs the
+  loop's 54.2%; the leg demoted to `experiments.repair_leg` opt-in;
+  its DETECTION value — 0.983 AUC — stands, shipped).
+- **KEPT** (proved value, shipped in 0.6.25/0.6.26): the generation
+  seam (C10/C11), the destructive head + experiment gate (C12 +
+  experimentation-over-refusal), vision QC (C17), the form-filler's
+  remember/improve origins (C19, opt-in repair now), the graded
+  judgment stream (C9's remnant), the archive audit (C0's command).
+- **FURTHER EVALUATION** (inconclusive, named backlog on the plan):
+  C13-mention/silent, C14, C15's per-item score variant, C16 — all
+  gated on small labeled fixtures — plus the live-grounding passes.
+
+**Earlier rejections (this page, above):** selection replacement's
+eight shapes, score fan-out at catalog size, LFM3 as selector,
+cross-vendor score transplant, hard narrowing, the canonical framing
+for selection, d1 for selection, the declaration-tax "fix".
+
+**Original triage (2026-11-10 afternoon), superseded by the final:**
+
+
 **FIX** — broken, with an evidence-backed repair in reach:
 
 - ~~**The declaration tax**~~ — **REJECTED as a fix, corrected

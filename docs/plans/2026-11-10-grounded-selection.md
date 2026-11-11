@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-10
 updated: 2026-11-10
 slug: grounded-selection
@@ -219,33 +219,39 @@ checkbox order — never reorder after gating.
   glide 51.3% / 0.787, liquid 28.6% / 0.568. **Kill gate fires**: no head
   beats the 99.1% baseline; Phases 1-3 stop, 4 and 6 proceed. Full table
   and reasoning in docs/features/selection.md §head-to-head.)
-- [ ] C2: On the designated session kind, the turn's tool set comes from a
-  top-k choice-head injection instead of the full declaration set, with
-  measured tokens/request below C0's baseline and wrong-tool rate no worse
-  than C0's.
-- [ ] C3: The skill catalog is selected by one head pass per owner turn and
-  the winner's SKILL.md loads through `use_skill`, with selection accuracy
-  against recorded turns reported beside C0.
-- [ ] C4: An emitted call receives a head verdict before `prepare_call`
-  executes it, and on the corrupted-call corpus the repair leg (head-rename or
-  hosted-LFM3 argument regeneration) recovers a strictly higher share of calls
-  than the current error-result loop, with p50 repair latency reported.
-- [ ] C5: A selection whose top-minus-second margin is under the configured
-  threshold produces a clarifying question in the conversation instead of an
-  executed guess, pinned by a test that removes the threshold and fails.
-- [ ] C6: GLiDE and d1 answer the same selection in parallel; agreement acts
-  and disagreement escalates to the ambiguity path, pinned by a test on both
-  branches, and both heads' probabilities land in the selection's calib row.
-- [ ] C7: One `sys1_classify` call returns tool choice, skill choice,
-  workload tier, and destructive yes/no as four heads, and a full turn is
-  consumed from that single response with the round-trip count measured.
-- [ ] C8: The first tool-call fragment of a turn triggers the destructive
-  prediction and approval warm-up before the arguments finish streaming,
-  pinned by an ordering test on the stream events.
-- [ ] C9: Every selection writes a calib row carrying vendor, head,
-  confidence, margin, and eventual outcome, and a `fleet judge` run over a
-  day's rows grades selection decisions with the result readable from
-  `fleet calib`.
+- [x] C2: KILLED on C1's measurement (2026-11-10) — no head beats the
+  model's own selection (best 56.7% vs 99.1%); injection would leave one
+  turn in four without the wanted tool. The declaration tax was
+  separately rejected (the surface fits its bound).
+- [x] C3: KILLED with C2 (2026-11-10) — the same selection shape, the
+  same meta-failure.
+- [x] C4: RESOLVED SPLIT (2026-11-10). Detection: the verifier
+  measurement — glide AUC 0.983, 60/60 corruption rejection; drex 0.883 /
+  96.7% — detection is real and shipped (the C12 head in the gate, the
+  repair-leg calib rows). Repair: LFM3-1.7B as the author recovers 29.3%
+  of schema-broken calls vs the loop's 54.2% (58-call measurement,
+  `scripts/c-recovery-measure.py`, p50 2.99s) — the criterion's bar is
+  NOT met, the repair leg is demoted to opt-in
+  (`experiments.repair_leg`, default off), and the detection-half ships.
+  Detection and repair are different skills; only one measured sharp.
+- [x] C5: KILLED as designed (2026-11-10) — the selection margin died
+  with selection. The margin's surviving use is the verification noul at
+  the repair seam (shipped).
+- [x] C6: KILLED as designed (2026-11-10) — cross-vendor ensembles
+  measured identical to control on both mixes; the same-vendor compose
+  (flat x noul, +2.5pp) lives in the weed-then-verify findings and the
+  shipped repair seam instead.
+- [x] C7: KILLED (2026-11-10) — rode the selection heads; the
+  multi-head fan-out's measured envelope (2-3 heads practical, 27
+  collapse) bounds any future version.
+- [x] C8: KILLED as designed (2026-11-10) — it fed off head selection.
+  The surviving idea (the destructive head annotating before the gate)
+  shipped via C12's pre-pass.
+- [x] C9: RESOLVED SPLIT (2026-11-10). The selection-row half died
+  with selection. The judgment-row half shipped: `repair_leg`,
+  `vision_qc`, and the destructive head's annotations all land as calib
+  rows readable from `fleet calib` — the graded stream for everything
+  that measured sharp.
 - [x] C10: Compaction folds, conversation titles, and session-archive
   summaries each render through the hosted small-model lane with today's path
   as the named fallback, and the per-call cost delta versus the flagship path
@@ -279,35 +285,23 @@ checkbox order — never reorder after gating.
   with the list as the zero-spend fast path and an inline `task_spec`.
   The order is list-first (a listed command never spends); the head adds
   the detections the list cannot see. Test over mock-mcp.)
-- [ ] C13: Mention-kind, silent-stop, and memory-shape classification each
-  run through a head with the word list as fallback, pinned by one test per
-  seam that fails when the head call is removed.
-  (The shape half's per-seam gate KILLED the conversion 2026-11-10: the
-  head scores 62% top-1 against the corpus's own 40-fact labels
-  (`scripts/c13-shape-measure.py`) — the misses cluster on state-sync
-  records the head reads as resolved/build, semantically defensible but
-  not the corpus's convention. The keyword tables stay; the head is
-  re-openable only with a labeled set that fixes the convention.
-  Mention-kind and silent-stop keep their own gates open — both need
-  small hand-labeled fixtures before they can run.)
-- [ ] C14: Skill merge/duplicate curation and the lesson coverage gate judge
-  through heads with token overlap as the equal-confidence tie-break, pinned
-  by a known-duplicate skill pair and a coverage-straddling lesson pair.
-  (Open behind its fixture: the gate needs ~10 hand-labeled skill pairs
-  and two lesson pairs before it can run — the owner's call is what
-  makes a pair a duplicate.)
-- [ ] C15: Top-N recall candidates receive a score-head rerank over the
-  six-channel ranking, and on a labeled fixture set the rerank's accuracy is
-  reported against the channel weights (rerank stays only if it wins).
-  (Open behind its fixture: a labeled relevance set — ~50
-  instruction-to-fact pairs — is the gate's input; building it is the
-  next session's first Phase 5 act.)
-- [ ] C16: Cron catch-up, inbox priority, and boards handoff each score
-  through a head with the deterministic rule as fallback, pinned by one test
-  per surface that fails when the head call is removed.
-  (Open behind its fixture: the three surfaces need their real rows
-  sampled and hand-labeled — worth/before-not-after/ready — before the
-  gate can run.)
+- [x] C13: CLASSIFIED (2026-11-10): the shape half KILLED (62%
+  against the corpus's own labels; the tables stay, calibrated).
+  Mention-kind and silent-stop: FURTHER EVALUATION — both pass the
+  answer-in-the-question test; they are gated on the owner's hand
+  labels (~30 messages, ~20 turns; the extraction is buildable on
+  request). Moved to the plan's Further-evaluation backlog below.
+- [x] C14: CLASSIFIED (2026-11-10): FURTHER EVALUATION — gated on
+  ~10 hand-labeled skill pairs and two lesson pairs (the owner's call
+  is what makes a pair a duplicate). Moved to the backlog below.
+- [x] C15: CLASSIFIED (2026-11-10): FURTHER EVALUATION — the batched
+  score shape was a wire artifact (never validly measured); the
+  vendor-documented per-item-calls variant is untested and competes
+  against the noul re-rank that already won at one call per turn.
+  Moved to the backlog below; measurable offline on request.
+- [x] C16: CLASSIFIED (2026-11-10): FURTHER EVALUATION — gated on
+  hand-labeled real rows (worth / priority / ready) from the three
+  surfaces. Moved to the backlog below.
 - [x] C17: gen1 media outputs grade through the existing `vision_qc` task,
   verdicts land as calib rows, and a failing grade names the artifact —
   pinned by a stubbed vision answer.
@@ -337,10 +331,10 @@ checkbox order — never reorder after gating.
   rides improve's change parse (proposals touching skills/ files are the
   same emission). Two tests: the repaired emission lands, a garbage lane
   answer falls to the ordinary path. Gate green 2,349.)
-- [ ] C20: Each phase's landing records, in this plan's Notes, the cleanup
-  act with free-disk before/after — `git worktree list` shows no stale
-  lanes, `scripts/cache-sweep.sh` ran, and no build debris survives the
-  phase.
+- [x] C20: Every phase's landing carries its cleanup-ledger entry
+  (activation, C0, C10, C11, C17+C19, C12+C13, C18 probe + sweep, the
+  build-and-cut, the close-out) — no worktrees, no lanes, no scratch,
+  112 GiB free at close, the sweep run twice.
 
 ## Files to be touched
 
@@ -673,6 +667,27 @@ discipline. Each stands re-openable only on new evidence:
 The live re-open: **C4's verify+repair leg** on the verifier evidence
 (glide AUC 0.983, 60/60 corruption rejection; drex 0.883/96.7%) — the
 owner's decision, the basis on file.
+
+## Further evaluation (the open residue, the owner's direction 2026-11-10)
+
+The criteria above are classified; the inconclusive ones stay alive
+here as the named backlog, not as open boxes pretending to be in-flight
+work:
+
+- **C13-mention / C13-silent** — pass the answer-in-the-question test;
+  gated on the owner's hand labels (~30 messages, ~20 turns). Build or
+  kill on their per-seam gates.
+- **C14 skill-duplicates + lesson coverage** — gated on ~10 labeled
+  pairs and two lesson pairs.
+- **C15 score re-rank, per-item-calls variant** — the vendor-documented
+  shape, never validly measured (the batched one was a wire artifact);
+  measurable offline on the same 120 turns; the bar is beating the noul
+  re-rank's 54.6% / 79.0% at one call per turn.
+- **C16 queue triage** — gated on labeled real rows from cron, the
+  inbox, and the boards.
+- **Live grounding** — one real gen1 image through vision_qc, one real
+  repair through the opt-in leg, one real fold for C10's cost table;
+  small spends, keys on hand, next-session acts.
 
 ## Cleanup ledger (C20)
 

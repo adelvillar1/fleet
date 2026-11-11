@@ -6159,14 +6159,16 @@ impl<'a> Agent<'a> {
     /// straight through; a failed repair runs the ordinary path too,
     /// which is the error-result loop the plan keeps as the last rung.
     async fn prepare_call_checked(&mut self, call: &ToolCall) -> Result<Prepared, AgentError> {
-        // Grounded-selection C4's runtime leg: the repair attempt is
-        // not remember/improve's privilege — every tool's validation
-        // failure gets one re-author through the hosted lane before the
-        // error-result loop. The verifier's measured basis (0.983 AUC)
-        // is the corruption screen; the guard is the schema itself: a
-        // schema-valid call is never re-authored, because the heads are
-        // conservative acceptors and a re-authored good call would
-        // drift.
+        // Grounded-selection C4's runtime leg — KILLED by its own
+        // measurement (2026-11-10): LFM3-1.7B as the repair author
+        // recovers 29.3% of schema-broken calls against the
+        // error-result loop's 54.2% (scripts/c-recovery-measure.py,
+        // 58 calls) — showing the model the error beats paying for the
+        // repair. The leg stays in the tree behind an explicit opt-in
+        // (`experiments.repair_leg`, default off) so a better repair
+        // author is one settings key away; the verifier's DETECTION
+        // value (0.983 AUC) is untouched — detection and repair are
+        // different skills.
         let is_remember = call.function.name == tools::REMEMBER_TOOL;
         let is_improve = call.function.name == tools::IMPROVE_TOOL;
         let parsed = serde_json::from_str::<serde_json::Value>(&call.function.arguments);
@@ -6197,6 +6199,23 @@ impl<'a> Agent<'a> {
                     reason,
                 );
             }
+        }
+        let repair_opt_in = schema_error.is_some()
+            && self
+                .options
+                .improve_home
+                .as_deref()
+                .map(|home| {
+                    crate::settings::read_config_leaf(home, "experiments.repair_leg")
+                        .map(|value| matches!(value.as_str(), "on" | "true" | "1"))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+        if !repair_opt_in {
+            // The measured default: the error-result loop recovers more
+            // (54.2% vs 29.3%) at no lane latency — the model sees the
+            // error and fixes it itself.
+            return self.prepare_call(call);
         }
         if parsed.is_ok() && schema_error.is_none() {
             return self.prepare_call(call);
@@ -11254,6 +11273,19 @@ mod tests {
         (child, scratch.join("script.jsonl"), scratch)
     }
 
+    /// A scratch home with the repair leg explicitly enabled — the
+    /// measured default is off (29.3% < 54.2%), so the reform tests
+    /// opt in to exercise the leg.
+    fn repair_opt_in_home(name: &str) -> std::path::PathBuf {
+        let home = scratch(name);
+        std::fs::write(
+            home.join("config.json"),
+            r#"{"experiments": {"repair_leg": "on"}}"#,
+        )
+        .unwrap();
+        home
+    }
+
     fn blend1_spec(script: &std::path::Path) -> crate::mcp::ServerSpec {
         crate::mcp::ServerSpec {
             program: crate::eval::mock_mcp_binary()
@@ -11567,6 +11599,7 @@ mod tests {
         let (mut lane_child, script, lane_scratch) = lane_mock(
             r#"{"status":"ok","model":"lfm3-1.7b","text":"{\"name\":\"lane-repaired-fact\",\"description\":\"the lane repaired this emission\",\"type\":\"fact\",\"date\":\"2026-11-10\",\"basis\":\"inferred\",\"shape\":\"build\",\"tier\":\"durable\",\"body\":\"the lane re-authored these arguments and they passed\"}"}"#,
         );
+        let opt_in = repair_opt_in_home("reform-remember");
         let home = scratch("reform-remember");
         let root = home.join("memory");
         let mut session = crate::session::Session::create(&home, "m").unwrap();
@@ -11598,7 +11631,7 @@ mod tests {
             role_overlay: None,
             memory: Some(memory),
             scope: None,
-            improve_home: None,
+            improve_home: Some(opt_in),
             goal_home: None,
             goal_session: None,
             route_home: None,
@@ -11662,6 +11695,7 @@ mod tests {
         let (mut lane_child, script, lane_scratch) = lane_mock(
             r#"{"status":"ok","model":"lfm3-1.7b","text":"{\"command\":\"echo repaired-by-the-leg\"}"}"#,
         );
+        let opt_in = repair_opt_in_home("reform-bash");
         let home = scratch("reform-bash");
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
@@ -11688,7 +11722,7 @@ mod tests {
             role_overlay: None,
             memory: None,
             scope: None,
-            improve_home: None,
+            improve_home: Some(opt_in),
             goal_home: None,
             goal_session: None,
             route_home: None,
@@ -11738,14 +11772,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_lane_that_cannot_repair_sends_the_emission_to_the_error_loop() {
-        // The last rung holds: the lane answers garbage, the full
-        // validation refuses it, and the emission runs the ordinary
-        // path — the schema error the model would have read anyway.
+    async fn the_repair_legs_measured_default_is_off() {
+        // The kill: LFM3 repair recovered 29.3% against the loop's
+        // 54.2% — the default is the error-result loop, and no lane
+        // call is spent even when one could answer.
         let m = fold_mock("unused");
-        let (mut lane_child, script, lane_scratch) =
-            lane_mock(r#"{"status":"ok","model":"lfm3-1.7b","text":"not json at all"}"#);
-        let home = scratch("reform-fallback");
+        let (mut lane_child, script, lane_scratch) = lane_mock(
+            r#"{"status":"ok","model":"lfm3-1.7b","text":"{\"name\":\"would-have-repaired\",\"description\":\"x\",\"type\":\"fact\",\"basis\":\"inferred\",\"tier\":\"durable\",\"shape\":\"build\",\"body\":\"y\"}"}"#,
+        );
+        let home = scratch("repair-default-off");
         let root = home.join("memory");
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
@@ -11777,6 +11812,95 @@ mod tests {
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent
+            .execute_call(&call(
+                "r3",
+                "remember",
+                r#"{"description":"no name — schema-broken"}"#,
+            ))
+            .await
+            .unwrap();
+        drop(agent);
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let output = records
+            .iter()
+            .find_map(|record| match record {
+                Record::ToolResult {
+                    call_id, output, ..
+                } if call_id == "r3" => Some(output.clone()),
+                _ => None,
+            })
+            .expect("the call's result");
+        assert!(
+            output.starts_with("error"),
+            "the ordinary path answered: {output}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = lane_child.kill();
+        let _ = lane_child.wait();
+        let _ = std::fs::remove_dir_all(&lane_scratch);
+    }
+
+    #[tokio::test]
+    async fn a_lane_that_cannot_repair_sends_the_emission_to_the_error_loop() {
+        // The last rung holds: the lane answers garbage, the full
+        // validation refuses it, and the emission runs the ordinary
+        // path — the schema error the model would have read anyway.
+        let m = fold_mock("unused");
+        let (mut lane_child, script, lane_scratch) =
+            lane_mock(r#"{"status":"ok","model":"lfm3-1.7b","text":"not json at all"}"#);
+        let opt_in = repair_opt_in_home("reform-fallback");
+        let home = scratch("reform-fallback");
+        let root = home.join("memory");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let memory = std::sync::Arc::new(Memory::load_with(
+            &root,
+            Box::new(crate::memory::KeywordOnly),
+        ));
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            capped: false,
+            health_note: false,
+            lane_prose: true,
+            ui_tx: None,
+            lane_specs: Some(
+                [(
+                    crate::generate::BLEND1_LANE.to_string(),
+                    blend1_spec(&script),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: Some(memory),
+            scope: None,
+            improve_home: Some(opt_in),
             goal_home: None,
             goal_session: None,
             route_home: None,
