@@ -12,6 +12,33 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.28 — 2026-11-11
+
+Two active sessions at once, and the face never wedges behind a phantom run.
+
+- **The face runs admitted runs concurrently, one per session** (the
+  `docs/plans/2026-11-11-multi-session.md` plan, closing KI-525). The single
+  serial command loop is now a dispatcher: each admitted run drives its own
+  session on its own thread, with its own event forwarder so two transcripts
+  never cross. The per-session state table that already existed is now the
+  source of truth for execution, not just display.
+- **The wedge is gone.** KI-525 was a stale `running=true` on an empty chat
+  whose `driving` named a dead run — a second send queued behind work that
+  never executed, blocking the composer. A restart now reconstructs an idle
+  face, a refused run clears its own flag, and `driving` hands back to a
+  running peer rather than naming a finished one.
+- **Concurrency follows the machine's capacity, politely.** Before a second
+  run starts, `contract::admits_concurrent` grades the cumulative run budget
+  against the volume's headroom above the reserve (the resource contract's
+  own strict arithmetic). Within capacity it admits; beyond it, the face
+  paints a courteous named card telling the owner the run needs to be
+  reconsidered or queued — never a silent over-spend, never a terse refusal.
+- **The health card's line set is stable across ticks** (KI-513). A fast pass
+  carries the previous pass's slow-tier verdicts beside its own fresh ones
+  (`HealthReport::merged_over`), so a down docker/lanes/release service is no
+  longer invisible on every other tick; `carried` names which lines were not
+  re-probed.
+
 ## v0.6.27 — 2026-11-11
 
 The resource contract's numbers derive, and a stale install can no longer hide.
