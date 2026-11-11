@@ -1,8 +1,8 @@
 # Generation — the hosted small-model text leg
 
 The grounded-selection plan's Phase 4 feature doc: the seam through which
-prose a small hosted model authors rides, what the fallbacks are, and what
-each call costs against the flagship path it replaced. Status mirrors
+prose a small hosted model authors rides, what the fallbacks are, and
+which surfaces are owner-visible. Status mirrors
 `docs/plans/2026-11-10-grounded-selection.md`.
 
 ## The seam
@@ -36,7 +36,7 @@ caller owns the fallback; a dead lane never takes a run down with it.
 | **End-of-run archive summary** | One sentence for the archive card, from the task plus the final message. | The head-and-tail heuristic (`session::summarize`). |
 
 The owner's own title always wins: an existing `sessions-titles.json`
-entry is never overwritten, and an owner-named session costs one lane
+entry is never overwritten, and an owner-named session takes one lane
 call (the summary) instead of two.
 
 Both sidecars live beside the logs — `sessions-titles.json` (existing)
@@ -48,29 +48,6 @@ The act is gated by `AgentOptions.lane_prose` — the same actor
 `health_note` names: the CLI and the face's run paths set it; children,
 eval runs, and tests leave it off, so a test's premise never rides the
 machine's lanes.
-
-## Cost delta (C10's fourth number)
-
-The leg reports its own spend: every generate result carries `usage`
-(prompt/completion tokens, and Liquid's own `cost` when the API prices
-it). The delta against the flagship path it replaced, per surface:
-
-| Surface | Flagship path's cost shape | Lane path's measured cost |
-|---|---|---|
-| Compaction fold | One routed turn: the full transcript through the flagship (C0's mean request: ~70.2k prompt tokens) | The same transcript through lfm3-1.7b + its reasoning |
-| Title | None today (the ladder is deterministic) — the alternative was a flagship turn | **66 prompt + 687 completion tokens (680 of them reasoning), 2.83 s, $0.00014 — measured live 2026-11-10** |
-| Archive summary | None today (head-and-tail read) | the same shape as the title call |
-
-The measured title call is the anchor: **~$0.0001 against a flagship
-turn**, with the reasoning tokens dominating the completion — which is
-why the 1024 floor exists.
-
-The fold is the delta that matters: the flagship's fold rides the same
-token volume at the flagship's per-token price; the lane's is the small
-model's. The leg's `usage.cost` on each real fold is the number to
-average over time — the cost ledger accumulates in blend1's own lane
-telemetry, and `docs/features/selection.md`'s baseline table is where the
-routed side's number lives.
 
 ## What this seam deliberately does not do
 
