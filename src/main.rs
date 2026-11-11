@@ -91,6 +91,7 @@ fn main() -> ExitCode {
             | Ok(Command::Mcp(_))
             | Ok(Command::Tools(_))
             | Ok(Command::Lifecycle(_))
+            | Ok(Command::Relay(_))
     );
     if needs_runtime {
         return match tokio::runtime::Builder::new_current_thread()
@@ -129,6 +130,7 @@ async fn dispatch(args: &[String]) -> ExitCode {
         Ok(Command::Delegate(options)) => delegate_command(&options).await,
         Ok(Command::Eval(options)) => eval_command(&options).await,
         Ok(Command::Explain(options)) => explain_command(&options).await,
+        Ok(Command::Relay(options)) => relay_command(&options).await,
         // The sync half owns every other command; the runtime check in
         // `main` is what keeps them apart.
         _ => dispatch_sync(args),
@@ -4271,6 +4273,63 @@ fn grants_command() -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// `fleet relay` (armada L6): run the self-contained broker (`--broker`), or
+/// report a running broker's status. The broker is a mode of this binary —
+/// no Python, no foreign runtime (hard rule 12). An absent join secret fails
+/// closed on every join, named, never an open switchboard.
+async fn relay_command(options: &cli::RelayOptions) -> ExitCode {
+    if options.broker {
+        let join_secret = options
+            .join_secret
+            .clone()
+            .or_else(|| std::env::var("FLEET_RELAY_JOIN_SECRET").ok())
+            .unwrap_or_default();
+        if join_secret.is_empty() {
+            eprintln!(
+                "fleet: relay: no join secret — the broker will refuse every join; \
+                 pass --join-secret or set FLEET_RELAY_JOIN_SECRET"
+            );
+        }
+        println!(
+            "fleet: relay broker listening on port {} ({})",
+            options.port,
+            if join_secret.is_empty() {
+                "join closed — no secret"
+            } else {
+                "join gated"
+            }
+        );
+        match fleet::remote::broker::serve(options.port, join_secret).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("fleet: relay: {error}");
+                ExitCode::FAILURE
+            }
+        }
+    } else {
+        let url = options
+            .url
+            .clone()
+            .unwrap_or_else(|| format!("http://127.0.0.1:{}", options.port));
+        let status_url = format!("{url}/status");
+        match ureq::get(&status_url).call() {
+            Ok(response) => {
+                let body: serde_json::Value =
+                    response.into_json().unwrap_or(serde_json::Value::Null);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&body).unwrap_or_default()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("fleet: relay: no broker answered at {url}: {error}");
+                ExitCode::FAILURE
+            }
+        }
+    }
 }
 
 fn doctor_command(options: &cli::DoctorOptions) -> ExitCode {

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-11
 updated: 2026-11-11
 slug: armada-l6-relay
@@ -64,13 +64,13 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0: a Rust broker (`fleet relay --broker`) routes sealed frames by sid; the existing fleet client connects unchanged; no Python is involved (self-contained).
-- [ ] C1: the broker pushes an unsolicited frame to a sid with ack + cursor; a client that missed a poll detects the gap and re-requests (a test pins delivery + ack + gap recovery).
-- [ ] C2: a `kind:"control"` frame carries `{verb, install, principal, assertion?, payload, nonce, issued_at}` sealed by the existing crypto; the broker routes it without parsing the verb.
-- [ ] C3: the sealing is unchanged — a tampered frame is rejected (AAD bound to path/frame-id); a test pins it.
-- [ ] C4: relay-down is a named degradation (the client names it, never a silent stop); the four-leg gate passes.
-- [ ] C5: `fleet relay` / doctor renders the broker status and connected sids.
-- [ ] C6: delivery is trusted only on ack — a test pins that an unacked frame is a named gap (re-requestable), the broker measures queue depth/lag and names a breach, and a sid with no recent poll/heartbeat is reported not-live (liveness earned, not assumed).
+- [x] C0: a Rust broker (`fleet relay --broker`) routes sealed frames by sid; the existing fleet client connects unchanged; no Python is involved (self-contained).
+- [x] C1: the broker pushes an unsolicited frame to a sid with ack + cursor; a client that missed a poll detects the gap and re-requests (a test pins delivery + ack + gap recovery).
+- [x] C2: a `kind:"control"` frame carries `{verb, install, principal, assertion?, payload, nonce, issued_at}` sealed by the existing crypto; the broker routes it without parsing the verb.
+- [x] C3: the sealing is unchanged — a tampered frame is rejected (AAD bound to path/frame-id); a test pins it.
+- [x] C4: relay-down is a named degradation (the client names it, never a silent stop); the four-leg gate passes.
+- [x] C5: `fleet relay` / doctor renders the broker status and connected sids.
+- [x] C6: delivery is trusted only on ack — a test pins that an unacked frame is a named gap (re-requestable), the broker measures queue depth/lag and names a breach, and a sid with no recent poll/heartbeat is reported not-live (liveness earned, not assumed).
 
 ## Files to be touched
 

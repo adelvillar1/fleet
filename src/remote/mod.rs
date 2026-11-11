@@ -12,6 +12,7 @@
 //! `--host` by name. This module adds a face beside it, not a mode the
 //! existing one enters.
 
+pub mod broker;
 pub mod listener;
 pub mod pairing;
 pub mod qr;

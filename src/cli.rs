@@ -61,6 +61,9 @@ pub enum Command {
     /// Show the grant store: the principal's grants across every dimension
     /// (armada L3). The owner's wildcard is the lane-1 bootstrap.
     Grants,
+    /// The relay broker (armada L6): `--broker` runs the self-contained
+    /// switchboard; the bare command reports a broker's status.
+    Relay(RelayOptions),
     /// Show the calibration stream: one day's rows, grouped by op.
     Calib(CalibOptions),
     Demand(DemandOptions),
@@ -861,6 +864,8 @@ usage:
   fleet identity                 this install's id, its principal, and paired devices
   fleet journal                  the durable event trail, last seq, and consumer cursors
   fleet grants                   the grant store: the principal's grants per dimension
+  fleet relay [--broker] [--port <p>] [--join-secret <s>] [--url <u>]
+                                run the self-contained relay broker, or report its status
   fleet calib [--day <date>] [--calibration]
                                 the calibration stream: one day's rows by op;
                                 --calibration renders the per-provider judged
@@ -1105,6 +1110,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "identity" => no_flags(rest, Command::Identity),
         "journal" => no_flags(rest, Command::Journal),
         "grants" => no_flags(rest, Command::Grants),
+        "relay" => parse_relay(rest),
         "calib" => parse_calib(rest),
         "demand" => parse_demand(rest),
         "judge" => parse_judge(rest),
@@ -3378,6 +3384,63 @@ pub(crate) fn valid_calendar_day(day: &str) -> bool {
         _ => return false,
     };
     (1..=longest).contains(&day_of_month)
+}
+
+/// Options for `fleet relay` (armada L6): run the self-contained broker, or
+/// report a running broker's status.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RelayOptions {
+    /// Run the broker (the self-contained switchboard) rather than report.
+    pub broker: bool,
+    /// The port the broker binds (default 8420).
+    pub port: u16,
+    /// The join secret gating registration; absent, the broker fails closed.
+    pub join_secret: Option<String>,
+    /// A broker URL to report status from (the bare command's read).
+    pub url: Option<String>,
+}
+
+/// `fleet relay [--broker] [--port <p>] [--join-secret <s>] [--url <u>]`.
+fn parse_relay(args: &[String]) -> Result<Command, String> {
+    let mut options = RelayOptions {
+        port: 8420,
+        ..Default::default()
+    };
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--broker" => options.broker = true,
+            "--port" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--port needs a number".to_string())?;
+                options.port = value
+                    .parse()
+                    .map_err(|_| format!("`{value}` is not a port number"))?;
+            }
+            "--join-secret" => {
+                index += 1;
+                options.join_secret = Some(
+                    args.get(index)
+                        .ok_or_else(|| "--join-secret needs a value".to_string())?
+                        .clone(),
+                );
+            }
+            "--url" => {
+                index += 1;
+                options.url = Some(
+                    args.get(index)
+                        .ok_or_else(|| "--url needs a value".to_string())?
+                        .clone(),
+                );
+            }
+            other => return Err(format!("unknown relay option `{other}`")),
+        }
+        index += 1;
+    }
+    Ok(Command::Relay(options))
 }
 
 /// Commands that take no options at all; a stray flag is a usage error
