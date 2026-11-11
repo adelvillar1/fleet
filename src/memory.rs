@@ -2888,8 +2888,25 @@ impl Memory {
     /// does not. The curation focus hint's seam — the lane names what
     /// the words did not, and the partition routes under it.
     pub fn partition_with_shape(&self, instruction: &str, hint: Option<&'static str>) -> Partition {
+        self.partition_with_vector(instruction, hint, None)
+    }
+
+    /// The same partition, ranking against a caller-supplied query
+    /// vector — the seam a measurement needs (KI-459): with the embed
+    /// hoisted out of the timed region, a ranking comparison measures
+    /// the ranking rather than the embedder's own spread. `None` embeds
+    /// as before, so every existing caller is unchanged.
+    pub fn partition_with_vector(
+        &self,
+        instruction: &str,
+        hint: Option<&'static str>,
+        prepared: Option<&[f32]>,
+    ) -> Partition {
         let shape = hint.or_else(|| classify_shape(instruction));
-        let query_vector = self.embedder.embed(instruction);
+        let query_vector = match prepared {
+            Some(vector) => Some(vector.to_vec()),
+            None => self.embedder.embed(instruction),
+        };
         // The two-stage prefilter, when the setting is on: the slice
         // stage's top-K is the only set whose vector term survives.
         let prefilter = if self.two_stage.load(std::sync::atomic::Ordering::Relaxed) {
@@ -3061,6 +3078,17 @@ impl Memory {
     /// dropped as noise for this instruction. [`Memory::partition`] is
     /// the same ranking with the two pools kept apart, which is what
     /// the assembly and the surface read.
+    /// The recall ranked against a caller-supplied vector — the same
+    /// hits `recall` would return, with the embed hoisted out. The
+    /// measurement seam KI-459 names; production calls `recall`.
+    pub fn recall_with_vector(&self, instruction: &str, vector: Option<&[f32]>) -> Vec<ScoredFact> {
+        let partition = self.partition_with_vector(instruction, None, vector);
+        let mut hits = partition.primary;
+        hits.extend(partition.spillover);
+        hits.extend(partition.graph);
+        hits
+    }
+
     pub fn recall(&self, instruction: &str) -> Vec<ScoredFact> {
         let partition = self.partition(instruction);
         let mut hits = partition.primary;
@@ -7405,7 +7433,14 @@ mod tests {
     #[ignore = "grades the live corpus and embedder; run with --ignored"]
     fn the_two_stage_measurement() {
         let root = crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
-        let memory = Memory::load(&root);
+        // The embedder must be LIVE for this measurement: `probed_embedder`
+        // answers keyword-only on its first call (the probe runs in the
+        // background), which would leave the hoisted vectors empty and
+        // make the cost half undecidable a second way (KI-459).
+        let memory = Memory::load_with(
+            &root,
+            probed_embedder_ready(std::time::Duration::from_secs(10)),
+        );
         let facts = memory.fact_count();
         let instructions = [
             "how does the router choose a provider",
@@ -7419,25 +7454,47 @@ mod tests {
             "the deck tool's layouts",
             "what the lifecycle sweep disables",
         ];
+        // KI-459: the embeddings are hoisted OUT of the timed region.
+        // Timing `recall` measures the embedder's own spread (16-59 ms
+        // against 127.0.0.1) as much as the ranking, which is why the
+        // original deltas were unreadable. Each instruction embeds once,
+        // up front; the timed loop ranks against those vectors only.
+        let prepared: Vec<Option<Vec<f32>>> = instructions
+            .iter()
+            .map(|instruction| memory.instruction_vector(instruction))
+            .collect();
+        println!(
+            "prepared {} instruction vector(s) outside the timed region",
+            prepared.iter().filter(|v| v.is_some()).count()
+        );
+        const REPEATS: usize = 7;
         let measure = |two_stage: bool| {
             memory
                 .two_stage
                 .store(two_stage, std::sync::atomic::Ordering::Relaxed);
-            let started = std::time::Instant::now();
+            let mut timings: Vec<u128> = Vec::new();
             let mut runs: Vec<Vec<String>> = Vec::new();
-            for instruction in &instructions {
-                let hits = memory.recall(instruction);
-                runs.push(
-                    hits.iter()
-                        .take(10)
-                        .map(|hit| hit.fact.name.clone())
-                        .collect(),
-                );
+            for _ in 0..REPEATS {
+                let started = std::time::Instant::now();
+                runs.clear();
+                for (instruction, vector) in instructions.iter().zip(prepared.iter()) {
+                    let hits = memory.recall_with_vector(instruction, vector.as_deref());
+                    runs.push(
+                        hits.iter()
+                            .take(10)
+                            .map(|hit| hit.fact.name.clone())
+                            .collect(),
+                    );
+                }
+                timings.push(started.elapsed().as_micros());
             }
-            (started.elapsed().as_millis(), runs)
+            timings.sort_unstable();
+            (timings[timings.len() / 2], runs)
         };
-        let (plain_ms, plain_runs) = measure(false);
-        let (two_ms, two_runs) = measure(true);
+        let (plain_us, plain_runs) = measure(false);
+        let (two_us, two_runs) = measure(true);
+        let plain_ms = plain_us / 1000;
+        let two_ms = two_us / 1000;
         let mut overlaps = Vec::new();
         for (index, (plain, two)) in plain_runs.iter().zip(two_runs.iter()).enumerate() {
             let shared = plain.iter().filter(|name| two.contains(name)).count();
@@ -7449,8 +7506,10 @@ mod tests {
         let mean_overlap: f64 =
             overlaps.iter().map(|o| *o as f64).sum::<f64>() / overlaps.len() as f64 / 10.0;
         println!(
-            "the gate: mean recall@10 agreement {mean_overlap:.3} (≥0.98 passes) over {facts} facts; single {plain_ms}ms vs two-stage {two_ms}ms for {} instructions",
-            instructions.len()
+            "the gate: mean recall@10 agreement {mean_overlap:.3} (>=0.98 passes) over {facts} facts; \
+             median-of-{REPEATS} ranking time per {n} instructions: single {plain_us}us vs two-stage {two_us}us \
+             (embeds hoisted out, KI-459)",
+            n = instructions.len()
         );
     }
 
