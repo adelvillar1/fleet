@@ -252,7 +252,7 @@ changes, `learn` from the settles).
 
 ## L6 — The relay transport
 
-*Proposed by `2026-11-11-armada-l6-relay.md` (draft).*
+*Settled by `2026-11-11-armada-l6-relay.md` (built, shipped v0.6.34).*
 
 - **D20 — the broker is Rust, a mode of the fleet binary (`fleet relay
   --broker`), dumb, routing sealed frames by sid; `relay/relay.py` retires.**
