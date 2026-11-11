@@ -1,28 +1,44 @@
 # Fleet
 
-**A coding agent that belongs to you.** One Rust binary on your machine,
-under your own keys, inside the folder you point it at — with a memory it
-keeps, a router it owns, and a harness that does the thinking a language
-model would only guess at. The model speaks last, not alone.
+**A coding agent whose work you can verify.** Most agents ask you to trust a
+black box: they guess a number, forget your context, change themselves
+silently, and sound more confident the bigger the model gets. Fleet takes
+the opposite position — **verifiable facts drive everything it does.** The
+language model is one component, and it speaks last, standing on what the
+harness has computed, recalled, and checked. You get capability you can
+trust, a memory that compounds your knowledge, and a harness you govern.
 
-Fleet began as a question: could an agent be truly self-contained — no
-runtime, no harness checkout, credentials from its own home and nowhere
-else — and still be more capable than the model it calls? The answer is a
-harness where judgment, memory, routing, and verification are components
-you own, and the language model is one voice among them. MIT-licensed and
-open source; the code is the argument, so it ships.
+It is one self-contained Rust binary on your machine, under your own keys,
+in the folder you point it at. But that is table stakes. The thing that
+matters is *how it knows what it knows* — and that nothing it does is beyond
+your inspection. MIT-licensed and open source; the code is the argument, so
+it ships.
 
-## The bet
+## Why it is built this way
 
-Most coding agents rent you a model and wrap a prompt around it. Fleet takes
-the opposite position: **the model is one component, not the harness.** The
-cognitive load a model is worst at — deciding what kind of work this is,
-recalling what you already know, computing a number instead of inventing
-one, judging whether a change is risky — is carried by specialized services
-that are cheap, fast, and reliable beside it. That is what lets a flash-tier
-model do work it would fail at alone.
+A language model is a convincing guesser. Ask it for a number and it will
+produce one that sounds right; ask it whether a change is risky and it will
+tell you a story. That is fine for drafting prose and dangerous for doing
+work. So Fleet does not let the model guess at the things a guess gets
+wrong:
 
-Five vendored lanes do that work, driven over Fleet's own MCP client:
+- **Judgment** is a closed-set classification with a confidence, not an
+  opinion.
+- **Arithmetic** is computed from rows, never generated.
+- **Recall** is vectors and ranked evidence, not the model's memory of you.
+- **Risk** is graded against evidence before a destructive call runs.
+- **Every decision** is recorded and later graded against its outcome.
+
+The model still speaks — it composes, explains, and writes — but it speaks
+*last*, on a foundation of facts the harness established. That is what lets
+a cheap, fast model do work it would fail at alone: the cognitive load it is
+worst at is carried by components that are reliable beside it.
+
+## What is in it for you
+
+### Work you can trust
+
+Five specialized lanes do the grounding, driven over Fleet's own MCP client:
 
 | Lane | What it does | What it returns |
 |---|---|---|
@@ -34,83 +50,98 @@ Five vendored lanes do that work, driven over Fleet's own MCP client:
 
 Hallucination is controlled by construction: closed output spaces,
 confidence gates in the path rather than the prompt, a generative leg
-bounded and validated before it ships, and outcomes graded before they may
-change behavior. The case, with the evidence, is
+bounded and validated before it ships. The case, with the evidence, is
 [docs/architecture/lanes.md](docs/architecture/lanes.md).
 
-## What makes it yours
+### A memory that compounds your knowledge
 
-- **Self-contained.** One static Rust binary. No Node, no checkout, no
-  foreign runtime. Credentials resolve from the environment and
-  `~/.fleet/.env` and are read from nowhere else.
-- **A memory you can read and edit.** One markdown fact per file,
-  git-tracked, recalled by meaning. It keeps your corrections, its own
-  failures, and what aged out — and you can inspect all of it.
-- **Autonomy graded on evidence.** Every route is judged and graded;
-  self-changes to skills, memory, and source are proposals that apply only
-  through the local gate. Nothing ships green by assertion.
-- **Your work is the view.** The surfaces are organized around what you are
-  doing — the conversation, the deliverables, the bots, the lessons — not
-  around the machinery.
+Memory is not a black box you hope remembers you. It is a corpus of
+markdown facts, one per file, git-tracked, that you can read and edit. Every
+fact names *how it is known* — stated by you, inferred by the harness, or
+validated against evidence — and a nightly dream pass checks the inferences
+against their sources. Your corrections are a protected tier that is never
+evicted; the harness's own failures are kept as anti-vectors so it does not
+repeat them; recall is shape-first, so the problem's structure finds the
+relevant knowledge and the words corroborate within it. What ages out is
+superseded and archived, not lost. The longer you work, the more the harness
+knows — and you can audit every bit of it.
+([docs/features/memory.md](docs/features/memory.md))
 
-## What it does today
+### Capability you govern
 
-Three faces over one agent core — the browser console (`fleet gui`), the
-terminal surface (`fleet`), and the headless CLI — each with the
-conversation first.
+The harness grows its own skills, tools, workflows, and loops — but never
+silently, and never beyond your reach:
 
-- **Conversation and runs** — standing goals, mid-run steers, checkpoints
-  you can rewind, and compaction that scales with the serving model's
-  window. Sessions end only by archive, the owner's verb.
-- **Memory and skills** — shape-first recall over a git-tracked corpus;
-  skills as procedural memory, disclosed description-first and fetched on
-  demand, with the harness's own drafts waiting as proposals that never
-  apply silently.
-- **Delegation with a record** — a child is a real session on a scoped
-  toolset, routed over its own brief, working in its own collision-free
-  [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) workspace over one
-  shared history.
-- **A router that owns its decisions** — your declared chain, sys1-judged
-  per task, failover by failure class. The router decides unless you pin;
-  routing is a decision, not an inference.
-- **Huddles and bots** — rooms with your personas; `@name` routes a turn to
-  a bot with its own voice and tools; a capability the room lacks leaves a
-  suggestion card, not a failure. Your SOUL is the guardrail under every
-  bot's voice.
-- **Learning as a work surface** — a first-class measure → plan → teach
-  loop, its propositions riding the memory substrate, its friction feeding
-  the skill drafter.
-- **A design canvas** — pages from a brief on a pan/zoom board, live token
-  tweaks, measured accessibility checks, and exports; a board feeds its
-  project's knowledge.
-- **Work from anywhere** — paired devices and channels over a relay, off by
-  default, capability fixed at pairing.
-- **A resource contract** — the run loop admits, measures, and curtails
-  against the machine's own learned profile; a budget per store, not a
-  cleanup after.
+- **Skills** are procedural memory, disclosed description-first and fetched
+  on demand. The harness drafts new ones from session evidence, but they
+  wait as *proposals* that apply only through the gate.
+- **Tools** are a bounded set — the built-ins plus the lanes over MCP — every
+  call validated, the destructive class held at an approval seat you answer.
+  The harness cannot reach what it is not granted.
+- **Workflows** are composed and named: the skill chains
+  (warmup → plan → build → recap), delegation with a dependency graph, rooms
+  with your bots. Work is structured, not improvised.
+- **Loops** are how the harness maintains itself on evidence: calibration
+  grades every routing decision against its outcome; self-improvement
+  proposes changes that are *measured before they are kept*, reversible, and
+  leave a lesson behind; the learning loop teaches from the substrate; the
+  health loop watches the machine. Every self-change is gated.
 
-Every surface, in depth:
-[docs/architecture/surfaces.md](docs/architecture/surfaces.md) and
-[docs/features/](docs/features/).
+The thread through all of it: grounded in facts, bounded by closed sets and
+gates, governed by proposals and approval, auditable through provenance and
+logs. ([docs/features/](docs/features/))
+
+### One productive front end
+
+Fleet is not a chat window you visit — it is meant to be the place your work
+lives. The conversation, the desk with its deliverables and lessons, the
+bots, the learning, the design canvas, the calibration: one productive
+surface, organized around *your work*, not the machinery. Three faces over
+one agent core — the browser console (`fleet gui`), the terminal (`fleet`),
+and the headless CLI — each with the conversation first, plus a native
+desktop shell. The direction is to connect them with real tissue: a task
+links to its conversation, its deliverable, the bot that did it, and the
+lesson it taught — one workspace, not a drawer of silos.
+([docs/architecture/surfaces.md](docs/architecture/surfaces.md))
+
+### A machine it respects
+
+The run loop measures what it uses, refuses work the machine cannot host,
+settles what the work actually took, and learns its estimates from those
+settlements. A store has a number it stays under; work is refused *before*
+it starts rather than rescued after. A breach is arithmetic, not a judgment
+call — the numbers go in front of you, and the run continues only on a yes.
+([docs/features/resource-contract.md](docs/features/resource-contract.md))
+
+## How it stays trustworthy
+
+The method is the scientific one, applied to the harness itself. Every
+non-trivial change is a **plan with acceptance criteria** — the hypothesis.
+The build is the experiment. The **gate** is the measurement:
+`cargo fmt`, `clippy`, `build`, `test`, the fixed eval corpus, and the plan,
+evidence, and architecture gates over the plans, exit codes read directly.
+The **calibration stream** grades the decisions against their outcomes, and
+your agree-or-disagree rides the same append-only row as ground truth. The
+recap is the conclusion. Nothing ships green by assertion; each claim has a
+gate, and the gates grade themselves.
+
+That is the whole bet: an agent that gets more capable without getting less
+reliable, because every increase in capability is measured against evidence
+before it is kept.
 
 ## Where it is heading
 
-Fleet today is one agent that is yours. The direction is **armada**: many
-installs, one shared mind.
+Fleet today is one agent whose work you can verify. The direction is
+**armada**: many installs, one shared mind. The same binary becomes a fleet
+— instances on your machines and VPSs, commanded from a flagship, thinking
+from a shared corpus of memories, skills, and tools that syncs across them.
+A memory born on one machine reaches another working the same project. A
+security substrate of principals, grants, and step-up approval is designed
+once, so the fleet can grow into a multi-user org — a team workspace where
+humans and agents collaborate, on the same fact-driven foundation.
 
-The same self-contained binary becomes a fleet — instances on your machines
-and VPSs, commanded from a flagship, thinking from a shared corpus of
-memories, skills, and tools that syncs across them. A memory born on one
-machine reaches another working the same project. The relay becomes a
-two-way command lane; a security substrate of principals, grants, and
-step-up approval is designed once, so the fleet can grow into a multi-user
-org — a team workspace where humans and agents collaborate, not just a
-control plane they tolerate.
-
-It is the same bet scaled: an agent that belongs to you becomes a fleet that
-belongs to you, the cognition owned and the model speaking last at every
-node. The full direction — the substrate, the relay, the surfaces, and the
-prior art it borrows from — is
+It is the same bet scaled: capability you can trust, memory that compounds,
+a harness you govern — at every node. The full direction is
 [docs/architecture/2026-11-11-armada-direction.md](docs/architecture/2026-11-11-armada-direction.md).
 
 Fleet is **beta** (0.6.x). The owner's bar is the reliable execution of a
