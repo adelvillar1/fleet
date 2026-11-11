@@ -1,6 +1,6 @@
 [package]
 name = "fleet-desktop"
-version = "0.6.28"
+version = "0.6.29"
 edition = "2021"
 description = "Fleet's native shell — the face in its own window"
 license = "MIT"

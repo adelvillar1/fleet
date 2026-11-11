@@ -12,6 +12,28 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.29 — 2026-11-11
+
+The KI burndown: conversations are named and found by what they were, and the
+scheduled corpus refresh stops fighting the fact-name grammar.
+
+- **A conversation is named by its task, not its opener** (KI-480). The
+  recall fact's task falls past house words ("warmup", "hi") to the first
+  substantive owner message, and the digest now reads every owner message
+  and compaction summary ahead of the tool calls — so a recall query finds a
+  long conversation by its content words ("memory, cpu, disk", "good
+  citizen"), not only by its calls. The sessions rail titles a row by the
+  run's own summary when the first message is a greeting.
+- **The corpus refresh names the fact dotless** (KI-466). The scheduled
+  task string now instructs the fact name `corpus-<project>-<date>` (the
+  remember grammar refuses a dot) and explains that the substrate writes it
+  to the file `corpus-<project>-<date>.md`, which the tree's ignore rule
+  matches — so the refresh no longer hits the one-call refusal every window.
+- **The plan-gate reads criteria under the right heading** (KI-456, in
+  dev-decisions). The gate's criteria parser is scoped to the Acceptance
+  criteria heading, so a plan's Use-cases block no longer shifts every
+  criterion's id; the plan that parsed 19 now parses its declared 14.
+
 ## v0.6.28 — 2026-11-11
 
 Two active sessions at once, and the face never wedges behind a phantom run.
