@@ -1,5 +1,5 @@
 ---
-status: completed
+status: active
 created: 2026-11-10
 updated: 2026-11-10
 slug: grounded-selection
@@ -204,137 +204,72 @@ These are the contract. Each one is a verifiable assertion. The work is "done"
 when every box is checked. **Order is identity**: criteria are C0, C1, … in
 checkbox order — never reorder after gating.
 
-- [x] C0: A baseline report naming today's wrong-tool rate, malformed-argument
-  rate, repair-turn rate, and mean declaration tokens per request is written
-  to `docs/features/selection.md` with the measurement commands that produced it.
-  (Landed 2026-11-10: `fleet tools audit --all` over 764 logs — wrong-tool
-  0.9% (235/26,556), malformed-argument 0.1% (28), repair 54.2% (496/915),
-  declaration tax 8,028 est. tokens/request of ~70.2k prompt; gate green
-  2,337 passed.)
-- [x] C1: An offline replay grades GLiDE, d1, and Drex heads on recorded
-  selection turns, reports top-1 accuracy and margin AUC per head against C0's
-  baseline, and names the primary head (or records the kill-gate outcome that
-  stops the head-consuming phases).
-  (Landed 2026-11-10: 120 turns, 3 heads — drex 56.7% top-1 / 0.756 AUC,
-  glide 51.3% / 0.787, liquid 28.6% / 0.568. **Kill gate fires**: no head
-  beats the 99.1% baseline; Phases 1-3 stop, 4 and 6 proceed. Full table
-  and reasoning in docs/features/selection.md §head-to-head.)
-- [x] C2: KILLED on C1's measurement (2026-11-10) — no head beats the
-  model's own selection (best 56.7% vs 99.1%); injection would leave one
-  turn in four without the wanted tool. The declaration tax was
-  separately rejected (the surface fits its bound).
-- [x] C3: KILLED with C2 (2026-11-10) — the same selection shape, the
-  same meta-failure.
-- [x] C4: RESOLVED SPLIT (2026-11-10). Detection: the verifier
-  measurement — glide AUC 0.983, 60/60 corruption rejection; drex 0.883 /
-  96.7% — detection is real and shipped (the C12 head in the gate, the
-  repair-leg calib rows). Repair: LFM3-1.7B as the author recovers 29.3%
-  of schema-broken calls vs the loop's 54.2% (58-call measurement,
-  `scripts/c-recovery-measure.py`, p50 2.99s) — the criterion's bar is
-  NOT met, the repair leg is demoted to opt-in
-  (`experiments.repair_leg`, default off), and the detection-half ships.
-  Detection and repair are different skills; only one measured sharp.
-- [x] C5: KILLED as designed (2026-11-10) — the selection margin died
-  with selection. The margin's surviving use is the verification noul at
-  the repair seam (shipped).
-- [x] C6: KILLED as designed (2026-11-10) — cross-vendor ensembles
-  measured identical to control on both mixes; the same-vendor compose
-  (flat x noul, +2.5pp) lives in the weed-then-verify findings and the
-  shipped repair seam instead.
-- [x] C7: KILLED (2026-11-10) — rode the selection heads; the
-  multi-head fan-out's measured envelope (2-3 heads practical, 27
-  collapse) bounds any future version.
-- [x] C8: KILLED as designed (2026-11-10) — it fed off head selection.
-  The surviving idea (the destructive head annotating before the gate)
-  shipped via C12's pre-pass.
-- [x] C9: RESOLVED SPLIT (2026-11-10). The selection-row half died
-  with selection. The judgment-row half shipped: `repair_leg`,
-  `vision_qc`, and the destructive head's annotations all land as calib
-  rows readable from `fleet calib` — the graded stream for everything
-  that measured sharp.
-- [x] C10: Compaction folds, conversation titles, and session-archive
-  summaries each render through the hosted small-model lane with today's path
-  as the named fallback, and the per-call cost delta versus the flagship path
-  is reported in `docs/features/generation.md`.
-  (Landed 2026-11-10 across three commits — the blend1 `generate` tool
-  `e0bbcc9`, the fold leg `f84a896`, the prose act and listing; both lane
-  models probed live, the 1024-token reasoning floor measured, 4
-  lane-driving tests over mock-mcp, gate green 2,345 passed.)
-- [x] C11: tool_advisor prose, improve proposal prose, skill-drafter bodies,
-  anomaly/doctor narration, and delegate briefs render through the hosted
-  lane while tests prove their deterministic inputs are byte-identical to
-  today's and each consumer's existing validation still passes.
-  (Landed 2026-11-10, with three surfaces dispositioned by design
-  authority: the skill drafter's bodies and the tools-advise card
-  narrate through the lane — name/description/evidence and the card
-  byte-identical, the rule text and the card the named fallbacks, the
-  lane text passing the consumer's own validation. The anomaly
-  narration already rides a hosted lane (explain's composed ask) — no
-  change. The doctor recap stays deterministic by its own plan's AC2
-  (evidence-first, ledger-cited — a lane paragraph would replace a
-  landed artifact). Improve-proposal justification and delegate-brief
-  authorship stay with the routed model per this plan's own
-  out-of-scope (small models never author turns); their batch reports
-  stay deterministic. Gate green 2,346.)
-- [x] C12: Destructive detection runs the head first with the substring list
-  as fast path, and a pinned test carrying a command outside `DESTRUCTIVE`
-  that the head judges destructive still reaches the approval gate.
-  (Landed 2026-11-10: the per-seam measurement passed — the head 1/1
-  recall, 76/77 safe precision, the list 0/1 and 69/77 on the same 78
-  hand-labeled commands — then the pre-pass landed in `execute_calls`
-  with the list as the zero-spend fast path and an inline `task_spec`.
-  The order is list-first (a listed command never spends); the head adds
-  the detections the list cannot see. Test over mock-mcp.)
-- [x] C13: CLASSIFIED (2026-11-10): the shape half KILLED (62%
-  against the corpus's own labels; the tables stay, calibrated).
-  Mention-kind and silent-stop: FURTHER EVALUATION — both pass the
-  answer-in-the-question test; they are gated on the owner's hand
-  labels (~30 messages, ~20 turns; the extraction is buildable on
-  request). Moved to the plan's Further-evaluation backlog below.
-- [x] C14: CLASSIFIED (2026-11-10): FURTHER EVALUATION — gated on
-  ~10 hand-labeled skill pairs and two lesson pairs (the owner's call
-  is what makes a pair a duplicate). Moved to the backlog below.
-- [x] C15: CLASSIFIED (2026-11-10): FURTHER EVALUATION — the batched
-  score shape was a wire artifact (never validly measured); the
-  vendor-documented per-item-calls variant is untested and competes
-  against the noul re-rank that already won at one call per turn.
-  Moved to the backlog below; measurable offline on request.
-- [x] C16: CLASSIFIED (2026-11-10): FURTHER EVALUATION — gated on
-  hand-labeled real rows (worth / priority / ready) from the three
-  surfaces. Moved to the backlog below.
-- [x] C17: gen1 media outputs grade through the existing `vision_qc` task,
-  verdicts land as calib rows, and a failing grade names the artifact —
-  pinned by a stubbed vision answer.
-  (Landed 2026-11-10: the sys1 classify tool carries `images` over MCP
-  now; a gen1 imagine's written files grade through `classify` as
-  `vision_qc`, the verdict rides the tool result and a lifecycle row
-  names the artifact; best-effort — a dead lane names itself and the
-  images stand ungraded. Test over mock-mcp; gate green 2,347.)
-- [x] C18: Liquid's hosted embedding API runs beside sem1 on recall
-  candidates and sub-threshold disagreement flags the fact for the
-  dream/validate pass (or Notes record the endpoint's absence as a kill),
-  pinned by a stubbed disagreement.
-  (Kill-gate outcome recorded 2026-11-10: the probe — `POST
-  /v1/embeddings`, `/openai/v1/embeddings`, `/v1/embed` with the live
-  LIQUID_API_KEY — answered HTTP 404 on all three, and the served model
-  list (`/v1/chat/models`) carries five models, none an embedder. The
-  nano embedders are download-only; the hosted second embedder does not
-  exist. sem1 stays the sole embedder; the disagreement pattern is
-  re-openable if Liquid ever serves embeddings.)
-- [x] C19: A validation-failed remember, improve, or skill-frontmatter
-  emission re-authors through the hosted small model before the flagship's
-  next turn, else falls to the error-result loop — one pinned test per tool.
-  (Landed 2026-11-10: `prepare_call_checked` repairs remember and improve
-  emissions once, behind the full validation — Remember::parse /
-  parse_change — as the gate; the Work layer's own parse still the final
-  word and the error-result loop the last rung. The skill-frontmatter leg
-  rides improve's change parse (proposals touching skills/ files are the
-  same emission). Two tests: the repaired emission lands, a garbage lane
-  answer falls to the ordinary path. Gate green 2,349.)
-- [x] C20: Every phase's landing carries its cleanup-ledger entry
-  (activation, C0, C10, C11, C17+C19, C12+C13, C18 probe + sweep, the
-  build-and-cut, the close-out) — no worktrees, no lanes, no scratch,
-  112 GiB free at close, the sweep run twice.
+State as of 2026-11-10, audited against what was planned versus what was
+actually tested. A box is ticked only when the assertion as written was
+met by a test or measurement.
+
+**Met (6):**
+
+- [x] C0: baseline report — `fleet tools audit --all` over 764 logs; the four
+  numbers and their commands are in `docs/features/selection.md` §baseline.
+- [x] C1: the offline replay graded glide/drex/liquid over 120 recorded turns
+  and recorded the kill-gate outcome (best head 56.7% top-1 against the
+  model's 99.1%).
+- [x] C12: the destructive head runs with the substring list as the fast
+  path, and a mock-mcp test carries a command outside `DESTRUCTIVE` that the
+  head flags through to the gate.
+- [x] C17: gen1's images grade through `vision_qc` with the verdict as a
+  calib row naming the artifact — **stubbed** answer, not a live lane call.
+- [x] C18: the embedded-API absence is recorded as a kill with probe evidence
+  (three 404s, a chat-only model list).
+- [x] C20: every phase's landing carries its cleanup-ledger entry.
+
+**Abandoned on measurement — never built, never tested (6):** C2, C3, C5,
+C6, C7, C8. C1's data says no head beats the model's own selection, so these
+were dropped rather than built. Abandonment is not the criterion being met;
+the boxes stay open.
+
+- [ ] C2: top-k choice-head injection — not built.
+- [ ] C3: skill selection by one head pass — not built.
+- [ ] C5: margin under threshold produces a clarifying question — not built.
+- [ ] C6: glide and d1 answer in parallel, agreement acts — not built.
+- [ ] C7: one `sys1_classify` returns four heads — not built.
+- [ ] C8: first tool-call fragment triggers the warm-up — not built.
+
+**Attempted and NOT met as written (4):**
+
+- [ ] C4: the criterion's bar is that the repair leg recovers a *strictly
+  higher* share than the error-result loop. It was built and measured:
+  **29.3% against the loop's 54.2%** (58 corrupted calls, p50 2.99 s). The
+  bar was not met; the leg is now opt-in and off by default.
+- [ ] C9: the criterion asks for a `fleet judge` run over a day's rows whose
+  result is readable from `fleet calib`. Judgment rows (repair_leg,
+  vision_qc) are written, but **that judge run was never executed**.
+- [ ] C11: the criterion names five prose surfaces. Two went through the lane
+  (skill-drafter bodies, the tools-advise card), one was already lane-served,
+  two were dispositioned out (improve prose, delegate briefs) plus the doctor
+  recap. Three of five are not done.
+- [ ] C13: the criterion asks for three seams through a head, each with a
+  test that fails when the head call is removed. The shape seam was measured
+  and killed (62% against the corpus's own labels); **mention-kind and
+  silent-stop were never built**.
+
+**Partially met:**
+
+- [ ] C10: the three prose surfaces are built and the fallbacks are tested
+  against mock-mcp, but the fold was never exercised in a live session — only
+  the title path was called live, once. The cost-delta half of the criterion
+  was retracted at the owner's direction.
+- [ ] C14, C15, C16: these fixtures were run with the *author's* labels, not
+  the owner's — the plan's gate names hand-labeled ground truth, so the runs
+  are evidence about the heads but not the criterion. C15's per-item score
+  variant was measured on accuracy (37.5%/67.5% against the noul re-rank's
+  54.6%/79.0%) and killed.
+
+**Not attempted (0):** none — every criterion was either met, abandoned, or
+attempted.
+
+**Tally: 6 met · 6 abandoned unbuilt · 4 attempted and short · 4 partial.**
 
 ## Files to be touched
 
@@ -669,27 +604,6 @@ discipline. Each stands re-openable only on new evidence:
 The live re-open: **C4's verify+repair leg** on the verifier evidence
 (glide AUC 0.983, 60/60 corruption rejection; drex 0.883/96.7%) — the
 owner's decision, the basis on file.
-
-## Further evaluation (the open residue, the owner's direction 2026-11-10)
-
-The criteria above are classified; the inconclusive ones stay alive
-here as the named backlog, not as open boxes pretending to be in-flight
-work:
-
-- **C13-mention / C13-silent** — pass the answer-in-the-question test;
-  gated on the owner's hand labels (~30 messages, ~20 turns). Build or
-  kill on their per-seam gates.
-- **C14 skill-duplicates + lesson coverage** — gated on ~10 labeled
-  pairs and two lesson pairs.
-- ~~**C15 score re-rank, per-item-calls variant**~~ — **measured and
-  killed 2026-11-10**: 37.5% top-1 / 67.5% top-3 over 40 turns, below
-  the noul re-rank's 54.6% / 79.0%. The ordinal score is not this
-  ranking's refinement signal.
-- **C16 queue triage** — gated on labeled real rows from cron, the
-  inbox, and the boards.
-- **Live grounding** — one real gen1 image through vision_qc, one real
-  repair through the opt-in leg, one real fold for C10's cost table;
-  small spends, keys on hand, next-session acts.
 
 ## Cleanup ledger (C20)
 
