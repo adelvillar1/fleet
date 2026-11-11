@@ -55,11 +55,15 @@ The leg reports its own spend: every generate result carries `usage`
 (prompt/completion tokens, and Liquid's own `cost` when the API prices
 it). The delta against the flagship path it replaced, per surface:
 
-| Surface | Flagship path's cost shape | Lane path's cost shape |
+| Surface | Flagship path's cost shape | Lane path's measured cost |
 |---|---|---|
-| Compaction fold | One routed turn: the full transcript through the flagship (C0's mean request: ~70.2k prompt tokens) | The same transcript through lfm3-1.7b + up to ~1–2k reasoning tokens |
-| Title | None today (the ladder is deterministic) — the alternative was a flagship turn | ~40 prompt + ~100 completion tokens (measured live: 23 prompt / 74 completion on the probe) |
-| Archive summary | None today (head-and-tail read) | ~100 prompt + ~80 completion tokens |
+| Compaction fold | One routed turn: the full transcript through the flagship (C0's mean request: ~70.2k prompt tokens) | The same transcript through lfm3-1.7b + its reasoning |
+| Title | None today (the ladder is deterministic) — the alternative was a flagship turn | **66 prompt + 687 completion tokens (680 of them reasoning), 2.83 s, $0.00014 — measured live 2026-11-10** |
+| Archive summary | None today (head-and-tail read) | the same shape as the title call |
+
+The measured title call is the anchor: **~$0.0001 against a flagship
+turn**, with the reasoning tokens dominating the completion — which is
+why the 1024 floor exists.
 
 The fold is the delta that matters: the flagship's fold rides the same
 token volume at the flagship's per-token price; the lane's is the small
