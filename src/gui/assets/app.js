@@ -20419,6 +20419,12 @@
                 value: (read.identity && read.identity.install_id)
                   ? read.identity.install_id.slice(0, 12) + '…' : 'absent',
                 card: function () { return [['this install', installIdentityCard(read)]]; }
+              }),
+              cfgItem({
+                id: 'grants', kind: 'grants', name: 'the grants',
+                value: (read.grants && read.grants.explicit)
+                  ? read.grants.explicit.length + ' explicit' : 'owner wildcard',
+                card: function () { return [['the grants', grantsCard(read)]]; }
               })])
           ];
         }
@@ -21665,6 +21671,35 @@
       row.appendChild(node('span', 'list-row-key', pair[0]));
       var value = node('span', 'list-row-value');
       value.textContent = pair[1];
+      row.appendChild(value);
+      card.appendChild(row);
+    });
+    return card;
+  }
+
+  // The grant store (armada L3): the owner's wildcard bootstrap and the
+  // explicit grants across every dimension. Read-only — grant-making is a
+  // governance act, never the agent's.
+  function grantsCard(read) {
+    var grants = read.grants || {};
+    var explicit = grants.explicit || [];
+    var card = boardCard(12, 'the grants',
+      explicit.length ? explicit.length + ' explicit' : 'owner wildcard',
+      'the authorization substrate: the owner holds a wildcard grant (every ' +
+      'dimension, scope, class) in lane 1; any other principal needs an explicit ' +
+      'grant. Default-deny — an ungranted action is refused by name.');
+    card.id = 'settings-grants';
+    var bootstrap = node('div', 'list-row');
+    bootstrap.appendChild(node('span', 'list-row-key', 'bootstrap'));
+    var bval = node('span', 'list-row-value');
+    bval.textContent = grants.bootstrap || 'owner wildcard';
+    bootstrap.appendChild(bval);
+    card.appendChild(bootstrap);
+    explicit.forEach(function (grant) {
+      var row = node('div', 'list-row');
+      row.appendChild(node('span', 'list-row-key', grant.principal));
+      var value = node('span', 'list-row-value');
+      value.textContent = grant.dimension + ' · ' + grant.scope + ' · ' + grant.class;
       row.appendChild(value);
       card.appendChild(row);
     });

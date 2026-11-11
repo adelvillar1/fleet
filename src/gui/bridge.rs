@@ -9917,6 +9917,11 @@ fn settings_read(home: &std::path::Path) -> Value {
     let identity_devices = crate::identity::Registry::load(home)
         .map(|registry| registry.devices.len())
         .unwrap_or(0);
+    // The grant store (armada L3): the owner's wildcard bootstrap and the
+    // explicit grants, for the settings trust section.
+    let grants = crate::security::GrantStore::load(home)
+        .map(|store| store.grants)
+        .unwrap_or_default();
     let router = crate::settings::router_config(home, &dotenv);
     let catalog = crate::settings::catalog(home, &dotenv);
     let lanes = lanes_document(home);
@@ -10016,6 +10021,15 @@ fn settings_read(home: &std::path::Path) -> Value {
             "install_id": install_id.map(|id| id.to_string()).unwrap_or_default(),
             "principal": identity_principal.to_string(),
             "devices": identity_devices,
+        },
+        "grants": {
+            "bootstrap": "owner wildcard — every dimension, scope, class",
+            "explicit": grants.iter().map(|grant| json!({
+                "principal": grant.principal,
+                "dimension": grant.dimension.map(|d| format!("{d:?}")).unwrap_or_else(|| "*".to_string()),
+                "scope": grant.scope.clone().unwrap_or_else(|| "*".to_string()),
+                "class": grant.class.map(|c| format!("{c:?}")).unwrap_or_else(|| "*".to_string()),
+            })).collect::<Vec<_>>(),
         },
         "router": router_document(&router),
         "catalog": catalog_document(&catalog),

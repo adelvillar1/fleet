@@ -58,6 +58,9 @@ pub enum Command {
     /// Show the durable event journal: the recent trail, the last sequence
     /// number, and each named consumer's cursor (armada L2).
     Journal,
+    /// Show the grant store: the principal's grants across every dimension
+    /// (armada L3). The owner's wildcard is the lane-1 bootstrap.
+    Grants,
     /// Show the calibration stream: one day's rows, grouped by op.
     Calib(CalibOptions),
     Demand(DemandOptions),
@@ -857,6 +860,7 @@ usage:
   fleet providers                list the routing roster and per-provider state
   fleet identity                 this install's id, its principal, and paired devices
   fleet journal                  the durable event trail, last seq, and consumer cursors
+  fleet grants                   the grant store: the principal's grants per dimension
   fleet calib [--day <date>] [--calibration]
                                 the calibration stream: one day's rows by op;
                                 --calibration renders the per-provider judged
@@ -1100,6 +1104,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "providers" => no_flags(rest, Command::Providers),
         "identity" => no_flags(rest, Command::Identity),
         "journal" => no_flags(rest, Command::Journal),
+        "grants" => no_flags(rest, Command::Grants),
         "calib" => parse_calib(rest),
         "demand" => parse_demand(rest),
         "judge" => parse_judge(rest),

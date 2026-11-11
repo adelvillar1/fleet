@@ -169,6 +169,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Identity) => identity_command(),
         Ok(Command::Journal) => journal_command(),
+        Ok(Command::Grants) => grants_command(),
         Ok(Command::Hygiene) => hygiene_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Demand(options)) => demand_command(&options),
@@ -4232,6 +4233,41 @@ fn journal_command() -> ExitCode {
         names.sort();
         for name in names {
             println!("consumer    {}  at seq {}", name, journal.cursor(&name));
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// `fleet grants`: the grant store (armada L3) — the owner's wildcard
+/// bootstrap and the explicit grants across every dimension.
+fn grants_command() -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let store = match fleet::security::GrantStore::load(&home) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("fleet: grants: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    println!("principal   owner  (wildcard bootstrap — every dimension, scope, class)");
+    if store.grants.is_empty() {
+        println!("grants      none explicit");
+    } else {
+        println!("grants      {}", store.grants.len());
+        for grant in &store.grants {
+            let dimension = grant
+                .dimension
+                .map(|d| format!("{d:?}"))
+                .unwrap_or_else(|| "*".to_string());
+            let scope = grant.scope.as_deref().unwrap_or("*");
+            let class = grant
+                .class
+                .map(|c| format!("{c:?}"))
+                .unwrap_or_else(|| "*".to_string());
+            println!("  {}  {}  {}  {}", grant.principal, dimension, scope, class);
         }
     }
     ExitCode::SUCCESS

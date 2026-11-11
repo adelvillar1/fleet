@@ -2664,6 +2664,26 @@ impl<'a> Agent<'a> {
         if let Some(decision) = self.client.route_decision() {
             profile_order(&mut specs, decision.workload.as_deref());
         }
+        // The per-principal declaration filter (armada L3, D16): the owner's
+        // wildcard admits every tool (lane 1, unchanged); a non-owner
+        // principal sees only the tools it is granted — an ungranted tool is
+        // not even declared.
+        let principal = self
+            .options
+            .principal
+            .as_ref()
+            .map(|p| p.as_str().to_string())
+            .unwrap_or_else(|| crate::identity::OWNER.to_string());
+        if principal != crate::identity::OWNER {
+            if let Some(store) = self
+                .options
+                .improve_home
+                .as_deref()
+                .and_then(|home| crate::security::GrantStore::load(home).ok())
+            {
+                specs.retain(|spec| crate::security::admits_tool(&principal, spec.name(), &store));
+            }
+        }
         (specs, withheld)
     }
 
@@ -5204,6 +5224,54 @@ impl<'a> Agent<'a> {
                      filesystem. Nothing was read, written, or executed. Ask the owner to set a \
                      folder in the run bar; the next run works there.",
                     tool.name()
+                )));
+            }
+        }
+        // The uniform guard (armada L3, D15): the principal's grant is
+        // checked default-deny at the one choke point every call crosses.
+        // Lane 1's owner holds a wildcard, so nothing the owner does today
+        // is refused; the decision is audited to the journal (D17). A
+        // non-owner principal without a matching grant is refused by name.
+        // The step-up tier stays with the approval gate below (lane 1's
+        // in-turn approval is the fresh proof); the signed assertion is the
+        // org-scale form L8 verifies.
+        if let Some(home) = self.options.improve_home.as_deref() {
+            let principal = self
+                .options
+                .principal
+                .as_ref()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_else(|| crate::identity::OWNER.to_string());
+            let class = if crate::approvals::Gate::is_destructive(call) {
+                crate::security::ActionClass::Destructive
+            } else {
+                crate::security::ActionClass::Write
+            };
+            let store = crate::security::GrantStore::load(home).unwrap_or_default();
+            let decision = crate::security::guard::check_grant(
+                &principal,
+                crate::security::Dimension::Tool,
+                "instance",
+                class,
+                &store,
+            );
+            if let Ok(mut journal) = crate::journal::Journal::open(home) {
+                let _ = journal.append(
+                    "guard",
+                    Some(&principal),
+                    self.options.session_id.as_deref(),
+                    serde_json::json!({
+                        "tool": call.function.name,
+                        "dimension": "tool",
+                        "scope": "instance",
+                        "class": format!("{class:?}"),
+                        "decision": format!("{decision:?}"),
+                    }),
+                );
+            }
+            if let crate::security::Decision::Denied { name } = decision {
+                return Ok(settled(format!(
+                    "error: {name}. Nothing was read, written, or executed."
                 )));
             }
         }

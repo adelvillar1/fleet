@@ -89,6 +89,7 @@ pub mod roles;
 pub mod route;
 pub mod route_cache;
 pub mod search;
+pub mod security;
 pub mod session;
 pub mod session_recall;
 pub mod settings;

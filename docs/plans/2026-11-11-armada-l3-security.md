@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-11
 updated: 2026-11-11
 slug: armada-l3-security
@@ -70,14 +70,14 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0: the grant store holds `(principal, dimension, scope, action-class)` tuples; the folder grant is represented as `(owner, project, project:<id>, write)`; an ungranted action is refused by name (default-deny).
-- [ ] C1: the uniform guard checks every call at `prepare_call`; with the owner wildcard, no existing owner action is refused — the four-leg gate passes and behavior is unchanged.
-- [ ] C2: a principal lacking a tool's grant does not see that tool declared (a test pins the per-principal declaration filter).
-- [ ] C3: every guard decision (grant/deny) settles a `guard` journal event carrying principal, dimension, scope, and class (the durable per-principal audit).
-- [ ] C4: a `destructive`/`governance` action requires fresh human proof — lane-1 in-turn approval satisfies it (unchanged), a valid Ed25519 assertion satisfies it, and neither yields `StepUpRequired` (a test pins all three).
-- [ ] C5: an agent attempt to modify the governance layer (grant store, guard config) is refused by name and audited; the agent is never declared a governance tool.
-- [ ] C6: the assertion verifies against the flagship public key and rejects a forged or stale one (a test signs with a test key and pins freshness/nonce).
-- [ ] C7: the security surface — guard refusals are named in the transcript and the settings trust section renders the principal's grants.
+- [x] C0: the grant store holds `(principal, dimension, scope, action-class)` tuples; the folder grant is represented as `(owner, project, project:<id>, write)`; an ungranted action is refused by name (default-deny).
+- [x] C1: the uniform guard checks every call at `prepare_call`; with the owner wildcard, no existing owner action is refused — the four-leg gate passes and behavior is unchanged.
+- [x] C2: a principal lacking a tool's grant does not see that tool declared (a test pins the per-principal declaration filter).
+- [x] C3: every guard decision (grant/deny) settles a `guard` journal event carrying principal, dimension, scope, and class (the durable per-principal audit).
+- [x] C4: a `destructive`/`governance` action requires fresh human proof — lane-1 in-turn approval satisfies it (unchanged), a valid Ed25519 assertion satisfies it, and neither yields `StepUpRequired` (a test pins all three).
+- [x] C5: an agent attempt to modify the governance layer (grant store, guard config) is refused by name and audited; the agent is never declared a governance tool.
+- [x] C6: the assertion verifies against the flagship public key and rejects a forged or stale one (a test signs with a test key and pins freshness/nonce).
+- [x] C7: the security surface — guard refusals are named in the transcript and the settings trust section renders the principal's grants.
 
 ## Files to be touched
 

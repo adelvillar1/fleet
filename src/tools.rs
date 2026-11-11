@@ -4147,6 +4147,14 @@ fn resolve_write_in_root(root: &Path, path: &str) -> Result<PathBuf, String> {
             false => format!("{path}: a symlink resolves outside the working folder"),
         });
     }
+    // The governance layer is immutable to the agent (armada L3, D19): the
+    // grant store and the identity registry are owned by the control plane,
+    // changed only by a governance act, never by the agent's write tools.
+    if crate::security::is_governance_target(&target) {
+        return Err(format!(
+            "{path}: the governance layer is immutable to the agent; grant-making is the owner's act"
+        ));
+    }
     Ok(target)
 }
 
@@ -4335,6 +4343,23 @@ mod tests {
         let stamp = std::time::SystemTime::now() - std::time::Duration::from_secs(7 * 86_400);
         let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         file.set_modified(stamp).unwrap();
+    }
+
+    /// Armada L3 (C5, D19): the governance layer is immutable to the agent —
+    /// a write to the grant store or the identity registry is refused by
+    /// name; an ordinary file resolves.
+    #[test]
+    fn the_governance_layer_is_immutable_to_the_agent() {
+        let root = scratch("governance");
+        for name in ["grants.json", "identity.json"] {
+            let err = resolve_write_in_root(&root, name).unwrap_err();
+            assert!(
+                err.contains("governance layer is immutable"),
+                "{name}: {err}"
+            );
+        }
+        assert!(resolve_write_in_root(&root, "src/main.rs").is_ok());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// KI-071: the measured per-turn cost of the `subagent` declaration,

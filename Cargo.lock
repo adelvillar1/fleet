@@ -1156,6 +1156,7 @@ dependencies = [
  "png",
  "rand",
  "ratatui",
+ "ring",
  "serde",
  "serde_json",
  "sha2",
