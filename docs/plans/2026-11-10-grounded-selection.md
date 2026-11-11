@@ -1,11 +1,17 @@
 ---
-status: active
+status: cancelled
 created: 2026-11-10
 updated: 2026-11-10
 slug: grounded-selection
 ---
 
 # Plan: grounded selection — decision heads and small models across the estate
+
+> **CLOSED 2026-11-10 by the owner's direction — cancelled, not completed.**
+> 6 criteria were met, 6 were abandoned unbuilt after C1's measurement, 4
+> were attempted and fell short of their stated bar, 4 are partial. The
+> owner closed the plan rather than pursuing the rest. Nothing below is
+> re-opened, extended, or turned into new criteria.
 
 ## Context
 
