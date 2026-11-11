@@ -1,0 +1,33 @@
+---
+name: learnharness-deep-dive-2026-11-08
+description: "project 2026-11-08 — amosblomqvist/learnharness read against fleet: the teaching theory and the measure→plan→teach→practice loop mapped onto fleet's machinery; the Learning feature designed for the work menu, sharpened by the owner's rulings that learning is project knowledge and self-improvement feedstock (docs/architecture/deep-dive-2026-11-08-learnharness.md, 0239f9b + c7acd46); no plan drafted"
+type: project
+date: 2026-11-11
+basis: inferred
+tier: durable
+shape: []
+phrases: []
+missing: []
+premises: []
+recall-count: 0
+superseded-by:
+valid-until:
+source: zcode:fleet:content:285983102772d99aaed2c496d57acdf6f320aad7347d3891e9bb9e2378839d34
+---
+
+The owner's steer (2026-11-08): *"this one is a bit of a greenfield, I always thought that learning is part of my work process. I would like to implement something similar to what this harness does and put it as a first class citizen feature inside the work menu"* — the fourth comparison dive in the series (Anthropic memory, DoubleAI self-improvement, Waza habits, now LearnHarness), and the first that becomes a first-class feature rather than a plan of fixes.
+
+**LearnHarness in one line:** an agent harness for learning — the agents probe the learner's current understanding, plan the minimal dependency tree to the goal, teach one reasoning step at a time with a check after each, then run practice sessions where the knowledge must come to mind unnamed. The terminal condition is the goal *feeling obviously true* (not recall, not coverage); a knowledge graph (propositions + jointly-entailing reasoning chains, with provenance to sessions) carries it across sessions, storing ideas and connections, never mastery ratings.
+
+**The theory's load-bearing points** (the acceptance criteria any build must meet): the learner's effort goes only into the material (the system absorbs the logistics — research, fact-checking, planning, ordering); teaching moves in single checked steps so errors surface the moment they are stepped on and are repaired before anything is built on them; the plan's resolution must not leak into the lesson (the plan is the map, not the road); the learner's thinking fields — reasoning, uncertainty, reactions — are the richest data, more than right/wrong; a check after every step.
+
+**The design mapped onto fleet's machinery:** the lesson/practice sessions ride the session machinery; the lesson plan is the dependency graph module (`src/graph.rs`) with a validated Mermaid DAG (the minimal tree — nothing held re-taught, nothing off-path taught); the Prober/Teacher/Practitioner are the roles module; the propositions could be a fact type while the chains (joint premises ⇒ conclusion — a hyperedge the pairwise recall graph lacks) need a new store; the learning events join the calibration stream; the practice problems sit beside the eval corpus; the face's rail hosts the Learning section; the dream pass is the extraction pipeline's sibling (extract → audit → merge, gated). The evidence discipline is a ruling: sessions = what happened, the graph = the intended map, confidence is self-reported, model-authored content can be wrong.
+
+**The scope note (the dive's own):** this is a PROGRAM, not a plan — the lesson session kind and the probe loop alone is the first plan's worth; the face surface triggers the mockups-first rule.
+
+**The owner's two rulings (2026-11-08), which moved the design's center of gravity:** *"learning needs to also be treated as project knowledge, there is no reason for having all this information and not treating it that way, it could also feed the self-improvement system."* (a) The knowledge graph rides the MEMORY SUBSTRATE, not a new store — the propositions are facts (a `proposition` type), the chains are facts carrying a `premises` field (the joint-premise hyperedge the pairwise recall graph lacks), the provenance is the fact's `source`, the practice outcomes are facts; the extraction pipeline writes through the one writer, so the recall, the dream pass, and the calibration rows apply unchanged — a future session working the project recalls what the learner holds like any other project knowledge. (b) The learning record's friction is the self-improvement system's feedstock: the learning events join the calib stream as rows the demand map reads (the learner's confusions become demand classes), the recurring confusions feed the clustering beat's shape proposals (already owner-applied `improve` proposals), and the friction itself is proposal feedstock ("the confusion about X says the docs lack Y"). The dream pass reads the teaching prose for the extraction and the learner's records for the confusions in one pass. The first plan's scope adjusts: the lesson session kind's records ride the substrate from the start (the probe answers and checks are facts and calib rows, not a side format).
+
+**Why:** the owner's framing — learning is part of the work process, not a separate app — makes the work menu the feature's home, and the two rulings make the learning record a first-class citizen of the knowledge and self-improvement systems rather than a silo.
+**How to apply:** the first plan should carry the lesson session kind and the probe loop, with the frontmatter schema work (the `proposition` type, the `premises` field) through the same `Remember::parse` path; the owner's go decides. Related: [[self-improvement-program-merged-and-delivered-2026-11-07]], [[waza-deep-dive-and-improvements-plan-2026-11-08]], [[memory-dreaming-plan-implemented-2026-11-07]], [[fleet-deliverables-and-kami-2026-11-07]].
+
+**The third ruling (2026-11-08, the capability feed):** *"also learning could be a signal that some new personas are needed, or skills, or tools, or workflows"* — the learning record's friction names what the project lacks, and the lack's kind picks the surface: PERSONAS (a lesson needing an expertise the project has no one in — the roles module, the huddle's `author_persona` precedent), SKILLS (a recurring procedure — the self-authoring drafter's owner-gated drafts, teaching prose as feedstock), TOOLS (friction no tool addresses — the `improve` proposal store as the backlog), WORKFLOWS (a procedure repeating across lessons — the cron, the plan templates, the huddle workflows). The huddle's capability-gap card is the precedent; the learning record generalizes it; every proposal lands through its surface's own gate, never a silent self-application. The design doc's feed section carries it as the third feed (4378e81); see [[learning-is-project-knowledge-and-feedstock]] for the full ruling set.
