@@ -448,12 +448,16 @@ fn unquote_foreign(value: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct RemoteInstance {
     project: String,
+    /// The remote corpus's fact tree (a git work tree synced by L4). The
+    /// feeder reads it at its HEAD commit — one corpus, two feeders.
+    root: std::path::PathBuf,
 }
 
 impl RemoteInstance {
-    pub fn new(project: &str) -> RemoteInstance {
+    pub fn new(project: &str, root: impl Into<std::path::PathBuf>) -> RemoteInstance {
         RemoteInstance {
             project: project.to_string(),
+            root: root.into(),
         }
     }
 }
@@ -467,11 +471,39 @@ impl Source for RemoteInstance {
         &self.project
     }
 
+    /// Read the remote corpus at its git HEAD (D27): the tracked fact tree,
+    /// provenance-tagged `armada:<project>:<commit>` by the unchanged pull.
+    /// An absent corpus is a named absence, never an empty success.
     fn read(&self) -> Result<Snapshot, PullError> {
-        Err(PullError::NotYetBuilt(format!(
-            "the armada remote-instance feeder is not yet built — project `{}` has no remote source to pull from (the local harness feeder is `--source zcode`)",
-            self.project
-        )))
+        if !self.root.exists() {
+            return Err(PullError::Absent(format!(
+                "the remote corpus for `{}` is not present at {} — sync it first (`fleet memories --sync`)",
+                self.project,
+                self.root.display()
+            )));
+        }
+        let revision = store_revision(&self.root);
+        let mut facts = Vec::new();
+        let mut skips = Vec::new();
+        let today = crate::calib::today();
+        for fact in crate::memory::load_facts(&self.root) {
+            // A retired fact is not a live import; the archive is named.
+            if fact.forgotten(&today) {
+                skips.push(fact.name.clone());
+                continue;
+            }
+            facts.push(SourceFact {
+                name: fact.name.clone(),
+                description: fact.description.clone(),
+                fact_type: fact.fact_type.clone(),
+                body: fact.body.clone(),
+            });
+        }
+        Ok(Snapshot {
+            revision,
+            facts,
+            skips,
+        })
     }
 }
 
@@ -705,15 +737,23 @@ fn content_digest(description: &str, fact_type: &str, body: &str) -> String {
 /// fact whose name already sits at the bound still lands a valid key
 /// rather than overshooting it.
 fn replacement_name(root: &Path, name: &str) -> String {
-    // Room for `-r` and a serial of up to four digits.
-    let budget = MAX_NAME_CHARS.saturating_sub(6);
+    // Room for `-r<serial>-<install8>` (the install-scoped serial, D25).
+    let budget = MAX_NAME_CHARS.saturating_sub(16);
     let mut base: String = name.chars().take(budget).collect();
     while base.ends_with('-') {
         base.pop();
     }
+    // The install suffix disambiguates across installs (the distributed
+    // KI-285 fix): two installs never mint the same replacement name. The
+    // local free-serial scan + flock still order one install's writes.
+    let install = root
+        .parent()
+        .and_then(|home| crate::identity::install(home).ok())
+        .map(|id| id.as_str().to_string())
+        .unwrap_or_default();
     let mut serial = 2;
     loop {
-        let candidate = format!("{base}-r{serial}");
+        let candidate = crate::corpus::scoped_replacement(&base, serial, &install);
         if !root.join(format!("{candidate}.md")).exists() {
             return candidate;
         }
@@ -1362,8 +1402,12 @@ mod tests {
         // the fresh provenance.
         let facts = load_facts(&root);
         let old = facts.iter().find(|fact| fact.name == "updated").unwrap();
-        assert_eq!(old.superseded_by, "updated-r2");
-        let new = facts.iter().find(|fact| fact.name == "updated-r2").unwrap();
+        // The replacement serial is install-scoped (L4, D25): two installs
+        // never mint the same name.
+        let install = crate::identity::install(&home).unwrap();
+        let replacement = crate::corpus::scoped_replacement("updated", 2, install.as_str());
+        assert_eq!(old.superseded_by, replacement);
+        let new = facts.iter().find(|fact| fact.name == replacement).unwrap();
         assert_eq!(new.description, "the second words");
         assert_eq!(new.body, "Second body.");
         assert!(new.source.starts_with("zcode:fleet:"));
@@ -1433,14 +1477,15 @@ mod tests {
             Some(&"git:abc123".to_string())
         );
 
-        // The armada stub: the same interface, a named absence.
-        let remote = RemoteInstance::new("demo");
+        // The armada feeder: the same interface; an absent corpus is a
+        // named absence, never an empty success (L4, D27).
+        let remote = RemoteInstance::new("demo", home.join("remote-corpus"));
         assert_eq!(remote.harness(), "armada");
         let error = remote.read().unwrap_err();
-        assert!(matches!(error, PullError::NotYetBuilt(_)), "{error}");
-        assert!(error.to_string().contains("not yet built"), "{error}");
+        assert!(matches!(error, PullError::Absent(_)), "{error}");
+        assert!(error.to_string().contains("not present"), "{error}");
         let error = pull(&remote, &memory, &home, None).unwrap_err();
-        assert!(error.to_string().contains("armada"), "{error}");
+        assert!(error.to_string().contains("not present"), "{error}");
         let _ = fs::remove_dir_all(&home);
     }
 

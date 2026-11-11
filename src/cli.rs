@@ -432,6 +432,12 @@ pub struct MemoriesOptions {
     /// The source harness the pull reads (`--source`); absent means the
     /// default (`zcode`). Only meaningful with `--pull`.
     pub pull_source: Option<String>,
+    /// Run the corpus sync (armada L4): fetch → merge → push the shared
+    /// corpus over git. With no remote configured, refuses by name.
+    pub sync: bool,
+    /// The corpus remote URL (`--remote`); absent means the configured one.
+    /// Only meaningful with `--sync`.
+    pub sync_remote: Option<String>,
 }
 
 /// Options for `fleet remember`. The flags are the frontmatter's own
@@ -1826,6 +1832,8 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
     let mut pull = false;
     let mut pull_project: Option<String> = None;
     let mut pull_source: Option<String> = None;
+    let mut sync = false;
+    let mut sync_remote: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -1856,6 +1864,14 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
                     return Err("--source needs a harness name".to_string());
                 }
                 pull_source = Some(value);
+            }
+            "--sync" => sync = true,
+            "--remote" => {
+                let value = take_value(args, &mut index, arg)?;
+                if value.trim().is_empty() {
+                    return Err("--remote needs a git URL".to_string());
+                }
+                sync_remote = Some(value);
             }
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown memories option `{arg}`"));
@@ -1897,6 +1913,15 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
     if !pull && (pull_project.is_some() || pull_source.is_some()) {
         return Err("--project and --source name the pull's store; they need --pull".to_string());
     }
+    if sync && (recall.is_some() || shape.is_some() || consolidate || validate || archive || pull) {
+        return Err(
+            "--sync distributes the corpus and prints what it did; it combines with nothing"
+                .to_string(),
+        );
+    }
+    if !sync && sync_remote.is_some() {
+        return Err("--remote names the corpus sync's remote; it needs --sync".to_string());
+    }
     Ok(Command::Memories(MemoriesOptions {
         recall,
         shape,
@@ -1906,6 +1931,8 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
         pull,
         pull_project,
         pull_source,
+        sync,
+        sync_remote,
     }))
 }
 
@@ -4755,6 +4782,8 @@ mod tests {
         assert_eq!(
             parse(&args(&["memories"])).unwrap(),
             Command::Memories(MemoriesOptions {
+                sync: false,
+                sync_remote: None,
                 recall: None,
                 shape: None,
                 consolidate: false,
@@ -4768,6 +4797,8 @@ mod tests {
         assert_eq!(
             parse(&args(&["memories", "--recall", "the deploy is failing"])).unwrap(),
             Command::Memories(MemoriesOptions {
+                sync: false,
+                sync_remote: None,
                 recall: Some("the deploy is failing".to_string()),
                 shape: None,
                 consolidate: false,
@@ -4781,6 +4812,8 @@ mod tests {
         assert_eq!(
             parse(&args(&["memories", "--shape", "deploy"])).unwrap(),
             Command::Memories(MemoriesOptions {
+                sync: false,
+                sync_remote: None,
                 recall: None,
                 shape: Some("deploy".to_string()),
                 consolidate: false,
@@ -4796,6 +4829,8 @@ mod tests {
         assert_eq!(
             parse(&args(&["memories", "--consolidate"])).unwrap(),
             Command::Memories(MemoriesOptions {
+                sync: false,
+                sync_remote: None,
                 recall: None,
                 shape: None,
                 consolidate: true,
@@ -4809,6 +4844,8 @@ mod tests {
         assert_eq!(
             parse(&args(&["memories", "--consolidate", "--shape", "deploy"])).unwrap(),
             Command::Memories(MemoriesOptions {
+                sync: false,
+                sync_remote: None,
                 recall: None,
                 shape: Some("deploy".to_string()),
                 consolidate: true,
@@ -4822,6 +4859,8 @@ mod tests {
         assert_eq!(
             parse(&args(&["memories", "--archive"])).unwrap(),
             Command::Memories(MemoriesOptions {
+                sync: false,
+                sync_remote: None,
                 recall: None,
                 shape: None,
                 consolidate: false,
@@ -4837,6 +4876,8 @@ mod tests {
         assert_eq!(
             parse(&args(&["memories", "--validate"])).unwrap(),
             Command::Memories(MemoriesOptions {
+                sync: false,
+                sync_remote: None,
                 recall: None,
                 shape: None,
                 consolidate: false,
@@ -4874,6 +4915,8 @@ mod tests {
         assert_eq!(
             parse(&args(&["memories", "--pull"])).unwrap(),
             Command::Memories(MemoriesOptions {
+                sync: false,
+                sync_remote: None,
                 recall: None,
                 shape: None,
                 consolidate: false,
@@ -4896,6 +4939,8 @@ mod tests {
             ]))
             .unwrap(),
             Command::Memories(MemoriesOptions {
+                sync: false,
+                sync_remote: None,
                 recall: None,
                 shape: None,
                 consolidate: false,

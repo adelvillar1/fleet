@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-11
 updated: 2026-11-11
 slug: armada-l4-corpus
@@ -121,15 +121,15 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0: `corpus.sync` with no configured remote refuses by name ("no corpus remote configured") and writes nothing; an unconfigured install's local behavior is byte-identical to today.
-- [ ] C1: `corpus.sync(remote)` over two clones of one corpus fetches, merges, and pushes; the install-scoped cursor at `<home>/corpus-sync.json` advances to the remote revision, and a second sync with no changes is a named no-op.
-- [ ] C2: a conflicted `recall-count` line merges by sum/delta — base 5, ours 8, theirs 7 → merged 10 — never last-writer-wins (a pure three-way rule test pins it).
-- [ ] C3: two installs superseding or archiving the same fact mint distinct install-scoped serials, so no add/add filename collision occurs (a two-install test pins it).
-- [ ] C4: two replacements claiming one predecessor resolve to a single live frontier — higher basis wins, tie → later date, tie → greater install-id — the loser folded into the winner with a named retirement note, read-back verified, nothing hard-deleted.
-- [ ] C5: `RemoteInstance` implements `Source`, reads the remote corpus at a git commit, and `pull()` imports through the unchanged writer with provenance `armada:<project>:<commit>`; the `NotYetBuilt` stub is gone.
-- [ ] C6: a sync moves only the tracked fact tree (`memories/*.md` + `.archive/`); the recall index, `*.lock`, `*.tmp`, and per-install state never enter the synced tree.
-- [ ] C7: every sync settles a `corpus_sync` journal event (install, principal, remote, before/after revision, merged/summed/resolved/refused counts) and the merged tree is graded by read-back (loads as facts, no live fact lost, chains intact) before the sync reports done.
-- [ ] C8: single-owner behavior is preserved — the four-leg gate passes and no existing run is refused (sync is additive and opt-in).
+- [x] C0: `corpus.sync` with no configured remote refuses by name ("no corpus remote configured") and writes nothing; an unconfigured install's local behavior is byte-identical to today.
+- [x] C1: `corpus.sync(remote)` over two clones of one corpus fetches, merges, and pushes; the install-scoped cursor at `<home>/corpus-sync.json` advances to the remote revision, and a second sync with no changes is a named no-op.
+- [x] C2: a conflicted `recall-count` line merges by sum/delta — base 5, ours 8, theirs 7 → merged 10 — never last-writer-wins (a pure three-way rule test pins it).
+- [x] C3: two installs superseding or archiving the same fact mint distinct install-scoped serials, so no add/add filename collision occurs (a two-install test pins it).
+- [x] C4: two replacements claiming one predecessor resolve to a single live frontier — higher basis wins, tie → later date, tie → greater install-id — the loser folded into the winner with a named retirement note, read-back verified, nothing hard-deleted.
+- [x] C5: `RemoteInstance` implements `Source`, reads the remote corpus at a git commit, and `pull()` imports through the unchanged writer with provenance `armada:<project>:<commit>`; the `NotYetBuilt` stub is gone.
+- [x] C6: a sync moves only the tracked fact tree (`memories/*.md` + `.archive/`); the recall index, `*.lock`, `*.tmp`, and per-install state never enter the synced tree.
+- [x] C7: every sync settles a `corpus_sync` journal event (install, principal, remote, before/after revision, merged/summed/resolved/refused counts) and the merged tree is graded by read-back (loads as facts, no live fact lost, chains intact) before the sync reports done.
+- [x] C8: single-owner behavior is preserved — the four-leg gate passes and no existing run is refused (sync is additive and opt-in).
 
 ## Files to be touched
 

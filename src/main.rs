@@ -1781,6 +1781,25 @@ fn run_dream_pass(root: &std::path::Path, home: &std::path::Path) -> String {
 
 fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
     let root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+    if options.sync {
+        let Some(home) = fleet_home().ok() else {
+            eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+            return ExitCode::FAILURE;
+        };
+        return match fleet::corpus::sync(&home, options.sync_remote.as_deref()) {
+            Ok(report) => {
+                println!(
+                    "corpus sync: merged {} · summed {} · resolved {} · refused {}",
+                    report.merged, report.summed, report.resolved, report.refused
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("fleet: memories --sync: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if options.pull {
         return memories_pull_command(&root, options);
     }
@@ -1850,7 +1869,10 @@ fn memories_pull_command(root: &std::path::Path, options: &cli::MemoriesOptions)
     // the armada instance by name. An unknown harness is the discovery's
     // named absence, not a silent default.
     let source: Box<dyn fleet::memory_pull::Source> = if harness == "armada" {
-        Box::new(fleet::memory_pull::RemoteInstance::new(&project))
+        Box::new(fleet::memory_pull::RemoteInstance::new(
+            &project,
+            fleet::corpus::corpus_root(&home),
+        ))
     } else {
         let Some(user_home) = user_home else {
             eprintln!("fleet: no user home known; set HOME to discover foreign memory stores");
