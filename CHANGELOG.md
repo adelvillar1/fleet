@@ -12,6 +12,32 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.30 — 2026-11-11
+
+The first armada-vision increment: fleet pulls knowledge from other harnesses.
+
+**Part of the armada vision** — the shared-mind layer's first working piece.
+The direction in full is `docs/architecture/2026-11-11-armada-direction.md`.
+
+- **The cross-harness memory pull** — `fleet memories --pull [--project <name>]
+  [--source <harness>]` imports a project's facts from another installed
+  harness (zcode first) into fleet's git-tracked corpus: provenance-tagged
+  (`source: zcode:<project>:<revision>`), basis inferred, deduped against
+  native facts (never clobbered), supersede-on-update, archive-on-delete. A
+  one-time bootstrap plus a commit-cursor delta (git HEAD where tracked, a
+  stable content hash otherwise). The `Source` abstraction leaves the armada
+  remote-instance feeder a named stub. Proven on real data: 125 fresh facts
+  imported, every native fact protected, the second pull unchanged.
+- **The README, reframed** — around the why and the payoff: verifiable facts
+  drive everything; work you can trust, a memory that compounds your
+  knowledge, capability you govern, one productive front end. The substrate
+  philosophy (memory, skills, tools, workflows, loops) and the methodology
+  are front and center; self-containment is table stakes, not the pitch.
+- **The armada direction note** — the security substrate (principals, grants,
+  guards, step-up 2FA), the relay as the two-way command lane, the surface
+  progression (CLI/TUI → PWA → Tauri), and the muxin / omni / orbit prior art
+  it borrows from.
+
 ## v0.6.29 — 2026-11-11
 
 The KI burndown: conversations are named and found by what they were, and the
