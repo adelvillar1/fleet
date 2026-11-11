@@ -12,6 +12,44 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.27 — 2026-11-11
+
+The resource contract's numbers derive, and a stale install can no longer hide.
+
+- **The contract's numbers come from the machine** (C10/C11/C12 of
+  `docs/plans/2026-11-09-the-resource-contract.md`). `src/footprint_history.rs`
+  is the one reader of the footprint history: volume, the standing free share
+  over the last 30 readings, its spread, the fill rate in days, memory pressure
+  and laptop/server from the machine's own battery probe. The reserve, the turn
+  cadence, the per-run budget, the upkeep interval and a run's admitting prior
+  all derive from that profile plus the owner's declaration, so no number stays
+  a code constant once a profile exists.
+- **The appetite is declared, and it governs everything.** `appetite`
+  (`tight`/`balanced`/`roomy`, or `steady`) and `footprint.reserve_gib` are
+  settings at last — the first was read by the contract but refused by
+  `fleet settings` since it landed. One grade is in force, so a declaration
+  tightens the reserve, the cadence, the run budget and the upkeep together.
+  `fleet settings unset <key>` is a CLI verb for the first time.
+- **The evidence rides beside every number.** `environment_clause()` prints the
+  inference and what produced it — *"reserve 18 GiB of 460 GiB (inferred; laptop
+  25% free for 2 record(s) ±0 pt)"* — on `fleet footprint`, `fleet doctor`, the
+  run loop's admission and refusal, and the JSON document.
+- **The upkeep cadence is consumed, not printed**: `scripts/daily-maintenance.sh`
+  reads `upkeep_days` as the build lanes' retention window, so a machine filling
+  fast revisits its caches sooner. `scripts/footprint.sh --record` now writes
+  memory into the same history row.
+- **A stale install is a named FAIL.** `fleet doctor` gains a `binary` line that
+  compares the bytes of the built binary against the installed copy — the check
+  `GET /api/version` cannot make, since a rebuild keeps the same version — and
+  names the remedy (`fleet reload --from <build>`). It found the owner's own
+  console serving a thirteen-hour-old binary at this cut.
+- Fixed en route: `reload::source_beside_home` walked two parents and searched
+  `/Users/Projects`, so the build-beside-the-home fallback had never found the
+  checkout (KI-521); `contract::env_from_history` dropped the fill rate, so every
+  run's upkeep read as "not filling" (KI-519); a declared appetite moved the
+  reserve while leaving the cadence and budgets on the inferred grade (KI-518);
+  and `appetite` was unreachable from every settings surface (KI-517).
+
 ## v0.6.26 — 2026-11-10
 
 Experimentation over refusal (the owner's rule 8).
