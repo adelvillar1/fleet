@@ -1,278 +1,150 @@
 # Fleet
 
-**Fleet is a coding agent that runs on your machine, under your own keys,
-inside the folder you point it at.** It remembers, delegates, schedules,
-and routes each piece of work to the model your plans already pay for —
-with five specialized services deciding, measuring, indexing and
-rendering, and the language model speaking last. It began as a question:
-could an agent be self-contained — one binary, no runtime, no harness
-checkout, credentials from its own home and nothing else? The answer
-that holds is a harness whose router it owns, whose memory it can read
-and edit, whose self-changes are proposals that never apply silently,
-and whose autonomy is graded on evidence. MIT-licensed and open source —
-the code is the argument, so it ships.
+**A coding agent that belongs to you.** One Rust binary on your machine,
+under your own keys, inside the folder you point it at — with a memory it
+keeps, a router it owns, and a harness that does the thinking a language
+model would only guess at. The model speaks last, not alone.
 
-## The arc
+Fleet began as a question: could an agent be truly self-contained — no
+runtime, no harness checkout, credentials from its own home and nowhere
+else — and still be more capable than the model it calls? The answer is a
+harness where judgment, memory, routing, and verification are components
+you own, and the language model is one voice among them. MIT-licensed and
+open source; the code is the argument, so it ships.
 
-**The idea.** An agent that belongs to its owner: one static Rust
-binary, no Node runtime, no dependency on another harness's checkout,
-credentials resolved from the process environment and
-`<FLEET_HOME>/.env` and read from nowhere else. The agent loop, the
-session log, and the rule that everything the model sees is
-reconstructable from that log were inherited from the DeepSeek Harness's
-architecture and reimplemented natively — a port, not a fork
-(`docs/architecture/overview.md`).
+## The bet
 
-**The experiment.** Absorb the whole ecosystem into that one binary:
-the sys1 house's five lanes — judgment, tabular, embeddings, media, and
-their grounded composition — driven over a hand-rolled MCP client; a
-router the app owns, with the precursor's decision core as its spec
-rather than its dependency; a calibration stream in dev-decisions'
-vocabulary that grades what served; and a self-maintenance loop whose
-changes to the harness's own skills, memory, and source are proposals
-that apply only through the local gate. The methodology grew with it:
-every non-trivial piece of work is a plan with acceptance criteria, and
-the plan is the source of truth for whether it is done.
+Most coding agents rent you a model and wrap a prompt around it. Fleet takes
+the opposite position: **the model is one component, not the harness.** The
+cognitive load a model is worst at — deciding what kind of work this is,
+recalling what you already know, computing a number instead of inventing
+one, judging whether a change is risky — is carried by specialized services
+that are cheap, fast, and reliable beside it. That is what lets a flash-tier
+model do work it would fail at alone.
 
-**The solution.** A language model is one component, not the harness.
-Five specialized services do the work a model would only guess at, and
-the language model speaks last:
+Five vendored lanes do that work, driven over Fleet's own MCP client:
 
 | Lane | What it does | What it returns |
 |---|---|---|
-| **sys1** — judgment | classifies the work: which workload tier, which execution shape, is this diff risky, did the run land | a label from a closed set, with a confidence — it cannot invent a category |
-| **sdm1** — tabular | computes a number from rows: classification or regression over a table | a score with an interval — arithmetic is never generated |
-| **sem1** — embeddings | similarity and recall: which fact, which skill, which session means this | vectors in, vectors out — never verdicts |
+| **sys1** — judgment | classifies the work, judges risk, grades the run | a label from a closed set, with a confidence — it cannot invent a category |
+| **sdm1** — tabular | computes a number from rows | a score with an interval — arithmetic is never generated |
+| **sem1** — embeddings | similarity and recall: which fact, skill, or session means this | vectors in, vectors out — never verdicts |
 | **gen1** — media | renders images to a brief, and judges images against one | pixels, and a verdict on pixels |
-| **blend1** — composition | composes the three siblings under one grounded answer, with the language model speaking last | an answer whose reasoning stands on computed facts |
+| **blend1** — composition | grounds one answer over the siblings, the model speaking last | reasoning that stands on computed facts |
 
-Hallucination is controlled by construction — closed
-output spaces, confidence gates in the path rather than in the prompt, a
-generative leg that is bounded and validated before it ships, and
-outcomes that are graded before they may change behavior. That is what
-lets flash-tier models do work they would fail at alone: the cognitive
-load the model is worst at is carried by components that are cheap,
-fast, and reliable beside it. The case, with the evidence, is
+Hallucination is controlled by construction: closed output spaces,
+confidence gates in the path rather than the prompt, a generative leg
+bounded and validated before it ships, and outcomes graded before they may
+change behavior. The case, with the evidence, is
 [docs/architecture/lanes.md](docs/architecture/lanes.md).
 
-**Tested.** The verification is one logic at three scales. The gate at the change: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test` with exit codes read directly, beside the fixed eval corpus graded headless and the plan, evidence, and arch gates over the plans. The judge at the day: the calibration stream grades every route it recorded, per provider-and-workload-shape cell, from redacted evidence only, and the owner's agree-or-disagree rides the same append-only row as ground truth. The same pattern runs at project scale: one-line tower reports reconciled against git. Nothing ships green by assertion; each claim has a gate, and the gates grade themselves.
+## What makes it yours
 
-**Here.** Beta, version 0.5.0-beta.1, past the agent core: routing, memory
-recall, delegation, scheduling, self-calibration, a browser face, a
-terminal face, and the harness maintaining itself. What is next is
-named, not implied — see Sequencing in
-[TECHNICAL-DOCUMENTATION.md](TECHNICAL-DOCUMENTATION.md).
+- **Self-contained.** One static Rust binary. No Node, no checkout, no
+  foreign runtime. Credentials resolve from the environment and
+  `~/.fleet/.env` and are read from nowhere else.
+- **A memory you can read and edit.** One markdown fact per file,
+  git-tracked, recalled by meaning. It keeps your corrections, its own
+  failures, and what aged out — and you can inspect all of it.
+- **Autonomy graded on evidence.** Every route is judged and graded;
+  self-changes to skills, memory, and source are proposals that apply only
+  through the local gate. Nothing ships green by assertion.
+- **Your work is the view.** The surfaces are organized around what you are
+  doing — the conversation, the deliverables, the bots, the lessons — not
+  around the machinery.
 
-## What ships today
+## What it does today
 
-- **Three faces over one agent core** — the browser console
-  (`fleet gui`), the terminal surface (`fleet`), and the headless CLI —
-  each with the conversation first. What the surfaces are for, one by
-  one, is [docs/architecture/surfaces.md](docs/architecture/surfaces.md).
-- **A design canvas** — the console's `design` board: pages from a brief
-  by a Fleet run, side by side on a pan/zoom canvas, with live token
-  tweaks, comment pins, versions, measured accessibility checks and
-  exports (HTML, tokens, a hand-off packet, a PNG). It is the native
-  descendant of the owner's **design-canvas** project: the canvas, its
-  contract and its frame model came over, and the SaaS shell around it —
-  billing, accounts, collaboration, publishing — stayed behind, so a
-  board is one file in the home and every panel reads it. The reasoning
-  is [docs/plans/2026-10-31-design-canvas-native.md](docs/plans/2026-10-31-design-canvas-native.md);
-  the surface is [docs/features/design.md](docs/features/design.md). The composer sits in
-  the canvas's center frame like a conversation's, and its **focus is the
-  request's subject**: no page selected is a board-wide ask, a selected
-  page is the page's ask (the chip says which). Boards and pages are full
-  CRUD; each page carries its own settings (viewport presets, set
-  membership, name); a board binds to a project folder and feeds that
-  project's knowledge — its digest rides every save, its lifecycle facts
-  the memory substrate, and the corpus refresh picks the digests up. Send
-  composes over whichever models the owner presses — a **fan-out**, one
-  run per model, because different models carry different strengths. And
-  every board can be **saved, exported, or hosted locally** at
-  `/site/<slug>/` — a network-dead site built from the frames themselves.
-  A frame is a complete self-contained page, so the board holds what the
-  deck renders and the document preview reads — and any run can put one
-  there.
-- **Plugins — a face you can extend** — a bundle is one folder with a
-  manifest and one self-contained page; installing it adds a rail entry
-  and a mount, and the face plays it in a frame that may ask only the
-  queries the manifest declares. Two tiers: **untrusted** runs sandboxed
-  with no origin and no reach past its declared set, **privileged** is the
-  owner's own and runs in the face's window. **Telemetry** ships as the
-  worked example: eight strata of Fleet's real pipeline — door, recall,
-  skills, route, model, tools, rooms, write-back — drawn from live
-  counts, every figure a query answer, and a refused query rendered as a
-  named refusal rather than a zero. See
-  [docs/features/plugins.md](docs/features/plugins.md).
-- **A router that owns its decisions** — the owner's declared chain,
-  sys1-judged per task, failover by failure class, and deepseek-flash as
-  the tail every walk closes on. Work is judged into tiers — quick,
-  standard code, **frontend** (interface surface routes to
-  deepseek-flash first, GLM behind it across two more hosts), hard,
-  prose, deep context — and nothing is hardcoded: the router decides
-  unless you pin, and `--model` is a pin resolved by name. Routing is a decision, not an inference: a closed verdict set, a confidence floor with the fallback recorded, and a judge that grades each provider by the shape it served, never an average.
-- **Sessions that end only by archive** — the work list shows what is
-  alive (`handed back`, `capped`, `working`), not what merely stopped;
-  archiving is the owner's verb, and archived sessions gather in one
-  collapsed group, restorable on demand.
-- **Huddles — rooms with your bots** — the console's `#/huddles`: one
-  session with members (you and one or more bots), listed active /
-  inactive / ended. `@name` routes the next turn to that bot, which
-  answers with its own tools, skills and voice; deliverables post in-line
-  and open in the right pane. A bot that names a capability the room lacks
-  leaves a suggestion card — convene a role the home keeps, or hire a
-  persona for the gap, standing or temporal. A phase breaks out into a
-  child huddle, and the room keeps what it recalled and what it produced
-  beside its outcomes, with a **distil what we learned** action that turns
-  the room's lessons into facts and skill proposals. Destructiveness is
-  judged by sys1 on the seat, and the owner's SOUL is the guardrail under
-  every bot's voice. See
-  [docs/features/huddles.md](docs/features/huddles.md).
-- **Learning as a first-class work surface** — the measure → plan →
-  teach loop: the prober asks what the learner holds and where it ends,
-  the minimal tree draws the teaching order, the teacher moves one
-  checked step at a time, and the practitioner poses problems that need
-  the knowledge to come to mind unnamed. The propositions ride the
-  memory substrate as chains, and the friction feeds the demand map and
-  the skill drafter. See
-  [docs/features/learning.md](docs/features/learning.md).
-- **A working folder that is a default** — set it once; every chat
-  without its own choice works in it, and the face shows the folder the
-  run will use.
-- **Memory that reads, edits, and remembers its failures** — one
-  markdown fact per file, git-tracked, recalled by meaning, shape-first: the problem's shape partitions recall and the words corroborate within it. Facts carry the vocabulary of trajectories that diverged as anti-vectors, the three endings of a problem (diverged, incomplete, resolved), the owner's own corrections as a tier that is never evicted, and an hourly consolidation that supersedes and archives what aged out. The corpus and its recall counts are both inspectable.
-- **Compaction that scales with the model** — the trigger is three fifths of the serving model's declared window, with a 100k floor, a 32k reserve at the edge, and the last four turns verbatim, so a 128k model and a 1M model run the same rule at different scales.
-- **Skills as procedural memory** — the canonical cross-harness library read in place, disclosed description-first, fetched on demand, arranged on the rail by declared category, with the harness's own drafts waiting as proposals that never apply silently — and an approve that lands a home-side write on its own validations, no repo gate required.
+Three faces over one agent core — the browser console (`fleet gui`), the
+terminal surface (`fleet`), and the headless CLI — each with the
+conversation first.
+
+- **Conversation and runs** — standing goals, mid-run steers, checkpoints
+  you can rewind, and compaction that scales with the serving model's
+  window. Sessions end only by archive, the owner's verb.
+- **Memory and skills** — shape-first recall over a git-tracked corpus;
+  skills as procedural memory, disclosed description-first and fetched on
+  demand, with the harness's own drafts waiting as proposals that never
+  apply silently.
 - **Delegation with a record** — a child is a real session on a scoped
-  tool set, routed by the router over its own brief, with the plan's
-  dependency graph carried beside it.
-- **Work from outside, by grant** — paired devices and channels, off by
+  toolset, routed over its own brief, working in its own collision-free
+  [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) workspace over one
+  shared history.
+- **A router that owns its decisions** — your declared chain, sys1-judged
+  per task, failover by failure class. The router decides unless you pin;
+  routing is a decision, not an inference.
+- **Huddles and bots** — rooms with your personas; `@name` routes a turn to
+  a bot with its own voice and tools; a capability the room lacks leaves a
+  suggestion card, not a failure. Your SOUL is the guardrail under every
+  bot's voice.
+- **Learning as a work surface** — a first-class measure → plan → teach
+  loop, its propositions riding the memory substrate, its friction feeding
+  the skill drafter.
+- **A design canvas** — pages from a brief on a pan/zoom board, live token
+  tweaks, measured accessibility checks, and exports; a board feeds its
+  project's knowledge.
+- **Work from anywhere** — paired devices and channels over a relay, off by
   default, capability fixed at pairing.
-- **Credentials that seal** — a vault that lists names and renders no
-  value, with onboarding that migrates the plaintext `.env`.
+- **A resource contract** — the run loop admits, measures, and curtails
+  against the machine's own learned profile; a budget per store, not a
+  cleanup after.
 
-## How it is built
+Every surface, in depth:
+[docs/architecture/surfaces.md](docs/architecture/surfaces.md) and
+[docs/features/](docs/features/).
 
-Two drawings carry the shape: what the binary is made of, and what one
-turn does. Both are [Archify](https://github.com/tt-a1i/archify) diagrams
-— the interactive HTML sits in [docs/architecture](docs/architecture),
-and each image below links to it. The `SRC` badges on the drawings point
-at the `file:line` each claim was read from.
+## Where it is heading
+
+Fleet today is one agent that is yours. The direction is **armada**: many
+installs, one shared mind.
+
+The same self-contained binary becomes a fleet — instances on your machines
+and VPSs, commanded from a flagship, thinking from a shared corpus of
+memories, skills, and tools that syncs across them. A memory born on one
+machine reaches another working the same project. The relay becomes a
+two-way command lane; a security substrate of principals, grants, and
+step-up approval is designed once, so the fleet can grow into a multi-user
+org — a team workspace where humans and agents collaborate, not just a
+control plane they tolerate.
+
+It is the same bet scaled: an agent that belongs to you becomes a fleet that
+belongs to you, the cognition owned and the model speaking last at every
+node. The full direction — the substrate, the relay, the surfaces, and the
+prior art it borrows from — is
+[docs/architecture/2026-11-11-armada-direction.md](docs/architecture/2026-11-11-armada-direction.md).
+
+Fleet is **beta** (0.6.x). The owner's bar is the reliable execution of a
+whole project, and the shakeout is the work mode until then.
+
+## A look
 
 [![Fleet's architecture — one agent core, three faces](docs/images/architecture-fleet.png)](docs/architecture/fleet-architecture.html)
 
-*One Rust binary holds the turn loop, the router, the tool surface and
-the records; the console, the terminal and the headless CLI are three
-faces over it. The face binds loopback only, and the stores beside the
-core are files in the home — memory one file per fact, the session log
-every record, the canvas the boards and their project digests.*
-
-[![A Fleet turn, end to end](docs/images/process-turn.png)](docs/architecture/fleet-turn.html)
-
-*What one turn does: assemble the context (the standing goal, recalled
-facts, disclosed skills, the bound project's design digests), let sys1
-judge the task, walk the declared chain with failover by class, hold the
-destructive class at the approval seat, then stream the answer while the
-session log records it. The router never guesses, and the record names
-the route it took.*
-
-The console, surface by surface — every destination a user lands on. The
-long pages run one idiom: a rail of sections (what needs you first, then
-the substrate's own categories), one section at a time, one-line rows, and
-the right pane for the item — settings, bots, skills, memory, workspace
-history, and calibration all share it. The main rail groups its fifteen
-destinations, every one with its own mark, and **a group's label folds its
-rows** and keeps the needs-you count it holds, so the rail can return a
-third of the screen without hiding anything silently.
-
-Shots at 1440×900 from a scratch home — the owner's own home is never the
-fixture.
+*One Rust binary holds the turn loop, the router, the tool surface, and the
+records; the console, the terminal, and the headless CLI are three faces
+over it. The stores beside the core are files in the home — memory one file
+per fact, the session log every record. The interactive drawing carries the
+shape; the `SRC` badges point at the `file:line` each claim was read from.*
 
 | | |
 |---|---|
-| ![the conversation](docs/images/surface-chat.jpg) *the conversation: the plan's goal rides the composer, the run's cards open in place* | ![the rooms](docs/images/surface-huddles.jpg) *a room: you and two bots, a deliverable on the shelf, a capability gap the room names* |
-| ![sessions](docs/images/surface-sessions.jpg) *sessions: what is alive — active, handed back, capped — grouped by project* | ![the design canvas](docs/images/surface-design.jpg) *the design canvas: boards by project, pages on a pan/zoom board, the composer in the center frame* |
-| ![the router](docs/images/surface-router.jpg) *the router: the declared chain, the day's ledger, the hour and model mix* | ![delegation](docs/images/surface-delegation.jpg) *delegation: the run's own tree, the runs before it, the plan's declared graph* |
-| ![memory](docs/images/surface-memory.jpg) *memory: one fact per file, recalled by shape, with the corpus counted* | ![skills](docs/images/surface-skills.jpg) *skills: the library by category, what was never used, what awaits a decision* |
-| ![second brain](docs/images/surface-second-brain.jpg) *second brain: every project's six-week pulse and what needs a person* | ![bots](docs/images/surface-bots.jpg) *bots: a persona's conversations, and the channels work arrives on* |
-| ![vault](docs/images/surface-vault.jpg) *the vault: names listed, no value ever rendered* | ![settings](docs/images/surface-settings.jpg) *settings: the router, the accounts, the rules — one card per decision* |
-| ![calibration](docs/images/surface-calibration.jpg) *calibration: the day's stream, the failover gate, the rows it grades* | ![plugins](docs/images/surface-plugins.jpg) *plugins: the tool plugin, the lanes, the MCP servers, the installed bundles* |
-| ![telemetry](docs/images/surface-telemetry.jpg) *the telemetry bundle: eight strata of the real pipeline, every figure a query answer* | ![the folded rail](docs/images/rail-folded.jpg) *the rail with two groups folded — fifteen destinations, six rows* |
-
-
-- **Collision-free delegation, on LayerFS** — each delegated child works
-  in its own writable workspace over one shared committed history, so
-  concurrent agents answer a named conflict instead of stepping on each
-  other's code. Fleet drives
-  [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) (MIT) the way
-  it drives the vendored lanes — an external tool reached through its
-  `layerfs` command, with nothing of it vendored and no runtime entering
-  the binary. `fleet install` provisions the substrate as a standard
-  phase, and a folder's first delegation registers it with no manual
-  step; the merged child's work is applied home through a named
-  conflict path, never silently.
-- **The workspace history instrument** — the LayerFS tree read as a
-  surface: a band for every published layer, a lane for every branch at
-  its actual fork, a leaf per commit, a dashed stem where a publish
-  grafted work back, the substrate's live call feed, a file's
-  text/blame/revisions/diff, and the Store's own accounting — all from
-  one backend read that answers warm in under a quarter-second.
-
-The terminal face — the same core at a keyboard's density. The
-conversation on the left, a tabbed board set on the right, every mode a
-key away. Shots at 120×40 from a scratch home, captured by
-`scripts/tui-shots.py`.
-
-| | |
-|---|---|
-| ![the conversation](docs/images/tui-conversation.png) *the conversation: the run's board beside the transcript, the status bar reading context health* | ![the palette](docs/images/tui-palette.png) *the palette: every pane, panel, and action, filtered by typing* |
-| ![sessions](docs/images/tui-sessions.png) *sessions: the archive as a styled table — a fresh home names its emptiness* | ![checkpoints](docs/images/tui-checkpoints.png) *checkpoints: the turn table; enter arms a rewind, `d` opens the diff — a fresh home has no store yet, and says so* |
-| ![lanes](docs/images/tui-lanes.png) *lanes: the vendored lanes' health, probed live* | ![plan mode](docs/images/tui-plan.png) *plan mode: `Ctrl-T` holds the write-class tools; the plan is the final answer* |
-
-## What is next
-
-Effort levels per workload (research done, plan not written); the
-`composed` workload's reachability by judgment; the bot-first phone
-shell; the cron corpus-refresh repair. Each is named with its reason in
-the technical document's Sequencing section.
-
-Shipped: the guided onboarding (`docs/features/onboarding.md`). A fresh
-`fleet gui` opens on the door — one account, one decision, and the
-answer it proves — and everything else (the lanes, the projects folder,
-the evidence token, the cost ceiling) arrives as benefit cards on
-demand, never as a checklist. `fleet onboard` walks the same sequence in
-a terminal, resuming where the machine left off.
+| ![the conversation](docs/images/surface-chat.jpg) *the conversation: the goal rides the composer, the run's cards open in place* | ![the design canvas](docs/images/surface-design.jpg) *the design canvas: boards by project, pages on a pan/zoom board* |
+| ![a huddle](docs/images/surface-huddles.jpg) *a room: you and your bots, a deliverable on the shelf, a capability gap named* | ![the terminal](docs/images/tui-conversation.png) *the terminal face: the same core at a keyboard's density* |
 
 ## Install
 
-Three ways in: a GitHub release (the prebuilt dmg and CLI tarball), building
-the bundle yourself, or building from this repo. All land the same binary
-and the same home.
+Three ways in, all landing the same binary and the same home.
 
-**The prebuilt release.** The [latest release](https://github.com/adelvillar1/fleet/releases/latest)
-carries the dmg (`fleet_<version>_aarch64.dmg`) that installs the native
-shell as an app, and the CLI tarball (`fleet-aarch64-apple-darwin.tar.gz`)
-for the terminal:
+**The prebuilt release.** The
+[latest release](https://github.com/adelvillar1/fleet/releases/latest) carries
+the dmg (the native shell) and the CLI tarball:
 
 ```sh
 gh release download -R adelvillar1/fleet -p '*.dmg'
 open fleet-*.dmg    # drag fleet.app to /Applications
 ```
 
-**The prebuilt shell (Tauri).** Build the bundle once and install it as
-an app — no shell profile, no checkout; the services root and the lane
-wiring ride inside the bundle:
-
-```sh
-cargo tauri build    # → target/release/bundle/dmg/fleet_<version>_aarch64.dmg
-```
-
-Open the dmg and drag `fleet.app` to `/Applications`. The first launch
-creates the home (`~/.fleet`), builds the lane venvs in the background,
-and opens the face in its own window. Credentials are never written by
-the app: set `DEEPSEEK_API_KEY` in the environment or `~/.fleet/.env`.
-
-**Building from the repo.** A Rust toolchain and the Tauri CLI
+**Build the bundle.** A Rust toolchain and the Tauri CLI
 (`cargo install tauri-cli`) are the only prerequisites:
 
 ```sh
@@ -280,64 +152,63 @@ cargo build --release    # the fleet binary: the TUI, the face's server, the age
 cargo tauri build        # the native shell, bundled as a dmg
 ```
 
-**The home.** `fleet install` provisions `~/.fleet` — the config
-scaffold, the sessions and memory stores, the doctor gate — idempotently;
-its exit code is the doctor's. The vendored lanes under `services/` are
-an optional second step (`fleet install --lanes`), each skipped by name
-when it cannot be built. No step needs Node or another harness's
-checkout.
+The first launch creates the home (`~/.fleet`), builds the lane venvs in the
+background, and opens the face. Credentials are never written by the app:
+set `DEEPSEEK_API_KEY` in the environment or `~/.fleet/.env`.
+
+**Provision the home.** `fleet install` lays out `~/.fleet` — config,
+sessions, memory, the doctor gate — idempotently; the vendored lanes are an
+optional second step (`fleet install --lanes`), each skipped by name when it
+cannot be built. No step needs Node or another harness's checkout.
 
 ## Start here
 
-Build once (see [Install](#install)), then:
-
 ```sh
-target/release/fleet gui                  # the guided first run: the door
-target/release/fleet onboard              # or the same steps in a terminal
-target/release/fleet chat                 # the everyday surface
+fleet gui        # the guided first run: one account, one decision, a real answer
+fleet onboard    # or the same steps in a terminal, resuming where you left off
+fleet chat       # the everyday surface
 ```
 
-`fleet gui` on a fresh home asks for one thing — an account to think
-with — and proves it with a real answer before anything else is offered.
-`fleet onboard` walks the sequence in a terminal and resumes at the first
-incomplete step; `--json` prints the document the face reads.
+`fleet gui` on a fresh home asks for one thing — an account to think with —
+and proves it with a real answer before anything else is offered.
 
 ## Foundations
 
-Ten foundations, named rather than borrowed quietly. Two are external; eight are the
-owner's own work that predates and feeds this harness. What grew from them is its own architecture.
+Named rather than borrowed quietly. Two are external; the rest are the
+owner's own work that predates and feeds this harness.
 
-- **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — the seed this repo grew from. Its architecture gave Fleet the agent loop, the session log, the reconstructability rule, the lanes' vendoring pattern, and the decision core the router keeps as its spec. The port to Rust is where the inheritance ends: memory, context, skills, workflows, and the verification loops are Fleet's own designs, and the harness they compose is its own thing — answerable to this repository's rulings, not its ancestor's shape.
-- **[LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs)** (MIT, v1.1.0) — the substrate under collision-free delegation and the workspace-history instrument. Fleet drives the released tool through its command; every delegated child's copy-on-write workspace stands on it.
-- **[dev-decisions](https://github.com/adelvillar1/dev-decisions)** — the owner's verification and calibration layer, built before this harness and integrated by wire contract. Its plan, evidence, docs, and architecture gates run Fleet's development; its JSONL log vocabulary is what Fleet's calibration stream writes into; its judge-grading floors are the trust model Fleet reuses.
-- **[agnostic-router-kit](https://github.com/adelvillar1/agnostic-router-kit)** — the owner's harness-neutral router and workflow plane, the precursor to Fleet's router. Fleet owns routing in-process; the kit's decision core (roster, tiering, sys1-judged workload, quota-aware failover, and the journaled workflow plane) is the spec it was ported from.
-- **The sys1 house lanes**, each one its own repository under dev-decisions' umbrella and each vendored into Fleet under `services/`: [sys1](https://github.com/adelvillar1/sys1) (judgment), [sdm1](https://github.com/adelvillar1/sdm1) (tabular scores), [sem1](https://github.com/adelvillar1/sem1) (embeddings), [gen1](https://github.com/adelvillar1/gen1) (media), and [blend1](https://github.com/adelvillar1/blend1) (grounded composition). The five-lane structure itself is the owner's design; Fleet carries the bundled copies, not the architectural idea.
+- **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** —
+  the seed. Its architecture gave Fleet the agent loop, the session log, the
+  reconstructability rule, and the decision core the router keeps as its
+  spec. The port to Rust is where the inheritance ends; memory, context,
+  skills, workflows, and the verification loops are Fleet's own.
+- **[LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs)** (MIT) — the
+  substrate under collision-free delegation, driven through its command,
+  nothing vendored.
+- **[dev-decisions](https://github.com/adelvillar1/dev-decisions)** — the
+  verification and calibration layer; its gates run Fleet's development and
+  its log vocabulary is what the calibration stream writes.
+- **[agnostic-router-kit](https://github.com/adelvillar1/agnostic-router-kit)**
+  — the router's precursor; its decision core is the spec Fleet ported, not
+  a dependency.
+- **The sys1 house lanes** — [sys1](https://github.com/adelvillar1/sys1),
+  [sdm1](https://github.com/adelvillar1/sdm1),
+  [sem1](https://github.com/adelvillar1/sem1),
+  [gen1](https://github.com/adelvillar1/gen1),
+  [blend1](https://github.com/adelvillar1/blend1), vendored under `services/`.
 
 ## Where things live
 
-- [TECHNICAL-DOCUMENTATION.md](TECHNICAL-DOCUMENTATION.md) — the system
-  of record for running the project: interface contracts, environments,
-  runbooks, the verification and release process, the risk register,
-  sequencing, and the module reference.
-- [FUNCTIONAL-SPECIFICATIONS.md](FUNCTIONAL-SPECIFICATIONS.md) — what
-  the product does, surface by surface, in the user's terms.
-- [docs/features/desk.md](docs/features/desk.md) · the desk: where
-  knowledge work happens — the brief, the claims with their sentences,
-  the coverage that names its gaps, the end gate that names what stands.
-- [docs/features/learning.md](docs/features/learning.md) · the learning
-  loop: the measure → plan → teach cycle and the practice, riding the
-  memory substrate.
-- [docs/architecture/surfaces.md](docs/architecture/surfaces.md) · the
-  what and why of the destinations.
-  [docs/architecture/lanes.md](docs/architecture/lanes.md) — the five-lane
-  case.
-- `CLAUDE.md` — the house rules, the pointer index, and the session
-  protocol (warmup → plan → build → recap → commit). `docs/plans/` and
-  `docs/recaps/` — the contracts and the journals. `docs/features/` —
-  the how, module by module.
-- Commands, exit codes, and the CLI's flags: `fleet help` and
-  [FUNCTIONAL-SPECIFICATIONS.md](FUNCTIONAL-SPECIFICATIONS.md). Platform
-  support (macOS arm64/x86_64, Linux x86_64/arm64; Windows anticipated
-  and unverified — KI-011) and the release path
-  (`cargo build --release`, one binary at `target/release/fleet`) are in
-  [docs/features/install.md](docs/features/install.md).
+- [TECHNICAL-DOCUMENTATION.md](TECHNICAL-DOCUMENTATION.md) — the system of
+  record: contracts, environments, runbooks, verification, sequencing.
+- [FUNCTIONAL-SPECIFICATIONS.md](FUNCTIONAL-SPECIFICATIONS.md) — what the
+  product does, surface by surface, in the user's terms.
+- [docs/architecture/](docs/architecture/) — the deep dives, the lanes case,
+  the surfaces, and the armada direction.
+- [docs/features/](docs/features/) — the how, module by module.
+- `CLAUDE.md` — the house rules and the session protocol; `docs/plans/` and
+  `docs/recaps/` — the contracts and the journals.
+
+Commands and flags: `fleet help`. Platform support (macOS arm64/x86_64,
+Linux x86_64/arm64; Windows anticipated and unverified) and the release path
+are in [docs/features/install.md](docs/features/install.md).
