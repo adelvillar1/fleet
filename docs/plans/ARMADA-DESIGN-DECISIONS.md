@@ -113,7 +113,7 @@ changes, `learn` from the settles).
 
 ## L2 — The event journal
 
-*Proposed by `2026-11-11-armada-l2-journal.md` (draft).*
+*Settled by `2026-11-11-armada-l2-journal.md` (built, shipped v0.6.32).*
 
 - **D10 — the journal is day-partitioned append-only JSONL at
   `<home>/journal/YYYY/MM/DD.jsonl`; `Event {seq, ts, kind, install,

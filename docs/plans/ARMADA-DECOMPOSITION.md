@@ -44,9 +44,9 @@ choices that span atoms are noted in the layer header.
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
 | L2.1 | the Seq + Event type + sequencer | L1.1 | D10 | done |
-| L2.2 | durable append (JSONL + fsync cadence) | L2.1 | D11 | drafted |
-| L2.3 | durable named consumer + cursor | L2.2 | D12 | drafted |
-| L2.4 | the journal behind `record()` (additive) | L2.2, L2.3 | D13 | drafted |
+| L2.2 | durable append (JSONL + fsync cadence) | L2.1 | D11 | done |
+| L2.3 | durable named consumer + cursor | L2.2 | D12 | done |
+| L2.4 | the journal behind `record()` (additive) | L2.2, L2.3 | D13 | done |
 
 ## Wave 2 — the foundations
 
@@ -83,9 +83,9 @@ choices that span atoms are noted in the layer header.
 *Layer-level choices: D35 (dispatch graded), D36 (relay is a channel).*
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L5.1 | the durable outbox | L2.2 | D30 | drafted |
+| L5.1 | the durable outbox | L2.2 | D30 | done |
 | L5.2 | the identity graph (peer→principal) | L1.4, L3.1 | D31, D32 | drafted |
-| L5.3 | the pub/sub bus over the journal | L2.3 | D33 | drafted |
+| L5.3 | the pub/sub bus over the journal | L2.3 | D33 | done |
 | L5.4 | gated dispatch (threads the principal) | L5.2, L3.2 | D34 | drafted |
 
 ### L7 Workspace — plan `2026-11-11-armada-l7-workspace.md` · contract §8
@@ -150,7 +150,7 @@ is its bedrock twin.
 
 ## Status summary
 
-- **40 lane-1 atoms**: L1 (4) `done`, the rest `drafted` (their 9 layer plans are drafted; nothing
+- **40 lane-1 atoms**: L1 (4) + L2 (4) `done`, the rest `drafted` (their 9 layer plans are drafted; nothing
   built yet). 0 `building`, 0 `done`.
 - The cross-cutting **trust-is-earned-by-measurements** obligation (design-
   decisions ledger) attaches a verifiable grading property to each layer; the
