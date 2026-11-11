@@ -1,7 +1,7 @@
 ---
 status: active
 created: 2026-10-30
-updated: 2026-10-30
+updated: 2026-11-10
 slug: beta-shakeout
 ---
 
@@ -201,12 +201,14 @@ A shakeout run is a fleet run whose task is this manifest:
       moves to "held". *KI-378's goal bound re-run live in pass two
       (A3); KI-380's recovery paths pinned by the harness's KI-380
       case (482 checks / 52 cases); KI-381's walk pinned end to end.*
-- [ ] **B5 — the beta ships.** The pass ends with the matrix whole, no
-      open crasher, and the shakeout's summary in the recap — the beta
-      gate the owner's declaration set. *The matrix is whole and no
-      open crasher remains; the recap is this session's, and pass
-      three (the re-walk after the owner's restart of the face and
-      their own use) is what closes the box.*
+- [ ] **B5 — the shakeout pass closes.** The matrix is walked whole
+      with no open crasher left standing, and the pass's summary lands
+      in a recap. *This box is about the PASS, not about the beta
+      epoch: it was misread as "exit beta" on 2026-11-10 and corrected
+      by the owner — **fleet stays in beta until the owner has
+      reliably executed a whole project on it**. Nothing here changes
+      the status line; pass three (the re-walk during the owner's own
+      use) is what closes the box.*
 
 ## Files to be touched
 
