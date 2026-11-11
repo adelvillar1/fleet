@@ -93,7 +93,7 @@ changes, `learn` from the settles).
 
 ## L1 — Identity
 
-*Proposed by `2026-11-11-armada-l1-identity.md` (draft).*
+*Settled by `2026-11-11-armada-l1-identity.md` (built, shipped v0.6.31).*
 
 - **D7 — InstallId = 32 hex (16 random bytes, `rand`), minted once at
   install, persisted `<home>/install-id`, read by `identity::install()`.**

@@ -35,15 +35,15 @@ choices that span atoms are noted in the layer header.
 ### L1 Identity — plan `2026-11-11-armada-l1-identity.md` · contract §2
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L1.1 | mint the install-id (persisted, idempotent) | — | D7 | drafted |
-| L1.2 | the PrincipalId type + owner bootstrap | — | D8 | drafted |
-| L1.3 | per-run principal propagation (child inherits) | L1.2 | D9 | drafted |
-| L1.4 | the device→principal map (pairing) | L1.2 | D8, D2 | drafted |
+| L1.1 | mint the install-id (persisted, idempotent) | — | D7 | done |
+| L1.2 | the PrincipalId type + owner bootstrap | — | D8 | done |
+| L1.3 | per-run principal propagation (child inherits) | L1.2 | D9 | done |
+| L1.4 | the device→principal map (pairing) | L1.2 | D8, D2 | done |
 
 ### L2 Journal — plan `2026-11-11-armada-l2-journal.md` · contract §3
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L2.1 | the Seq + Event type + sequencer | L1.1 | D10 | drafted |
+| L2.1 | the Seq + Event type + sequencer | L1.1 | D10 | done |
 | L2.2 | durable append (JSONL + fsync cadence) | L2.1 | D11 | drafted |
 | L2.3 | durable named consumer + cursor | L2.2 | D12 | drafted |
 | L2.4 | the journal behind `record()` (additive) | L2.2, L2.3 | D13 | drafted |
@@ -53,7 +53,7 @@ choices that span atoms are noted in the layer header.
 ### L3 Security — plan `2026-11-11-armada-l3-security.md` · contract §4
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L3.1 | the grant schema + store (folder grant = first row) | L1.2 | D14 | drafted |
+| L3.1 | the grant schema + store (folder grant = first row) | L1.2 | D14 | done |
 | L3.2 | the uniform guard at `prepare_call` (owner bootstrap) | L3.1, L1.3 | D15 | drafted |
 | L3.3 | the per-principal declaration filter | L3.1, L1.3 | D16 | drafted |
 | L3.4 | guard audit → journal | L3.2, L2.4 | D17 | drafted |
@@ -64,7 +64,7 @@ choices that span atoms are noted in the layer header.
 ### L6 Relay transport — plan `2026-11-11-armada-l6-relay.md` · contract §7
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L6.1 | the Rust broker (replaces relay.py) | L1.1 | D20 | drafted |
+| L6.1 | the Rust broker (replaces relay.py) | L1.1 | D20 | done |
 | L6.2 | push / ack / cursor | L6.1 | D21 | drafted |
 | L6.3 | the control-frame discriminator | L6.2, L3.5 | D22 | drafted |
 
@@ -74,7 +74,7 @@ choices that span atoms are noted in the layer header.
 *Layer-level choices: D28 (sync graded by read-back), D29 (never-sync set).*
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L4.1 | the corpus remote + sync driver | L1.1 | D23 | drafted |
+| L4.1 | the corpus remote + sync driver | L1.1 | D23 | done |
 | L4.2 | the recall-count merge rule (sum/delta) | L4.1 | D24 | drafted |
 | L4.3 | distributed supersede / serial-collision rule | L4.1 | D25, D26 | drafted |
 | L4.4 | the RemoteInstance feeder over Source | L4.1, L4.2, L4.3 | D27 | drafted |
@@ -92,7 +92,7 @@ choices that span atoms are noted in the layer header.
 *Layer-level choice: D43 (work graded against outcome).*
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L7.1 | the task object (id, status, assignee) | L1.2 | D37, D38 | drafted |
+| L7.1 | the task object (id, status, assignee) | L1.2 | D37, D38 | done |
 | L7.2 | the work-object edges + hand_to_desk fix | L7.1, L2.4 | D39 | drafted |
 | L7.3 | surfaces as views over the graph | L7.2 | D40 | drafted |
 | L7.4 | bot invocation as a workspace action (gated) | L7.2, L3.2 | D41, D42 | drafted |
@@ -150,7 +150,7 @@ is its bedrock twin.
 
 ## Status summary
 
-- **40 lane-1 atoms**, all `drafted` (their 9 layer plans are drafted; nothing
+- **40 lane-1 atoms**: L1 (4) `done`, the rest `drafted` (their 9 layer plans are drafted; nothing
   built yet). 0 `building`, 0 `done`.
 - The cross-cutting **trust-is-earned-by-measurements** obligation (design-
   decisions ledger) attaches a verifiable grading property to each layer; the
