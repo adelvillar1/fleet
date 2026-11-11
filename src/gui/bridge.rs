@@ -203,6 +203,11 @@ pub struct GuiState {
     /// folder. Persisted in `<FLEET_HOME>/sessions-workdirs.json`, so a
     /// reload restores the choice.
     workdirs: std::collections::HashMap<String, String>,
+    /// The durable event journal (armada L2, D13), shared so `record()` can
+    /// append additively beside the broadcast. `None` when the journal could
+    /// not open — a named degradation, never a broken face. An `Arc` so the
+    /// append happens outside the state lock (the hot path holds no IO).
+    journal: Option<Arc<Mutex<crate::journal::Journal>>>,
 }
 
 impl GuiState {
@@ -419,6 +424,9 @@ impl Bridge {
             permissions: crate::approvals::Mode::Ask,
             provider_pin: None,
             workdirs: load_workdirs(&home),
+            journal: crate::journal::Journal::open(&home)
+                .ok()
+                .map(|journal| Arc::new(Mutex::new(journal))),
         }));
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
         // The fan-out persists a folder that was chosen before the
@@ -12380,8 +12388,10 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &
         value.get("type").and_then(Value::as_str),
         Some("finished") | Some("failed")
     );
+    let journal;
     {
         let mut state = lock(state);
+        journal = state.journal.clone();
         {
             let attached = state.attached(session);
             if finished {
@@ -12413,6 +12423,21 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &
     }
     if let Some(notice) = notice {
         let _ = events.send(notice);
+    }
+    // The durable journal (armada L2, D13): append additively beside the
+    // broadcast, outside the state lock so the hot path holds no IO. The
+    // seat/control/finished events that died on crash now survive. A journal
+    // failure is named, never breaks the stream; calib and the session log
+    // are untouched.
+    if let Some(journal) = journal {
+        let kind = value.get("type").and_then(Value::as_str).unwrap_or("event");
+        let principal = value.get("principal").and_then(Value::as_str);
+        let sess = value.get("session").and_then(Value::as_str);
+        if let Ok(mut journal) = journal.lock() {
+            if let Err(error) = journal.append(kind, principal, sess, value.clone()) {
+                eprintln!("fleet gui: journal append: {error}");
+            }
+        }
     }
     let _ = events.send(value);
 }
@@ -17033,6 +17058,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// Armada L2 (C3): `record()` journals every event additively beside the
+    /// broadcast — the seat/control events that died on crash now survive in
+    /// the durable journal, while the live stream still fires.
+    #[tokio::test]
+    async fn record_journals_the_event_additively_beside_the_broadcast() {
+        let home = scratch("journal-record");
+        let (bridge, _sources) = Bridge::detached(home.clone(), "m".to_string(), None);
+        let mut rx = bridge.events.subscribe();
+        let seat = json!({"type": "seat", "tool": "bash"});
+        record(&bridge.state, &bridge.events, "s1", seat);
+        // The broadcast still fires (the face keeps streaming).
+        let broadcast = rx.try_recv().expect("the broadcast fires");
+        assert_eq!(broadcast["type"], "seat");
+        assert_eq!(broadcast["session"], "s1");
+        // The journal carries the event durably, with the install id on it.
+        let journal = crate::journal::Journal::open(&home).unwrap();
+        let events = journal.replay(0).unwrap();
+        let journaled = events
+            .iter()
+            .find(|event| event.kind == "seat")
+            .expect("the seat is journaled: {events:?}");
+        assert_eq!(journaled.session.as_deref(), Some("s1"));
+        assert_eq!(journaled.install.len(), 32);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// C1/C3: when the machine's resources are too constrained to carry
     /// another run, the dispatcher refuses it with a polite named card that
     /// tells the owner to reconsider or queue, and leaves no phantom running
@@ -18827,6 +18878,7 @@ mod tests {
     #[test]
     fn every_recorded_event_names_its_session() {
         let state = Mutex::new(GuiState {
+            journal: None,
             pending_replay: None,
             sessions: Default::default(),
             launch: Some("s".to_string()),
@@ -18850,6 +18902,7 @@ mod tests {
         assert_eq!(streamed["session"], "s", "{streamed}");
         // A face whose launch log does not exist yet has no id to name.
         let empty = Mutex::new(GuiState {
+            journal: None,
             pending_replay: None,
             sessions: Default::default(),
             launch: None,
@@ -18873,6 +18926,7 @@ mod tests {
     #[test]
     fn a_delegation_event_carries_the_conversation_it_rides() {
         let state = Mutex::new(GuiState {
+            journal: None,
             pending_replay: None,
             sessions: Default::default(),
             launch: Some("s".to_string()),

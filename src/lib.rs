@@ -49,6 +49,7 @@ pub mod hybrid;
 pub mod identity;
 pub mod improve;
 pub mod install;
+pub mod journal;
 pub mod judge;
 pub mod lane_client;
 pub mod lanes;

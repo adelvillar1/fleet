@@ -55,6 +55,9 @@ pub enum Command {
     /// Show this install's identity: the install-id, the principal every
     /// run acts for, and the paired devices linked to it (armada L1).
     Identity,
+    /// Show the durable event journal: the recent trail, the last sequence
+    /// number, and each named consumer's cursor (armada L2).
+    Journal,
     /// Show the calibration stream: one day's rows, grouped by op.
     Calib(CalibOptions),
     Demand(DemandOptions),
@@ -853,6 +856,7 @@ usage:
                                 selection baseline's measurement)
   fleet providers                list the routing roster and per-provider state
   fleet identity                 this install's id, its principal, and paired devices
+  fleet journal                  the durable event trail, last seq, and consumer cursors
   fleet calib [--day <date>] [--calibration]
                                 the calibration stream: one day's rows by op;
                                 --calibration renders the per-provider judged
@@ -1095,6 +1099,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "mcp" => parse_mcp(rest),
         "providers" => no_flags(rest, Command::Providers),
         "identity" => no_flags(rest, Command::Identity),
+        "journal" => no_flags(rest, Command::Journal),
         "calib" => parse_calib(rest),
         "demand" => parse_demand(rest),
         "judge" => parse_judge(rest),

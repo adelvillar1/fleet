@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-11
 updated: 2026-11-11
 slug: armada-l2-journal
@@ -60,13 +60,13 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0: `journal.append` assigns a strictly increasing `Seq` that persists across restart; two events are totally ordered by `Seq` regardless of day file.
-- [ ] C1: an appended event survives a process restart — `replay(from)` reads it back (durable, not the in-memory deque).
-- [ ] C2: a named consumer's cursor persists; `subscribe(consumer, from)` replays from the cursor, and a restarted consumer resumes exactly where it stopped.
-- [ ] C3: `record()` appends every UI event to the journal additively while the broadcast still works; a seat/control event is journaled (a test pins it).
-- [ ] C4: the journal declares a retention budget and curtails day-files past it by age, naming the curtail (a test pins the bound and the name).
-- [ ] C5: calib is unchanged (still advisory/lossy) and the session log unchanged; the four-leg gate passes and the face still streams (non-breaking).
-- [ ] C6: `fleet journal` renders the event trail and a consumer's cursor position.
+- [x] C0: `journal.append` assigns a strictly increasing `Seq` that persists across restart; two events are totally ordered by `Seq` regardless of day file.
+- [x] C1: an appended event survives a process restart — `replay(from)` reads it back (durable, not the in-memory deque).
+- [x] C2: a named consumer's cursor persists; `subscribe(consumer, from)` replays from the cursor, and a restarted consumer resumes exactly where it stopped.
+- [x] C3: `record()` appends every UI event to the journal additively while the broadcast still works; a seat/control event is journaled (a test pins it).
+- [x] C4: the journal declares a retention budget and curtails day-files past it by age, naming the curtail (a test pins the bound and the name).
+- [x] C5: calib is unchanged (still advisory/lossy) and the session log unchanged; the four-leg gate passes and the face still streams (non-breaking).
+- [x] C6: `fleet journal` renders the event trail and a consumer's cursor position.
 
 ## Files to be touched
 

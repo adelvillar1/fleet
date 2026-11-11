@@ -168,6 +168,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         ),
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Identity) => identity_command(),
+        Ok(Command::Journal) => journal_command(),
         Ok(Command::Hygiene) => hygiene_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Demand(options)) => demand_command(&options),
@@ -4175,6 +4176,62 @@ fn identity_command() -> ExitCode {
         Err(error) => {
             eprintln!("fleet: identity: {error}");
             return ExitCode::from(2);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// `fleet journal`: the durable event journal (armada L2) — the last
+/// sequence number, the recent trail, and each named consumer's cursor.
+fn journal_command() -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let journal = match fleet::journal::Journal::open(&home) {
+        Ok(journal) => journal,
+        Err(error) => {
+            eprintln!("fleet: journal: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let last = journal.last_seq();
+    println!("last seq    {last}");
+    let from = last.saturating_sub(19);
+    match journal.replay(from) {
+        Ok(events) => {
+            println!("trail       {} event(s)", events.len());
+            for event in events.iter().rev() {
+                let session = event.session.as_deref().unwrap_or("-");
+                println!(
+                    "  {:>6}  {}  {}  {}",
+                    event.seq, event.ts, event.kind, session
+                );
+            }
+        }
+        Err(error) => {
+            eprintln!("fleet: journal: {error}");
+            return ExitCode::from(2);
+        }
+    }
+    let consumers_dir = home.join("journal").join("consumers");
+    if let Ok(entries) = std::fs::read_dir(&consumers_dir) {
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) == Some("cursor") {
+                    path.file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        names.sort();
+        for name in names {
+            println!("consumer    {}  at seq {}", name, journal.cursor(&name));
         }
     }
     ExitCode::SUCCESS
