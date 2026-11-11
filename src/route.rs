@@ -3862,6 +3862,12 @@ impl Router {
 
 /// A route prepared for a session: the router, its decision, the
 /// judgment's latency, and the calibration stream this session writes to.
+///
+/// `Clone` shares the router and the calibration queue rather than copying
+/// them, so a concurrent run can take its session's prepared route out of the
+/// shared cache without holding the cache's lock across the run's awaits
+/// (the multi-session plan's per-session run loop).
+#[derive(Clone)]
 pub struct Prepared {
     pub router: Arc<Router>,
     pub decision: RouteDecision,

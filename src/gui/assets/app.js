@@ -2609,6 +2609,18 @@
     return row(el0, event);
   }
 
+  // The capacity refusal (the multi-session plan's C3): a named, courteous
+  // card in the same grammar as the run's end card. The reason carries the
+  // contract's own words — the headroom, the cumulative budget, and the
+  // ask to reconsider or queue — so the owner reads a decision, not a terse
+  // error. It is not a failure of the work: the run simply never started.
+  function queuedRow(event) {
+    var el0 = card('queued', '\u23f8', 'queued \u00b7 reconsider when there is room',
+      event.reason, null, null);
+    el0.classList.add('queued');
+    return row(el0, event);
+  }
+
   // The end receipt (the contract, D5): outcome, artifacts,
   // verification evidence, and the ask. Everything it renders is read
   // from face.events - the same record replay feeds - so a receipt is
@@ -2926,6 +2938,12 @@
         // The inbox is cross-session by design: a seat or its resolution
         // anywhere updates the queue, throttled like every read.
         readInbox();
+      } else if (event.type === 'queued') {
+        // A capacity refusal in another conversation: that chat is not
+        // running, so the work list repaints rather than implying a run
+        // is still in flight there (the multi-session plan's C1).
+        face.sessions = null;
+        readSessions(false);
       }
       return;
     }
@@ -3156,6 +3174,19 @@
           : null;
         stripFold(event);
         paintRunbar();
+        break;
+      case 'queued':
+        // The resource contract refused this run: the machine cannot carry
+        // it beside the work already in flight. The run never started, so
+        // the chat is not running and the composer is free — no phantom
+        // flag wedges the next send (the multi-session plan's C1/C3). The
+        // card tells the owner, courteously, to reconsider or queue.
+        face.running = false;
+        if (face.driving && (!event.session || event.session === face.driving)) {
+          face.driving = '';
+        }
+        closeAssistant();
+        queuedRow(event);
         break;
       case 'health':
         // The loop's transition (the failsafe plan's phase A): the
@@ -8896,15 +8927,19 @@
   }
 
   function send(queuedSession, queuedSurface) {
-    // While a run is in flight the composer queues: one slot, sent the
-    // moment the run ends. The queue is the face's own state — a reload
-    // drops it, and the chip says so. A flush carries the session its
-    // message was typed for, so a queued message can never drain into
-    // a different conversation (2026-11-05).
+    // While a run is in flight IN THIS conversation the composer queues:
+    // one slot, sent the moment the run ends. The queue is the face's own
+    // state — a reload drops it, and the chip says so. A flush carries the
+    // session its message was typed for, so a queued message can never
+    // drain into a different conversation (2026-11-05).
+    //
+    // A run working in ANOTHER conversation no longer queues this one
+    // (the multi-session plan's Stage 2): the send goes to the bridge,
+    // which admits a concurrent run when the machine has room and paints
+    // a polite reconsider-or-queue card when it does not. The capacity
+    // decision is the resource contract's, not the composer's.
     var here = queuedSurface !== undefined ? queuedSurface : composerSurface();
-    if (queuedSession === undefined &&
-        (face.running || face.seat ||
-        (face.driving && face.driving !== face.session))) {
+    if (queuedSession === undefined && (face.running || face.seat)) {
       var pending = el.task.value.trim();
       if (pending) {
         face.queued.push({ text: pending, session: face.session, surface: here });

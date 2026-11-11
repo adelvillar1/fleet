@@ -1476,14 +1476,19 @@ async function theHeadCarriesTheWayOutAndTheSwitcher() {
 
 // C5 (face half): with a run working in another conversation, a send
 // here queues and the chip names the working one.
-async function aSendBesideDrivingWorkQueuesAndNamesIt() {
+// The multi-session plan's Stage 2: a send in a conversation OTHER than the
+// one driving is no longer queued client-side — it dispatches to the bridge,
+// which admits a concurrent run when the machine has room (and paints a
+// polite reconsider-or-queue card when it does not). The capacity decision
+// belongs to the resource contract, not the composer.
+async function aSendBesideDrivingWorkDispatchesConcurrently() {
   const page = boot({
     width: 1440,
     hash: '#/sessions/this-one',
     documents: {
       sessions: {
         type: 'sessions', read_at: 'now', current: '',
-        counts: { needs: 0, working: 0, background: 0, earlier: 2, total: 2 },
+        counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 2 },
         sessions: [
           row('other-one', 'working', { title: 'corpus-refresh-fleet — approval' }),
           row('this-one', 'completed', { title: 'this conversation' }),
@@ -1499,12 +1504,13 @@ async function aSendBesideDrivingWorkQueuesAndNamesIt() {
   page.fireOn('composer', 'submit', {});
   await flush();
   const runs = page.calls.filter((c) => c.url.startsWith('/api/run'));
-  check('C5 no run starts beside another', runs.length === 0, String(runs.length));
-  const note = page.text('queue-note');
-  check('C5 the queue names the working conversation', /a run is working in corpus-refresh-fleet — approval/.test(note), note);
-  check('C5 the queue chip is shown', page.IDS['queue-chip'].hidden === false, 'hidden');
-  check('C5 the queued text is the owner\'s', /do the next thing/.test(page.text('queue-list')), page.text('queue-list'));
-  if (process.env.FACE_DEBUG) console.error('C5 DEBUG', JSON.stringify({ note: page.text('queue-note'), chip: page.text('queue-chip') }));
+  check('C5 a send beside a foreign run dispatches concurrently', runs.length === 1,
+    JSON.stringify(runs.map((c) => c.url)));
+  check('C5 the concurrent run names this conversation',
+    runs.length === 1 && String(runs[0].url).includes('session=this-one'),
+    JSON.stringify(runs.map((c) => c.url)));
+  check('C5 no client-side queue is raised for a concurrent send',
+    page.IDS['queue-chip'].hidden === true, 'queue-chip hidden');
 }
 
 // C6: a streamed reply is text until its block closes, then rendered
@@ -5355,7 +5361,10 @@ async function theQueuedMessagesCarryTheirActions() {
           row('this-one', 'completed', { title: 'this conversation' }),
         ],
       },
-      state: (asked) => ({ ...emptyState(asked), session: asked, driving: 'other-one', running: false }),
+      // This chat's own run is in flight, so a further send here queues
+      // (a send in ANOTHER conversation now dispatches concurrently — the
+      // multi-session plan's Stage 2 — and is pinned by its own case).
+      state: (asked) => ({ ...emptyState(asked), session: asked, driving: asked, running: true }),
     },
   });
   await flush();
@@ -11848,6 +11857,154 @@ async function aFinishedRunSettlesItsOrphanedToolCalls() {
     after.map((r) => r.textContent.slice(0, 80)).join(' | '));
 }
 
+// The multi-session plan's C1/C3: when the resource contract refuses a run
+// for want of capacity, the face paints a named, courteous queued card —
+// the reconsider-or-queue words — and clears the running flag so the
+// composer is never wedged behind a phantom run.
+async function aCapacityRefusalPaintsAPoliteQueuedCard() {
+  const page = boot({
+    hash: '#/sessions/cap-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+        sessions: [row('cap-1', 'working', { title: 'the capacity chat' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked, running: true }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'message', role: 'owner', text: 'a task the machine cannot carry', session: 'cap-1' });
+  await flush();
+  check('MS the refusal arrives while the chat reads running',
+    page.text('state-pill') === 'running', page.text('state-pill'));
+  page.push({
+    type: 'queued', session: 'cap-1',
+    reason: 'this machine\'s resources are too constrained right now to carry another run ' +
+      'beside the work already in flight: 0.00 GiB of headroom against a 2.00 GiB cumulative ' +
+      'budget. Please reconsider this run, or queue it for when there is room.',
+  });
+  await flush();
+  const cards = page.rows('.card-row.queued');
+  check('MS the refusal paints one named queued card', cards.length === 1, String(cards.length));
+  check('MS the card tells the owner to reconsider or queue',
+    cards.length === 1 && /reconsider/.test(cards[0].textContent) && /queue/.test(cards[0].textContent),
+    cards.length ? cards[0].textContent.slice(0, 200) : 'no card');
+  check('MS the card names the constrained resources',
+    cards.length === 1 && /constrained/.test(cards[0].textContent),
+    cards.length ? cards[0].textContent.slice(0, 200) : 'no card');
+  // No phantom: the flag came back, so the header reads idle and the next
+  // send dispatches rather than queueing behind a run that never started.
+  check('MS the refusal clears the running flag', page.text('state-pill') === 'idle',
+    page.text('state-pill'));
+  page.IDS.task.value = 'a fresh task';
+  page.fireOn('composer', 'submit', {});
+  await flush();
+  const runs = page.calls.filter((c) => c.url.startsWith('/api/run'));
+  check('MS the composer is free after the refusal', runs.length === 1,
+    JSON.stringify(runs.map((c) => c.url)));
+}
+
+// The multi-session plan's C2: two concurrent runs render their own
+// transcripts. A live event for another session never lands in the open
+// chat's log, and each session's own log replays its own words.
+async function twoConcurrentSessionsRenderTheirOwnTranscripts() {
+  const sessions = {
+    type: 'sessions', read_at: 'now', current: '',
+    counts: { needs: 0, working: 2, background: 0, earlier: 0, total: 2 },
+    sessions: [
+      row('iso-a', 'working', { title: 'alpha chat' }),
+      row('iso-b', 'working', { title: 'beta chat' }),
+    ],
+  };
+  const page = boot({
+    hash: '#/sessions/iso-a',
+    documents: {
+      sessions,
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  // Alpha's run, live, in the open chat.
+  page.push({ type: 'message', role: 'owner', text: 'the alpha task', session: 'iso-a' });
+  page.push({ type: 'turn', turn: 1, session: 'iso-a' });
+  page.push({ type: 'token', text: 'the alpha answer', session: 'iso-a' });
+  page.push({ type: 'finished', stop_reason: 'completed', session: 'iso-a' });
+  // Beta's run, concurrent, in the other chat: none of it may paint here.
+  page.push({ type: 'message', role: 'owner', text: 'the beta task', session: 'iso-b' });
+  page.push({ type: 'token', text: 'the beta answer', session: 'iso-b' });
+  page.push({ type: 'finished', stop_reason: 'completed', session: 'iso-b' });
+  await flush();
+  const logA = page.IDS['log'].textContent;
+  check('MS the open chat renders its own task and answer',
+    /the alpha task/.test(logA) && /the alpha answer/.test(logA), logA.slice(0, 300));
+  check('MS the other session\u2019s words never land in the open chat',
+    !/the beta task/.test(logA) && !/the beta answer/.test(logA), logA.slice(0, 300));
+  // Beta's own face replays its own log — the second transcript renders in
+  // its own session, not alpha's.
+  const pageB = boot({
+    hash: '#/sessions/iso-b',
+    documents: {
+      sessions,
+      state: (asked) => ({
+        ...emptyState(asked), session: asked,
+        events: [
+          { type: 'message', role: 'owner', text: 'the beta task', session: 'iso-b' },
+          { type: 'message', role: 'assistant', text: 'the beta answer', session: 'iso-b' },
+          { type: 'finished', stop_reason: 'completed', session: 'iso-b' },
+        ],
+      }),
+    },
+  });
+  await flush();
+  pageB.open();
+  await flush(120);
+  const logB = pageB.IDS['log'].textContent;
+  check('MS the second session replays its own transcript',
+    /the beta task/.test(logB) && /the beta answer/.test(logB), logB.slice(0, 300));
+  check('MS the second session\u2019s log never carries the first\u2019s words',
+    !/the alpha task/.test(logB) && !/the alpha answer/.test(logB), logB.slice(0, 300));
+}
+
+// The multi-session plan's C0: a face reopened after a restart reads idle —
+// the stale running flag and the dead driving run do not survive the
+// reconstruction — and the composer sends rather than wedging behind a
+// phantom. The bridge test pins the state rebuild; this pins what the
+// owner sees: an idle chat that accepts the next task.
+async function aReopenedFaceIsIdleAndNotWedged() {
+  const page = boot({
+    hash: '#/sessions/restart-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('restart-1', 'completed', { title: 'the reopened chat' })],
+      },
+      // The reconstruction: running=false, driving=null, an empty transcript
+      // — exactly what a restart rebuilds over a home whose prior run died.
+      state: (asked) => ({ ...emptyState(asked), session: asked, running: false, driving: null }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  check('MS the reopened face reads idle, not running', page.text('state-pill') === 'idle',
+    page.text('state-pill'));
+  page.IDS.task.value = 'the task after the restart';
+  page.fireOn('composer', 'submit', {});
+  await flush();
+  const runs = page.calls.filter((c) => c.url.startsWith('/api/run'));
+  check('MS the reopened face sends rather than wedging', runs.length === 1,
+    JSON.stringify(runs.map((c) => c.url)));
+  check('MS the send names the reopened conversation',
+    runs.length === 1 && String(runs[0].url).includes('session=restart-1'),
+    JSON.stringify(runs.map((c) => c.url)));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -11881,7 +12038,7 @@ const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
   ['C3 the head carries the way out and the switcher', theHeadCarriesTheWayOutAndTheSwitcher],
-  ['C5 a send beside driving work queues and names it', aSendBesideDrivingWorkQueuesAndNamesIt],
+  ['C5 a send beside a foreign run dispatches concurrently', aSendBesideDrivingWorkDispatchesConcurrently],
   ['C5 a finished run stops blocking the next send', aFinishedRunStopsBlockingTheNextSend],
   ['C6 a streamed reply renders at its boundary', aStreamedReplyRendersAtItsBoundary],
   ['C6 a replayed reply renders as markdown', aReplayedReplyRendersAsMarkdown],
@@ -11989,6 +12146,9 @@ const cases = [
   ['C0 the health card names what is down and the repair', theHealthCardNamesWhatIsDownAndTheRepair],
   ['KI-510 a routed event paints the live decision with its facts', aRoutedEventPaintsTheLiveDecisionWithItsFacts],
   ['KI-511 the history pane names lost stores and re-registers', theHistoryPaneNamesLostStoresAndReRegisters],
+  ['MS a capacity refusal paints a polite queued card', aCapacityRefusalPaintsAPoliteQueuedCard],
+  ['MS two concurrent sessions render their own transcripts', twoConcurrentSessionsRenderTheirOwnTranscripts],
+  ['MS a reopened face is idle and not wedged', aReopenedFaceIsIdleAndNotWedged],
 ];
 
 for (const [name, run] of cases) {

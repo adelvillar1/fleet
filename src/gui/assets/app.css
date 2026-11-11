@@ -2730,7 +2730,8 @@ body[data-object-card="open"] .dock-object {
 .card-row[data-kind="deck"] .glyph { color: var(--dsw-alias-accent); }
 
 .card-row[data-kind="notice"] .glyph,
-.card-row[data-kind="dropped"] .glyph { color: var(--dsw-alias-warn); }
+.card-row[data-kind="dropped"] .glyph,
+.card-row[data-kind="queued"] .glyph { color: var(--dsw-alias-warn); }
 
 .card-row .body { min-width: 0; flex: 1; display: grid; gap: 1px; }
 

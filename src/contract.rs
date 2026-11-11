@@ -76,6 +76,24 @@ impl Work {
     }
 }
 
+/// Whether the machine can carry one more concurrent run, given how many are
+/// already in flight (the multi-session plan's C3).
+///
+/// Concurrency is bounded by the environment's capacity, never by a fixed pool
+/// size: each run may write up to its own budget, so `in_flight + 1` runs need
+/// `in_flight + 1` budgets of headroom above the reserve. The arithmetic is the
+/// same strict [`footprint::admit`] the single-run door uses — a cumulative
+/// estimate that exactly equals the headroom is refused, because work that
+/// costs exactly what is spare leaves nothing for the next run. Pure, like the
+/// rest of this module: it reads a [`Reading`] and returns an [`Admission`],
+/// and the caller does the one `statvfs` that produced the reading.
+pub fn admits_concurrent(reading: &Reading, in_flight: usize) -> Admission {
+    let cumulative = reading
+        .run_budget_kib
+        .saturating_mul((in_flight as u64) + 1);
+    footprint::admit(reading.available_kib, reading.reserve_kib, cumulative)
+}
+
 /// One look at the volume, and when it was taken — the interval is part of the
 /// fact, because a reading during a heavy run is a moving target.
 #[derive(Debug, Clone)]
@@ -403,6 +421,51 @@ mod tests {
         assert!(!admission.ok, "{admission:?}");
         assert_eq!(admission.headroom_kib, GIB);
         assert_eq!(admission.needed_kib, 2 * GIB);
+    }
+
+    #[test]
+    fn concurrency_is_admitted_while_headroom_covers_the_cumulative_budget() {
+        // A roomy machine: 98 GiB of headroom over the reserve, and each run
+        // carries the declared 2 GiB budget (a bare reading has no profile, so
+        // the prior stands). One, two, and ten runs all fit.
+        let roomy = reading(116, 18);
+        assert_eq!(roomy.run_budget_kib, 2 * GIB);
+        for in_flight in [0, 1, 9] {
+            let admission = admits_concurrent(&roomy, in_flight);
+            assert!(admission.ok, "{in_flight} in flight: {admission:?}");
+            assert_eq!(admission.needed_kib, (in_flight as u64 + 1) * 2 * GIB);
+        }
+    }
+
+    #[test]
+    fn concurrency_is_refused_when_the_cumulative_budget_outgrows_headroom() {
+        // 3 GiB of headroom: one 2 GiB run fits, a second cumulative 4 GiB does
+        // not. The refusal names the numbers rather than silently over-spending.
+        let tight = reading(21, 18);
+        let first = admits_concurrent(&tight, 0);
+        assert!(first.ok, "{first:?}");
+        let second = admits_concurrent(&tight, 1);
+        assert!(!second.ok, "{second:?}");
+        assert_eq!(second.headroom_kib, 3 * GIB);
+        assert_eq!(second.needed_kib, 4 * GIB);
+    }
+
+    #[test]
+    fn the_cumulative_boundary_is_strict() {
+        // The contract's one backwards-looking boundary, carried into the
+        // concurrent gate: a cumulative estimate that exactly equals the
+        // headroom is refused, because it would consume the reserve to its
+        // floor and leave nothing for the next run. 98 GiB of headroom is 49
+        // budgets: the 49th run (48 already in flight) is the exact fit, and it
+        // is refused; the 48th (47 in flight) leaves a budget to spare.
+        let roomy = reading(116, 18);
+        let under = admits_concurrent(&roomy, 47);
+        assert!(under.ok, "{under:?}");
+        assert_eq!(under.needed_kib, 96 * GIB);
+        let exact = admits_concurrent(&roomy, 48);
+        assert!(!exact.ok, "an exact fit is refused: {exact:?}");
+        assert_eq!(exact.headroom_kib, exact.needed_kib);
+        assert_eq!(exact.needed_kib, 98 * GIB);
     }
 
     #[test]

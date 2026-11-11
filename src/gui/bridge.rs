@@ -118,6 +118,10 @@ pub struct AgentInputs {
     /// driving: the events it emits have to land in that session's log,
     /// and the thread is the only place that knows which one is running.
     pub state: Arc<Mutex<GuiState>>,
+    /// The face's event broadcast, so a concurrent run's forwarder can
+    /// record its own events straight into its own session's log rather
+    /// than routing them through the single `driving` field (KI-525).
+    pub events: broadcast::Sender<Value>,
 }
 
 /// One attached session's live face: its ordered event log, whether a
@@ -538,6 +542,7 @@ impl Bridge {
         // are handed the same root, not because they each walked for one.
         let memories = bridge.memories.clone();
         let state = Arc::clone(&bridge.state);
+        let events = bridge.events.clone();
         let handle = thread::spawn(move || {
             let _ = spawn_agent(AgentInputs {
                 home,
@@ -549,6 +554,7 @@ impl Bridge {
                 base_url,
                 memories_root: memories,
                 state,
+                events,
             });
         });
         Bridge {
@@ -562,6 +568,13 @@ impl Bridge {
     /// two agree because they are the same log.
     pub fn subscribe(&self) -> broadcast::Receiver<Value> {
         self.events.subscribe()
+    }
+
+    /// The live stream's sender, for the agent-thread seam: a concurrent
+    /// run's forwarder records into this same broadcast, so its events reach
+    /// every surface the bridge's own fan-out reaches (KI-525).
+    pub fn event_sender(&self) -> broadcast::Sender<Value> {
+        self.events.clone()
     }
 
     /// The state document's `services` block: the loop's latest pass,
@@ -12356,9 +12369,15 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &
         // seam every event crosses, beside the flag it belongs with —
         // closes the window where the archive still said a finished run
         // was driving and a send in another conversation queued behind
-        // work that had ended (KI-301).
+        // work that had ended (KI-301). With concurrent runs (KI-525) the
+        // mark hands back to a peer that is still executing, so `driving`
+        // never names a run that has ended while another carries on.
         if finished && state.driving.as_deref() == Some(session) {
-            state.driving = None;
+            state.driving = state
+                .sessions
+                .iter()
+                .find(|(id, attached)| attached.running && id.as_str() != session)
+                .map(|(id, _)| id.clone());
         }
     }
     if let Some(notice) = notice {
@@ -12631,6 +12650,70 @@ fn describe_seat(
     })
 }
 
+/// One core event into the face, attributed to `session`. This is the
+/// per-event half of the fan-out, factored out so a concurrent run's
+/// forwarder can attribute its own events to its own session rather than to
+/// the single `driving` field (KI-525). The shared fan-out calls it with the
+/// face's target for the core's own traffic; a run's forwarder calls it with
+/// the session that run drives, so two runs' transcripts never mix.
+fn apply_event(
+    state: &Arc<Mutex<GuiState>>,
+    events: &broadcast::Sender<Value>,
+    home: &std::path::Path,
+    session: &str,
+    event: UiEvent,
+) {
+    // The log the agent thread created on its first task becomes this face's
+    // launch session: the pending log moves to the id, so a face that was
+    // reading the pending key reads the same events under the id it shows
+    // (KI-022). A folder chosen before that first task moves with it and
+    // lands in the sidecar under the id it will be read back by.
+    if let UiEvent::Session { id } = &event {
+        if lock(state).name_launch(id).is_some() {
+            let map = lock(state).workdirs.clone();
+            save_workdirs(home, &map);
+        }
+        // Independent of the folder: a goal set before the first run moves
+        // to the session's own key.
+        move_pending_goal(home, id);
+    }
+    // The session-close hygiene: a goal completing is the moment the run's
+    // debris is at its peak — the checkpoints grew one 64 MB snapshot per
+    // turn — so the retention runs here, off the async context, and names
+    // what it freed.
+    if matches!(event, UiEvent::GoalDone { .. }) {
+        let store = home.join("checkpoints");
+        tokio::task::spawn_blocking(move || {
+            // The live-safe retention: this fires while the session is still
+            // open, so its newest checkpoint — the turn the face's rewind
+            // points at — is spared (KI-478).
+            let (removed, reclaimed) = crate::checkpoints::prune_live(
+                &store,
+                crate::checkpoints::KEEP_TURNS,
+                crate::checkpoints::STORE_CAP_BYTES,
+            );
+            if removed > 0 {
+                eprintln!(
+                    "fleet: hygiene: {removed} checkpoint turn(s) pruned, {reclaimed} bytes freed"
+                );
+            }
+        });
+    }
+    let mut described = describe(&event);
+    // The events that close a run name their session, for the reason the
+    // seat does: a surface watching another conversation must be able to
+    // tell whose run ended.
+    if let Some(object) = described.as_object_mut() {
+        if matches!(
+            object.get("type").and_then(Value::as_str),
+            Some("finished") | Some("failed")
+        ) {
+            object.insert("session".to_string(), json!(session));
+        }
+    }
+    record(state, events, session, described);
+}
+
 /// Drains both core channels into the ordered log for as long as either
 /// is open. Both close only when the agent thread ends, which is the
 /// bridge's own end: the channels are the thread's lifetime.
@@ -12652,63 +12735,14 @@ async fn fan_out(
         tokio::select! {
             event = ui_rx.recv(), if !ui_done => match event {
                 Some(event) => {
-                    // The log the agent thread created on its first task
-                    // becomes this face's launch session: the pending log
-                    // moves to the id, so a face that was reading the
-                    // pending key reads the same events under the id it
-                    // shows (KI-022). A folder chosen before that first
-                    // task moves with it and lands in the sidecar under
-                    // the id it will be read back by.
-                    if let UiEvent::Session { id } = &event {
-                        if lock(&state).name_launch(id).is_some() {
-                            let map = lock(&state).workdirs.clone();
-                            save_workdirs(&home, &map);
-                        }
-                        // Independent of the folder: a goal set before the
-                        // first run moves to the session's own key.
-                        move_pending_goal(&home, id);
-                    }
-                    // The session-close hygiene: a goal completing is the
-                    // moment the run's debris is at its peak — the
-                    // checkpoints grew one 64 MB snapshot per turn — so the
-                    // retention runs here, off the async context, and names
-                    // what it freed.
-                    if matches!(event, UiEvent::GoalDone { .. }) {
-                        let store = home.join("checkpoints");
-                        tokio::task::spawn_blocking(move || {
-                            // The live-safe retention: this fires while
-                            // the session is still open, so its newest
-                            // checkpoint — the turn the face's rewind
-                            // points at — is spared (KI-478).
-                            let (removed, reclaimed) = crate::checkpoints::prune_live(
-                                &store,
-                                crate::checkpoints::KEEP_TURNS,
-                                crate::checkpoints::STORE_CAP_BYTES,
-                            );
-                            if removed > 0 {
-                                eprintln!(
-                                    "fleet: hygiene: {removed} checkpoint turn(s) pruned, {reclaimed} bytes freed"
-                                );
-                            }
-                        });
-                    }
-                    // The event belongs to the session the thread is
-                    // driving, which is exact because the thread's
-                    // command loop is serial: the events for one task all
-                    // arrive before the next command is read.
+                    // A core event with no run of its own (a cron fire, a
+                    // skills load, the launch's naming) belongs to the
+                    // session the face is driving, or the launch when
+                    // nothing is. A concurrent run's own events do not come
+                    // through here — its forwarder attributes them to its
+                    // own session (KI-525).
                     let session = lock(&state).target();
-                    let mut described = describe(&event);
-                    // The events that close a run or raise a seat name
-                    // their session, for the reason the seat does.
-                    if let Some(object) = described.as_object_mut() {
-                        if matches!(
-                            object.get("type").and_then(Value::as_str),
-                            Some("finished") | Some("failed")
-                        ) {
-                            object.insert("session".to_string(), json!(session));
-                        }
-                    }
-                    record(&state, &events, &session, described);
+                    apply_event(&state, &events, &home, &session, event);
                 }
                 None => ui_done = true,
             },
@@ -12968,6 +13002,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             base_url,
             memories_root,
             state,
+            events,
         } = inputs;
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
         // The scheduled consolidation cycle: one pass now, then one every
@@ -13023,37 +13058,45 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                     });
                 }
             }
-            // The declared list for one run: the library with the owner's
-            // retired filtered out (KI-215's shape — the owner retires on
-            // the skills page, the library is never written). Read per
-            // run, so a retirement reaches the next run without a
-            // restart, and each run's `skills` record pins what that run
-            // actually saw.
-            let declared_skills = || {
-                crate::skills::resolve_skills_dir(
-                    std::env::var("FLEET_SKILLS_DIR").ok().as_deref(),
-                    std::env::var("HOME").ok().as_deref(),
-                )
-                .map(|dir| {
-                    crate::skills::note_retired(&home);
-                    crate::skills::load_declared(&dir, &home)
-                })
-                .unwrap_or_default()
-            };
+            // The declared skills list is read per run inside `drive_run`
+            // (KI-215's shape — the owner retires on the skills page, the
+            // library is never written), so a retirement reaches the next
+            // run without a restart and each run's `skills` record pins what
+            // that run actually saw.
             // The route is chosen once per session, on that session's
             // first task, and the committed router is reused for the rest
             // of it — one sys1 judgment, not one per task. A session this
             // thread has never driven has no entry and is judged when its
-            // first task arrives.
-            let mut routes: std::collections::HashMap<String, Option<crate::route::Prepared>> =
-                std::collections::HashMap::new();
+            // first task arrives. The three maps are shared behind a mutex
+            // because the runs this thread dispatches now execute
+            // concurrently (KI-525): each run clones its own session's
+            // entry out and inserts back only what it prepared, never
+            // holding the lock across an await.
+            let routes: Arc<Mutex<std::collections::HashMap<String, Option<crate::route::Prepared>>>> =
+                Arc::new(Mutex::new(std::collections::HashMap::new()));
             // The provider each prepared route was judged under: a chat
             // that changes its pin is re-routed rather than served the
             // old decision.
-            let mut route_pins: std::collections::HashMap<String, Option<String>> =
-                std::collections::HashMap::new();
-            let mut judge_tasks: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
+            let route_pins: Arc<Mutex<std::collections::HashMap<String, Option<String>>>> =
+                Arc::new(Mutex::new(std::collections::HashMap::new()));
+            let judge_tasks: Arc<Mutex<std::collections::HashMap<String, String>>> =
+                Arc::new(Mutex::new(std::collections::HashMap::new()));
+            // The shared resources every run drives with. The run itself
+            // owns its log, client, approver and progress locally, so the
+            // agent's borrows stay on the run's own frame.
+            let ctx = RunCtx {
+                home: home.clone(),
+                model: model.clone(),
+                base_url: base_url.clone(),
+                approval_tx: approval_tx.clone(),
+                state: Arc::clone(&state),
+                rules: Arc::clone(&rules),
+                events: events.clone(),
+                routes: Arc::clone(&routes),
+                route_pins: Arc::clone(&route_pins),
+                judge_tasks: Arc::clone(&judge_tasks),
+                dotenv: dotenv.clone(),
+            };
             // The launch session does not exist yet: it is created on the
             // first task, so a browser face that is opened and closed
             // without a prompt leaves no empty log behind (KI-022),
@@ -13143,269 +13186,111 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         // driven, which is exact because the thread's
                         // command loop is serial.
                         lock(&state).driving = Some(driving.clone());
-                        let pin = lock(&state).provider_pin.clone();
-                        if route_pins.get(&driving).cloned().flatten() != pin {
-                            routes.insert(driving.clone(), None);
-                        }
-                        // A turn carrying a picture is not judged: its
-                        // chain is the `vision` workload's, named rather
-                        // than guessed, because the judgment reads the
-                        // task's words and a screenshot's words do not
-                        // describe the picture. It is also never served
-                        // from the session's prepared slot — that route
-                        // answered a conversation of words, and reusing it
-                        // would put a picture on a text-only chain — so a
-                        // carrying turn prepares its own and leaves the
-                        // slot empty for the words that follow.
-                        let carrying = !images.is_empty();
-                        if carrying {
-                            routes.insert(driving.clone(), None);
-                        }
-                        // Prepared into a local so the map's borrow does
-                        // not span the await.
-                        let mut just_routed: Option<crate::route::Prepared> = None;
-                        let needs_route =
-                            carrying || routes.get(&driving).is_none_or(|slot| slot.is_none());
-                        if needs_route {
-                            let outcome = if carrying {
-                                crate::route::prepare_for_images(
-                                    &home,
-                                    &dotenv,
-                                    &task,
-                                    &std::collections::HashMap::new(),
-                                    pin.as_deref(),
-                                    Some(driving.as_str()),
-                                )
-                                .await
-                            } else {
-                                crate::route::prepare_with_pin(
-                                    &home,
-                                    &dotenv,
-                                    &task,
-                                    &std::collections::HashMap::new(),
-                                    pin.as_deref(),
-                                    Some(driving.as_str()),
-                                )
-                                .await
-                            };
-                            match outcome {
-                                Ok(fresh) if carrying => just_routed = Some(fresh),
-                                Ok(fresh) => {
-                                    judge_tasks.insert(driving.clone(), task.clone());
-                                    route_pins.insert(driving.clone(), pin.clone());
-                                    routes.insert(driving.clone(), Some(fresh));
-                                }
-                                Err(error) => {
-                                    // A stop can be written while the
-                                    // route is being judged. This run
-                                    // will never read it, and a later
-                                    // run in the same session must not.
-                                    if let Some(id) = current_session.as_deref() {
-                                        clear_control(&session::session_path(&home, id));
-                                    }
-                                    // A keyless machine is the door's
-                                    // case, not a routing error: the
-                                    // pre-flight names it before the
-                                    // run, and the face raises the
-                                    // onboarding screen inline.
-                                    let preflight = crate::route::preflight(&home, &dotenv);
-                                    let event = if preflight.is_err() {
-                                        UiEvent::NeedsSetup(
-                                            crate::onboard::STEP_LLM.to_string(),
-                                        )
-                                    } else {
-                                        UiEvent::Failed(format!("routing config: {error}"))
-                                    };
-                                    let _ = ui_tx.send(event);
-                                    continue;
+                        // Admission before the run spawns (the multi-session
+                        // plan's C3): concurrency is bounded by the machine's
+                        // capacity, never a fixed pool size. Count the runs
+                        // already in flight — this session's own flag was set
+                        // by `dispatch`, so it is not counted again — and ask
+                        // the contract whether one more budget fits above the
+                        // reserve.
+                        let in_flight = {
+                            let state = lock(&state);
+                            state
+                                .sessions
+                                .iter()
+                                .filter(|(id, attached)| {
+                                    attached.running && id.as_str() != driving
+                                })
+                                .count()
+                        };
+                        let admission =
+                            concurrent_admission(&home, folder.as_deref(), in_flight);
+                        if !admission.ok {
+                            // The machine cannot carry this run beside the ones
+                            // already driving. Say so politely, by name, and
+                            // leave no phantom flag: the run never started, so
+                            // its session is not running. The owner is told to
+                            // reconsider or queue — never silently over-spent,
+                            // never a terse refusal (the owner's ruling).
+                            {
+                                let mut state = lock(&state);
+                                state.attached(&driving).running = false;
+                                // `driving` was just pointed at this refused
+                                // session; it must name a run that is actually
+                                // executing, so hand it back to a running peer
+                                // (or none) rather than leave it on a chat that
+                                // never started.
+                                if state.driving.as_deref() == Some(driving.as_str()) {
+                                    state.driving = state
+                                        .sessions
+                                        .iter()
+                                        .find(|(_, attached)| attached.running)
+                                        .map(|(id, _)| id.clone());
                                 }
                             }
-                        }
-                        let prepared = match &just_routed {
-                            Some(prepared) => prepared,
-                            None => routes
-                                .get(&driving)
-                                .and_then(|slot| slot.as_ref())
-                                .expect("prepared on the first run"),
-                        };
-                        let client = Client::routed(prepared.router.clone());
-                        let path = session::session_path(
-                            &home,
-                            current_session.as_deref().unwrap_or_default(),
-                        );
-                        // The corpus is loaded per task, off the async
-                        // worker: the files can change between runs, and a
-                        // fact an earlier run of this session remembered is
-                        // on disk by the time this one assembles.
-                        let memory = tokio::task::spawn_blocking(|| {
-                            let root = crate::memory::resolve_root(
-                                &std::env::current_dir().unwrap_or_default(),
+                            let reason = format!(
+                                "this machine's resources are too constrained right now to carry \
+                                 another run beside the work already in flight: {:.2} GiB of headroom \
+                                 against a {:.2} GiB cumulative budget. Please reconsider this run, or \
+                                 queue it for when there is room.",
+                                admission.headroom_kib as f64 / 1024.0 / 1024.0,
+                                admission.needed_kib as f64 / 1024.0 / 1024.0,
                             );
-                            std::sync::Arc::new(crate::memory::Memory::load(&root))
-                        })
-                        .await
-                        .ok();
-                        // One agent per task over a freshly opened log: the
-                        // replay seeds the conversation exactly as a
-                        // resumed headless run is seeded.
-                        let mut log = match Session::open(&path) {
-                            Ok(log) => log,
-                            Err(error) => {
-                                clear_control(&path);
-                                let _ = ui_tx.send(UiEvent::Failed(format!(
-                                    "could not open the session log: {error}"
-                                )));
-                                continue;
-                            }
-                        };
-                        // The main session's loop is uncapped by turns
-                        // (the 2026-11-05 ruling): the option's value is
-                        // the subagent path's fallback ceiling, not a
-                        // bound on this run. The face's per-run budget
-                        // override is retired with the cap it served.
-                        let turn_budget = crate::route::run_config(&home).max_turns;
-                        // The registry's enabled servers seed the run's
-                        // lane specs, so the run pre-joins them before
-                        // its first request (D2). A name the env chain
-                        // cannot resolve fails the run by name — the
-                        // face reads it as a failed run, the model
-                        // spawned nothing half-configured.
-                        let dotenv: std::collections::BTreeMap<String, String> =
-                            crate::home::read_dotenv_with_process_vault(&home)
-                                .into_iter()
-                                .collect();
-                        let mut seed = AgentOptions::default();
-                        let lane_specs = match seed.seed_user_servers(&home, &dotenv) {
-                            Ok(absent) => {
-                                // The named absences (the 2026-10-26
-                                // plan): one line per unkeyed server, the
-                                // run's own startup voice — the face's
-                                // stderr is where its runs print.
-                                for (server, reason) in absent {
-                                    eprintln!(
-                                        "fleet: server `{server}`: {reason} — its tools are not declared this run"
-                                    );
-                                }
-                                seed.lane_specs
-                            }
-                            Err(error) => {
-                                let _ = ui_tx.send(UiEvent::Failed(format!(
-                                    "the run did not start: {error}"
-                                )));
-                                continue;
-                            }
-                        };
-                        // The lead persona's overlay rides the run: the
-                        // conversation says who works it, so the model
-                        // hears the voice the record names (D7 — the
-                        // same seam a delegation's role overlay uses).
-                        // A persona that does not resolve runs unnamed
-                        // rather than failing the run; the record still
-                        // says whose turn it is.
-                        let role_overlay = {
-                            let lead = session::summarize(
-                                &session::session_path(&home, &driving),
-                            )
-                            .and_then(|summary| summary.personas.first().cloned());
-                            match lead {
-                                Some(name) => crate::roles::load(&home, &name)
-                                    .ok()
-                                    .map(|role| crate::roles::overlay_prompt(&role))
-                                    .filter(|frame| !frame.is_empty()),
-                                None => None,
-                            }
-                        };
-                        let options = AgentOptions {
-                            // The session's standing objective, read per
-                            // run so a change reaches the next run with
-                            // no restart.
-                            goal: session_goal(&home, &driving),
-                            model: model.clone(),
-                            max_turns: turn_budget,
-                            capped: false,
-                            health_note: true,
-                            lane_prose: true,
-                            // The run's resolved `{session}` value, so a
-                            // mid-run re-route re-seeds the same id.
-                            session_id: Some(prepared.session_id.clone()),
-                            identity: crate::home::read_soul(&home),
-                            ui_tx: Some(ui_tx.clone()),
-                            lane_specs,
-                            calib: Some(prepared.calib.clone()),
-                            // The face supplies the resource judge: it has the
-                            // home the lane resolves through, so a run that
-                            // outgrows its budget can be asked about rather
-                            // than silently stopped.
-                            resource_judge: Some(crate::judge::resource_judge_for(&home)),
-                            skills: declared_skills(),
-                            role_overlay,
-                            memory,
-                            scope: None,
-                            // The self-maintenance tool rides the
-                            // interactive surfaces: a session can file a
-                            // proposal, and only the owner's `fleet improve
-                            // apply` runs one.
-                            improve_home: Some(home.clone()),
-                            goal_home: Some(home.clone()),
-                            goal_session: Some(driving.clone()),
-                            route_home: None,
-                            // The owner is in a browser, and the run says
-                            // so: the prompt line is what tells the model
-                            // its progress is being watched live and where
-                            // the owner's messages arrive.
-                            gui_prompt: Some(gui::prompt_line(&base_url)),
-                            // The interactive surface has no forced-fold
-                            // flag: its owner is present, so the budget's
-                            // own timing is the right one.
-                            compact_now: false,
-                            // The trust trio's floor: this face's runs
-                            // checkpoint per turn, under the home's own
-                            // store, so a run can be rewound from the
-                            // browser and diffed against a turn.
-                            checkpoints: Some(home.join("checkpoints")),
-                            // The chat's working folder, resolved when
-                            // the run was accepted. A chat that never
-                            // chose one has no filesystem access at
-                            // all: the four built-ins are refused by
-                            // name, and the refusal tells the model to
-                            // ask for a folder.
-                            file_access: match folder {
-                                Some(root) => crate::agent::FileAccess::Folder(root),
-                                None => crate::agent::FileAccess::None,
-                            },
-                            plan_mode,
-                        };
-                        let mode = lock(&state).permissions;
-                        // The seat's wait watches this run's control file,
-                        // so a stop the owner writes mid-wait ends it.
-                        let control_path =
-                            session::session_path(&home, &driving).with_extension("control");
-                        let approver: Box<dyn Approver> = Box::new(GuiApprover::new(
-                            approval_tx.clone(),
-                            Arc::clone(&rules),
-                            mode,
-                            control_path,
-                        ));
-                        // Progress text has a sink here: the page renders
-                        // the events, and the log records exactly what
-                        // headless records.
-                        let mut progress = std::io::sink();
-                        let mut agent =
-                            match Agent::new(&client, options, &mut log, approver, &mut progress) {
-                                Ok(agent) => agent,
+                            record(
+                                &state,
+                                &events,
+                                &driving,
+                                json!({"type": "queued", "session": driving, "reason": reason}),
+                            );
+                            continue;
+                        }
+                        // Admitted: the run executes beside any other admitted
+                        // run, each on its own thread and current-thread
+                        // runtime — the same shape `spawn_agent` itself uses,
+                        // and the reason is the same: the agent borrows a
+                        // `dyn Write` and a `dyn Approver`, so its future is
+                        // not `Send` and cannot ride the shared multi-thread
+                        // runtime's `spawn`. Its events are attributed to its
+                        // own session by its forwarder, so two transcripts
+                        // never mix (C2). The dispatcher stays serial only for
+                        // the session naming and this admission; the work
+                        // itself runs concurrent with its peers.
+                        let run_ctx = ctx.clone();
+                        let run_state = Arc::clone(&state);
+                        let run_events = events.clone();
+                        let run_session = driving.clone();
+                        thread::spawn(move || {
+                            let runtime = match tokio::runtime::Builder::new_current_thread()
+                                .enable_all()
+                                .build()
+                            {
+                                Ok(runtime) => runtime,
                                 Err(error) => {
-                                    clear_control(&path);
-                                    let _ = ui_tx.send(UiEvent::Failed(error.to_string()));
-                                    continue;
+                                    // The run never started: name it and clear
+                                    // the flag rather than leave a phantom.
+                                    lock(&run_state).attached(&run_session).running = false;
+                                    record(
+                                        &run_state,
+                                        &run_events,
+                                        &run_session,
+                                        json!({
+                                            "type": "failed",
+                                            "reason": format!("the run runtime failed to start: {error}"),
+                                        }),
+                                    );
+                                    return;
                                 }
                             };
-                        let _ = agent.run_with_images(&task, images).await;
-                        // A control that landed on the run's last step is
-                        // never read by the loop. Left in place it would
-                        // stop the next run in this session before that
-                        // run's first turn, which is not what the owner
-                        // asked for.
-                        clear_control(&path);
+                            runtime.block_on(drive_run(
+                                run_ctx,
+                                driving,
+                                task,
+                                folder,
+                                images,
+                                plan_mode,
+                                learning,
+                            ));
+                        });
                     }
                     Command::Rewind(_turn) => {
                         // The face already restored the tree, recorded
@@ -13413,9 +13298,11 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         // thread's half is the prepared route: the
                         // judgment answered the conversation that is
                         // gone, and the next task is judged as its own.
+                        // Handled serially in the dispatcher; the shared
+                        // maps are locked only for the edit.
                         if let Some(id) = &current_session {
-                            routes.insert(id.clone(), None);
-                            judge_tasks.remove(id);
+                            lock(&routes).insert(id.clone(), None);
+                            lock(&judge_tasks).remove(id);
                         }
                     }
                     Command::Resume(id) => {
@@ -13428,23 +13315,18 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         // routes stand: a phone working in another
                         // conversation keeps its judgment.
                         current_session = Some(id.clone());
-                        routes.insert(id.clone(), None);
-                        judge_tasks.remove(&id);
+                        lock(&routes).insert(id.clone(), None);
+                        lock(&judge_tasks).remove(&id);
                     }
                 }
             }
-            // Every session's routing decision is recorded once, when
-            // the agent thread ends — best-effort, never fatal. A thread
-            // that drove three conversations records three judgments.
-            for (session, prepared) in &routes {
-                if let Some(prepared) = prepared {
-                    let judged = judge_tasks.get(session).cloned().unwrap_or_default();
-                    prepared.record_route(&judged);
-                }
-            }
-            // And the self-authoring half runs once, on the session this
-            // face drove: its lessons are drafted into proposals awaiting
-            // the slice-12 gate, best-effort, never applied here.
+            // Each run records its own session's routing decision when it
+            // ends (in `drive_run`), so there is no thread-end route pass
+            // here any more — a concurrent run must not wait for the thread
+            // to end to land its judgment. The self-authoring half still
+            // runs once, on the session this face drove last: its lessons
+            // are drafted into proposals awaiting the slice-12 gate,
+            // best-effort, never applied here.
             let user_home = std::env::var("HOME").ok();
             let path = match current_session.as_deref() {
                 Some(id) => crate::session::session_path(&home, id),
@@ -13474,6 +13356,375 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             }
         });
     })
+}
+
+/// The shared resources a run drives with (the multi-session plan's
+/// per-session run loop). Everything here is cheap to clone and safe to
+/// share across concurrent runs; the run itself owns its log, client,
+/// approver and progress locally, so the agent's borrows stay on the run's
+/// own frame and never cross a spawn boundary.
+#[derive(Clone)]
+struct RunCtx {
+    home: PathBuf,
+    model: String,
+    base_url: String,
+    approval_tx: UnboundedSender<ApprovalRequest>,
+    state: Arc<Mutex<GuiState>>,
+    rules: Arc<Mutex<approvals::Rules>>,
+    events: broadcast::Sender<Value>,
+    /// The route cache, shared and session-keyed: a run clones its own
+    /// session's entry out and inserts back only what it prepared, never
+    /// holding the lock across an await.
+    routes: Arc<Mutex<std::collections::HashMap<String, Option<crate::route::Prepared>>>>,
+    route_pins: Arc<Mutex<std::collections::HashMap<String, Option<String>>>>,
+    judge_tasks: Arc<Mutex<std::collections::HashMap<String, String>>>,
+    /// The routing dotenv, read once when the thread starts.
+    dotenv: std::collections::HashMap<String, String>,
+}
+
+/// The reading the concurrent-admission gate grades against: the volume the
+/// run works in (or the home volume for a folderless chat), the reserve the
+/// environment's history implies, and the owner's declaration. It mirrors the
+/// agent loop's own admission reading so the dispatcher and the run cannot
+/// disagree about the machine. A volume that cannot be read is a named
+/// degradation, not a refusal — the run is admitted ungoverned rather than
+/// blocked over a filesystem the app could not measure, the same rule the
+/// agent loop's `admit_work` follows.
+fn concurrent_admission(
+    home: &std::path::Path,
+    folder: Option<&std::path::Path>,
+    in_flight: usize,
+) -> crate::footprint::Admission {
+    let root = folder.unwrap_or(home);
+    let Some(readout) = crate::contract::reading_of(root) else {
+        return crate::footprint::Admission {
+            ok: true,
+            headroom_kib: 0,
+            needed_kib: 0,
+        };
+    };
+    let env = crate::footprint_history::profile(home);
+    let declared = crate::footprint_history::declared(home);
+    let reading = crate::footprint::Reading::with_floor(
+        Vec::new(),
+        readout.volume_kib,
+        readout.available_kib,
+        &env,
+        declared.appetite,
+        declared.reserve_kib(),
+    );
+    crate::contract::admits_concurrent(&reading, in_flight)
+}
+
+/// Drive one admitted run to its end on its own task (the multi-session
+/// plan's Stage 2). This is the former serial command loop's Run-arm body,
+/// lifted so two admitted runs execute concurrently, each owning its log,
+/// client, approver and progress. Its events ride a private channel whose
+/// forwarder attributes them to `driving`, so a second run's transcript never
+/// lands in the first's log (C2). The shared route maps are locked only to
+/// clone out / insert back what this run needs — never across an await.
+///
+/// Every exit path names the run's end on its own channel: the agent emits
+/// `finished`/`failed` itself, and the early refusals below emit `failed`, so
+/// `record` always clears the session's `running` flag and no phantom run is
+/// left behind (C0/C1).
+async fn drive_run(
+    ctx: RunCtx,
+    driving: String,
+    task: String,
+    folder: Option<PathBuf>,
+    images: Vec<crate::api::ImageRef>,
+    plan_mode: bool,
+    // The lesson kind and role are consumed by the dispatcher's session
+    // creation (a lesson is born with its persona); the run body itself reads
+    // the lead persona off the log, so the pair does not ride further.
+    _learning: Option<(String, String)>,
+) {
+    let RunCtx {
+        home,
+        model,
+        base_url,
+        approval_tx,
+        state,
+        rules,
+        events,
+        routes,
+        route_pins,
+        judge_tasks,
+        dotenv,
+    } = ctx;
+    // The run's private event channel: its forwarder attributes every event
+    // to this run's session, which is what keeps two concurrent transcripts
+    // apart. The shared fan-out only sees the core's own traffic.
+    let (run_tx, mut run_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    let forwarder = {
+        let state = Arc::clone(&state);
+        let events = events.clone();
+        let home = home.clone();
+        let session = driving.clone();
+        tokio::spawn(async move {
+            while let Some(event) = run_rx.recv().await {
+                apply_event(&state, &events, &home, &session, event);
+            }
+        })
+    };
+    // The pin this run was accepted under, and whether the session's cached
+    // route still answers it. A changed pin re-routes rather than serving the
+    // old decision.
+    let pin = lock(&state).provider_pin.clone();
+    if lock(&route_pins).get(&driving).cloned().flatten() != pin {
+        lock(&routes).insert(driving.clone(), None);
+    }
+    // A turn carrying a picture is not judged: its chain is the `vision`
+    // workload's, named rather than guessed, because the judgment reads the
+    // task's words and a screenshot's words do not describe the picture. It
+    // is also never served from the session's prepared slot — that route
+    // answered a conversation of words, and reusing it would put a picture on
+    // a text-only chain — so a carrying turn prepares its own and leaves the
+    // slot empty for the words that follow.
+    let carrying = !images.is_empty();
+    if carrying {
+        lock(&routes).insert(driving.clone(), None);
+    }
+    // Prepared into a local so the map's lock does not span the await.
+    let mut just_routed: Option<crate::route::Prepared> = None;
+    let needs_route = carrying
+        || lock(&routes)
+            .get(&driving)
+            .is_none_or(|slot| slot.is_none());
+    if needs_route {
+        let outcome = if carrying {
+            crate::route::prepare_for_images(
+                &home,
+                &dotenv,
+                &task,
+                &std::collections::HashMap::new(),
+                pin.as_deref(),
+                Some(driving.as_str()),
+            )
+            .await
+        } else {
+            crate::route::prepare_with_pin(
+                &home,
+                &dotenv,
+                &task,
+                &std::collections::HashMap::new(),
+                pin.as_deref(),
+                Some(driving.as_str()),
+            )
+            .await
+        };
+        match outcome {
+            Ok(fresh) if carrying => just_routed = Some(fresh),
+            Ok(fresh) => {
+                lock(&judge_tasks).insert(driving.clone(), task.clone());
+                lock(&route_pins).insert(driving.clone(), pin.clone());
+                lock(&routes).insert(driving.clone(), Some(fresh));
+            }
+            Err(error) => {
+                // A stop can be written while the route is being judged. This
+                // run will never read it, and a later run in the same session
+                // must not.
+                clear_control(&session::session_path(&home, &driving));
+                // A keyless machine is the door's case, not a routing error:
+                // the pre-flight names it before the run, and the face raises
+                // the onboarding screen inline.
+                let preflight = crate::route::preflight(&home, &dotenv);
+                let event = if preflight.is_err() {
+                    UiEvent::NeedsSetup(crate::onboard::STEP_LLM.to_string())
+                } else {
+                    UiEvent::Failed(format!("routing config: {error}"))
+                };
+                let _ = run_tx.send(event);
+                let _ = forwarder.await;
+                return;
+            }
+        }
+    }
+    let prepared = match &just_routed {
+        Some(prepared) => prepared.clone(),
+        None => lock(&routes)
+            .get(&driving)
+            .and_then(|slot| slot.clone())
+            .expect("prepared on the first run"),
+    };
+    let client = Client::routed(prepared.router.clone());
+    let path = session::session_path(&home, &driving);
+    // The corpus is loaded per task, off the async worker: the files can
+    // change between runs, and a fact an earlier run of this session
+    // remembered is on disk by the time this one assembles.
+    let memory = tokio::task::spawn_blocking(|| {
+        let root = crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+        std::sync::Arc::new(crate::memory::Memory::load(&root))
+    })
+    .await
+    .ok();
+    // One agent per task over a freshly opened log: the replay seeds the
+    // conversation exactly as a resumed headless run is seeded.
+    let mut log = match Session::open(&path) {
+        Ok(log) => log,
+        Err(error) => {
+            clear_control(&path);
+            let _ = run_tx.send(UiEvent::Failed(format!(
+                "could not open the session log: {error}"
+            )));
+            let _ = forwarder.await;
+            return;
+        }
+    };
+    // The main session's loop is uncapped by turns (the 2026-11-05 ruling):
+    // the option's value is the subagent path's fallback ceiling, not a bound
+    // on this run. The face's per-run budget override is retired with the cap
+    // it served.
+    let turn_budget = crate::route::run_config(&home).max_turns;
+    // The registry's enabled servers seed the run's lane specs, so the run
+    // pre-joins them before its first request (D2). A name the env chain
+    // cannot resolve fails the run by name — the face reads it as a failed
+    // run, the model spawned nothing half-configured.
+    let vault: std::collections::BTreeMap<String, String> =
+        crate::home::read_dotenv_with_process_vault(&home)
+            .into_iter()
+            .collect();
+    let mut seed = AgentOptions::default();
+    let lane_specs = match seed.seed_user_servers(&home, &vault) {
+        Ok(absent) => {
+            // The named absences (the 2026-10-26 plan): one line per unkeyed
+            // server, the run's own startup voice — the face's stderr is
+            // where its runs print.
+            for (server, reason) in absent {
+                eprintln!(
+                    "fleet: server `{server}`: {reason} — its tools are not declared this run"
+                );
+            }
+            seed.lane_specs
+        }
+        Err(error) => {
+            let _ = run_tx.send(UiEvent::Failed(format!("the run did not start: {error}")));
+            let _ = forwarder.await;
+            return;
+        }
+    };
+    // The lead persona's overlay rides the run: the conversation says who
+    // works it, so the model hears the voice the record names (D7 — the same
+    // seam a delegation's role overlay uses). A persona that does not resolve
+    // runs unnamed rather than failing the run; the record still says whose
+    // turn it is.
+    let role_overlay = {
+        let lead = session::summarize(&session::session_path(&home, &driving))
+            .and_then(|summary| summary.personas.first().cloned());
+        match lead {
+            Some(name) => crate::roles::load(&home, &name)
+                .ok()
+                .map(|role| crate::roles::overlay_prompt(&role))
+                .filter(|frame| !frame.is_empty()),
+            None => None,
+        }
+    };
+    // The declared skills for this run: the library with the owner's retired
+    // filtered out, read per run so a retirement reaches the next run without
+    // a restart (KI-215's shape).
+    let declared_skills = crate::skills::resolve_skills_dir(
+        std::env::var("FLEET_SKILLS_DIR").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .map(|dir| {
+        crate::skills::note_retired(&home);
+        crate::skills::load_declared(&dir, &home)
+    })
+    .unwrap_or_default();
+    let options = AgentOptions {
+        // The session's standing objective, read per run so a change reaches
+        // the next run with no restart.
+        goal: session_goal(&home, &driving),
+        model: model.clone(),
+        max_turns: turn_budget,
+        capped: false,
+        health_note: true,
+        lane_prose: true,
+        // The run's resolved `{session}` value, so a mid-run re-route re-seeds
+        // the same id.
+        session_id: Some(prepared.session_id.clone()),
+        identity: crate::home::read_soul(&home),
+        ui_tx: Some(run_tx.clone()),
+        lane_specs,
+        calib: Some(prepared.calib.clone()),
+        // The face supplies the resource judge: it has the home the lane
+        // resolves through, so a run that outgrows its budget can be asked
+        // about rather than silently stopped.
+        resource_judge: Some(crate::judge::resource_judge_for(&home)),
+        skills: declared_skills,
+        role_overlay,
+        memory,
+        scope: None,
+        // The self-maintenance tool rides the interactive surfaces: a session
+        // can file a proposal, and only the owner's `fleet improve apply`
+        // runs one.
+        improve_home: Some(home.clone()),
+        goal_home: Some(home.clone()),
+        goal_session: Some(driving.clone()),
+        route_home: None,
+        // The owner is in a browser, and the run says so: the prompt line is
+        // what tells the model its progress is being watched live and where
+        // the owner's messages arrive.
+        gui_prompt: Some(gui::prompt_line(&base_url)),
+        // The interactive surface has no forced-fold flag: its owner is
+        // present, so the budget's own timing is the right one.
+        compact_now: false,
+        // The trust trio's floor: this face's runs checkpoint per turn, under
+        // the home's own store, so a run can be rewound from the browser and
+        // diffed against a turn.
+        checkpoints: Some(home.join("checkpoints")),
+        // The chat's working folder, resolved when the run was accepted. A
+        // chat that never chose one has no filesystem access at all: the four
+        // built-ins are refused by name, and the refusal tells the model to
+        // ask for a folder.
+        file_access: match folder {
+            Some(root) => crate::agent::FileAccess::Folder(root),
+            None => crate::agent::FileAccess::None,
+        },
+        plan_mode,
+    };
+    let mode = lock(&state).permissions;
+    // The seat's wait watches this run's control file, so a stop the owner
+    // writes mid-wait ends it.
+    let control_path = session::session_path(&home, &driving).with_extension("control");
+    let approver: Box<dyn Approver> = Box::new(GuiApprover::new(
+        approval_tx.clone(),
+        Arc::clone(&rules),
+        mode,
+        control_path,
+    ));
+    // Progress text has a sink here: the page renders the events, and the log
+    // records exactly what headless records.
+    let mut progress = std::io::sink();
+    let mut agent = match Agent::new(&client, options, &mut log, approver, &mut progress) {
+        Ok(agent) => agent,
+        Err(error) => {
+            clear_control(&path);
+            let _ = run_tx.send(UiEvent::Failed(error.to_string()));
+            let _ = forwarder.await;
+            return;
+        }
+    };
+    let _ = agent.run_with_images(&task, images).await;
+    // A control that landed on the run's last step is never read by the loop.
+    // Left in place it would stop the next run in this session before that
+    // run's first turn, which is not what the owner asked for.
+    clear_control(&path);
+    // This session's routing decision is recorded when its run ends, not when
+    // the thread ends — a concurrent run must not wait for its peers to land
+    // its judgment. The words are the task the route was judged under.
+    let judged = lock(&judge_tasks)
+        .get(&driving)
+        .cloned()
+        .unwrap_or_else(|| task.clone());
+    prepared.record_route(&judged);
+    // Drain the forwarder so the run's last event (its `finished`/`failed`)
+    // is in the log before this task ends: dropping the agent and the sender
+    // closes the channel, and the forwarder exits once it has recorded all.
+    drop(agent);
+    drop(run_tx);
+    let _ = forwarder.await;
 }
 
 /// The rank route's scoring, extracted for the seam's own tests (KI-268):
@@ -15361,6 +15612,7 @@ mod tests {
             base_url: "http://127.0.0.1:1".to_string(),
             memories_root: home.clone(),
             state: Arc::clone(&bridge.state),
+            events: bridge.events.clone(),
         });
         bridge.run(&id, "go").expect("the run is accepted");
         // KI-340: the poll's wall clock was the flake — a loaded machine
@@ -15434,6 +15686,7 @@ mod tests {
             base_url: "http://127.0.0.1:1".to_string(),
             memories_root: home.clone(),
             state: Arc::clone(&bridge.state),
+            events: bridge.events.clone(),
         });
         bridge.run("", "go").expect("the run is accepted");
         // The session event lands, and the state document names the id.
@@ -16535,6 +16788,375 @@ mod tests {
         assert_eq!(bridge.state(&one)["running"], true);
         assert_eq!(bridge.state(&two)["running"], true);
 
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A chat-completions mock that answers any number of requests, each on
+    /// its own thread, so two concurrent runs are served at once. Every
+    /// request gets the same one-turn streamed answer, which ends the run
+    /// `finished` rather than awaiting a tool call.
+    fn mock_chat_concurrent() -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a mock");
+        let port = listener.local_addr().expect("an address").port();
+        std::thread::spawn(move || {
+            for _ in 0..64 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                std::thread::spawn(move || {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    let head_end;
+                    loop {
+                        match stream.read(&mut chunk) {
+                            Ok(0) => return,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                            Err(_) => return,
+                        }
+                        if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            head_end = at + 4;
+                            break;
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&buf[..head_end]).to_ascii_lowercase();
+                    let length = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    while buf.len() < head_end + length {
+                        match stream.read(&mut chunk) {
+                            Ok(0) => break,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                            Err(_) => break,
+                        }
+                    }
+                    let chunk = serde_json::json!({
+                        "choices": [{"delta": {"content": "the concurrent answer"}}]
+                    });
+                    let body = format!("data: {chunk}\n\ndata: [DONE]\n\n");
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                });
+            }
+        });
+        port
+    }
+
+    /// The roster and routing a concurrent-run test drives: one keyless
+    /// stand-in provider every workload walks, and a small declared reserve
+    /// so the admission gate reads the machine as able to carry the runs
+    /// regardless of the host's own free space.
+    fn write_concurrent_roster(home: &std::path::Path, port: u16) {
+        std::fs::write(
+            home.join("config.json"),
+            format!(
+                r#"{{"providers":[{{"id":"stand-in","base_url":"http://127.0.0.1:{port}/v1","key_env":"STAND_IN_KEY","models":["auto"],"key_required":false}}],"footprint":{{"reserve_gib":1}}}}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            home.join("routing.json"),
+            r#"{"workloads":[{"workload":"quick","candidates":["stand-in/auto"]},{"workload":"standard_code","candidates":["stand-in/auto"]},{"workload":"hard","candidates":["stand-in/auto"]},{"workload":"prose","candidates":["stand-in/auto"]},{"workload":"deep_context","candidates":["stand-in/auto"]}],"gates":{"default_workload":"standard_code"}}"#,
+        )
+        .unwrap();
+    }
+
+    /// C2: two admitted runs execute concurrently, each grows its own log,
+    /// and no event lands in the wrong session's transcript. The real agent
+    /// thread drives both over a mock that answers them at once.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_concurrent_runs_grow_their_own_logs_and_stay_isolated() {
+        let home = scratch("two-concurrent");
+        let port = mock_chat_concurrent();
+        write_concurrent_roster(&home, port);
+        let one = Session::create(&home, "m")
+            .expect("log one")
+            .id()
+            .to_string();
+        let two = Session::create(&home, "m")
+            .expect("log two")
+            .id()
+            .to_string();
+        let (mut bridge, sources) =
+            Bridge::detached(home.clone(), "m".to_string(), Some(one.clone()));
+        let door = bridge.connect();
+        let _thread = spawn_agent(AgentInputs {
+            home: home.clone(),
+            model: "m".to_string(),
+            session_id: Some(one.clone()),
+            ui_tx: sources.ui,
+            approval_tx: sources.seat,
+            command_rx: door,
+            base_url: format!("http://127.0.0.1:{port}"),
+            memories_root: home.clone(),
+            state: Arc::clone(&bridge.state),
+            events: bridge.events.clone(),
+        });
+        bridge
+            .run(&one, "the first task")
+            .expect("run one accepted");
+        bridge
+            .run(&two, "the second task")
+            .expect("run two accepted");
+        // Both runs end on their own `finished` event. The wait is on the
+        // product's own seam (the event log), not a private clock.
+        let ended = |id: &str| {
+            bridge.state(id)["events"]
+                .as_array()
+                .is_some_and(|events| events.iter().any(|e| e["type"] == "finished"))
+        };
+        for _ in 0..1200 {
+            if ended(&one) && ended(&two) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let one_state = bridge.state(&one);
+        let two_state = bridge.state(&two);
+        let one_events = one_state["events"].as_array().expect("one's log");
+        let two_events = two_state["events"].as_array().expect("two's log");
+        assert!(
+            one_events.iter().any(|e| e["type"] == "finished"),
+            "run one finished: {one_events:?}"
+        );
+        assert!(
+            two_events.iter().any(|e| e["type"] == "finished"),
+            "run two finished: {two_events:?}"
+        );
+        // Both flags came back: neither run is a phantom.
+        assert_eq!(one_state["running"], false, "one ended");
+        assert_eq!(two_state["running"], false, "two ended");
+        // Isolation: each transcript carries its own owner message and the
+        // answer, and never the other's task words.
+        let has_text = |events: &[serde_json::Value], text: &str| {
+            events
+                .iter()
+                .any(|e| e["text"].as_str().is_some_and(|t| t.contains(text)))
+        };
+        assert!(
+            has_text(one_events, "the first task"),
+            "one's own task: {one_events:?}"
+        );
+        assert!(
+            has_text(two_events, "the second task"),
+            "two's own task: {two_events:?}"
+        );
+        assert!(
+            has_text(one_events, "the concurrent answer"),
+            "one's answer: {one_events:?}"
+        );
+        assert!(
+            has_text(two_events, "the concurrent answer"),
+            "two's answer: {two_events:?}"
+        );
+        assert!(
+            !has_text(one_events, "the second task"),
+            "two's task never lands in one: {one_events:?}"
+        );
+        assert!(
+            !has_text(two_events, "the first task"),
+            "one's task never lands in two: {two_events:?}"
+        );
+        // Every event in a log names that log's session (or is untagged core
+        // traffic): no event carries the OTHER session's id.
+        for event in one_events {
+            if let Some(session) = event["session"].as_str() {
+                assert_eq!(session, one, "one's event names one: {event}");
+            }
+        }
+        for event in two_events {
+            if let Some(session) = event["session"].as_str() {
+                assert_eq!(session, two, "two's event names two: {event}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// C1/C3: when the machine's resources are too constrained to carry
+    /// another run, the dispatcher refuses it with a polite named card that
+    /// tells the owner to reconsider or queue, and leaves no phantom running
+    /// flag on the chat. The reserve is declared larger than any disk, so the
+    /// cumulative budget can never fit.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_refused_by_capacity_paints_a_polite_queue_and_clears_the_flag() {
+        let home = scratch("capacity-refusal");
+        // A reserve no volume can satisfy: headroom is zero, so even one run
+        // is over capacity. The refusal is the contract's, not a routing one.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{"footprint":{"reserve_gib":1000000}}"#,
+        )
+        .unwrap();
+        let id = Session::create(&home, "m")
+            .expect("the log")
+            .id()
+            .to_string();
+        let (mut bridge, sources) =
+            Bridge::detached(home.clone(), "m".to_string(), Some(id.clone()));
+        let door = bridge.connect();
+        let _thread = spawn_agent(AgentInputs {
+            home: home.clone(),
+            model: "m".to_string(),
+            session_id: Some(id.clone()),
+            ui_tx: sources.ui,
+            approval_tx: sources.seat,
+            command_rx: door,
+            base_url: "http://127.0.0.1:1".to_string(),
+            memories_root: home.clone(),
+            state: Arc::clone(&bridge.state),
+            events: bridge.events.clone(),
+        });
+        bridge
+            .run(&id, "a task the machine cannot carry")
+            .expect("accepted");
+        // The polite queued card lands and the flag comes back.
+        let queued = |state: &serde_json::Value| {
+            state["events"]
+                .as_array()
+                .is_some_and(|events| events.iter().any(|e| e["type"] == "queued"))
+        };
+        for _ in 0..600 {
+            if queued(&bridge.state(&id)) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let state = bridge.state(&id);
+        let events = state["events"].as_array().expect("the log");
+        let card = events
+            .iter()
+            .find(|e| e["type"] == "queued")
+            .expect("the polite queued card: {events:?}");
+        let reason = card["reason"].as_str().expect("a reason");
+        assert!(
+            reason.contains("reconsider") && reason.contains("queue"),
+            "the card tells the owner to reconsider or queue: {reason}"
+        );
+        assert!(
+            reason.contains("constrained"),
+            "the card names the constrained resources: {reason}"
+        );
+        assert_eq!(card["session"], id, "the card names its session");
+        // No phantom: the run never started, so the chat is not running, and
+        // a second send is not wedged behind a flag.
+        assert_eq!(
+            state["running"], false,
+            "the refused run left no phantom flag"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// C0: a face restart reconstructs `running=false` and `driving=None`.
+    /// A stale flag — the KI-525 phantom, a `running=true` on an empty chat
+    /// whose driving names a dead run — never survives the rebuild, because
+    /// the state is born fresh and only a genuinely dispatched run sets it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_restart_reconstructs_no_phantom_running_flag() {
+        let home = scratch("restart-recovery");
+        let id = Session::create(&home, "m")
+            .expect("the log")
+            .id()
+            .to_string();
+        // The first face: a run is dispatched and its flag stands, exactly as
+        // it did in the KI-525 repro before the face restarted.
+        let (mut first, _sources) =
+            Bridge::detached(home.clone(), "m".to_string(), Some(id.clone()));
+        let _door = first.connect();
+        first.run(&id, "the work").expect("accepted");
+        first.drive(&id);
+        assert_eq!(first.state(&id)["running"], true);
+        assert_eq!(first.state(&id)["driving"], id.as_str());
+        drop(first);
+        // The restart: a fresh bridge over the same home. Nothing is truly in
+        // flight — the prior thread is gone — so the reconstruction must read
+        // idle, not inherit the phantom.
+        let (second, _sources) = Bridge::detached(home.clone(), "m".to_string(), Some(id.clone()));
+        let state = second.state(&id);
+        assert_eq!(
+            state["running"], false,
+            "the restart reconstructs idle: {state}"
+        );
+        assert!(
+            state["driving"].is_null() || state["driving"] == "",
+            "the restart names no dead driving run: {state}"
+        );
+        // And the composer is not wedged: a new send is accepted rather than
+        // refused behind the phantom.
+        let (mut third, _sources) =
+            Bridge::detached(home.clone(), "m".to_string(), Some(id.clone()));
+        let _door = third.connect();
+        assert!(
+            third.run(&id, "a fresh task").is_ok(),
+            "the restart is not wedged behind a phantom run"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// C4: the session lifecycle strands no running flag. Resuming and
+    /// rewinding a chat clear its flag and seat; joining and leaving a persona
+    /// never touch it; and a run in flight in one session does not bleed its
+    /// flag into another's lifecycle.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_session_lifecycle_strands_no_running_flag() {
+        let home = scratch("lifecycle");
+        let id = Session::create(&home, "m")
+            .expect("the log")
+            .id()
+            .to_string();
+        let (mut bridge, _sources) =
+            Bridge::detached(home.clone(), "m".to_string(), Some(id.clone()));
+        let _door = bridge.connect();
+        // A run stands in flight in this session.
+        bridge.run(&id, "the work").expect("accepted");
+        bridge.drive(&id);
+        assert_eq!(bridge.state(&id)["running"], true);
+        // Joining and leaving a persona are log writes, not run state: the
+        // flag is untouched by either.
+        let _ = bridge.join(&id, "nonexistent-persona", false);
+        let _ = bridge.leave(&id, "nonexistent-persona");
+        assert_eq!(
+            bridge.state(&id)["running"],
+            true,
+            "a persona write does not clear a live run"
+        );
+        // Resume refuses while the run is in flight (it would race the log),
+        // and the refusal leaves the flag exactly as it was.
+        let refused = bridge.resume(&id).await;
+        assert!(
+            refused.is_err(),
+            "resume refuses a run in flight: {refused:?}"
+        );
+        assert_eq!(bridge.state(&id)["running"], true);
+        // The run ends: the flag comes back on its own finished event.
+        lock(&bridge.state).attached(&id).running = false;
+        // Now resume succeeds and reconstructs the chat idle, seat cleared.
+        let resumed = bridge
+            .resume(&id)
+            .await
+            .expect("resume after the run ended");
+        assert_eq!(resumed["session"], id);
+        let state = bridge.state(&id);
+        assert_eq!(state["running"], false, "resume reconstructs idle");
+        assert!(
+            state["approval"].is_null(),
+            "resume clears any standing seat"
+        );
+        // A second session's lifecycle is independent: its flag never moved.
+        let other = Session::create(&home, "m")
+            .expect("the other log")
+            .id()
+            .to_string();
+        assert_eq!(
+            bridge.state(&other)["running"],
+            false,
+            "the other chat was never running"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 

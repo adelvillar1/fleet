@@ -181,6 +181,7 @@ async fn a_real_run_streams_over_sse_tokens_turn_and_end() {
         base_url: format!("http://127.0.0.1:{}", m.port),
         memories_root: home.clone(),
         state: std::sync::Arc::clone(&bridge.state),
+        events: bridge.event_sender(),
     });
     let (mut server, port) =
         fleet::gui::server::Server::bind("127.0.0.1", 0, std::sync::Arc::new(bridge))
