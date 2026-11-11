@@ -12,6 +12,27 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.35 — 2026-11-11
+
+The armada shared mind: the corpus syncs across installs.
+
+**Part of the armada vision** — layer L4 (the shared corpus), the distributed
+knowledge. The plan is `docs/plans/2026-11-11-armada-l4-corpus.md`.
+
+- **The sync** — `fleet memories --sync` is fetch → merge → push over git;
+  fleet owns the semantic merge. With no remote it refuses by name and the
+  corpus stays local. Opt-in and additive.
+- **The merge rules** — recall-count merges by sum/delta (a fact recalled on
+  one install bumps its rank for another); replacement serials are
+  install-scoped so two installs never collide; a supersede collision
+  resolves to one live frontier by the basis ladder.
+- **The feeder** — `--pull --source armada` reads a remote install's corpus
+  at its git commit through the unchanged import path, provenance-tagged.
+- **A responsible citizen** — only the tracked fact tree moves (never the
+  recall index, locks, or per-install state); every sync settles a journal
+  event and is graded by read-back; an unresolvable conflict curtails, never
+  a half-merge pushed.
+
 ## v0.6.34 — 2026-11-11
 
 The armada nervous system: a self-contained relay broker.
