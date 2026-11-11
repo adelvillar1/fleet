@@ -54,12 +54,12 @@ choices that span atoms are noted in the layer header.
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
 | L3.1 | the grant schema + store (folder grant = first row) | L1.2 | D14 | done |
-| L3.2 | the uniform guard at `prepare_call` (owner bootstrap) | L3.1, L1.3 | D15 | drafted |
-| L3.3 | the per-principal declaration filter | L3.1, L1.3 | D16 | drafted |
-| L3.4 | guard audit → journal | L3.2, L2.4 | D17 | drafted |
-| L3.5 | the assertion format + Ed25519 verification | L3.2 | D18 | drafted |
-| L3.6 | the governance boundary (immutable to agent) | L3.2, L3.4 | D19 | drafted |
-| L3.7 | step-up 2FA (in-turn approval lane 1; assertion org) | L3.5 | D18 | drafted |
+| L3.2 | the uniform guard at `prepare_call` (owner bootstrap) | L3.1, L1.3 | D15 | done |
+| L3.3 | the per-principal declaration filter | L3.1, L1.3 | D16 | done |
+| L3.4 | guard audit → journal | L3.2, L2.4 | D17 | done |
+| L3.5 | the assertion format + Ed25519 verification | L3.2 | D18 | done |
+| L3.6 | the governance boundary (immutable to agent) | L3.2, L3.4 | D19 | done |
+| L3.7 | step-up 2FA (in-turn approval lane 1; assertion org) | L3.5 | D18 | done |
 
 ### L6 Relay transport — plan `2026-11-11-armada-l6-relay.md` · contract §7
 | Atom | Builds | Depends | Choices | Status |
@@ -150,7 +150,7 @@ is its bedrock twin.
 
 ## Status summary
 
-- **40 lane-1 atoms**: L1 (4) + L2 (4) `done`, the rest `drafted` (their 9 layer plans are drafted; nothing
+- **40 lane-1 atoms**: L1 (4) + L2 (4) + L3 (7) `done`, the rest `drafted` (their 9 layer plans are drafted; nothing
   built yet). 0 `building`, 0 `done`.
 - The cross-cutting **trust-is-earned-by-measurements** obligation (design-
   decisions ledger) attaches a verifiable grading property to each layer; the

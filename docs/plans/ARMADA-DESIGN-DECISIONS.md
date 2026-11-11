@@ -136,7 +136,7 @@ changes, `learn` from the settles).
 
 ## L3 — Security / authority
 
-*Proposed by `2026-11-11-armada-l3-security.md` (draft).*
+*Settled by `2026-11-11-armada-l3-security.md` (built, shipped v0.6.33).*
 
 - **D14 — `Grant = (principal, dimension, scope, action-class)`; the closed
   enums (Dimension/ActionClass/Scope); the store at `<home>/grants.json`;
