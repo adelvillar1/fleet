@@ -4767,7 +4767,10 @@ mod tests {
         // volume, so the caller supplies it where the volume is known.
         let run = crate::footprint::CLASS_RUN;
         let derived = 5 * 1024 * 1024;
-        assert_eq!(estimate_for_with_prior(run, &[], derived), (derived, "prior"));
+        assert_eq!(
+            estimate_for_with_prior(run, &[], derived),
+            (derived, "prior")
+        );
         // The constant would have said 2 GiB; the supplied prior wins.
         assert_ne!(estimate_for(run, &[]).0, derived);
         // Three settlements still outrank any prior, supplied or not — the
@@ -4785,7 +4788,11 @@ mod tests {
             decided_by: "bounds".to_string(),
             judge_words: String::new(),
         };
-        let rows = vec![row(3 * 1024 * 1024), row(3 * 1024 * 1024), row(3 * 1024 * 1024)];
+        let rows = vec![
+            row(3 * 1024 * 1024),
+            row(3 * 1024 * 1024),
+            row(3 * 1024 * 1024),
+        ];
         assert_eq!(
             estimate_for_with_prior(run, &rows, derived),
             (3 * 1024 * 1024, "settled")

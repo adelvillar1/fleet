@@ -5990,10 +5990,17 @@ impl<'a> Agent<'a> {
                 .unwrap_or("the imagine call named no prompt")
                 .to_string();
             let (outcome_text, truncated) = self.call_lane(call, "gen1", "imagine").await?;
-            let shaped = crate::capabilities::write_images_with_paths(
-                std::path::Path::new("generated"),
-                &outcome_text,
-            );
+            // The folder is the run's, not the process's cwd: a test that
+            // exercises this call would otherwise write into whatever
+            // directory `cargo test` happened to start in — which is the repo,
+            // so every test run dirtied the tree (and a dirty tree refuses a
+            // release cut). A run with no folder keeps `generated/` beside the
+            // process, which is where the tool has always written.
+            let image_dir = match &self.options.file_access {
+                FileAccess::Folder(root) => root.join("generated"),
+                _ => std::path::PathBuf::from("generated"),
+            };
+            let shaped = crate::capabilities::write_images_with_paths(&image_dir, &outcome_text);
             return Ok(match shaped {
                 Ok((text, paths)) => {
                     // Grounded-selection C17: the rendered images grade
@@ -11468,7 +11475,9 @@ mod tests {
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
-            file_access: FileAccess::Unrestricted,
+            // The run works in its own folder, so the shaped images land
+            // there and never in the directory `cargo test` was started from.
+            file_access: FileAccess::Folder(home.clone()),
             plan_mode: false,
             resource_judge: None,
         };
@@ -11499,7 +11508,15 @@ mod tests {
             .iter()
             .find(|row| row.op == "lifecycle" && row.kind == "vision_qc")
             .expect("the vision_qc row landed");
-        assert!(qc.name.contains("generated/image-0.png"), "{}", qc.name);
+        // The row names the artifact the run's own folder produced: the repo
+        // root is not a folder this test's run was granted, so the file lands
+        // under the session home it was.
+        assert!(
+            qc.name.ends_with("image-0.png"),
+            "the row names the artifact: {}",
+            qc.name
+        );
+        assert!(qc.name.contains("generated"), "{}", qc.name);
         assert_eq!(qc.action, "yes");
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&calib_root);
