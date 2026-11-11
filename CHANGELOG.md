@@ -12,6 +12,26 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.34 — 2026-11-11
+
+The armada nervous system: a self-contained relay broker.
+
+**Part of the armada vision** — layer L6 (the relay transport), the control
+lane's foundation. The plan is `docs/plans/2026-11-11-armada-l6-relay.md`.
+
+- **The broker** — `fleet relay --broker` runs a dumb switchboard that routes
+  sealed frames by session id, a mode of the fleet binary. It replaces
+  `relay.py`: no Python, no foreign runtime. The fleet client connects
+  unchanged; the sealing is end-to-end and untouched.
+- **Push with ack + cursor** — a frame is trusted delivered only when acked;
+  an unacked frame is a named gap the client re-requests, never a silent loss.
+- **The control frame** — `kind:"control"` carries the principal and (for
+  step-up) the assertion; the broker routes it dumbly, parsing no verb. The
+  vocabulary is the control plane's (L8).
+- **Liveness earned** — a session is live only while it polls; the queue is
+  bounded and names a breach. The roster (L8) consumes this.
+- **Surface** — `fleet relay --broker` runs it; `fleet relay` reports status.
+
 ## v0.6.33 — 2026-11-11
 
 The armada authorization layer: a principal-agnostic security substrate.
