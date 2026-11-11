@@ -681,10 +681,10 @@ work:
   kill on their per-seam gates.
 - **C14 skill-duplicates + lesson coverage** — gated on ~10 labeled
   pairs and two lesson pairs.
-- **C15 score re-rank, per-item-calls variant** — the vendor-documented
-  shape, never validly measured (the batched one was a wire artifact);
-  measurable offline on the same 120 turns; the bar is beating the noul
-  re-rank's 54.6% / 79.0% at one call per turn.
+- ~~**C15 score re-rank, per-item-calls variant**~~ — **measured and
+  killed 2026-11-10**: 37.5% top-1 / 67.5% top-3 over 40 turns, below
+  the noul re-rank's 54.6% / 79.0%. The ordinal score is not this
+  ranking's refinement signal.
 - **C16 queue triage** — gated on labeled real rows from cron, the
   inbox, and the boards.
 - **Live grounding** — one real gen1 image through vision_qc, one real

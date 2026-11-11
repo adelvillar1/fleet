@@ -261,6 +261,7 @@ atomic sys1 calls. Shapes measured
 | L1 LFM3 re-rank — glide weed | 30.3% | 35.3% |
 | L2 LFM3 schema-aware weed | 20.2% | 22.7% |
 | score fan-out — glide (wire artifact) | 1.7% | 2.5% |
+| per-item score re-rank, top-5 — glide (40 turns) | 37.5% | 67.5% |
 
 Cross-vendor verification (drex-weed × glide-verify and the reverse)
 measured identical to control: the noul calibrations do not transfer.
