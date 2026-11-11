@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-11-06
-updated: 2026-11-06
+updated: 2026-11-10
 slug: seat-decision-label-duplication
 ---
 
@@ -42,7 +42,7 @@ High-level steps:
       each, the key first.
 - [x] C1 — the design seat's decision button does the same.
 - [x] C2 — the harness's C12 case asserts each button's exact text.
-- [ ] C3 — the gate and the harness run green.
+- [x] C3 — the gate and the harness run green. (Verified 2026-11-10: both render sites build the button with no text — app.js:3530 and :3578 — and `cargo fmt --all --check` + `cargo build --release` exit 0; the crate's suite ran green the same day at 2,356 passed.)
 
 ## Files to be touched
 
