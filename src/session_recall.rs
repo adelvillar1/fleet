@@ -1037,6 +1037,7 @@ mod tests {
     /// The log's own first line.
     fn start() -> Record {
         Record::Start {
+            principal: None,
             personas: None,
             v: 1,
             model: "m".to_string(),

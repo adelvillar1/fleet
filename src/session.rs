@@ -231,6 +231,13 @@ pub enum Record {
         /// into the same set.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         personas: Option<Vec<String>>,
+        /// The principal this run acts for (armada L1, D9) — the unit of
+        /// authority, recorded so the run's authority is reconstructable
+        /// from its log (hard rule 5). Absent is the owner, the run this
+        /// crate has always had; a child records the principal it inherited
+        /// from its parent, never its own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        principal: Option<String>,
     },
     User {
         content: String,
@@ -671,7 +678,7 @@ impl Session {
     /// clock's sub-second bits and the process id.
     pub fn create(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, None, None, None)
+        Session::open_new(&dir, model, None, None, None, None)
     }
 
     /// The owner-facing creation that names who takes the conversation:
@@ -684,7 +691,7 @@ impl Session {
         personas: Option<Vec<String>>,
     ) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, None, None, personas)
+        Session::open_new(&dir, model, None, None, personas, None)
     }
 
     /// Create a breakout room's log under `home`: a session with members
@@ -699,7 +706,7 @@ impl Session {
         personas: Option<Vec<String>>,
     ) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, None, Some(parent), personas)
+        Session::open_new(&dir, model, None, Some(parent), personas, None)
     }
 
     /// Create a delegated child's log under `home` — the same convention
@@ -711,9 +718,21 @@ impl Session {
     /// picker, `fleet sessions`, and replay treat it as an ordinary
     /// session with a marker: a child's work is real work in a real
     /// session, not a side channel.
-    pub fn create_subagent(home: &Path, model: &str, parent: &str) -> io::Result<Session> {
+    pub fn create_subagent(
+        home: &Path,
+        model: &str,
+        parent: &str,
+        principal: Option<&str>,
+    ) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(SUBAGENT_KIND), Some(parent), None)
+        Session::open_new(
+            &dir,
+            model,
+            Some(SUBAGENT_KIND),
+            Some(parent),
+            None,
+            principal,
+        )
     }
 
     /// Create a scheduled run's log under `sessions_dir(home)`, marked
@@ -726,7 +745,7 @@ impl Session {
     /// and replay treat it as real work in a real session.
     pub fn create_scheduled(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(SCHEDULED_KIND), None, None)
+        Session::open_new(&dir, model, Some(SCHEDULED_KIND), None, None, None)
     }
 
     /// Create a verification run's log under `sessions_dir(home)`,
@@ -737,7 +756,7 @@ impl Session {
     /// so by the kind.
     pub fn create_probe(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(PROBE_KIND), None, None)
+        Session::open_new(&dir, model, Some(PROBE_KIND), None, None, None)
     }
 
     /// Create a learning session's log under `sessions_dir(home)`,
@@ -753,7 +772,7 @@ impl Session {
         personas: Option<Vec<String>>,
     ) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(kind), None, personas)
+        Session::open_new(&dir, model, Some(kind), None, personas, None)
     }
 
     /// The one place a log is created: the id, the file, and the `start`
@@ -764,6 +783,7 @@ impl Session {
         kind: Option<&str>,
         parent: Option<&str>,
         personas: Option<Vec<String>>,
+        principal: Option<&str>,
     ) -> io::Result<Session> {
         let id = format!(
             "{}-{:06x}",
@@ -799,6 +819,7 @@ impl Session {
             parent: parent.map(str::to_string),
             workspace,
             personas,
+            principal: principal.map(str::to_string),
         })?;
         Ok(session)
     }
@@ -2206,7 +2227,7 @@ mod tests {
     #[test]
     fn an_opened_log_answers_for_the_kind_it_was_born_with() {
         let home = temp_home("kind");
-        let mut child = Session::create_subagent(&home, "m", "parent-1").unwrap();
+        let mut child = Session::create_subagent(&home, "m", "parent-1", None).unwrap();
         assert_eq!(child.kind(), Some(SUBAGENT_KIND));
         child
             .record(&Record::User {
@@ -2458,6 +2479,7 @@ mod tests {
                 kind: None,
                 parent: None,
                 workspace: None,
+                principal: None,
             },
             Record::User {
                 content: "hi".into(),
@@ -2516,6 +2538,7 @@ mod tests {
                 kind: None,
                 parent: None,
                 workspace: None,
+                principal: None,
             },
             Record::User {
                 content: "probe it".into(),
@@ -2611,6 +2634,7 @@ mod tests {
                 kind: None,
                 parent: None,
                 workspace: None,
+                principal: None,
             },
             skills_record(),
             Record::User {
@@ -2705,6 +2729,7 @@ mod tests {
                 kind: None,
                 parent: None,
                 workspace: None,
+                principal: None,
             },
             memory_record(),
             Record::User {
@@ -2868,6 +2893,7 @@ mod tests {
     /// the model, the `kind` marker, and the delegating session's id.
     fn subagent_start() -> Record {
         Record::Start {
+            principal: None,
             personas: None,
             v: 1,
             model: "test-model".to_string(),
@@ -2883,7 +2909,8 @@ mod tests {
         let home = temp_home("subagent-start");
         // KI-072: the constructor takes a home and resolves the sessions
         // directory itself — the test no longer resolves one to hand it.
-        let mut child = Session::create_subagent(&home, "test-model", "parent-session").unwrap();
+        let mut child =
+            Session::create_subagent(&home, "test-model", "parent-session", None).unwrap();
         child
             .record(&Record::User {
                 content: "the delegated goal".into(),

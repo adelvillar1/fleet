@@ -338,6 +338,7 @@ pub async fn rerun(
         calib: Some(calib.clone()),
         skills: Vec::new(),
         identity: None,
+        principal: None,
         home: Some(home.to_path_buf()),
         depth: 1,
         plan_mode: false,

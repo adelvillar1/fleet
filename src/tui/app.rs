@@ -4131,6 +4131,7 @@ mod tests {
         let mut app = app();
         app.seed(&[
             Record::Start {
+                principal: None,
                 personas: None,
                 v: 1,
                 model: "m".to_string(),
@@ -4449,6 +4450,7 @@ mod tests {
         app.apply_ui_event(UiEvent::Failed("boom".to_string()));
         let records = vec![
             Record::Start {
+                principal: None,
                 personas: None,
                 v: 1,
                 model: "m".to_string(),

@@ -46,6 +46,7 @@ pub mod gui;
 pub mod health;
 pub mod home;
 pub mod hybrid;
+pub mod identity;
 pub mod improve;
 pub mod install;
 pub mod judge;

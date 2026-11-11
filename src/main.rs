@@ -167,6 +167,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
             unset.as_deref(),
         ),
         Ok(Command::Providers) => providers_command(),
+        Ok(Command::Identity) => identity_command(),
         Ok(Command::Hygiene) => hygiene_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Demand(options)) => demand_command(&options),
@@ -3468,6 +3469,7 @@ async fn drive(
         Err(error) => return Err(AgentError::Registry(error)),
     };
     let options = AgentOptions {
+        principal: None,
         capped: false,
         health_note: true,
         lane_prose: true,
@@ -4144,6 +4146,40 @@ fn providers_command() -> ExitCode {
     }
 }
 
+/// `fleet identity`: this install's identity (armada L1) — the install-id
+/// (minted on first use, idempotent), the principal every run acts for
+/// (lane 1: the owner), and the paired devices linked to a principal.
+fn identity_command() -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let install_id = match fleet::identity::install(&home) {
+        Ok(id) => id,
+        Err(message) => {
+            eprintln!("fleet: identity: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let principal = fleet::identity::principal_for(&home);
+    println!("install-id  {install_id}");
+    println!("principal   {principal}");
+    match fleet::identity::Registry::load(&home) {
+        Ok(registry) if registry.devices.is_empty() => println!("devices     none paired"),
+        Ok(registry) => {
+            println!("devices     {}", registry.devices.len());
+            for link in &registry.devices {
+                println!("  {}  ->  {}", link.device, link.principal);
+            }
+        }
+        Err(error) => {
+            eprintln!("fleet: identity: {error}");
+            return ExitCode::from(2);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 fn doctor_command(options: &cli::DoctorOptions) -> ExitCode {
     // The diagnosis path: classify one session's failure and draft an
     // evidence-cited recap, filing (or naming) its ledger row.
@@ -4622,6 +4658,18 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
             }
         }
     }
+    // The install's identity (armada L1, D7): minted once, idempotent, after
+    // the layout has created the home. A fresh home gets a new install-id; a
+    // re-run keeps the existing one byte for byte. The corpus cursor, the
+    // roster, and deployment key on it.
+    let install_id = match fleet::identity::install(&home) {
+        Ok(id) => id,
+        Err(message) => {
+            eprintln!("fleet: install: identity: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!("fleet: install: identity: {install_id}");
     let (config_step, config_path) = match fleet::install::config_step(&home) {
         Ok(pair) => pair,
         Err(error) => {

@@ -52,6 +52,9 @@ pub enum Command {
     Lanes,
     /// List the routing roster in declared chain order with per-provider state.
     Providers,
+    /// Show this install's identity: the install-id, the principal every
+    /// run acts for, and the paired devices linked to it (armada L1).
+    Identity,
     /// Show the calibration stream: one day's rows, grouped by op.
     Calib(CalibOptions),
     Demand(DemandOptions),
@@ -849,6 +852,7 @@ usage:
                                 whole archive with --all (the grounded-
                                 selection baseline's measurement)
   fleet providers                list the routing roster and per-provider state
+  fleet identity                 this install's id, its principal, and paired devices
   fleet calib [--day <date>] [--calibration]
                                 the calibration stream: one day's rows by op;
                                 --calibration renders the per-provider judged
@@ -1090,6 +1094,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "lanes" => no_flags(rest, Command::Lanes),
         "mcp" => parse_mcp(rest),
         "providers" => no_flags(rest, Command::Providers),
+        "identity" => no_flags(rest, Command::Identity),
         "calib" => parse_calib(rest),
         "demand" => parse_demand(rest),
         "judge" => parse_judge(rest),

@@ -408,6 +408,7 @@ async fn run_on_capped(
     };
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -455,6 +456,7 @@ async fn run_on(
     };
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         capped: false,
         health_note: false,
         lane_prose: false,
@@ -496,6 +498,7 @@ async fn run_on_compacting(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -535,6 +538,7 @@ async fn run_on_probe(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -578,6 +582,7 @@ async fn run_with_lanes(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -1398,6 +1403,7 @@ async fn a_disabled_tool_is_undeclared_and_its_call_names_the_rule() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -1590,6 +1596,7 @@ async fn run_in_folder(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         capped: false,
         health_note: false,
         lane_prose: false,
@@ -2120,6 +2127,7 @@ async fn mcp_resources_and_prompts_are_listed_and_read() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -2274,6 +2282,7 @@ async fn send_file_emits_one_artifact_and_refuses_a_path_outside_the_folder() {
     {
         let client = Client::new(mock.url(), "test-key");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "test-model".to_string(),
@@ -2982,6 +2991,7 @@ async fn a_runs_thinking_is_logged_once_and_heard_before_the_answer() {
     let log_path = session.path().to_path_buf();
     let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -3088,6 +3098,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
     let log_path = session.path().to_path_buf();
     let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -3197,6 +3208,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -3254,6 +3266,7 @@ async fn a_denied_call_reports_its_result_event() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -3336,6 +3349,7 @@ async fn a_failed_run_reports_a_failure_event() {
     let log_path = session.path().to_path_buf();
     let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -4395,6 +4409,7 @@ async fn a_dead_substrate_degrades_the_child_instead_of_refusing_it() {
     let (ui_tx, _ui_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut approver: Box<dyn Approver> = Box::new(ApproveAll);
     let result = fleet::subagents::run(fleet::subagents::Delegation {
+        principal: None,
         client: &client,
         pin: None,
         lane_specs: std::collections::HashMap::new(),
@@ -4537,6 +4552,7 @@ async fn a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_
     let (ui_tx, _ui_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut approver: Box<dyn Approver> = Box::new(ApproveAll);
     let result = fleet::subagents::run(fleet::subagents::Delegation {
+        principal: None,
         client: &parent,
         pin: None,
         lane_specs: std::collections::HashMap::new(),
@@ -4636,6 +4652,7 @@ async fn a_down_service_rides_the_repair_note_and_the_models_bash_attempt_is_log
     let client = Client::new(mock.url(), "test-key");
     let mut session = crate::session::Session::create(&home, "test-model").unwrap();
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -5214,6 +5231,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
         let mut progress = Vec::new();
         let client = Client::new(mock.url(), "test-key");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "test-model".to_string(),
@@ -5754,6 +5772,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
     let router = Arc::new(Router::new(resolved, decision));
     let client = Client::routed(router.clone());
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -5879,6 +5898,7 @@ async fn a_committed_quota_failure_unlocks_the_walk() {
     router.commit_for_tests(0);
     let client = Client::routed(router.clone());
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -6405,6 +6425,7 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
     let mut session = Session::create(&home, &prepared.decision.model).unwrap();
     let client = Client::routed(prepared.router.clone());
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: prepared.decision.model.clone(),
@@ -6542,6 +6563,7 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::routed(prepared.router.clone());
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -6701,6 +6723,7 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -6794,6 +6817,7 @@ async fn an_unknown_role_is_refused_by_name_and_the_child_never_runs() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -6923,6 +6947,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -7003,6 +7028,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -7072,6 +7098,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -7139,6 +7166,7 @@ async fn a_run_without_a_stream_records_nothing() {
     let mut agent = Agent::new(
         &client,
         AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "test-model".to_string(),
@@ -7301,6 +7329,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::routed(prepared.router.clone());
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -7422,6 +7451,7 @@ async fn run_with_skills(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -8291,6 +8321,7 @@ async fn run_with_memory(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -8868,6 +8899,7 @@ async fn run_with_improve(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -9335,6 +9367,7 @@ async fn a_subagents_builtins_work_in_the_parents_folder() {
     {
         let _held = &_fh;
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "test-model".to_string(),
@@ -9417,6 +9450,7 @@ async fn a_chat_with_no_folder_cannot_touch_the_filesystem() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -9684,6 +9718,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
     };
     let client = Client::routed(Arc::new(Router::new(resolved, decision)));
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -10152,6 +10187,53 @@ async fn a_child_inherits_the_parents_declared_skills() {
     std::fs::remove_dir_all(&home).ok();
 }
 
+/// The child acts for its parent's principal, never its own (armada L1,
+/// D9): the authority follows the run, the way the voice and the floor do.
+/// The child's start record carries the inherited principal, so the run's
+/// authority is reconstructable from its log alone (hard rule 5). A
+/// non-owner principal rides down unchanged — the shape lane 2 generalizes.
+#[tokio::test]
+async fn a_child_inherits_the_parents_principal() {
+    let home = temp_home("subagent-principal");
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "subagent", &delegation_arguments("do the thing")),
+        assistant_stream("the child did the thing"),
+        assistant_stream("the thing is done"),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        principal: Some(fleet::identity::PrincipalId::new("test-principal")),
+        model: "test-model".to_string(),
+        max_turns: 5,
+        file_access: FileAccess::Unrestricted,
+        ..AgentOptions::default()
+    };
+    let mut progress = Vec::new();
+    let mut agent = Agent::new(
+        &client,
+        options,
+        &mut session,
+        Box::new(ApproveAll),
+        &mut progress,
+    )
+    .unwrap();
+    agent.run("delegate the thing").await.unwrap();
+
+    let child = child_summary(&home);
+    let records = session::replay(&child.path).unwrap();
+    let start_principal = records.iter().find_map(|record| match record {
+        Record::Start { principal, .. } => principal.clone(),
+        _ => None,
+    });
+    assert_eq!(
+        start_principal,
+        Some("test-principal".to_string()),
+        "the child carries the parent's principal: {records:?}"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
 // --- compaction (slice 10) -------------------------------------------------
 
 /// The messages one recorded request carried, as the wire type.
@@ -10178,6 +10260,7 @@ async fn run_capturing(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         capped: false,
         health_note: false,
         lane_prose: false,
@@ -11252,6 +11335,7 @@ async fn a_registry_server_declares_from_the_first_request() {
     let mut progress = Vec::new();
     let client = Client::new(mock.url(), "test-key");
     let mut options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -11370,6 +11454,7 @@ async fn a_run_completes_over_a_registry_whose_server_is_unkeyed() {
     let mut progress = Vec::new();
     let client = Client::new(mock.url(), "test-key");
     let mut options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -11512,6 +11597,7 @@ async fn a_disabled_server_is_absent_from_the_declarations() {
     let mut progress = Vec::new();
     let client = Client::new(mock.url(), "test-key");
     let mut options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -11650,6 +11736,7 @@ async fn what_the_model_saw_is_the_request_itself() {
     let client = Client::new(mock.url(), "test-key");
     let gui_line = fleet::gui::prompt_line("http://127.0.0.1:3080");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: Some("ship the controls this week".to_string()),
         model: "test-model".to_string(),
@@ -11897,6 +11984,7 @@ async fn a_layerfs_child_walks_the_coherence_sequence() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -12075,6 +12163,7 @@ async fn without_the_knob_the_delegation_never_touches_the_driver() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -12166,6 +12255,7 @@ async fn a_same_file_collision_is_a_conflict_the_parent_reads() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -12534,6 +12624,7 @@ async fn a_layerfs_live_coherence_findings_and_the_command_cadence() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -12674,6 +12765,7 @@ async fn a_settled_delegation_applies_the_merge_home() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -13369,6 +13461,7 @@ async fn a_design_run_emits_a_frame() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -13452,6 +13545,7 @@ async fn the_frame_tool_refuses_a_board_it_cannot_find() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),

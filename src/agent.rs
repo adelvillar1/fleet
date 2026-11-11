@@ -533,6 +533,12 @@ pub struct AgentOptions {
     /// child inherits it the way it inherits the parent's model: the
     /// voice follows the model, not the parent's session state.
     pub identity: Option<String>,
+    /// The principal this run acts for — the unit of authority (armada L1,
+    /// D9), distinct from `identity` (the SOUL voice). `None` is the owner,
+    /// the run this crate has always had; the guard (L3) reads it and a
+    /// delegation child inherits its parent's, never its own. Lane 1 has
+    /// one principal, so every surface leaves this `None`.
+    pub principal: Option<crate::identity::PrincipalId>,
     /// Force the fold on the next turn boundary, whatever the budget
     /// says — `fleet run --compact-now`. The budget decides *when*
     /// compaction fires on its own; this is the owner's hand on it, for
@@ -700,6 +706,7 @@ impl Default for AgentOptions {
             lane_prose: false,
             session_id: None,
             identity: None,
+            principal: None,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -6115,6 +6122,7 @@ impl<'a> Agent<'a> {
             calib,
             skills,
             identity: self.options.identity.clone(),
+            principal: self.options.principal.clone(),
             home,
             depth,
             plan_mode: self.plan_mode,
@@ -10649,6 +10657,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -10702,6 +10711,7 @@ mod tests {
     /// surface line, a short turn cap, and an unrestricted folder.
     fn routing_options(model: &str) -> AgentOptions {
         AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: model.to_string(),
@@ -11010,6 +11020,7 @@ mod tests {
             .unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -11105,6 +11116,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -11329,6 +11341,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -11446,6 +11459,7 @@ mod tests {
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let calib_root = scratch("vision-qc-calib");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -11545,6 +11559,7 @@ mod tests {
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let annotations = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -11636,6 +11651,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -11727,6 +11743,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -11816,6 +11833,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -11905,6 +11923,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -11989,6 +12008,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -12240,6 +12260,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -12316,6 +12337,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -12739,6 +12761,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -12890,6 +12913,7 @@ mod tests {
         let control_path = session_path.with_extension("control");
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -12950,6 +12974,7 @@ mod tests {
         let control_path = session_path.with_extension("control");
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -13382,6 +13407,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -13525,6 +13551,7 @@ mod tests {
                 Box::new(crate::memory::KeywordOnly),
             ));
             let options = AgentOptions {
+                principal: None,
                 session_id: None,
                 goal: None,
                 model: "m".to_string(),
@@ -13679,6 +13706,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -13744,6 +13772,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -13966,6 +13995,7 @@ mod tests {
                 crate::session::Session::create(&home, "m").unwrap(),
             ));
             let options = AgentOptions {
+                principal: None,
                 session_id: None,
                 goal: None,
                 model: "m".to_string(),
@@ -14046,6 +14076,7 @@ mod tests {
 You are auditing a change. Read the diff before you judge it.
 [ROLE OVERLAY END]";
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14099,6 +14130,7 @@ You are auditing a change. Read the diff before you judge it.
         // Without the overlay the same construction is the constant.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14170,6 +14202,7 @@ You are auditing a change. Read the diff before you judge it.
         let client = Client::new("http://127.0.0.1:9", "k");
         let line = crate::gui::prompt_line("http://127.0.0.1:3080");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14214,6 +14247,7 @@ You are auditing a change. Read the diff before you judge it.
         // Without the line the same construction is the constant.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14272,6 +14306,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14330,6 +14365,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14463,6 +14499,7 @@ You are auditing a change. Read the diff before you judge it.
         let id = session.id().to_string();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14539,6 +14576,7 @@ You are auditing a change. Read the diff before you judge it.
         let id = session.id().to_string();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14655,6 +14693,7 @@ You are auditing a change. Read the diff before you judge it.
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14798,6 +14837,7 @@ You are auditing a change. Read the diff before you judge it.
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -14889,6 +14929,7 @@ You are auditing a change. Read the diff before you judge it.
             crate::session::Session::create(&home, "m").unwrap(),
         ));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -15491,6 +15532,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -15556,6 +15598,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -15631,6 +15674,7 @@ You are auditing a change. Read the diff before you judge it.
             resolved, decision,
         )));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "step-5-preview".to_string(),
@@ -15694,6 +15738,7 @@ You are auditing a change. Read the diff before you judge it.
         // behaviour every run had before windows were declared.
         let plain = Client::new("http://127.0.0.1:9", "k");
         let plain_options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -15897,6 +15942,7 @@ You are auditing a change. Read the diff before you judge it.
         let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
         let session = Box::leak(Box::new(crate::session::Session::open(path).unwrap()));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),
@@ -16306,6 +16352,7 @@ You are auditing a change. Read the diff before you judge it.
             crate::session::Session::create(home, "m").unwrap(),
         ));
         let options = AgentOptions {
+            principal: None,
             session_id: None,
             goal: None,
             model: "m".to_string(),

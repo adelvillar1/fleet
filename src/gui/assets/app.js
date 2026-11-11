@@ -20413,6 +20413,12 @@
                 id: 'soul', kind: 'soul', name: 'the identity slot',
                 value: read.soul.present ? 'set' : 'absent',
                 card: function () { return [['the identity slot', soulCard(read)]]; }
+              }),
+              cfgItem({
+                id: 'install-identity', kind: 'install-identity', name: 'this install',
+                value: (read.identity && read.identity.install_id)
+                  ? read.identity.install_id.slice(0, 12) + '…' : 'absent',
+                card: function () { return [['this install', installIdentityCard(read)]]; }
               })])
           ];
         }
@@ -21637,6 +21643,32 @@
     });
     soulCard0.appendChild(saveSoul);
     return soulCard0;
+  }
+
+  // The install's own identity (armada L1): the id minted once at install,
+  // the principal every run acts for, and the paired-device count. Read-only
+  // — the id is the install's, the principal is the owner's in lane 1.
+  function installIdentityCard(read) {
+    var identity = read.identity || {};
+    var card = boardCard(12, 'this install',
+      identity.install_id ? 'identified' : 'absent',
+      'the install\u2019s identity: the id minted once at install, the principal every ' +
+      'run acts for, and the paired devices linked to it. The corpus, the roster, and ' +
+      'deployment key on the id; the guard reads the principal.');
+    card.id = 'settings-install-identity';
+    [
+      ['install-id', identity.install_id || 'absent'],
+      ['principal', identity.principal || 'owner'],
+      ['paired devices', String(identity.devices || 0)]
+    ].forEach(function (pair) {
+      var row = node('div', 'list-row');
+      row.appendChild(node('span', 'list-row-key', pair[0]));
+      var value = node('span', 'list-row-value');
+      value.textContent = pair[1];
+      row.appendChild(value);
+      card.appendChild(row);
+    });
+    return card;
   }
 
   function envCard(read) {

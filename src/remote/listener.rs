@@ -1129,6 +1129,16 @@ fn redeem(body: &str, home: &std::path::Path, relay_secret: Option<&str>) -> Rep
     if let Err(error) = store.save(home) {
         return api(500, json!({"error": error.to_string()}));
     }
+    // The device acts for the owner (armada L1, D2): pairing links it to
+    // the principal, the authority record the guard and the identity
+    // graph read. A link failure is named, not silent, and does not undo
+    // the pairing — the device is paired; an unlinked device resolves to
+    // no principal until the link is repaired.
+    if let Err(error) =
+        crate::identity::link_device(home, &id, &crate::identity::PrincipalId::owner())
+    {
+        eprintln!("fleet: pairing: identity link for {id}: {error}");
+    }
     // The token rides the cookie from here on. HttpOnly keeps the page's
     // own scripts from reading the capability back, and SameSite keeps
     // another site's requests from sending it. The relay secret rides

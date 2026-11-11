@@ -1550,6 +1550,7 @@ pub async fn execute(
         }
     }
     let options = AgentOptions {
+        principal: None,
         session_id: None,
         goal: None,
         model: model.clone(),

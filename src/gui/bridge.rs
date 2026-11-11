@@ -9901,6 +9901,14 @@ fn settings_read(home: &std::path::Path) -> Value {
         Err(_) => Vec::new(),
     };
     let soul = crate::home::read_soul(home);
+    // The install's identity (armada L1): the install-id, the principal
+    // every run acts for, and the paired-device count — the settings
+    // board's identity card beside the SOUL voice slot.
+    let install_id = crate::identity::install(home).ok();
+    let identity_principal = crate::identity::principal_for(home);
+    let identity_devices = crate::identity::Registry::load(home)
+        .map(|registry| registry.devices.len())
+        .unwrap_or(0);
     let router = crate::settings::router_config(home, &dotenv);
     let catalog = crate::settings::catalog(home, &dotenv);
     let lanes = lanes_document(home);
@@ -9995,6 +10003,11 @@ fn settings_read(home: &std::path::Path) -> Value {
         "soul": {
             "present": soul.is_some(),
             "text": soul.unwrap_or_default(),
+        },
+        "identity": {
+            "install_id": install_id.map(|id| id.to_string()).unwrap_or_default(),
+            "principal": identity_principal.to_string(),
+            "devices": identity_devices,
         },
         "router": router_document(&router),
         "catalog": catalog_document(&catalog),
@@ -13651,6 +13664,7 @@ async fn drive_run(
     })
     .unwrap_or_default();
     let options = AgentOptions {
+        principal: None,
         // The session's standing objective, read per run so a change reaches
         // the next run with no restart.
         goal: session_goal(&home, &driving),

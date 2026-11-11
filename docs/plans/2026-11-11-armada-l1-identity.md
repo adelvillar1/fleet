@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-11
 updated: 2026-11-11
 slug: armada-l1-identity
@@ -64,13 +64,13 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0: `fleet install` on a fresh home mints an install-id persisted at `<home>/install-id`; a second install run leaves it byte-identical; a different fresh home mints a different id.
-- [ ] C1: `identity::install()` returns the persisted id and `fleet identity` prints it.
-- [ ] C2: `identity::principal_for()` resolves `owner` for every lane-1 run, and `identity.json` holds exactly one principal.
-- [ ] C3: every run carries `AgentOptions.principal` (default `owner`), and a delegated child's principal equals its parent's (a test pins the inheritance).
-- [ ] C4: a paired device resolves to `owner` via `identity::device_principal()`, and the mapping persists in `identity.json` across restart.
-- [ ] C5: single-owner behavior is unchanged — the four-leg gate passes and no existing run is refused (the principal is additive; owner holds all).
-- [ ] C6: `fleet identity` and the settings identity slot render the install-id and the principal.
+- [x] C0: `fleet install` on a fresh home mints an install-id persisted at `<home>/install-id`; a second install run leaves it byte-identical; a different fresh home mints a different id.
+- [x] C1: `identity::install()` returns the persisted id and `fleet identity` prints it.
+- [x] C2: `identity::principal_for()` resolves `owner` for every lane-1 run, and `identity.json` holds exactly one principal.
+- [x] C3: every run carries `AgentOptions.principal` (default `owner`), and a delegated child's principal equals its parent's (a test pins the inheritance).
+- [x] C4: a paired device resolves to `owner` via `identity::device_principal()`, and the mapping persists in `identity.json` across restart.
+- [x] C5: single-owner behavior is unchanged — the four-leg gate passes and no existing run is refused (the principal is additive; owner holds all).
+- [x] C6: `fleet identity` and the settings identity slot render the install-id and the principal.
 
 ## Files to be touched
 

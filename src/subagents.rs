@@ -1688,6 +1688,11 @@ pub struct Delegation<'a> {
     /// follows the model — while the rest of the parent's state (its
     /// memory, its lanes, its home) stays the parent's own.
     pub identity: Option<String>,
+    /// The parent's principal, from its own options (armada L1, D9). The
+    /// child inherits it the way it inherits the voice — the authority
+    /// follows the run, never the actor: a child acts for its parent's
+    /// principal, never its own. `None` is the owner.
+    pub principal: Option<crate::identity::PrincipalId>,
     /// The home the child's role resolves under — the owner's home,
     /// where `<home>/roles/<name>.md` lives. `None` is a run with no
     /// home: a brief that names a role then meets the named refusal,
@@ -1910,6 +1915,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         calib,
         skills,
         identity,
+        principal,
         home,
         depth,
         plan_mode,
@@ -2096,8 +2102,12 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // own still lands its child's log beside the parent's — the run's
     // own home, resolved once at the substrate read above.
     let child_home = run_home.clone();
-    let mut child = match Session::create_subagent(&child_home, &child_route.model, &parent_session)
-    {
+    let mut child = match Session::create_subagent(
+        &child_home,
+        &child_route.model,
+        &parent_session,
+        principal.as_ref().map(|p| p.as_str()),
+    ) {
         Ok(child) => child,
         Err(error) => {
             return SubagentResult::refused(format!(
@@ -2275,6 +2285,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         model: child_route.model,
         max_turns,
         identity,
+        principal,
         ui_tx: None,
         lane_specs: None,
         calib,
@@ -3302,6 +3313,7 @@ mod tests {
     fn the_last_words_of_a_log_are_the_last_assistant_text() {
         let records = vec![
             Record::Start {
+                principal: None,
                 personas: None,
                 v: 1,
                 model: "m".to_string(),
@@ -3579,6 +3591,7 @@ mod tests {
     ) {
         std::fs::create_dir_all(dir).unwrap();
         let mut text = serde_json::to_string(&Record::Start {
+            principal: None,
             v: 1,
             model: "test-model".to_string(),
             created: "2026-10-15T00:00:00Z".to_string(),

@@ -1374,6 +1374,7 @@ async fn drive_over(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        principal: None,
         capped: false,
         health_note: false,
         lane_prose: false,
