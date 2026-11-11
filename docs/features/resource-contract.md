@@ -28,11 +28,53 @@ Every unit of work — a release gate, a release assets cut, a lane bootstrap, a
 | Estimate, lane bootstrap | 2 GiB | `ESTIMATE_LANE_BOOTSTRAP_KIB` |
 | A run's own budget | 2 GiB | `RUN_BUDGET_KIB` |
 | Store budgets | target 20 GiB, one lane 20, lanes 24, `~/.fleet` 12 | `scripts/footprint.sh` |
+| Standing window | 30 daily readings, median | `footprint::STANDING_WINDOW` |
+| Near the floor | under 10% free | `footprint::NEAR_FLOOR` |
+| Volatile | spread over 5 points of the volume | `footprint::VOLATILE_MAD` |
 
 **These are the owner's numbers, settled 2026-11-10** (*"leave them like that"*). They are declared in exactly those places, so changing one is one edit in one place. Two rules keep them honest:
 
 - **The reserve never learns.** Only estimates and per-work budgets calibrate. A floor that history could lower is not a floor.
-- **A tight machine tightens fleet, never loosens it.** The appetite is inferred from the standing free fraction (the median of the recorded history, so one good day after a cleanup does not read as roomy). A machine that habitually sits under 10% free is evidence of *no margin*, so fleet raises the reserve share, shortens its cadence and refuses earlier.
+- **A tight machine tightens fleet, never loosens it.** The appetite is inferred from the standing free fraction (the median of the last **thirty** readings, so one good day after a cleanup does not read as roomy) **and its spread** (the median absolute deviation). A machine whose free share swings by more than five points has no margin to absorb a runaway even when its median reads comfortable, so it is graded one step tighter — never one step looser, so a cleanup spree cannot buy a looser contract.
+- **Only estimates and work budgets calibrate; a floor that history could lower is not a floor.**
+
+## What derives, and from what
+
+Measured once a day by `scripts/footprint.sh --record`, into
+`<FLEET_HOME>/footprint-history.jsonl`: the volume, the free space, and memory
+in use. One reader turns that history into a profile — `src/footprint_history.rs`,
+which `fleet footprint`, `fleet doctor` and the agent loop all call — and the
+profile plus the owner's declaration produce every number the contract runs on:
+
+| Number | Derivation | Constant only when… |
+|---|---|---|
+| Reserve | the appetite's share of the volume | never — the share is a declared constant |
+| Run budget | the appetite's share of the volume, floored at 2 GiB and capped at four of them | the history is empty |
+| Turn cadence | 2 turns when tight, 5 otherwise | the history is empty |
+| Upkeep interval | headroom above the reserve ÷ the fill rate, floored at one day and capped by the appetite | the volume is not filling |
+| Memory pressure | the newest reading's used share | never recorded |
+
+The profile names its machine (`laptop` when `pmset`/`/sys` find a battery,
+`server` otherwise, `FLEET_MACHINE` overriding) because a full disk on a laptop
+costs its owner the machine.
+
+**The upkeep interval is consumed, not printed.** `scripts/daily-maintenance.sh`
+reads `upkeep_days` from `fleet footprint --json` as the build lanes' retention
+window, so a machine filling fast revisits its caches sooner than one that is
+not — and `FLEET_LANE_KEEP_DAYS` stays the owner's override.
+
+## Declaring it instead of inferring it
+
+Two settings, both reverted by `fleet settings unset <key>` back to inference:
+
+- `appetite` — `tight`, `balanced`, `roomy` (or `steady`, the plan's word for
+  `roomy`). It sets the reserve share **and** the cadence, the run budget and
+  the upkeep interval: one grade is in force, and every derived number reads it.
+  The report names the owner's hand beside the machine's own grade —
+  *"declared tight, the machine infers roomy"*.
+- `footprint.reserve_gib` — the number itself rather than the word. It wins over
+  the appetite, and every refusal then reads as the owner's own figure
+  (`reserve_source: declared floor`).
 
 ## Where the judgment goes
 
@@ -48,10 +90,10 @@ The breach pause is the owner's own question, so it goes to the **approval seat*
 
 ## The surfaces
 
-- `fleet footprint` — the process tree against its ceilings, the environment's appetite and reserve, and the store budgets' pointer. `--json` publishes the same facts as one document; `--class <work>` adds that class's estimate, headroom and admission.
+- `fleet footprint` — the process tree against its ceilings, the environment's clause (the inference, its evidence and the number it produced), the derived cadence, run budget and upkeep interval, and the store budgets' pointer. `--json` publishes the same facts as one document; `--class <work>` adds that class's estimate, headroom and admission.
 - `fleet footprint --class <work> --estimate` — what the class's own history says it costs, and whether that came from its prior or its settlements.
-- `fleet footprint --class <work> --record` — the admission as a stream row. `--settle <before_kib>` records the settlement and exits non-zero on a runaway.
-- `fleet doctor` — the `disk` line names the **same reserve** the footprint report derives, so a refusal reads as a decision on either surface.
+- `fleet footprint --class <work> --record` — the admission as a stream row. `--settle <before_kib>` records the settlement and exits non-zero on a runaway. Both take the class's prior from the same reading, so a run's number follows the profile.
+- `fleet doctor` — the `disk` line names the **same reserve** the footprint report derives *and* the sentence that produced it — the machine, the standing share, the spread, the fill rate and the memory pressure — so a refusal reads as a decision on either surface.
 - `scripts/release.sh` — both modes admit against the contract before building and settle after their work, through the binary rather than a re-derived shell number; the declared floor remains the named fallback when no binary on the tree answers.
 
 ## What is not covered

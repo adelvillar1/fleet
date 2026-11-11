@@ -1,7 +1,7 @@
 ---
 status: in progress
 created: 2026-11-09
-updated: 2026-11-10
+updated: 2026-11-11
 slug: the-resource-contract
 ---
 
@@ -170,26 +170,84 @@ declared, because the environment has already been telling us.
 - [x] C8 — The admitted estimate for a work class is the median of its last ten
       settlements, with the declared constant as the prior until three exist;
       a test with a deliberately wrong prior corrects after the settles land.
-- [ ] C12 — PARTLY: the risk appetite is inferred from the standing free fraction
-      (median of the last thirty daily readings) and its volatility, with the
-      declared setting overriding it; a habitually under-10%-free machine
-      yields *tighter* controls — a reserve as a fraction of the volume, a
-      shorter cadence, a lower per-run budget — and the report names the
-      inference and its evidence beside the number it produced.
-- [ ] C10 — NOT BUILT: an environment profile (volume size, standing free space, fill
-      rate, memory pressure, laptop or server) is derived from the footprint
-      rows, and a declared risk appetite (`steady`/`balanced`/`tight`, or an
-      explicit reserve) bounds it; the reserve, the cadence and the per-run
-      budgets derive from the two, so no number in this contract is a code
-      constant once a profile exists.
-- [ ] C11 — PARTLY: both name the appetite and the reserve beside the numbers
-      they produced ("reserve 18 GiB of 460 GiB (inferred; 1 record(s), standing
-      25% free)"), so a refusal reads as a decision. Not yet named: the profile
-      (laptop/server) and the fill rate ("laptop, steady, filling 1.8 GiB/day").
+- [x] C12 — DONE (2026-11-11). The appetite is inferred from the standing free
+      fraction over the last `STANDING_WINDOW` (30) readings and its spread
+      (`Env::volatility`, the median absolute deviation), and the declared
+      setting overrides both. A volatile history grades one step *tighter* and
+      never looser (`Appetite::tighter`, saturated at tight), so a comfortable
+      median with an 18-point swing reads `balanced`. A habitually under-10%-free
+      machine yields tighter controls end to end: `reserve 55 GiB of 460 GiB` at
+      the tight share, `cadence_turns == 2`, `upkeep_days == 1`, and a derived
+      run budget below the roomy one — all pinned in
+      `a_volatile_history_tightens_the_appetite_and_never_loosens_it`,
+      `the_volume_and_the_cadence_and_the_upkeep_follow_the_appetite` and
+      `a_declared_appetite_governs_every_derived_number_and_not_only_the_reserve`.
+      The report names it: `environment_clause()` emits *"reserve 18 GiB of 460
+      GiB (inferred; laptop 25% free for 2 record(s) ±0 pt)"* and adds *"— the
+      spread grades it balanced"* only when the spread actually moved the grade
+      (`the_environment_clause_names_its_evidence_beside_the_number`, and live:
+      `fleet footprint` printed exactly that line).
+- [x] C10 — DONE (2026-11-11). `src/footprint_history.rs` derives the profile
+      from the rows: volume, the free-share series and the standing share, the
+      fill rate in days (`fill_gib_per_day`), memory pressure (the newest row's
+      used share, `None` when unmeasured), and laptop/server from the machine's
+      own battery probe (`FLEET_MACHINE` overriding). `scripts/footprint.sh
+      --record` writes the memory half into the same row, so the profile is one
+      history. The declaration bounds it — `appetite` (accepting the plan's
+      `steady` as `roomy`) and `footprint.reserve_gib` — and the reserve, the
+      turn cadence, the per-run budget, the upkeep interval and the class prior
+      all derive from the two. Two defects this criterion uncovered and fixed:
+      `appetite` was *read* by `declared_appetite()` but was not in the settings
+      table, so the plan's "say steady to override" was refused by name; and
+      `contract::env_from_history` pushed only the free shares and left
+      `fill_gib_per_day` at zero on every run, so every run's upkeep read as
+      "not filling". Both now delegate to the one reader, and both carry pins.
+      "No number is a constant once a profile exists" is pinned from both ends:
+      `the_run_budget_is_the_prior_with_no_profile_and_a_bounded_share_with_one`
+      (the constant stands exactly at zero records, derives after) and
+      `a_caller_supplied_prior_replaces_the_constant_and_history_still_outranks_it`.
+- [x] C11 — DONE (2026-11-11). `Reading::environment_clause()` is the one
+      sentence, and every surface prints it: `fleet footprint`'s `environment`
+      line, `fleet doctor`'s `disk` line (via `doctor::evaluate_environment`,
+      which appends it to the graded line), the agent loop's admission line and
+      its refusal clause, and the `--json` document (`machine`, `volatility`,
+      `dips`, `memory_used_share`, `run_budget_kib`, `cadence_turns`,
+      `upkeep_days`). Both halves the criterion named as missing are now
+      present — the profile (`laptop`, `server`, or `unknown` for a reading
+      assembled from measurements) and the fill rate (`filling 1.2 GiB/day`) —
+      along with the dips, the spread and the memory pressure. Live output:
+      `environment  reserve 18 GiB of 460 GiB (inferred; laptop 25% free for 2
+      record(s) ±0 pt)`. Pinned by
+      `the_environment_clause_names_its_evidence_beside_the_number`,
+      `the_environment_line_carries_the_profile_the_reserve_came_from` and
+      `the_document_publishes_the_profile_the_clause_reads`.
 - [x] C9 — The resource judge's verdicts are graded by the subsequent outcome
       (a `runaway` on work that then completed cleanly counts against it; an
       `expected` before a breach counts against it), and that grading is
       readable by the fit rule.
+
+## Notes on the closing increment (2026-11-11)
+
+Three things this increment found that the plan's own text had assumed were done,
+each now fixed and pinned:
+
+- **`appetite` was unreachable from every surface.** `declared_appetite()` read
+  it, but the key was never in `settings::SETTINGS`, so `fleet settings set
+  appetite tight` answered *"`appetite` is not a setting"* — the closing frame's
+  "say steady to override" had no way to be said. Both `appetite` and
+  `footprint.reserve_gib` are now settings, `steady` is accepted as `roomy`, and
+  `fleet settings unset <key>` is a CLI verb for the first time (the writer's own
+  revert existed and the GUI called it; the terminal did not).
+- **A declared appetite moved one number and left three behind.** Proven on a
+  scratch home: `appetite: tight` derived the tight reserve and still printed
+  `roomy cadence every 5 turn(s)`. The cadence, the run budget and the upkeep
+  interval read the *inferred* grade while the reserve read the declared one.
+  One grade is now in force and a pin states it
+  (`a_declared_appetite_governs_every_derived_number_and_not_only_the_reserve`).
+- **`contract::env_from_history` dropped the fill rate.** It pushed the free
+  shares and left `fill_gib_per_day` at zero, so every run's upkeep interval read
+  "not filling" whatever the history said. It now delegates to the one reader,
+  and its test asserts the rate rather than only the shares.
 
 ## The next slice, in build order
 
