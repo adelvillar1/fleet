@@ -8,7 +8,7 @@ tier: durable
 shape: [change]
 phrases: ["propose and dispose: the drafter files and the owner's gate applies; the diff score prices a contradicted report above every category; a chosen improvement is a…"]
 missing: []
-recall-count: 703
+recall-count: 704
 superseded-by:
 valid-until:
 ---
