@@ -61,13 +61,13 @@ Rules (the D-ledger's, applied to design):
   dominates; accents are full-chroma *signals with fixed meanings*: green =
   verified/live/done · cyan = threads/relay/primary action · magenta = bots ·
   amber = tasks/working/pending · gold = lessons · red = blocked/breach ·
-  teal = facts/memory · blue = instances/fleet. The nine hues are the whole
+  teal = facts/memory · blue = instances/fleet. The eight hues are the whole
   set — no agent introduces a tenth. Every accent pairs with an icon or label
   so meaning never rides color alone. *Constrains:* every component, both
   themes, the TUI's color pairs.
 - **U5 — Two themes, one token set.** All color lives as CSS custom
   properties on the surface root (`--ink --panel --text --muted --line` +
-  the nine signals, each with a translucent `-d` wash for fills). Night is
+  the eight signals, each with a translucent `-d` wash for fills). Night is
   the default; Day Watch (`[data-theme="day"]`) is the warm-paper inverse.
   **No component hardcodes a color literal** — hardcoding breaks the theme
   contract by construction. *Constrains:* app.css, all inline styles.
@@ -195,7 +195,7 @@ Rules (the D-ledger's, applied to design):
 - **U26 — Never:** a silo surface (a view that hides the graph or breaks the
   focus law) · dashboard filler cards · decorative color (accent without
   meaning) · a plain-text table where U1 demands a visual · console controls
-  tucked into a modal · autoplay sound · an accent hue outside the nine · a
+  tucked into a modal · autoplay sound · an accent hue outside the eight · a
   hardcoded color literal · a second focus mechanism · invented data standing
   in for a read.
 - **U27 — Scoping:** the mockup/reference implementation scopes everything

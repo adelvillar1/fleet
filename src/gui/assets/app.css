@@ -2,7 +2,7 @@
 
    The design is the U-ledger's workspace (docs/plans/UI-DECISIONS.md): one
    shell, one graph, every surface a lens over it. Harbor Night is the
-   default ground since the U-reskin (U4/U5) — deep ink-teal, the nine
+   default ground since the U-reskin (U4/U5) — deep ink-teal, the eight
    signal hues carrying fixed meanings, nothing decorative. Day Watch
    ([data-theme="day"]) is the warm-paper inverse; paper (the pre-reskin
    default) survives as a theme of its own, and the colour chain still has
@@ -139,7 +139,7 @@
   --lane-5: rgb(163, 230, 53);
 
   /* --- the signal tier: U4/U5, one-to-one with the mockup ----------- */
-  /* The nine hues are the whole set — no tenth (U4). Every accent pairs
+  /* The eight hues are the whole set — no ninth (U4). Every accent pairs
      with an icon or label so meaning never rides colour alone. `--ink`/
      `--panel`/`--text`/`--line` and friends are the U5 token names the
      ledger fixes; the alias tier above re-points the existing components,
@@ -422,7 +422,7 @@
   --dsw-alias-gradient: linear-gradient(135deg, rgb(20, 60, 150), rgb(16, 48, 122));
   --dsw-alias-on-accent: rgb(255, 255, 255);
   /* The signal tier on a pure-white ground: the mockup's day set, the
-     same nine hues the light themes carry (U4 — no theme invents a hue). */
+     same eight hues the light themes carry (U4 — no theme invents a hue). */
   --ink: rgb(255, 255, 255);
   --panel: rgb(255, 255, 255);
   --panel2: rgb(238, 238, 238);

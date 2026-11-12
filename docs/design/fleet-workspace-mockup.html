@@ -402,7 +402,7 @@
         <div class="fw-lens-body" id="fw-lens-body" aria-live="polite"></div>
       </main>
 
-      <aside class="fw-tissue" aria-label="Connective tissue">
+      <aside class="fw-tissue" aria-label="connections — what this connects to">
         <div class="fw-tissue-h">
           <i data-lucide="waypoints" style="width:16px;height:16px;color:var(--teal)"></i>
           <span class="fw-th-title">Connections</span>
@@ -1175,7 +1175,7 @@ function renderFocus(){
     '<div class="fw-focus-title">'+esc(o.title||o.name||o.id)+'</div>'+
     '<div class="fw-focus-meta">'+meta+'</div>'+
     '<div class="fw-focus-actions">'+actions+'</div>'+
-    (links.length?'<div class="fw-linked"><div class="fw-linked-h">Connected tissue</div>'+linkedHtml+'</div>':"");
+    (links.length?'<div class="fw-linked"><div class="fw-linked-h">Connections</div>'+linkedHtml+'</div>':"");
   var adv=f.querySelector("#fw-f-adv"); if(adv)adv.onclick=function(){advance(o.id);};
   var th=f.querySelector("#fw-f-thread"); if(th)th.onclick=function(){ var tid=state.focus.kind==="deliverable"?o.thread:(state.focus.kind==="thread"?o.id:null); if(tid)focusOn("thread",tid,true); else openDrawer(state.focus.kind,o.id); };
   var dp=f.querySelector("#fw-f-dispatch"); if(dp)dp.onclick=function(){dispatchDesk(o.id);};

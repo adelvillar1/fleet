@@ -966,7 +966,7 @@ function renderFocus(){
     '<div class="fo-focus-title">'+esc(o.title||o.name||o.id)+'</div>'+
     '<div class="fo-focus-meta">'+meta+'</div>'+
     '<div class="fo-focus-actions">'+actions+'</div>'+
-    (links.length?'<div class="fo-linked"><div class="fo-linked-h">Connected tissue</div>'+linkedHtml+'</div>':"");
+    (links.length?'<div class="fo-linked"><div class="fo-linked-h">Connections</div>'+linkedHtml+'</div>':"");
   var su=f.querySelector("#fo-f-setup"); if(su)su.onclick=function(){ setLens("setup"); };
   f.querySelectorAll(".fo-linked button").forEach(function(b){ b.onclick=function(){focusOn(b.getAttribute("data-kind"),b.getAttribute("data-id"),true);}; });
   icons();

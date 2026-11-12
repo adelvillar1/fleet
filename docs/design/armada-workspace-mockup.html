@@ -409,7 +409,7 @@
       </main>
 
       <!-- tissue -->
-      <aside class="fa-tissue" aria-label="Connective tissue">
+      <aside class="fa-tissue" aria-label="connections — what this connects to">
         <div class="fa-tissue-h">
           <i data-lucide="waypoints" style="width:16px;height:16px;color:var(--cyan)"></i>
           <span class="fa-th-title">Connections</span>
@@ -1017,7 +1017,7 @@ function renderFocus(){
     '<div class="fa-focus-title">'+esc(o.title||o.name||o.id)+'</div>'+
     '<div class="fa-focus-meta">'+meta+'</div>'+
     '<div class="fa-focus-actions">'+actions+'</div>'+
-    (links.length?'<div class="fa-linked"><div class="fa-linked-h">Connected tissue</div>'+linkedHtml+'</div>':"");
+    (links.length?'<div class="fa-linked"><div class="fa-linked-h">Connections</div>'+linkedHtml+'</div>':"");
   var d=f.querySelector("#fa-f-dispatch"); if(d)d.onclick=function(){dispatch(o.id);};
   var th=f.querySelector("#fa-f-thread"); if(th)th.onclick=function(){ var tid=state.focus.kind==="task"?o.thread:(state.focus.kind==="thread"?o.id:null); if(tid){focusOn("thread",tid,true);} else openDrawer(state.focus.kind,o.id); };
   var det=f.querySelector("#fa-f-details"); if(det)det.onclick=function(){openDrawer(state.focus.kind,o.id);};
