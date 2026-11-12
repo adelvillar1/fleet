@@ -158,8 +158,13 @@ async fn a_real_run_streams_over_sse_tokens_turn_and_end() {
         home.join("routing.json"),
         serde_json::json!({
             "workloads": [
-                { "workload": "quick", "candidates": ["mock/m"] }
-            ]
+                { "workload": "quick", "candidates": ["mock/m"] },
+                { "workload": "standard_code", "candidates": ["mock/m"] },
+                { "workload": "hard", "candidates": ["mock/m"] },
+                { "workload": "prose", "candidates": ["mock/m"] },
+                { "workload": "deep_context", "candidates": ["mock/m"] }
+            ],
+            "gates": { "default_workload": "standard_code" }
         })
         .to_string(),
     )
@@ -219,7 +224,11 @@ async fn a_real_run_streams_over_sse_tokens_turn_and_end() {
         .write_all(b"GET /events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
         .await
         .expect("the stream asks");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    // A generous bound: a loaded machine (a system indexer hogging the CPU)
+    // starves the mock and the agent thread; the run finishes, just slowly.
+    // The loop breaks the moment the end event lands, so the common case
+    // pays nothing (KI-405's class).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let mut read = String::new();
     loop {
         assert!(
