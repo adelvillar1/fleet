@@ -35,6 +35,16 @@ pub const STEP_HOME: &str = "home";
 /// One model key: before the lanes, because every lane composes with a
 /// model, not instead of one.
 pub const STEP_LLM: &str = "first-llm";
+/// The judgment lane (U41): at minimum one system-one model, wired
+/// during setup — after the account, before anything else is offered,
+/// because the proof answer is judged by it. Required, never skippable.
+pub const STEP_SYS1: &str = "judgment";
+
+/// The judgment chain's own key envs (U41): the sys1 lane reads its
+/// providers by name — the preferred ones one click away. Liquid is the
+/// roster's own candidate (its key_env comes from there); Fastino and
+/// Drex are the lane's internals, named by its config.
+pub const SYS1_KEY_ENVS: &[&str] = &["FASTINO_API_KEY", "TYPESAFE_API_KEY", "DREX_API_KEY"];
 /// The passphrase: the step that makes the keys this home already
 /// holds unreadable to anything else on the machine. It is asked right
 /// after the first account, because that is when there is something
@@ -53,6 +63,7 @@ pub const STEP_ROSTER: &str = "roster";
 pub const STEPS: &[&str] = &[
     STEP_HOME,
     STEP_LLM,
+    STEP_SYS1,
     STEP_VAULT,
     STEP_LANES,
     STEP_PROJECTS,
@@ -182,6 +193,11 @@ pub struct Facts {
     /// The providers whose keys resolve, in roster order — the chain a
     /// walk actually closes on.
     pub keyed: Vec<String>,
+    /// Whether the judgment lane's own keys resolve (U41): the sys1
+    /// namespace — FASTINO_API_KEY, TYPESAFE_API_KEY, DREX_API_KEY, or
+    /// any SYS1_*_API_KEY the lane's config names. At minimum one
+    /// system-one model, wired during setup.
+    pub sys1_wired: bool,
     /// The fan-in tail's provider id, when the roster declares one.
     pub tail: Option<String>,
     /// The folder the tower scans.
@@ -353,6 +369,21 @@ impl Facts {
             declared_windows,
             window_floor: compaction::COMPACTION_TOKEN_BUDGET,
             present_keys,
+            sys1_wired: {
+                let mut names: Vec<&str> = SYS1_KEY_ENVS.to_vec();
+                names.extend(
+                    dotenv
+                        .keys()
+                        .filter(|name| name.starts_with("SYS1_") && name.ends_with("_API_KEY"))
+                        .map(String::as_str),
+                );
+                names.into_iter().any(|name| {
+                    dotenv
+                        .get(name)
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false)
+                })
+            },
         }
     }
 
@@ -476,6 +507,14 @@ fn presence(home: &Path, facts: &Facts, id: &str) -> (bool, String) {
                 String::new()
             } else {
                 format!("answers as {}", facts.keyed.join(", "))
+            },
+        ),
+        STEP_SYS1 => (
+            facts.sys1_wired,
+            if facts.sys1_wired {
+                "the judgment lane reads its own key".to_string()
+            } else {
+                String::new()
             },
         ),
         STEP_VAULT => {
@@ -643,6 +682,13 @@ pub fn proof(home: &Path, facts: &Facts, id: &str) -> String {
                 format!("answers as {}", facts.keyed.join(", "))
             }
         }
+        STEP_SYS1 => {
+            if facts.sys1_wired {
+                "the judgment lane reads its own key".to_string()
+            } else {
+                "no system-one key yet".to_string()
+            }
+        }
         STEP_LANES => format!(
             "{} of {} specialists are installed",
             facts.lanes_answering,
@@ -730,6 +776,25 @@ pub fn narration(id: &str, facts: &Facts) -> Narration {
             skip: String::new(),
             mechanism: facts.chain_words(),
         },
+        STEP_SYS1 => {
+            let wired = facts.sys1_wired;
+            Narration {
+                eyebrow: "fleet · a judgment".to_string(),
+                title: if wired {
+                    "The judgment lane is wired.".to_string()
+                } else {
+                    "At minimum one system-one model.".to_string()
+                },
+                lede: "The closed-set classification every proof and every decision is                        judged by must have a model before the rest of the setup means                        anything. The preferred ones are one click away: Fastino (glide —                        the short-text sharpness, the chain head, docs.fastino.ai), Liquid                        (d1 — the long-context backup on a free tier, liquid.ai), and Drex                        (drex-v1.5 — the long-state anchor at 131k tokens, drex.nace.ai),                        on the /v1/systemone chain."
+                    .to_string(),
+                action: if wired { "Add another".to_string() } else { "Wire the judgment".to_string() },
+                // Required, not skippable (U41): the responsible-citizen
+                // setup never leaves judgment unwired.
+                skip: String::new(),
+                mechanism: "The key is stored in your home only — the vault never renders                             a value. The proof answer is judged by this lane, so the step                             is required: the setup never leaves judgment unwired."
+                    .to_string(),
+            }
+        }
         STEP_VAULT => Narration {
             eyebrow: "fleet · your keys".to_string(),
             title: "One passphrase seals them.".to_string(),
@@ -922,6 +987,14 @@ pub fn set_key(home: &Path, name: &str, value: &str) -> Result<(), String> {
 /// owner picked, and this maps a friendly provider id to the env name
 /// the roster declares for it.
 pub fn key_env_for(home: &Path, provider: &str) -> Option<String> {
+    // The judgment chain's own keys (U41): the sys1 lane reads its
+    // providers by name, and the preferred ones are one click away.
+    // Liquid is the roster's own candidate and falls through to it.
+    match provider {
+        "fastino" => return Some("FASTINO_API_KEY".to_string()),
+        "drex" => return Some("DREX_API_KEY".to_string()),
+        _ => {}
+    }
     let roster = route::load_roster(home).ok()?;
     roster
         .candidates

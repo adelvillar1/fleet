@@ -5340,6 +5340,81 @@
         later.addEventListener('click', function () { onboardSkip(one.id); });
         acts.appendChild(later);
       }
+      // The judgment step's own screen (U41): the three preferred
+      // system-one models, each linked to its own page, one field that
+      // names the provider it wires. Liquid is d1 — never jev.
+      if (one.id === 'judgment') {
+        var preferred = node('div', 'onboard-sys1');
+        [
+          ['fastino', 'Fastino', 'glide — the short-text sharpness, the chain head',
+            'https://docs.fastino.ai'],
+          ['liquid', 'Liquid', 'd1 — the long-context backup on a free tier',
+            'https://liquid.ai'],
+          ['drex', 'Drex', 'drex-v1.5 — the long-state anchor at 131k tokens',
+            'https://drex.nace.ai'],
+        ].forEach(function (one1) {
+          var row = node('div', 'onboard-sys1-row');
+          var words = node('div', 'onboard-sys1-words');
+          words.appendChild(node('b', null, one1[1]));
+          words.appendChild(node('span', null, one1[2]));
+          row.appendChild(words);
+          var link = node('a', 'onboard-sys1-link', 'its page');
+          link.href = one1[3];
+          link.target = '_blank';
+          link.rel = 'noopener';
+          row.appendChild(link);
+          preferred.appendChild(row);
+        });
+        card.appendChild(preferred);
+        var sys1Form = node('form', 'composer onboard-key');
+        var sys1Pick = node('select');
+        sys1Pick.setAttribute('aria-label', 'which judgment provider this key wires');
+        [['fastino', 'Fastino (glide)'], ['liquid', 'Liquid (d1)'],
+          ['drex', 'Drex (drex-v1.5)']].forEach(function (pair) {
+          var option = node('option', null, pair[1]);
+          option.value = pair[0];
+          sys1Pick.appendChild(option);
+        });
+        var sys1Field = node('input');
+        sys1Field.type = 'password';
+        sys1Field.autocomplete = 'off';
+        sys1Field.setAttribute('aria-label', 'paste the judgment provider key');
+        sys1Field.placeholder = 'paste the key — stored in your home only';
+        var sys1Go = node('button', 'foot-btn send', 'Wire it');
+        sys1Go.type = 'submit';
+        sys1Form.appendChild(sys1Pick);
+        sys1Form.appendChild(sys1Field);
+        sys1Form.appendChild(sys1Go);
+        sys1Form.addEventListener('submit', function (event) {
+          event.preventDefault();
+          var value = sys1Field.value.trim();
+          if (!value) {
+            notice('the field is empty', 'paste the provider key — the vault never renders a value');
+            return;
+          }
+          sys1Go.disabled = true;
+          sys1Go.textContent = 'wiring\u2026';
+          post('/api/onboard', { op: 'key', provider: sys1Pick.value, value: value })
+            .then(function (reply) {
+              sys1Go.disabled = false;
+              sys1Go.textContent = 'Wire it';
+              sys1Field.value = '';
+              if (reply.status === 200 && reply.body.proved) {
+                notice('the judgment is wired', reply.body.answer || 'the proof answer landed');
+                readOnboard(true);
+                return;
+              }
+              notice('the wiring was refused',
+                (reply.body.refused || []).join(' ') || 'the proof refused it');
+            })
+            .catch(function () {
+              sys1Go.disabled = false;
+              sys1Go.textContent = 'Wire it';
+              notice('the wiring did not cross', 'the server did not answer');
+            });
+        });
+        card.appendChild(sys1Form);
+      }
       card.appendChild(acts);
       var how = node('details', 'onboard-mechanism');
       how.appendChild(node('summary', 'method-label', 'how this works'));
@@ -28719,6 +28794,7 @@
     bot: { hue: '--magenta', lens: 'bots', name: 'bots' },
     lesson: { hue: '--gold', lens: 'learning', name: 'lessons' },
     practice: { hue: '--teal', lens: 'learning', name: 'practices' },
+    install: { hue: '--blue', lens: null, name: 'installs' },
     fact: { hue: '--teal', lens: 'memory', name: 'facts' },
     instance: { hue: '--blue', lens: 'armada', name: 'instances' }
   };
@@ -28741,7 +28817,7 @@
       })
       .catch(function () {
         // KI-380: re-armed, never swallowed.
-        connectionDown('the tissue read');
+        connectionDown('the connections read');
         window.setTimeout(function () { readTissue(true); }, 5000);
       });
   }
@@ -28762,8 +28838,8 @@
     if (el.tissueEmpty) {
       el.tissueEmpty.hidden = nodes.length > 0;
       if (!nodes.length) {
-        el.tissueEmpty.textContent = 'the graph grows with the work \u2014 a task, '
-          + 'a thread, a deliverable lands here as the runs make them';
+        el.tissueEmpty.textContent = 'nothing connected yet \u2014 as runs make '
+          + 'things, they show up here with what they touch';
       }
     }
     if (!nodes.length) {
@@ -28939,8 +29015,8 @@
     el.panelChat.dataset.threadPane = open ? 'on' : 'off';
     el.threadPaneToggle.setAttribute('aria-pressed', String(open));
     el.threadPaneToggle.title = open
-      ? 'fold the thread tissue \u2014 what this conversation generated'
-      : 'open the thread tissue \u2014 what this conversation generated';
+      ? 'fold made here \u2014 what this conversation made'
+      : 'open made here \u2014 what this conversation made';
   }
 
   // The rows this pane has already shown: a row the pane has not seen
@@ -28992,8 +29068,8 @@
     if (el.threadPaneEmpty) {
       el.threadPaneEmpty.hidden = rows.length > 0;
       if (!rows.length) {
-        el.threadPaneEmpty.textContent = 'nothing yet \u2014 the objects this '
-          + 'conversation generates land here as the run makes them';
+        el.threadPaneEmpty.textContent = 'nothing yet \u2014 what this conversation '
+          + 'makes lands here as the run works';
       }
     }
     if (el.threadPaneCount) {

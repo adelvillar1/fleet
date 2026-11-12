@@ -1923,6 +1923,18 @@ impl Bridge {
                     "hot": false,
                 }));
             }
+            // A fresh home's graph holds exactly ONE node (U34): this install,
+            // pulsing — every setup step grows the graph from it, and the user
+            // learns the pivot gesture on the neighborhood they built.
+            if nodes.is_empty() {
+                nodes.insert(
+                    0,
+                    json!({
+                        "id": "install", "kind": "install", "label": "this install",
+                        "status": null, "live": true, "meta": null,
+                    }),
+                );
+            }
             json!({
                 "type": "tissue",
                 "nodes": nodes,

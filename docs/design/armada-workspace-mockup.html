@@ -392,7 +392,7 @@
           <div class="fa-views" id="fa-views"></div>
         </div>
         <div class="fa-rail-foot">
-          <b>The tissue</b> connects every object. Click any node to pivot the whole workspace to it — one graph, not a drawer of silos.
+          <b>Everything is connected.</b> Click any item to pivot the whole workspace to it — one graph, not a drawer of silos.
         </div>
       </nav>
 
@@ -412,7 +412,7 @@
       <aside class="fa-tissue" aria-label="Connective tissue">
         <div class="fa-tissue-h">
           <i data-lucide="waypoints" style="width:16px;height:16px;color:var(--cyan)"></i>
-          <span class="fa-th-title">The tissue</span>
+          <span class="fa-th-title">Connections</span>
           <span class="fa-th-sub" id="fa-tissue-sub">live graph</span>
         </div>
         <div class="fa-graphwrap"><svg id="fa-graph" viewBox="0 0 300 300" role="img" aria-label="Work-object graph"></svg></div>
@@ -431,7 +431,7 @@
       <div class="fa-ctl"><label for="fa-c-speed">Live feed</label><input type="range" id="fa-c-speed" min="0.5" max="3" step="0.5" value="1"><span class="fa-val" id="fa-c-speed-v">1×</span></div>
       <div class="fa-ctl"><label for="fa-c-spread">Graph</label><input type="range" id="fa-c-spread" min="60" max="120" step="5" value="92"><span class="fa-val" id="fa-c-spread-v">92</span></div>
       <div class="fa-ctl"><label>Motion</label><button class="fa-switch" id="fa-c-motion" aria-pressed="true" aria-label="Toggle motion"></button></div>
-      <div class="fa-ctl"><label>Tissue</label><button class="fa-switch" id="fa-c-tissue" aria-pressed="true" aria-label="Toggle tissue pane"></button></div>
+      <div class="fa-ctl"><label>Connections</label><button class="fa-switch" id="fa-c-tissue" aria-pressed="true" aria-label="Toggle connections pane"></button></div>
       <div class="fa-ctl"><label>Labels</label><button class="fa-switch" id="fa-c-labels" aria-pressed="true" aria-label="Toggle graph labels"></button></div>
       <span class="fa-spacer"></span>
       <button class="fa-btn" id="fa-c-shuffle"><i data-lucide="shuffle" style="width:13px;height:13px"></i> Shuffle</button>
@@ -768,7 +768,7 @@ function renderThreads(tools,body){
   if(!t){ body.classList.remove("fa-chatmode"); body.innerHTML='<div class="fa-empty">No tasks yet — create one on the Board to start a thread.</div>'; tools.innerHTML=""; return; }
   tools.innerHTML='<span class="fa-chip on"><i data-lucide="messages-square" style="width:12px;height:12px"></i> '+esc(t?t.title:"")+'</span>'+
     '<button class="fa-btn fa-btn-primary" id="fa-dispatch"><i data-lucide="send" style="width:13px;height:13px"></i> Dispatch bot</button>'+
-    '<button class="fa-btn" id="fa-tp-toggle" aria-pressed="'+(state.threadPane?"true":"false")+'" data-tooltip="Objects generated on this thread"><i data-lucide="'+(state.threadPane?"panel-right-close":"panel-right-open")+'" style="width:13px;height:13px"></i> Thread tissue</button>';
+    '<button class="fa-btn" id="fa-tp-toggle" aria-pressed="'+(state.threadPane?"true":"false")+'" data-tooltip="Objects generated on this thread"><i data-lucide="'+(state.threadPane?"panel-right-close":"panel-right-open")+'" style="width:13px;height:13px"></i> Made here</button>';
   tools.querySelector("#fa-dispatch").onclick=function(){ if(t)dispatch(t.id); };
   tools.querySelector("#fa-tp-toggle").onclick=function(){ state.threadPane=!state.threadPane; renderLens(); };
   var near=chatNearBottom(body);

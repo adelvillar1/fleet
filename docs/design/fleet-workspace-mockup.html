@@ -387,7 +387,7 @@
           <div class="fw-views" id="fw-views"></div>
         </div>
         <div class="fw-rail-foot">
-          <b>The tissue</b> is the same graph with or without armada — the surfaces connect either way. Flip <b>Armada</b> in the console and watch the graph grow.
+          <b>Everything is connected</b> — with or without armada, the surfaces connect either way. Flip <b>Armada</b> in the console and watch the graph grow.
         </div>
       </nav>
 
@@ -405,7 +405,7 @@
       <aside class="fw-tissue" aria-label="Connective tissue">
         <div class="fw-tissue-h">
           <i data-lucide="waypoints" style="width:16px;height:16px;color:var(--teal)"></i>
-          <span class="fw-th-title">The tissue</span>
+          <span class="fw-th-title">Connections</span>
           <span class="fw-th-sub" id="fw-tissue-sub">live graph</span>
         </div>
         <div class="fw-graphwrap"><svg id="fw-graph" viewBox="0 0 300 300" role="img" aria-label="Work-object graph"></svg></div>
@@ -424,7 +424,7 @@
       <div class="fw-ctl"><label for="fw-c-speed">Live feed</label><input type="range" id="fw-c-speed" min="0.5" max="3" step="0.5" value="1"><span class="fw-val" id="fw-c-speed-v">1×</span></div>
       <div class="fw-ctl"><label for="fw-c-spread">Graph</label><input type="range" id="fw-c-spread" min="60" max="120" step="5" value="92"><span class="fw-val" id="fw-c-spread-v">92</span></div>
       <div class="fw-ctl"><label>Motion</label><button class="fw-switch" id="fw-c-motion" aria-pressed="true" aria-label="Toggle motion"></button></div>
-      <div class="fw-ctl"><label>Tissue</label><button class="fw-switch" id="fw-c-tissue" aria-pressed="true" aria-label="Toggle tissue pane"></button></div>
+      <div class="fw-ctl"><label>Connections</label><button class="fw-switch" id="fw-c-tissue" aria-pressed="true" aria-label="Toggle connections pane"></button></div>
       <div class="fw-ctl"><label>Labels</label><button class="fw-switch" id="fw-c-labels" aria-pressed="true" aria-label="Toggle graph labels"></button></div>
       <span class="fw-spacer"></span>
       <button class="fw-btn" id="fw-c-reset"><i data-lucide="rotate-ccw" style="width:13px;height:13px"></i> Reset</button>
@@ -812,7 +812,7 @@ function renderThreads(tools,body){
   if(!d){ body.classList.remove("fw-chatmode"); body.innerHTML='<div class="fw-empty">Open a brief to start a thread.</div>'; tools.innerHTML=""; return; }
   tools.innerHTML='<span class="fw-chip on"><i data-lucide="messages-square" style="width:12px;height:12px"></i> '+esc(d.name)+'</span>'+
     (state.armada?'<button class="fw-btn fw-btn-primary" id="fw-dispatch"><i data-lucide="send" style="width:13px;height:13px"></i> Dispatch</button>':"")+
-    '<button class="fw-btn" id="fw-tp-toggle" aria-pressed="'+(state.threadPane?"true":"false")+'" data-tooltip="Objects generated on this thread"><i data-lucide="'+(state.threadPane?"panel-right-close":"panel-right-open")+'" style="width:13px;height:13px"></i> Thread tissue</button>';
+    '<button class="fw-btn" id="fw-tp-toggle" aria-pressed="'+(state.threadPane?"true":"false")+'" data-tooltip="Objects generated on this thread"><i data-lucide="'+(state.threadPane?"panel-right-close":"panel-right-open")+'" style="width:13px;height:13px"></i> Made here</button>';
   var dp=tools.querySelector("#fw-dispatch"); if(dp)dp.onclick=function(){ dispatchDesk(d.id); };
   tools.querySelector("#fw-tp-toggle").onclick=function(){ state.threadPane=!state.threadPane; renderLens(); };
   // Follow the transcript only while the reader is already at its end;
@@ -1250,7 +1250,7 @@ function toggleArmada(){
   $("#fw-c-armada").setAttribute("aria-pressed",state.armada?"true":"false");
   if(state.lens==="fleet"&&!state.armada) state.lens="desk";
   renderNav(); renderLens(); renderTissue();
-  toast(state.armada?"Armada on — the same workspace, more minds in the graph":"Armada off — fleet alone, the tissue unchanged","server",state.armada?"var(--blue)":"var(--teal)");
+  toast(state.armada?"Armada on — the same workspace, more minds in the graph":"Armada off — fleet alone, the connections unchanged","server",state.armada?"var(--blue)":"var(--teal)");
   announce(state.armada?"armada on":"armada off");
 }
 function bindConsole(){

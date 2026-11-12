@@ -323,6 +323,22 @@ Same shell, same tokens; the Setup lens on a fresh home.
   where keys live (the home; the vault never renders a value). *Constrains:*
   `fleet onboard`, the gui first run, the routing config UX.
 
+- **U42 — The metaphor is architecture, never a label.** The owner's ruling
+  (2026-11-12): *"you know why I talked about connective tissue? because the
+  cool thing about it is that holds everything together and nobody sees it
+  from the outside. naming connective tissue or tissue in the app is
+  absolutely meaningless to a user."* User-facing copy names a thing for what
+  it DOES, never for the design rationale behind it. The graph column is
+  **connections** ("what this connects to"); the thread's generated-objects
+  pane is **made here** ("what this conversation made"); the rail's explainer
+  is one plain sentence about clicking to see what an item touches. The word
+  "tissue", "the receipts", and "the work-object graph" as labels are retired
+  from every surface and every reference mockup; they survive only in this
+  ledger, the architecture docs, and internal identifiers (ids, classes, the
+  `/api/tissue` route), which no user reads. *Constrains:* every user-facing
+  string in the face, the TUI, the shell, and the mockups; new copy is judged
+  by whether a user who never read this ledger understands it.
+
 ---
 
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the

@@ -1274,7 +1274,14 @@ const emptySessions = () => ({
 
 // The tissue's empty read (U11): a graph with nothing in it yet. The
 // column paints the honest note, never a node.
-const emptyTissue = () => ({ type: 'tissue', nodes: [], edges: [], bounded: 60, omitted: 0 });
+const emptyTissue = () => ({
+  type: 'tissue',
+  // U34: a fresh home's graph holds exactly ONE node — this install,
+  // pulsing. The stub mirrors the route's own injection.
+  nodes: [{ id: 'install', kind: 'install', label: 'this install',
+    status: null, live: true, meta: null }],
+  edges: [], bounded: 60, omitted: 0,
+});
 
 // The learning pane's empty read: no lesson yet, an empty graph, no
 // outcomes, no history. The fixture the rail and the sections paint.
@@ -5932,6 +5939,7 @@ function onboardDoc(options) {
   const steps = [
     { id: 'home', done: true, skipped: false, evidence: 'the home is in place' },
     { id: 'first-llm', done: !opts.door, skipped: false, evidence: '' },
+    { id: 'judgment', done: false, skipped: false, evidence: '', proof: 'no system-one key yet' },
     { id: 'lanes', done: false, skipped: false, evidence: '' },
     { id: 'projects', done: false, skipped: false, evidence: '' },
     { id: 'github', done: false, skipped: false, evidence: '' },
@@ -5941,13 +5949,15 @@ function onboardDoc(options) {
     proof: step.proof || ('proof for ' + step.id + ': 0 of 1 read'),
     narration: {
       eyebrow: 'fleet \u00b7 ' + step.id,
-      title: step.id === 'lanes' ? 'Small specialists, called when they help.'
-        : step.id === 'projects' ? 'Point fleet at your work.'
-          : step.id === 'github' ? 'Check claims against the record.'
-            : step.id === 'roster' ? 'Which model does what.' : 'Fleet can think already.',
+      title: step.id === 'judgment' ? 'At minimum one system-one model.'
+        : step.id === 'lanes' ? 'Small specialists, called when they help.'
+          : step.id === 'projects' ? 'Point fleet at your work.'
+            : step.id === 'github' ? 'Check claims against the record.'
+              : step.id === 'roster' ? 'Which model does what.' : 'Fleet can think already.',
       lede: 'One sentence of benefit for ' + step.id + '.',
       action: 'Set it up',
-      skip: step.id === 'first-llm' ? '' : 'Without it, fleet still works, with a named cost.',
+      skip: (step.id === 'first-llm' || step.id === 'judgment')
+        ? '' : 'Without it, fleet still works, with a named cost.',
       mechanism: 'The mechanism words live here: KEY_NAME, endpoint, roster, tier, vault, port.',
     },
   }));
@@ -6053,9 +6063,17 @@ async function theCapabilityCardsAreOnDemand() {
     'door hidden: ' + page.IDS['onboard-door'].hidden);
   const cards = page.rows('.onboard-card');
   check('OB the cards are the capabilities still missing',
-    cards.length === 4, String(cards.length));
-  check('OB every card carries one action and a real not-now',
-    cards.every((card) => card.querySelectorAll('.foot-btn').length === 1 &&
+    cards.length === 5, String(cards.length));
+  // U41: the judgment step is REQUIRED — it carries the action and no
+  // "not now"; every optional card keeps its real one.
+  const judgment = cards.filter((one) => one.textContent.includes('system-one'))[0];
+  check('OB the judgment card is required — action, no not-now',
+    !!judgment && judgment.querySelectorAll('.foot-btn').length >= 1 &&
+      judgment.querySelectorAll('.row-rewind').length === 0,
+    'not-now=' + (judgment ? judgment.querySelectorAll('.row-rewind').length : 'no card'));
+  check('OB every optional card carries one action and a real not-now',
+    cards.filter((card) => card !== judgment).every((card) =>
+      card.querySelectorAll('.foot-btn').length === 1 &&
       card.querySelectorAll('.row-rewind').length === 1),
     String(cards.length));
   check('OB every card carries a visible proof',
@@ -12272,13 +12290,11 @@ async function anEmptyTissueNamesWhatFillsIt() {
   const page = boot({ documents: {} });
   page.open();
   await flush();
-  check('RESKIN the empty tissue draws no graph',
-    !page.IDS['tissue-graph'].querySelector('svg'), 'svg drawn');
-  check('RESKIN the empty note names what fills the graph',
-    page.IDS['tissue-empty'].hidden === false &&
-      page.IDS['tissue-empty'].textContent.includes('graph grows with the work'),
-    'hidden=' + page.IDS['tissue-empty'].hidden +
-      ' said=' + page.IDS['tissue-empty'].textContent);
+  check('RESKIN an empty corpus still starts from the install node (U34)',
+    !!page.IDS['tissue-graph'].querySelector('svg'), 'no svg');
+  check('RESKIN the install focus names the graph\u2019s one node',
+    page.IDS['tissue-focus'].textContent.includes('this install'),
+    page.IDS['tissue-focus'].textContent.slice(0, 60));
 }
 
 // U40's Tools and Workflows segments: the capability registry reads
@@ -12526,6 +12542,57 @@ async function theDeskCardCarriesTheStageTrackAndTheRefusals() {
     chips.length ? chips[0].textContent : 'no chips');
 }
 
+// U41: the judgment step names the three preferred system-one models,
+// each linked to its own page, Liquid reading d1 — and ZERO jev
+// references anywhere in the step (the owner's correction, pinned).
+async function theJudgmentStepNamesThePreferredOnes() {
+  const page = boot({
+    documents: { onboard: onboardDoc({ door: false }), state: (asked) => emptyState(asked) },
+    hash: '#/chat',
+  });
+  page.open();
+  await flush(80);
+  const cards = page.rows('.onboard-card');
+  const card = cards.filter((one) => one.textContent.includes('system-one'))[0];
+  check('ONBOARD the judgment card renders from the document', !!card, 'card painted');
+  const links = card.querySelectorAll('.onboard-sys1-link').map((one) => one.href);
+  check('ONBOARD the three preferred models are one click away',
+    links.length === 3 &&
+      links.some((href) => String(href).includes('docs.fastino.ai')) &&
+      links.some((href) => String(href).includes('liquid.ai')) &&
+      links.some((href) => String(href).includes('drex.nace.ai')),
+    JSON.stringify(links.map(String)));
+  const words = card.querySelector('.onboard-sys1-words').textContent;
+  check('ONBOARD Liquid reads d1', words.includes('Liquid') === false &&
+      page.IDS['onboard-cards'].textContent.includes('d1 \u2014 the long-context backup'),
+    'd1 named');
+  check('ONBOARD the step never says jev',
+    page.IDS['onboard-cards'].textContent.toLowerCase().includes('jev') === false,
+    'zero jev');
+  const pick = card.querySelector('select');
+  check('ONBOARD the field names the provider it wires',
+    pick && pick.querySelectorAll('option').length === 3,
+    pick ? String(pick.querySelectorAll('option').length) : 'no select');
+}
+
+// U34: a fresh home's graph holds exactly ONE node — this install,
+// pulsing — and the setup steps grow the graph from it.
+async function theInstallNodeStartsTheGraph() {
+  const page = boot({ documents: {}, hash: '#/chat' });
+  page.open();
+  await flush(80);
+  const svgEl = page.IDS['tissue-graph'].querySelector('svg');
+  check('ONBOARD the fresh graph draws the one install node', !!svgEl, 'svg drawn');
+  const nodes = svgEl.querySelectorAll('.tissue-node');
+  check('ONBOARD the graph holds exactly one node', nodes.length === 1,
+    'nodes=' + nodes.length);
+  const live = svgEl.querySelectorAll('.tissue-node.live');
+  check('ONBOARD the install node pulses', live.length === 1, 'live=' + live.length);
+  const focus = page.IDS['tissue-focus'].textContent;
+  check('ONBOARD the focus card names the install', focus.includes('this install'),
+    focus.slice(0, 60));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -12685,6 +12752,8 @@ const cases = [
   ['THREAD the pane collapses and persists', theThreadPaneCollapsesAndPersists],
   ['CAL the judged rows carry the meter and the word', theJudgedRowsCarryTheMeterAndTheWord],
   ['DESK the card carries the stage track and the refusals', theDeskCardCarriesTheStageTrackAndTheRefusals],
+  ['ONBOARD the judgment step names the preferred ones', theJudgmentStepNamesThePreferredOnes],
+  ['ONBOARD the install node starts the graph', theInstallNodeStartsTheGraph],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

@@ -24,6 +24,7 @@ fn the_sequence_is_the_declared_order() {
         &[
             STEP_HOME,
             STEP_LLM,
+            STEP_SYS1,
             STEP_VAULT,
             STEP_LANES,
             STEP_PROJECTS,
@@ -31,10 +32,12 @@ fn the_sequence_is_the_declared_order() {
             STEP_ROSTER
         ]
     );
-    // The first step is the home, the second the account: the critical
-    // path is two steps long and nothing else may block it.
+    // The first step is the home, the second the account, the third the
+    // judgment lane (U41): the proof answer is judged by it, so it is
+    // required before anything else is offered.
     assert_eq!(STEPS[0], STEP_HOME);
     assert_eq!(STEPS[1], STEP_LLM);
+    assert_eq!(STEPS[2], STEP_SYS1);
 }
 
 #[test]

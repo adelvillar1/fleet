@@ -336,7 +336,7 @@
         <div class="fo-lens-head">
           <div>
             <div class="fo-lens-title" id="fo-lens-title">Setup</div>
-            <div class="fo-lens-sub" id="fo-lens-sub">Each step adds a node to the tissue — watch the graph grow as you connect</div>
+            <div class="fo-lens-sub" id="fo-lens-sub">Each step adds a node — watch the graph grow as you connect</div>
           </div>
           <div class="fo-tools" id="fo-tools"></div>
         </div>
@@ -346,7 +346,7 @@
       <aside class="fo-tissue" aria-label="Connective tissue">
         <div class="fo-tissue-h">
           <i data-lucide="waypoints" style="width:16px;height:16px;color:var(--teal)"></i>
-          <span class="fo-th-title">The tissue</span>
+          <span class="fo-th-title">Connections</span>
           <span class="fo-th-sub" id="fo-tissue-sub">1 node</span>
         </div>
         <div class="fo-graphwrap"><svg id="fo-graph" viewBox="0 0 300 300" role="img" aria-label="Work-object graph"></svg></div>
@@ -362,7 +362,7 @@
       <div class="fo-ctl"><label for="fo-c-speed">Live feed</label><input type="range" id="fo-c-speed" min="0.5" max="3" step="0.5" value="1"><span class="fo-val" id="fo-c-speed-v">1×</span></div>
       <div class="fo-ctl"><label for="fo-c-spread">Graph</label><input type="range" id="fo-c-spread" min="60" max="120" step="5" value="88"><span class="fo-val" id="fo-c-spread-v">88</span></div>
       <div class="fo-ctl"><label>Motion</label><button class="fo-switch" id="fo-c-motion" aria-pressed="true" aria-label="Toggle motion"></button></div>
-      <div class="fo-ctl"><label>Tissue</label><button class="fo-switch" id="fo-c-tissue" aria-pressed="true" aria-label="Toggle tissue pane"></button></div>
+      <div class="fo-ctl"><label>Connections</label><button class="fo-switch" id="fo-c-tissue" aria-pressed="true" aria-label="Toggle connections pane"></button></div>
       <div class="fo-ctl"><label>Labels</label><button class="fo-switch" id="fo-c-labels" aria-pressed="true" aria-label="Toggle graph labels"></button></div>
       <span class="fo-spacer"></span>
       <button class="fo-btn" id="fo-c-replay"><i data-lucide="rotate-ccw" style="width:13px;height:13px"></i> Replay setup</button>
@@ -423,7 +423,7 @@ var state={
   running:{}
 };
 var LENSES=[
-  {id:"setup",icon:"sprout",label:"Setup",sub:"Each step adds a node to the tissue — watch the graph grow as you connect"},
+  {id:"setup",icon:"sprout",label:"Setup",sub:"Each step adds a node — watch the graph grow as you connect"},
   {id:"desk",icon:"package",label:"Desk",fill:"prove"},
   {id:"threads",icon:"messages-square",label:"Threads",fill:"prove"},
   {id:"intelligence",icon:"brain",label:"Intelligence",fill:"account"},
@@ -548,8 +548,8 @@ function renderLens(){
 function renderSetup(body){
   var whole=coreDone();
   body.innerHTML='<div class="fo-welcome">'+(whole?
-    'Your workspace is <b>whole</b> — every node connected. The gesture you just used (click a node, follow its tissue) is the whole product.':
-    'Fleet is <b>one graph</b> — your work, its memory, its judgment, connected. Setup is not a wizard: <b>each step grows the tissue</b>, and by the end you know the gesture.')+'</div>'+
+    'Your workspace is <b>whole</b> — every node connected. The gesture you just used (click a node, follow what it connects to) is the whole product.':
+    'Fleet is <b>one graph</b> — your work, its memory, its judgment, connected. Setup is not a wizard: <b>each step grows the graph</b>, and by the end you know the gesture.')+'</div>'+
     '<div class="fo-steps" id="fo-steps"></div>';
   var steps=$("#fo-steps");
   steps.appendChild(stepCard({
@@ -704,7 +704,7 @@ function stepCard(o){
   var actions=el.querySelector("[data-actions]");
   if(o.nodeRef&&o.state==="done"){
     var link=document.createElement("button"); link.className="fo-step-link";
-    link.innerHTML='<i data-lucide="waypoints" style="width:12px;height:12px"></i> see it in the tissue';
+    link.innerHTML='<i data-lucide="waypoints" style="width:12px;height:12px"></i> see its connections';
     link.onclick=function(){ focusOn(o.nodeRef.kind,o.nodeRef.id,true); };
     actions.appendChild(link);
   }
@@ -787,7 +787,7 @@ function checkWhole(){
   if(!DB.wholeCelebrated&&coreDone()&&DB.steps.folder!=="locked"){
     DB.wholeCelebrated=true;
     var p=progress();
-    toast("The tissue is whole — "+p.nodes+" nodes, every one connected. The gesture is yours now.","waypoints","var(--green)");
+    toast("Your workspace is whole — "+p.nodes+" nodes, every one connected. The gesture is yours now.","waypoints","var(--green)");
     announce("workspace whole");
   }
 }
@@ -979,7 +979,7 @@ function openDrawer(kind,id){
   var dr=$("#fo-drawer"); var k=KIND[kind];
   dr.innerHTML='<div class="fo-drawer-h"><span style="color:'+k.c+'"><i data-lucide="'+k.icon+'" style="width:20px;height:20px"></i></span><h2>'+esc(o.title||o.name||o.id)+'</h2><button class="fo-iconbtn" id="fo-d-close" aria-label="Close"><i data-lucide="x" style="width:17px;height:17px"></i></button></div>'+
     '<div class="fo-drawer-body">'+((o.body||o.claim)?'<div style="font-size:13px;color:var(--muted);line-height:1.6">'+esc(o.body||o.claim)+'</div>':"")+
-    '<button class="fo-btn" id="fo-d-see"><i data-lucide="waypoints" style="width:13px;height:13px"></i> See it in the tissue</button></div>';
+    '<button class="fo-btn" id="fo-d-see"><i data-lucide="waypoints" style="width:13px;height:13px"></i> See its connections</button></div>';
   dr.classList.add("show"); $("#fo-scrim").classList.add("show");
   dr.querySelector("#fo-d-close").onclick=closeDrawer;
   dr.querySelector("#fo-d-see").onclick=function(){ closeDrawer(); focusOn(kind,id,true); };
