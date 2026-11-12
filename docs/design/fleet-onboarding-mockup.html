@@ -407,6 +407,7 @@ function seed(){
     facts:[], threads:[], calib:[], deliverables:[], messages:[],
     steps:{
       account:"locked",   // locked | done
+      sys1:"locked",      // locked | done — at minimum one system-one model
       prove:"locked",
       folder:"locked",    // locked | done | skipped
       reef:"locked",      // locked | provisioning | registered | done
@@ -440,12 +441,13 @@ function byId(kind,id){
 function obj(ref){ return ref?byId(ref.kind,ref.id):null; }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
 function announce(t){ var l=$("#fo-live"); if(l) l.textContent=t; }
-function stepDone(s){ if(s==="account")return !!byId("fact","f-acct"); if(s==="prove")return !!byId("thread","th-first"); if(s==="folder")return DB.steps.folder==="done"; if(s==="reef")return DB.steps.reef==="done"; return false; }
-function coreDone(){ return stepDone("account")&&stepDone("prove"); }
+function stepDone(s){ if(s==="account")return !!byId("fact","f-acct"); if(s==="sys1")return !!byId("fact","f-sys1"); if(s==="prove")return !!byId("thread","th-first"); if(s==="folder")return DB.steps.folder==="done"; if(s==="reef")return DB.steps.reef==="done"; return false; }
+function coreDone(){ return stepDone("account")&&stepDone("sys1")&&stepDone("prove"); }
 function linkedObjects(ref){
   var out=[];
   if(ref.kind==="instance"&&ref.id==="i-home"){
     if(byId("fact","f-acct"))out.push({kind:"fact",id:"f-acct"});
+    if(byId("fact","f-sys1"))out.push({kind:"fact",id:"f-sys1"});
     if(byId("thread","th-first"))out.push({kind:"thread",id:"th-first"});
     if(DB.steps.folder==="done")out.push({kind:"workspace",id:"w-folder"});
     if(byId("instance","i-reef"))out.push({kind:"instance",id:"i-reef"});
@@ -494,15 +496,16 @@ function focusOn(kind,id,switchLens){
 }
 function progress(){
   var done=1; // the install itself
-  var total=4; // install, account, prove, folder
+  var total=5; // install, account, the judgment model, prove, folder
   if(stepDone("account"))done++;
+  if(stepDone("sys1"))done++;
   if(stepDone("prove"))done++;
   if(DB.steps.folder==="done")done++;
-  if(stepDone("reef"))done++, total=5;
+  if(stepDone("reef"))done++, total=6;
   return {done:done,total:total,nodes:nodeCount()};
 }
 function nodeCount(){
-  return 1+(byId("fact","f-acct")?1:0)+(byId("thread","th-first")?1:0)+(byId("calib","c-first")?1:0)+(DB.steps.folder==="done"?1:0)+(byId("fact","f-mind")?1:0)+(byId("instance","i-reef")?1:0)+(byId("calib","c-reef")?1:0);
+  return 1+(byId("fact","f-acct")?1:0)+(byId("fact","f-sys1")?1:0)+(byId("thread","th-first")?1:0)+(byId("calib","c-first")?1:0)+(DB.steps.folder==="done"?1:0)+(byId("fact","f-mind")?1:0)+(byId("instance","i-reef")?1:0)+(byId("calib","c-reef")?1:0);
 }
 function renderProgress(){
   var p=progress();
@@ -574,24 +577,57 @@ function renderSetup(body){
         DB.steps.account="done";
         toast("Connected · the judgment lane routes through your key","link","var(--teal)");
         ping(700);
-        afterStep("prove","Prove it with a real answer");
+        afterStep("sys1","A judgment model — system one");
       };
       form.querySelector("#fo-acct-env").onclick=function(){
         addNode("fact","f-acct","lane account · from environment",{basis:"stated",body:"Resolved from the process environment — the standing chain, never a third place."});
         DB.steps.account="done";
         toast("Connected from the environment","link","var(--teal)");
-        afterStep("prove","Prove it with a real answer");
+        afterStep("sys1","A judgment model — system one");
       };
     }
   }));
   steps.appendChild(stepCard({
+    id:"sys1",icon:"scale",color:"var(--amber)",title:"A judgment model — system one",
+    desc:"System one is the lane that judges: closed-set classification with a confidence — arithmetic, risk, and routing stand on it. At minimum one model; the preferred ones are Fastino, Liquid, and Drex on the /v1/systemone chain.",
+    state:stepDone("sys1")?"done":(stepDone("account")?"current":"locked"),
+    nodeRef:{kind:"fact",id:"f-sys1"},
+    action:function(el){
+      if(stepDone("sys1")) return;
+      if(!stepDone("account")){ var l=document.createElement("div"); l.className="fo-step-link"; l.innerHTML='<i data-lucide="lock" style="width:12px;height:12px"></i> unlocks when the account is connected'; el.appendChild(l); return; }
+      var models=[
+        {name:"Fastino",page:"https://docs.fastino.ai",note:"glide · the short-text sharpness — the chain head"},
+        {name:"Liquid",page:"https://liquid.ai",note:"d1 · the long-context backup on a free tier"},
+        {name:"Drex",page:"https://drex.nace.ai",note:"drex-v1.5 · the long-state anchor, 131k tokens"}
+      ];
+      var wrap=document.createElement("div"); wrap.className="fo-folders"; wrap.style.flexDirection="column";
+      models.forEach(function(m){
+        var row=document.createElement("div"); row.className="fo-folder"; row.style.width="100%"; row.style.justifyContent="space-between";
+        row.innerHTML='<span style="display:flex;align-items:center;gap:8px;min-width:0"><i data-lucide="scale" style="width:12px;height:12px"></i><b style="color:var(--text)">'+esc(m.name)+'</b><span style="color:var(--faint);font-size:10px">'+esc(m.note)+'</span></span>'+
+          '<span style="display:flex;gap:10px;align-items:center;flex:none"><a href="'+m.page+'" target="_blank" rel="noopener" style="color:var(--cyan);font-size:10.5px;text-decoration:none;display:inline-flex;align-items:center;gap:4px" data-tooltip="The provider’s own page">page <i data-lucide="arrow-up-right" style="width:11px;height:11px"></i></a>'+
+          '<button class="fo-btn fo-btn-primary" style="padding:5px 12px;font-size:11.5px" data-connect>Connect</button></span>';
+        row.querySelector("[data-connect]").onclick=function(){
+          addNode("fact","f-sys1","sys1 model · "+m.name.toLowerCase(),{basis:"stated",body:"The judgment lane at minimum one: "+m.name+" — closed-set classification with a confidence on the /v1/systemone chain."});
+          DB.steps.sys1="done";
+          toast("Judgment wired · the lane that grades every decision now exists","scale","var(--amber)");
+          ping(760);
+          afterStep("prove","Prove it with a real answer");
+        };
+        wrap.appendChild(row);
+      });
+      var note=document.createElement("div"); note.className="fo-step-link"; note.style.color="var(--muted)";
+      note.innerHTML='<i data-lucide="key-round" style="width:12px;height:12px"></i> links open the providers’ own pages; keys resolve from your home only — the vault never renders a value';
+      el.appendChild(wrap); el.appendChild(note);
+    }
+  }));
+  steps.appendChild(stepCard({
     id:"prove",icon:"scale",color:"var(--amber)",title:"Prove it with a real answer",
-    desc:"Before anything else is offered, one real, grounded answer — and it is graded like every decision after it. A calibration row lands in your workspace during setup: trust is earned by measurement from minute one.",
-    state:stepDone("prove")?"done":(stepDone("account")?"current":"locked"),
+    desc:"Before anything else is offered, one real, grounded answer — judged by the system-one model you just connected, and graded like every decision after it. A calibration row lands in your workspace during setup: trust is earned by measurement from minute one.",
+    state:stepDone("prove")?"done":(stepDone("sys1")?"current":"locked"),
     nodeRef:{kind:"thread",id:"th-first"},
     action:function(el){
       if(stepDone("prove")) return;
-      if(!stepDone("account")){ var l=document.createElement("div"); l.className="fo-step-link"; l.innerHTML='<i data-lucide="lock" style="width:12px;height:12px"></i> unlocks when the account is connected'; el.appendChild(l); return; }
+      if(!stepDone("sys1")){ var l=document.createElement("div"); l.className="fo-step-link"; l.innerHTML='<i data-lucide="lock" style="width:12px;height:12px"></i> unlocks when the judgment model is connected — the proof is judged by it'; el.appendChild(l); return; }
       var b=document.createElement("button"); b.className="fo-btn fo-btn-primary"; b.innerHTML='<i data-lucide="play" style="width:13px;height:13px"></i> Ask the first thing';
       b.onclick=function(){ runProve(el); };
       el.appendChild(b);
@@ -988,6 +1024,7 @@ function bindConsole(){
   $("#fo-c-replay").onclick=function(){ DB=seed(); threadReset(); state.focus={kind:"instance",id:"i-home"}; setLens("setup"); renderTissue(); toast("Fresh home — one node. Setup grows it again.","sprout","var(--teal)"); };
   $("#fo-c-jump").onclick=function(){
     if(!byId("fact","f-acct")){ addNode("fact","f-acct","lane account · deepseek",{basis:"stated",body:"The routing account Fleet thinks with."}); DB.steps.account="done"; }
+    if(!byId("fact","f-sys1")){ addNode("fact","f-sys1","sys1 model · fastino",{basis:"stated",body:"The judgment lane at minimum one — closed-set classification with a confidence."}); DB.steps.sys1="done"; }
     if(!byId("thread","th-first")){ addNode("thread","th-first","first answer"); addNode("calib","c-first","first answer",{workload:"first run",decision:"sys1 → blend1",confidence:.91,outcome:"held"}); DB.steps.prove="done"; }
     if(DB.steps.folder!=="done"&&DB.steps.folder!=="skipped"){ DB.steps.folder="done"; DB.steps.folderName="~/Projects/harbor"; addNode("workspace","w-folder","workspace · harbor"); }
     if(!byId("instance","i-reef")){ DB.steps.reef="done"; addNode("instance","i-reef","reef-1"); addNode("fact","f-mind","the shared mind",{basis:"stated",body:"The corpus is the portable, git-synced unit."}); addNode("calib","c-reef","reef-1 · first settle",{workload:"first run",decision:"reef-1",confidence:.87,outcome:"held"}); var r=byId("instance","i-reef"); r.live=true; r.settled=1; r.rel=1; r.host="vps · fra1"; DB.messages.push({id:"m-reef",chan:"relay",who:"reef-1",principal:"inst:reef",text:"Joined · trusted after my first settle.",out:"delivered",dir:"in"}); }

@@ -309,6 +309,20 @@ Same shell, same tokens; the Setup lens on a fresh home.
   face's memory/skills/tools surfaces, the substrate rendering, the armada
   intelligence, the onboarding empty state.
 
+- **U41 — At minimum one system-one model, wired during setup.** After the
+  provider account, setup walks a dedicated step: the judgment lane —
+  closed-set classification with a confidence — must have **at minimum one
+  model** before anything else is offered, because the proof answer is judged
+  by it. The preferred ones are one click away with links to their own pages:
+  **Fastino** (glide — the short-text sharpness, the chain head;
+  docs.fastino.ai), **Liquid** (**d1** — the long-context backup on a free
+  tier; liquid.ai), and **Drex** (drex-v1.5 — the long-state anchor, 131k
+  tokens; drex.nace.ai), on the `/v1/systemone` chain. Liquid is d1 — never
+  conflated with jev, which is a separate head. Required, not skippable: the
+  responsible-citizen setup never leaves judgment unwired, and the step says
+  where keys live (the home; the vault never renders a value). *Constrains:*
+  `fleet onboard`, the gui first run, the routing config UX.
+
 ---
 
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the
