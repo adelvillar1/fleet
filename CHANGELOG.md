@@ -12,6 +12,29 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.36 — 2026-11-11
+
+The armada omnichannel edge: communication that loses nothing.
+
+**Part of the armada vision** — layer L5 (communication), the responsible
+channel edge. The plan is `docs/plans/2026-11-11-armada-l5-communication.md`.
+
+- **The durable outbox** — a reply is journaled before the attempt, retried
+  on failure, and curtailed to a named `undeliverable` past its budget. No
+  reply is silently lost.
+- **The identity graph** — a peer on any channel resolves to one principal;
+  an unlinked peer is a named refusal, never a silent owner fallback.
+- **The bus is the journal** — the channel driver recovers seats and
+  outcomes from its persisted cursor on a lag or restart; the broadcast's
+  silent drop is retired.
+- **Gated dispatch** — an inbound run acts for the peer's resolved principal,
+  which the guard reads; every dispatch settles a journal event.
+- **The telegram offset persists** — a restart resumes the long-poll rather
+  than re-reading history.
+
+Single-owner behavior is unchanged: paired peers act for the owner, an
+Observe peer is still refused, the synchronous happy path stands.
+
 ## v0.6.35 — 2026-11-11
 
 The armada shared mind: the corpus syncs across installs.
