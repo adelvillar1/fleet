@@ -12668,6 +12668,75 @@ async function theDispatchHeroFlowPivotsToTheThread() {
     page.IDS.task.value === '', 'task=' + page.IDS.task.value);
 }
 
+// S3 (U24): the chrome search filters the active lens live — the same
+// face.query the lens's own search reads, so the two never disagree.
+async function theChromeSearchFiltersTheActiveLens() {
+  const page = boot({
+    documents: { memory: memoryDoc, state: (asked) => emptyState(asked) },
+    hash: '#/memory',
+  });
+  page.open();
+  await flush(80);
+  page.IDS['chrome-search-input'].value = 'owners-ruling';
+  page.IDS['chrome-search-input'].fire('input', {});
+  await flush(60);
+  check('S3 the chrome search filters the active lens',
+    page.text('memory-board').includes('owners-ruling') &&
+      !page.text('memory-board').includes('fact-00'),
+    'filtered to the match');
+}
+
+// S3 (U12): the console controls apply live and remember their choice.
+async function theConsoleControlsApplyLive() {
+  const page = boot({ documents: { state: (asked) => emptyState(asked) }, hash: '#/chat' });
+  page.open();
+  await flush(80);
+  page.IDS['ctl-density'].click();
+  await flush(40);
+  check('S3 density applies live and is remembered',
+    page.body.dataset.density === 'compact' &&
+      page.window.localStorage.getItem('fleet-density') === 'compact',
+    'density=' + page.body.dataset.density);
+  page.IDS['ctl-connections'].click();
+  await flush(40);
+  check('S3 the connections toggle hides the graph column',
+    page.body.dataset.tissue === 'off',
+    'tissue=' + page.body.dataset.tissue);
+  page.IDS['ctl-labels'].click();
+  await flush(40);
+  check('S3 the labels toggle applies live',
+    page.body.dataset.labels === 'off',
+    'labels=' + page.body.dataset.labels);
+}
+
+// S3 (U29): the armada switch grows the graph — instance nodes appear when
+// on, stand down when off, and fleet stays whole either way.
+async function theArmadaSwitchGrowsTheGraph() {
+  const tissueWithInstances = {
+    type: 'tissue',
+    nodes: [
+      { id: 'install', kind: 'install', label: 'this install', live: true },
+      { id: 'instance:reef', kind: 'instance', label: 'reef', live: true, meta: 'v0.7.2' },
+    ],
+    edges: [{ from: 'instance:reef', to: 'install', kind: 'shared_mind' }],
+    bounded: 60, omitted: 0,
+  };
+  const page = boot({ documents: { tissue: tissueWithInstances, state: (asked) => emptyState(asked) }, hash: '#/chat' });
+  page.open();
+  await flush(80);
+  const nodesOff = page.IDS['tissue-graph'].querySelectorAll('.tissue-node').length;
+  check('S3 armada off leaves fleet whole (no instance node)',
+    nodesOff === 1, 'nodes=' + nodesOff);
+  page.IDS['ctl-armada'].click();
+  await flush(80);
+  const nodesOn = page.IDS['tissue-graph'].querySelectorAll('.tissue-node').length;
+  check('S3 armada on grows the graph with the instance',
+    nodesOn === 2, 'nodes=' + nodesOn);
+  check('S3 the armada choice is remembered',
+    page.window.localStorage.getItem('fleet-armada') === 'on',
+    'armada=' + page.window.localStorage.getItem('fleet-armada'));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -12831,6 +12900,9 @@ const cases = [
   ['ONBOARD the install node starts the graph', theInstallNodeStartsTheGraph],
   ['S1 the focus law pivots the whole workspace', theFocusLawPivotsTheWholeWorkspace],
   ['S2 the dispatch hero flow pivots to the thread', theDispatchHeroFlowPivotsToTheThread],
+  ['S3 the chrome search filters the active lens', theChromeSearchFiltersTheActiveLens],
+  ['S3 the console controls apply live', theConsoleControlsApplyLive],
+  ['S3 the armada switch grows the graph', theArmadaSwitchGrowsTheGraph],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

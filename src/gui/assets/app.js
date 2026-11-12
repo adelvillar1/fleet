@@ -1096,6 +1096,12 @@
     chatBigger: document.getElementById('chat-bigger'),
     send: document.getElementById('send'),
     dispatch: document.getElementById('dispatch'),
+    chromeSearch: document.getElementById('chrome-search-input'),
+    ctlDensity: document.getElementById('ctl-density'),
+    ctlConnections: document.getElementById('ctl-connections'),
+    ctlLabels: document.getElementById('ctl-labels'),
+    ctlMotion: document.getElementById('ctl-motion'),
+    ctlArmada: document.getElementById('ctl-armada'),
     sendLabel: document.getElementById('send-label'),
     queueChip: document.getElementById('queue-chip'),
     queueCount: document.getElementById('queue-count'),
@@ -10523,6 +10529,91 @@
         });
     });
   }
+
+  // The chrome search (U24): one of the two doors. It filters the active
+  // lens live as the owner types — the same face.query the lens's own
+  // search reads, so the two never disagree. The palette (⌘K) is the
+  // other door. A lens with nothing to filter repaints unchanged.
+  function repaintActiveLens() {
+    switch (face.panel) {
+      case 'memory': case 'skills': paintMemory(); break;
+      case 'desk': paintDesk(); break;
+      case 'learning': paintLearning(); break;
+      case 'calibration': paintCalibration(); break;
+      case 'router': paintRouter(); break;
+      case 'delegation': paintDelegation(); break;
+      case 'bots': paintBots(); break;
+      case 'sessions': paintSessions(); break;
+      case 'inbox': paintInbox(); break;
+      case 'workspace-history': paintWorkspaceHistory(); break;
+      default: break;
+    }
+  }
+  if (el.chromeSearch) {
+    el.chromeSearch.addEventListener('input', function () {
+      face.query = el.chromeSearch.value;
+      repaintActiveLens();
+    });
+  }
+
+  // --- the console (U12) ----------------------------------------------
+  // A permanently visible control region; every control applies live to
+  // the real UI, and each choice is remembered like the theme. The
+  // armada switch (U29) grows the graph and the Fleet lens; off leaves
+  // fleet whole — nothing reflows, nothing fleet needs disappears.
+  function consoleSetting(key, fallback) {
+    try { return window.localStorage.getItem('fleet-' + key) || fallback; }
+    catch (error) { return fallback; }
+  }
+  function paintConsole() {
+    document.body.dataset.density = consoleSetting('density', 'comfortable');
+    document.body.dataset.tissue = consoleSetting('connections', 'on');
+    document.body.dataset.labels = consoleSetting('labels', 'on');
+    document.body.dataset.armada = consoleSetting('armada', 'off');
+    if (el.ctlDensity) el.ctlDensity.setAttribute('aria-pressed',
+      String(document.body.dataset.density === 'compact'));
+    if (el.ctlConnections) el.ctlConnections.setAttribute('aria-pressed',
+      String(document.body.dataset.tissue === 'on'));
+    if (el.ctlLabels) el.ctlLabels.setAttribute('aria-pressed',
+      String(document.body.dataset.labels === 'on'));
+    if (el.ctlMotion) el.ctlMotion.setAttribute('aria-pressed',
+      String(motionSetting() === 'on'));
+    if (el.ctlArmada) el.ctlArmada.setAttribute('aria-pressed',
+      String(document.body.dataset.armada === 'on'));
+  }
+  function consoleToggle(key, onValue, offValue, after) {
+    // Read the applied state, not the storage fallback: the default for
+    // connections/labels is on, so a fallback of off would flip the first
+    // press the wrong way.
+    var attr = { density: 'density', connections: 'tissue', labels: 'labels', armada: 'armada' }[key];
+    var now = document.body.dataset[attr] || offValue;
+    try { window.localStorage.setItem('fleet-' + key, now === onValue ? offValue : onValue); }
+    catch (error) { }
+    paintConsole();
+    if (after) after();
+  }
+  if (el.ctlDensity) el.ctlDensity.addEventListener('click', function () {
+    consoleToggle('density', 'compact', 'comfortable');
+  });
+  if (el.ctlConnections) el.ctlConnections.addEventListener('click', function () {
+    consoleToggle('connections', 'on', 'off', paintTissueNote);
+  });
+  if (el.ctlLabels) el.ctlLabels.addEventListener('click', function () {
+    consoleToggle('labels', 'on', 'off');
+  });
+  if (el.ctlMotion) el.ctlMotion.addEventListener('click', function () {
+    try { window.localStorage.setItem('fleet-motion', motionSetting() === 'on' ? 'off' : 'on'); }
+    catch (error) { }
+    paintMotion();
+    paintConsole();
+  });
+  if (el.ctlArmada) el.ctlArmada.addEventListener('click', function () {
+    consoleToggle('armada', 'on', 'off', function () {
+      buildRail();
+      readTissue(true);
+    });
+  });
+  paintConsole();
 
   // The composer's run policy: the permissions control and the route
   // picker. A chat's choices live on the face and ride its next run;
@@ -28910,6 +29001,12 @@
   function paintTissue() {
     if (!el.tissueGraph) return;
     var nodes = tissueNodes();
+    // Armada (U29): off leaves fleet whole — the instance nodes stand
+    // down, and the edges to them drop with them (the positions map is
+    // built from the nodes that remain). On grows the graph.
+    if (document.body.dataset.armada !== 'on') {
+      nodes = nodes.filter(function (one) { return one.kind !== 'instance'; });
+    }
     var edges = face.tissue && Array.isArray(face.tissue.edges) ? face.tissue.edges : [];
     el.tissueGraph.textContent = '';
     if (el.tissueEmpty) {

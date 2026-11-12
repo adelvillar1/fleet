@@ -203,6 +203,17 @@
         <span class="crumb-sep" aria-hidden="true">/</span>
         <span class="crumb-page" id="crumb-page">conversation</span>
       </nav>
+      <!-- The chrome search (U24): one of the two doors. It filters the
+           active lens live as you type; the palette (⌘K) is the other. -->
+      <label class="chrome-search" for="chrome-search-input">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5"></circle>
+          <path d="M16 16l4.5 4.5"></path>
+        </svg>
+        <input type="search" id="chrome-search-input" autocomplete="off" spellcheck="false"
+               placeholder="filter this view" aria-label="filter the active view">
+      </label>
     </div>
     <div class="topbar-right">
       <span class="pill" id="route-pill" data-state="idle" title="where this run's work went">no route yet</span>
@@ -1295,6 +1306,24 @@
     <div class="tissue-focus" id="tissue-focus"></div>
     <div class="tissue-empty" id="tissue-empty" hidden></div>
   </aside>
+
+  <!-- The console (U12): a permanently visible control region, never a
+       modal. Every control applies live to the real UI. The armada switch
+       (U29) grows the graph and the Fleet lens; off leaves fleet whole. -->
+  <footer class="console-bar" id="console-bar" aria-label="view controls">
+    <span class="console-label">view</span>
+    <button class="console-ctl" id="ctl-density" type="button" aria-pressed="false"
+            title="density — comfortable or compact">density</button>
+    <button class="console-ctl" id="ctl-connections" type="button" aria-pressed="true"
+            title="connections — show or hide the graph column">connections</button>
+    <button class="console-ctl" id="ctl-labels" type="button" aria-pressed="true"
+            title="labels — show or hide the graph labels">labels</button>
+    <button class="console-ctl" id="ctl-motion" type="button" aria-pressed="true"
+            title="motion — the ambient layer and animations">motion</button>
+    <span class="console-sep" aria-hidden="true"></span>
+    <button class="console-ctl console-armada" id="ctl-armada" type="button" aria-pressed="false"
+            title="armada — grow the graph with the fleet, or fleet alone">armada</button>
+  </footer>
 
 </div>
 

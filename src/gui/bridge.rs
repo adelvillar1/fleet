@@ -1972,6 +1972,29 @@ impl Bridge {
                     None,
                 );
             }
+            // Armada instances join the graph (U29): the fleet this install
+            // commands, each linked to it by the shared-mind edge. The face
+            // shows them when armada is on; off leaves fleet whole.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|span| span.as_secs())
+                .unwrap_or_default();
+            let roster = crate::armada::roster::load(&home);
+            let mut instance_ids: Vec<String> = Vec::new();
+            for instance in roster.instances.values() {
+                let id = format!("instance:{}", instance.sid);
+                instance_ids.push(id.clone());
+                push(
+                    &mut nodes,
+                    &mut omitted,
+                    id,
+                    "instance",
+                    instance.sid.clone(),
+                    None,
+                    instance.live(now),
+                    Some(format!("v{}", instance.version)),
+                );
+            }
             for edge in &graph.edges {
                 if edges.len() >= MAX_NODES * 2 {
                     break;
@@ -1982,10 +2005,21 @@ impl Bridge {
                     "hot": false,
                 }));
             }
+            // The shared-mind edges: each instance inherits the mind, not the
+            // identity (U38) — the edge draws to this install.
+            for id in &instance_ids {
+                if edges.len() >= MAX_NODES * 2 {
+                    break;
+                }
+                edges.push(json!({
+                    "from": id, "to": "install", "kind": "shared_mind", "hot": false,
+                }));
+            }
             // A fresh home's graph holds exactly ONE node (U34): this install,
             // pulsing — every setup step grows the graph from it, and the user
-            // learns the pivot gesture on the neighborhood they built.
-            if nodes.is_empty() {
+            // learns the pivot gesture on the neighborhood they built. The
+            // install is also the shared-mind anchor when instances exist.
+            if nodes.is_empty() || !instance_ids.is_empty() {
                 nodes.insert(
                     0,
                     json!({

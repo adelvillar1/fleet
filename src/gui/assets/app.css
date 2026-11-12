@@ -176,6 +176,7 @@
   /* --- component tokens -------------------------------------------- */
   --topbar-bg: color-mix(in srgb, var(--dsw-alias-page) 86%, transparent);
   --topbar-height: 58px;
+  --console-height: 40px;
   --rail-width: 236px;
   --rail-width-icons: 66px;
   --aside-width: 320px;
@@ -526,7 +527,7 @@ button, input, textarea, select { font: inherit; }
   /* The pane is the one right surface: two columns closed, three open,
      the pane's width the owner's own (P1's grip writes --pane-width). */
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
-  grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr);
+  grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr) var(--console-height);
   height: 100dvh;
   overflow: hidden;
 }
@@ -534,6 +535,7 @@ button, input, textarea, select { font: inherit; }
 .surfaces { grid-column: 1; grid-row: 1 / -1; }
 .topbar, .meter { grid-column: 2 / -1; }
 .stage { grid-column: 2; grid-row: 3; }
+.console-bar { grid-column: 2 / -1; grid-row: 4; }
 
 body[data-pane="open"] .face {
   grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--pane-width);
@@ -11371,3 +11373,77 @@ body[data-motion="off"] .thread-row.fresh { animation: none; }
 .foot-btn.dispatch { color: var(--dsw-alias-accent-lift); }
 .foot-btn.dispatch:hover { background: var(--dsw-alias-accent-wash); }
 .foot-btn.dispatch svg { width: 14px; height: 14px; }
+
+/* ==================================================================
+   The chrome search (U24) and the console (U12) — S3 */
+
+.chrome-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 14px;
+  padding: 5px 11px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--r-sm);
+  background: var(--card-bg);
+  color: var(--dsw-alias-ink-tertiary);
+  min-width: 0;
+  flex: 0 1 220px;
+}
+.chrome-search svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.chrome-search input {
+  border: 0; background: none; outline: none; min-width: 0; flex: 1 1 auto;
+  color: var(--dsw-alias-ink); font-size: 12px;
+}
+.chrome-search:focus-within { border-color: var(--dsw-alias-accent); }
+
+.console-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  background: color-mix(in srgb, var(--dsw-alias-surface) 60%, transparent);
+  overflow-x: auto;
+}
+.console-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.console-ctl {
+  padding: 4px 11px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease),
+    border-color var(--fast) var(--ease);
+}
+.console-ctl:hover { color: var(--dsw-alias-ink); border-color: var(--dsw-alias-hairline-strong); }
+.console-ctl[aria-pressed="true"] {
+  color: var(--dsw-alias-accent-lift);
+  border-color: var(--dsw-alias-accent);
+  background: var(--dsw-alias-accent-wash);
+}
+.console-armada[aria-pressed="true"] {
+  color: var(--blue);
+  border-color: var(--blue);
+  background: var(--blue-d);
+}
+.console-sep { flex: 0 0 auto; width: 1px; height: 18px; background: var(--dsw-alias-hairline); }
+
+/* Density (U12): compact tightens the card padding and the type scale. */
+body[data-density="compact"] { --card-pad: 12px; --card-value: 21px; --gap: 9px; }
+body[data-density="compact"] .stage-board { padding: 18px 20px 40px; }
+
+/* Labels (U12): hide the graph labels, keep the nodes. */
+body[data-labels="off"] .tissue-node-label { display: none; }
+
+/* Armada (U29): off leaves fleet whole — the Fleet lens stands down. */
+body[data-armada="off"] .surfaces-link[data-address="armada"] { display: none; }
