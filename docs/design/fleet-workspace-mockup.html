@@ -1,0 +1,1145 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+#fw-root{
+  box-sizing:border-box;
+  --ink:#08131a; --ink2:#0c1e27; --panel:#0f2530; --panel2:#12303c; --raise:#16394a;
+  --line:rgba(86,180,200,.16); --line2:rgba(86,180,200,.30);
+  --text:#e9f4f5; --muted:#93aeb6; --faint:#5f7d86;
+  --green:#37e2a4; --cyan:#3ad4f2; --magenta:#f757c2; --amber:#ffb224; --gold:#ffd86b; --red:#ff6060; --teal:#2dd6bf; --blue:#5b9dff;
+  --green-d:rgba(55,226,164,.14); --cyan-d:rgba(58,212,242,.14); --magenta-d:rgba(247,87,194,.14);
+  --amber-d:rgba(255,178,36,.14); --gold-d:rgba(255,216,107,.14); --red-d:rgba(255,96,96,.14); --teal-d:rgba(45,214,191,.14); --blue-d:rgba(91,157,255,.14);
+  --disp:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  --r-lg:16px; --r-md:11px; --r-sm:7px;
+  --shadow:0 18px 50px -18px rgba(0,0,0,.7);
+  --gap:14px; --pad:16px;
+  position:relative; width:100%; min-height:860px; color:var(--text);
+  font-family:var(--body); font-size:14px; line-height:1.5;
+  background:
+    radial-gradient(1200px 600px at 82% -10%, rgba(45,214,191,.10), transparent 60%),
+    radial-gradient(900px 520px at 8% 108%, rgba(255,178,36,.08), transparent 60%),
+    linear-gradient(160deg,var(--ink),var(--ink2) 60%,#0a1a22);
+  border-radius:var(--r-lg); overflow:hidden; isolation:isolate;
+  border:1px solid var(--line);
+}
+#fw-root[data-theme="day"]{
+  --ink:#eef0ea; --ink2:#e7eae2; --panel:#fbfaf5; --panel2:#f3f2ea; --raise:#ffffff;
+  --line:rgba(20,60,70,.14); --line2:rgba(20,60,70,.26);
+  --text:#13242b; --muted:#4d6670; --faint:#8397a0;
+  --green:#0fa876; --cyan:#0a93b8; --magenta:#cf2f9c; --amber:#c97e00; --gold:#b98900; --red:#dc3838; --teal:#0c9c8b; --blue:#2f6fd6;
+  --green-d:rgba(15,168,118,.12); --cyan-d:rgba(10,147,184,.12); --magenta-d:rgba(207,47,156,.12);
+  --amber-d:rgba(201,126,0,.13); --gold-d:rgba(185,137,0,.14); --red-d:rgba(220,56,56,.12); --teal-d:rgba(12,156,139,.12); --blue-d:rgba(47,111,214,.12);
+  --shadow:0 18px 44px -22px rgba(20,50,60,.4);
+  background:
+    radial-gradient(1100px 560px at 84% -12%, rgba(12,156,139,.10), transparent 60%),
+    radial-gradient(900px 520px at 6% 110%, rgba(201,126,0,.07), transparent 60%),
+    linear-gradient(160deg,var(--ink),var(--ink2));
+}
+#fw-root *{box-sizing:border-box; margin:0; padding:0}
+#fw-root ::selection{background:rgba(45,214,191,.3)}
+#fw-root ::-webkit-scrollbar{width:10px; height:10px}
+#fw-root ::-webkit-scrollbar-track{background:transparent}
+#fw-root ::-webkit-scrollbar-thumb{background:var(--line2); border-radius:20px; border:3px solid transparent; background-clip:content-box}
+#fw-root ::-webkit-scrollbar-thumb:hover{background:var(--teal); background-clip:content-box}
+#fw-root button{font-family:inherit; color:inherit; background:none; border:none; cursor:pointer}
+#fw-root input,#fw-root select,#fw-root textarea{font-family:inherit; color:inherit}
+#fw-root canvas.fw-amb{position:absolute; inset:0; z-index:0; pointer-events:none; opacity:.55}
+#fw-root .fw-grain{position:absolute; inset:0; z-index:0; pointer-events:none; opacity:.05; mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+#fw-root .fw-app{position:relative; z-index:1; display:grid; grid-template-rows:auto 1fr auto; height:860px}
+#fw-root[data-density="compact"]{--gap:9px; --pad:11px; font-size:13px}
+
+#fw-root .fw-top{display:flex; align-items:center; gap:14px; padding:12px 18px; border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(255,255,255,.02),transparent)}
+#fw-root .fw-brand{display:flex; align-items:center; gap:11px; min-width:210px}
+#fw-root .fw-mark{width:34px; height:34px; border-radius:10px; display:grid; place-items:center; color:#04121a;
+  background:conic-gradient(from 210deg,var(--teal),var(--green),var(--cyan),var(--teal)); box-shadow:0 0 22px -4px var(--teal)}
+#fw-root .fw-brand h1{font-family:var(--disp); font-size:18px; font-weight:700; line-height:1}
+#fw-root .fw-brand .fw-sub{font-family:var(--mono); font-size:10.5px; color:var(--muted); letter-spacing:.14em; text-transform:uppercase; margin-top:3px}
+#fw-root .fw-search{flex:1; max-width:520px; min-width:0; display:flex; align-items:center; gap:9px; padding:8px 13px; border-radius:10px;
+  background:var(--panel); border:1px solid var(--line); color:var(--muted); cursor:text; transition:.18s}
+#fw-root .fw-search:hover{border-color:var(--line2)}
+#fw-root .fw-search input{flex:1; min-width:0; background:none; border:none; outline:none; color:var(--text); font-size:13px}
+#fw-root .fw-kbd{font-family:var(--mono); font-size:10.5px; padding:2px 6px; border-radius:5px; border:1px solid var(--line2); color:var(--muted)}
+#fw-root .fw-fleetstat{display:flex; align-items:center; gap:8px; margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--muted)}
+#fw-root .fw-dot{width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 0 0 var(--green); animation:fw-pulse 2.4s infinite}
+@keyframes fw-pulse{0%{box-shadow:0 0 0 0 rgba(55,226,164,.5)}70%{box-shadow:0 0 0 7px rgba(55,226,164,0)}100%{box-shadow:0 0 0 0 rgba(55,226,164,0)}}
+#fw-root .fw-iconbtn{width:34px; height:34px; border-radius:9px; display:grid; place-items:center; color:var(--muted); border:1px solid transparent; transition:.16s}
+#fw-root .fw-iconbtn:hover{color:var(--text); background:var(--panel); border-color:var(--line)}
+#fw-root .fw-iconbtn[aria-pressed="true"]{color:var(--teal); background:var(--teal-d); border-color:var(--line2)}
+
+#fw-root .fw-body{display:grid; grid-template-columns:236px 1fr 320px; min-height:0}
+#fw-root[data-tissue="off"] .fw-body{grid-template-columns:236px 1fr}
+#fw-root[data-tissue="off"] .fw-tissue{display:none}
+
+#fw-root .fw-rail{border-right:1px solid var(--line); padding:14px 12px; overflow-y:auto; display:flex; flex-direction:column; gap:16px; background:rgba(0,0,0,.06)}
+#fw-root .fw-rail-h{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); padding:0 8px; margin-bottom:7px; display:flex; justify-content:space-between; align-items:center}
+#fw-root .fw-proj{display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:10px; background:var(--panel); border:1px solid var(--line); margin-bottom:4px}
+#fw-root .fw-proj .fw-pname{font-family:var(--disp); font-weight:600; font-size:13.5px}
+#fw-root .fw-proj .fw-pmeta{font-family:var(--mono); font-size:10px; color:var(--muted)}
+#fw-root .fw-nav{display:flex; flex-direction:column; gap:2px}
+#fw-root .fw-nav button{display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:9px; color:var(--muted); font-size:13px; font-weight:500; text-align:left; transition:.14s; width:100%}
+#fw-root .fw-nav button:hover{color:var(--text); background:var(--panel)}
+#fw-root .fw-nav button.active{color:var(--text); background:var(--panel2); box-shadow:inset 2px 0 0 var(--teal)}
+#fw-root .fw-nav button .fw-count{margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--faint); background:var(--panel); padding:1px 7px; border-radius:20px}
+#fw-root .fw-nav button.active .fw-count{color:var(--teal)}
+#fw-root .fw-views button{display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border-radius:8px; color:var(--muted); font-size:12px; text-align:left}
+#fw-root .fw-views button:hover{color:var(--text); background:var(--panel)}
+#fw-root .fw-views .fw-vdot{width:6px; height:6px; border-radius:50%; background:var(--gold)}
+#fw-root .fw-saveview{margin-top:4px; font-size:11.5px; color:var(--teal); display:flex; align-items:center; gap:6px; padding:5px 10px}
+#fw-root .fw-rail-foot{margin-top:auto; padding:10px; border-radius:10px; background:var(--panel); border:1px solid var(--line); font-size:11.5px; color:var(--muted)}
+#fw-root .fw-rail-foot b{color:var(--text); font-family:var(--disp)}
+
+#fw-root .fw-center{min-width:0; display:flex; flex-direction:column; overflow:hidden}
+#fw-root .fw-lens-head{display:flex; align-items:center; gap:12px; padding:14px 20px 10px; flex-wrap:wrap}
+#fw-root .fw-lens-title{font-family:var(--disp); font-size:20px; font-weight:700}
+#fw-root .fw-lens-sub{font-size:12px; color:var(--muted); margin-top:1px}
+#fw-root .fw-tools{display:flex; align-items:center; gap:8px; margin-left:auto; flex-wrap:wrap}
+#fw-root .fw-chip{font-family:var(--mono); font-size:11px; padding:5px 11px; border-radius:20px; border:1px solid var(--line); color:var(--muted); transition:.14s; display:inline-flex; align-items:center; gap:6px}
+#fw-root .fw-chip:hover{border-color:var(--line2); color:var(--text)}
+#fw-root .fw-chip.on{color:var(--text); background:var(--panel2); border-color:var(--line2)}
+#fw-root .fw-chip .fw-cdot{width:7px; height:7px; border-radius:50%}
+#fw-root .fw-select{font-family:var(--mono); font-size:11px; padding:5px 9px; border-radius:8px; background:var(--panel); border:1px solid var(--line); color:var(--muted); outline:none; min-width:0; max-width:100%}
+#fw-root .fw-btn{display:inline-flex; align-items:center; gap:7px; padding:7px 14px; border-radius:9px; font-size:12.5px; font-weight:600; border:1px solid var(--line); color:var(--text); background:var(--panel); transition:.16s}
+#fw-root .fw-btn:hover{border-color:var(--line2); background:var(--panel2)}
+#fw-root .fw-btn-primary{background:linear-gradient(135deg,var(--teal),var(--green)); color:#04121a; border:none; box-shadow:0 6px 20px -8px var(--teal)}
+#fw-root .fw-btn-primary:hover{filter:brightness(1.08)}
+#fw-root .fw-btn-danger{color:var(--red); border-color:var(--red-d)}
+#fw-root .fw-btn-danger:hover{background:var(--red-d)}
+#fw-root .fw-lens-body{flex:1; overflow-y:auto; padding:6px 20px 20px; min-height:0}
+
+/* desk */
+#fw-root .fw-dgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:var(--gap); align-items:stretch}
+#fw-root .fw-dcard{background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); padding:15px; transition:.16s; cursor:grab; position:relative; display:flex; flex-direction:column}
+#fw-root .fw-dcard:hover{border-color:var(--line2); transform:translateY(-2px); box-shadow:var(--shadow)}
+#fw-root .fw-dcard.sel{border-color:var(--teal); box-shadow:0 0 0 1px var(--teal)}
+#fw-root .fw-dcard.dragging{opacity:.4}
+#fw-root .fw-dcard h3{font-family:var(--disp); font-size:15px; font-weight:600; margin-bottom:6px; display:flex; align-items:flex-start; gap:8px}
+#fw-root .fw-dcard h3 .fw-check{width:16px; height:16px; border-radius:5px; border:1.5px solid var(--line2); flex:none; display:grid; place-items:center; color:transparent; transition:.14s; margin-top:1px}
+#fw-root .fw-dcard h3 .fw-check.on{background:var(--teal); border-color:var(--teal); color:#04121a}
+#fw-root .fw-dcard p{font-size:12px; color:var(--muted); line-height:1.5; flex:1}
+#fw-root .fw-stages{display:flex; gap:4px; margin-top:12px; align-items:center}
+#fw-root .fw-stage{flex:1; height:5px; border-radius:20px; background:var(--line); position:relative}
+#fw-root .fw-stage.done{background:linear-gradient(90deg,var(--teal),var(--green))}
+#fw-root .fw-stage.now{background:var(--teal); box-shadow:0 0 8px var(--teal)}
+#fw-root .fw-stage-l{display:flex; justify-content:space-between; font-family:var(--mono); font-size:9px; color:var(--faint); margin-top:5px; text-transform:uppercase; letter-spacing:.08em}
+#fw-root .fw-refusals{margin-top:10px; display:flex; flex-direction:column; gap:5px}
+#fw-root .fw-refusal{font-family:var(--mono); font-size:10px; color:var(--red); background:var(--red-d); padding:4px 8px; border-radius:6px; display:flex; gap:6px; align-items:center}
+#fw-root .fw-meter{height:5px; border-radius:20px; background:var(--line); overflow:hidden; margin-top:10px}
+#fw-root .fw-meter i{display:block; height:100%; border-radius:20px; background:linear-gradient(90deg,var(--teal),var(--green)); transition:width .5s}
+#fw-root .fw-dactions{display:flex; gap:7px; margin-top:12px; flex-wrap:wrap}
+#fw-root .fw-running{position:absolute; inset:0; border-radius:var(--r-md); pointer-events:none; border:1px solid var(--teal); overflow:hidden}
+#fw-root .fw-running::after{content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent,var(--teal-d),transparent); animation:fw-sweep 1.4s linear infinite}
+@keyframes fw-sweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+#fw-root .fw-empty{padding:40px; text-align:center; color:var(--faint); font-size:13px}
+
+#fw-root .fw-bulk{display:flex; align-items:center; gap:12px; padding:9px 14px; margin:0 0 12px; border-radius:10px; background:var(--panel2); border:1px solid var(--line2); font-size:12.5px}
+#fw-root .fw-bulk b{font-family:var(--mono)}
+
+/* threads */
+#fw-root .fw-thread{display:flex; flex-direction:column; gap:14px; max-width:760px}
+#fw-root .fw-msg{display:flex; gap:11px}
+#fw-root .fw-av{width:32px; height:32px; border-radius:9px; flex:none; display:grid; place-items:center; font-family:var(--disp); font-weight:700; font-size:13px; color:#04121a}
+#fw-root .fw-msg-body{flex:1; min-width:0}
+#fw-root .fw-msg-h{display:flex; align-items:center; gap:8px; margin-bottom:3px}
+#fw-root .fw-msg-name{font-weight:600; font-size:12.5px}
+#fw-root .fw-msg-time{font-family:var(--mono); font-size:10px; color:var(--faint)}
+#fw-root .fw-msg-text{font-size:13px; line-height:1.55}
+#fw-root .fw-msg-text .fw-cursor{display:inline-block; width:7px; height:14px; background:var(--teal); vertical-align:-2px; animation:fw-blink 1s steps(2) infinite}
+@keyframes fw-blink{50%{opacity:0}}
+#fw-root .fw-toolcall{font-family:var(--mono); font-size:11px; margin-top:7px; padding:7px 10px; border-radius:8px; background:var(--ink); border:1px solid var(--line); color:var(--muted); display:flex; align-items:center; gap:8px}
+#fw-root .fw-toolcall .fw-ok{color:var(--green)}
+#fw-root .fw-composer{margin-top:6px; border:1px solid var(--line2); border-radius:12px; background:var(--panel); padding:11px 13px}
+#fw-root .fw-composer textarea{width:100%; background:none; border:none; outline:none; resize:none; color:var(--text); font-size:13px; min-height:42px}
+#fw-root .fw-composer-bar{display:flex; align-items:center; gap:8px; margin-top:8px}
+#fw-root .fw-mention{font-family:var(--mono); font-size:11px; color:var(--magenta); padding:3px 9px; border-radius:7px; background:var(--magenta-d)}
+
+/* learning */
+#fw-root .fw-lgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:var(--gap)}
+#fw-root .fw-lcard{background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); padding:15px; border-left:3px solid var(--gold)}
+#fw-root .fw-lcard h3{font-family:var(--disp); font-size:15px; font-weight:600; color:var(--gold); margin-bottom:6px}
+#fw-root .fw-lcard p{font-size:12px; color:var(--muted); line-height:1.5}
+#fw-root .fw-props{margin-top:10px; display:flex; flex-direction:column; gap:5px}
+#fw-root .fw-prop{font-family:var(--mono); font-size:10.5px; color:var(--muted); display:flex; gap:7px; align-items:center}
+#fw-root .fw-prop .fw-held{margin-left:auto; color:var(--green)}
+#fw-root .fw-prop .fw-missed{margin-left:auto; color:var(--red)}
+
+/* memory */
+#fw-root .fw-facts{display:flex; flex-direction:column; gap:8px; max-width:820px}
+#fw-root .fw-fact{padding:12px 15px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); border-left:3px solid var(--teal); transition:.14s; cursor:pointer}
+#fw-root .fw-fact:hover{border-color:var(--line2)}
+#fw-root .fw-fact-h{display:flex; align-items:center; gap:8px; margin-bottom:4px}
+#fw-root .fw-fact-name{font-family:var(--mono); font-size:12px; font-weight:600}
+#fw-root .fw-basis{font-family:var(--mono); font-size:9.5px; padding:2px 7px; border-radius:5px; margin-left:auto}
+#fw-root .fw-fact-body{font-size:12.5px; color:var(--muted); line-height:1.5}
+#fw-root .fw-dreaming{border-color:var(--gold); animation:fw-pulse 1.6s infinite}
+
+/* calibration */
+#fw-root .fw-cal{display:flex; flex-direction:column; gap:8px; max-width:860px}
+#fw-root .fw-crow{display:grid; grid-template-columns:110px 1fr 90px 90px auto; gap:10px; align-items:center; padding:11px 14px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); transition:.14s}
+#fw-root .fw-crow:hover{border-color:var(--line2)}
+#fw-root .fw-cwork{font-family:var(--mono); font-size:10px; color:var(--cyan); background:var(--cyan-d); padding:3px 8px; border-radius:6px; text-align:center}
+#fw-root .fw-cdec{font-family:var(--mono); font-size:11.5px; min-width:0}
+#fw-root .fw-cconf{display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:10px; color:var(--muted)}
+#fw-root .fw-cconf .fw-meter{margin-top:0; flex:1; min-width:40px}
+#fw-root .fw-cout{font-family:var(--mono); font-size:10px; padding:3px 8px; border-radius:6px; text-align:center}
+#fw-root .fw-cagree{display:flex; gap:5px}
+#fw-root .fw-cagree button{width:26px; height:26px; border-radius:7px; border:1px solid var(--line); color:var(--faint); display:grid; place-items:center; transition:.14s}
+#fw-root .fw-cagree button:hover{color:var(--text); border-color:var(--line2)}
+#fw-root .fw-cagree button.on-up{color:var(--green); background:var(--green-d); border-color:var(--green)}
+#fw-root .fw-cagree button.on-down{color:var(--red); background:var(--red-d); border-color:var(--red)}
+#fw-root .fw-crow.owner-word{border-color:var(--gold)}
+
+/* inbox */
+#fw-root .fw-inbox{display:flex; flex-direction:column; gap:9px; max-width:820px}
+#fw-root .fw-inrow{display:flex; gap:12px; align-items:flex-start; padding:13px 15px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); transition:.14s}
+#fw-root .fw-inrow:hover{border-color:var(--line2)}
+#fw-root .fw-chan{font-family:var(--mono); font-size:10px; padding:3px 8px; border-radius:6px; flex:none; margin-top:2px}
+#fw-root .fw-inbody{flex:1; min-width:0}
+#fw-root .fw-inwho{font-weight:600; font-size:12.5px; display:flex; align-items:center; gap:8px}
+#fw-root .fw-principal{font-family:var(--mono); font-size:10px; color:var(--cyan); background:var(--cyan-d); padding:1px 7px; border-radius:5px}
+#fw-root .fw-intext{font-size:12.5px; color:var(--muted); margin-top:3px}
+#fw-root .fw-outbox{font-family:var(--mono); font-size:10px; flex:none; padding:3px 8px; border-radius:6px}
+
+/* fleet (armada) */
+#fw-root .fw-fgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:var(--gap)}
+#fw-root .fw-inst{background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); padding:16px; position:relative; overflow:hidden; transition:.16s}
+#fw-root .fw-inst:hover{border-color:var(--line2); box-shadow:var(--shadow)}
+#fw-root .fw-inst-h{display:flex; align-items:center; gap:10px; margin-bottom:12px}
+#fw-root .fw-inst-ic{width:38px; height:38px; border-radius:10px; display:grid; place-items:center; background:var(--blue-d); color:var(--blue)}
+#fw-root .fw-inst-name{font-family:var(--disp); font-weight:600; font-size:15px}
+#fw-root .fw-inst-host{font-family:var(--mono); font-size:10.5px; color:var(--muted)}
+#fw-root .fw-live{margin-left:auto; font-family:var(--mono); font-size:10px; padding:3px 9px; border-radius:20px; display:flex; align-items:center; gap:6px}
+#fw-root .fw-live.on{color:var(--green); background:var(--green-d)}
+#fw-root .fw-live.off{color:var(--faint); background:var(--panel2)}
+#fw-root .fw-inst-row{display:flex; justify-content:space-between; align-items:center; font-size:12px; margin-top:9px; color:var(--muted)}
+#fw-root .fw-inst-row b{color:var(--text); font-family:var(--mono); font-weight:500}
+#fw-root .fw-gauge{height:6px; border-radius:20px; background:var(--line); overflow:hidden; margin-top:5px}
+#fw-root .fw-gauge i{display:block; height:100%; border-radius:20px}
+#fw-root .fw-inst-actions{display:flex; gap:8px; margin-top:14px}
+#fw-root .fw-heart{position:absolute; top:14px; right:14px; width:9px; height:9px; border-radius:50%; background:var(--green); animation:fw-pulse 2.4s infinite}
+
+/* tissue */
+#fw-root .fw-tissue{border-left:1px solid var(--line); background:rgba(0,0,0,.08); display:flex; flex-direction:column; min-height:0}
+#fw-root .fw-tissue-h{padding:13px 16px 8px; display:flex; align-items:center; gap:8px}
+#fw-root .fw-tissue-h .fw-th-title{font-family:var(--disp); font-weight:600; font-size:14px}
+#fw-root .fw-tissue-h .fw-th-sub{font-family:var(--mono); font-size:10px; color:var(--faint); margin-left:auto}
+#fw-root .fw-graphwrap{position:relative; height:300px; margin:0 8px; border-radius:var(--r-md); background:radial-gradient(circle at 50% 45%,var(--panel),transparent 75%); border:1px solid var(--line)}
+#fw-root .fw-graphwrap svg{width:100%; height:100%; display:block}
+#fw-root .fw-edge{stroke:var(--line2); stroke-width:1.4; fill:none}
+#fw-root .fw-edge.hot{stroke:var(--teal); stroke-width:2; stroke-dasharray:5 5; animation:fw-flow 1s linear infinite}
+@keyframes fw-flow{to{stroke-dashoffset:-10}}
+#fw-root .fw-node{cursor:pointer}
+#fw-root .fw-node circle{transition:.18s}
+#fw-root .fw-node:hover circle{filter:brightness(1.25)}
+#fw-root .fw-node text{font-family:var(--mono); font-size:9px; fill:var(--muted); text-anchor:middle; pointer-events:none}
+#fw-root .fw-node.center text{fill:var(--text); font-weight:600}
+#fw-root .fw-legend{display:flex; flex-wrap:wrap; gap:7px; padding:10px 16px}
+#fw-root .fw-leg{font-family:var(--mono); font-size:9.5px; color:var(--muted); display:flex; align-items:center; gap:5px}
+#fw-root .fw-leg i{width:8px; height:8px; border-radius:3px; display:inline-block}
+#fw-root .fw-focus{margin:4px 12px 12px; padding:13px; border-radius:var(--r-md); background:var(--panel); border:1px solid var(--line); overflow-y:auto}
+#fw-root .fw-focus-kind{font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; margin-bottom:5px; display:flex; align-items:center; gap:6px}
+#fw-root .fw-focus-title{font-family:var(--disp); font-weight:600; font-size:15px; line-height:1.3; margin-bottom:8px}
+#fw-root .fw-focus-meta{font-size:11.5px; color:var(--muted); display:flex; flex-direction:column; gap:4px; margin-bottom:11px}
+#fw-root .fw-focus-actions{display:flex; gap:7px; flex-wrap:wrap}
+#fw-root .fw-linked{margin-top:11px; border-top:1px solid var(--line); padding-top:9px}
+#fw-root .fw-linked-h{font-family:var(--mono); font-size:9.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.12em; margin-bottom:6px}
+#fw-root .fw-linked button{display:flex; align-items:center; gap:7px; width:100%; padding:5px 7px; border-radius:7px; font-size:11.5px; color:var(--muted); text-align:left}
+#fw-root .fw-linked button:hover{background:var(--panel2); color:var(--text)}
+#fw-root .fw-linked .fw-ldot{width:7px; height:7px; border-radius:50%; flex:none}
+
+/* console */
+#fw-root .fw-console{border-top:1px solid var(--line); background:linear-gradient(0deg,rgba(0,0,0,.12),transparent); padding:10px 18px; display:flex; align-items:center; gap:16px; flex-wrap:wrap}
+#fw-root .fw-console-h{font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:7px}
+#fw-root .fw-ctl{display:flex; align-items:center; gap:8px}
+#fw-root .fw-ctl label{font-family:var(--mono); font-size:10.5px; color:var(--muted); white-space:nowrap}
+#fw-root .fw-ctl input[type=range]{width:84px; accent-color:var(--teal); height:4px}
+#fw-root .fw-ctl select{font-family:var(--mono); font-size:10.5px; padding:4px 7px; border-radius:7px; background:var(--panel); border:1px solid var(--line); color:var(--text); outline:none}
+#fw-root .fw-switch{position:relative; width:34px; height:19px; border-radius:20px; background:var(--line); transition:.18s; flex:none}
+#fw-root .fw-switch::after{content:""; position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%; background:var(--muted); transition:.18s}
+#fw-root .fw-switch[aria-pressed="true"]{background:var(--teal)}
+#fw-root .fw-switch[aria-pressed="true"]::after{left:17px; background:#04121a}
+#fw-root .fw-console .fw-spacer{margin-left:auto}
+#fw-root .fw-val{font-family:var(--mono); font-size:10px; color:var(--teal); min-width:26px; text-align:right}
+
+/* overlays */
+#fw-root .fw-scrim{position:absolute; inset:0; z-index:40; background:rgba(4,10,14,.55); backdrop-filter:blur(3px); opacity:0; pointer-events:none; transition:.2s}
+#fw-root .fw-scrim.show{opacity:1; pointer-events:auto}
+#fw-root .fw-drawer{position:absolute; top:0; right:0; bottom:0; width:380px; max-width:92%; z-index:50; background:var(--panel); border-left:1px solid var(--line2); box-shadow:var(--shadow); transform:translateX(102%); visibility:hidden; transition:transform .26s cubic-bezier(.4,0,.2,1), visibility .26s; display:flex; flex-direction:column; overflow-y:auto}
+#fw-root .fw-drawer.show{transform:translateX(0); visibility:visible}
+#fw-root .fw-drawer-h{padding:18px 20px 12px; border-bottom:1px solid var(--line); display:flex; align-items:flex-start; gap:10px}
+#fw-root .fw-drawer-h h2{font-family:var(--disp); font-size:17px; font-weight:700; flex:1; line-height:1.3}
+#fw-root .fw-drawer-body{padding:18px 20px; display:flex; flex-direction:column; gap:16px}
+#fw-root .fw-field label{display:block; font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); margin-bottom:6px}
+#fw-root .fw-field input,#fw-root .fw-field select,#fw-root .fw-field textarea{width:100%; padding:9px 12px; border-radius:9px; background:var(--ink); border:1px solid var(--line); color:var(--text); font-size:13px; outline:none; transition:.14s}
+#fw-root .fw-field input:focus,#fw-root .fw-field select:focus,#fw-root .fw-field textarea:focus{border-color:var(--teal)}
+#fw-root .fw-field textarea{resize:vertical; min-height:70px}
+#fw-root .fw-activity{display:flex; flex-direction:column; gap:8px}
+#fw-root .fw-act{display:flex; gap:9px; font-size:11.5px; color:var(--muted)}
+#fw-root .fw-act i{width:7px; height:7px; border-radius:50%; margin-top:5px; flex:none}
+#fw-root .fw-drawer-foot{margin-top:auto; padding:16px 20px; border-top:1px solid var(--line); display:flex; gap:9px}
+
+#fw-root .fw-palette{position:absolute; top:70px; left:50%; transform:translateX(-50%) translateY(-8px); width:560px; max-width:92%; z-index:60; background:var(--panel); border:1px solid var(--line2); border-radius:14px; box-shadow:var(--shadow); opacity:0; pointer-events:none; transition:.18s; overflow:hidden}
+#fw-root .fw-palette.show{opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0)}
+#fw-root .fw-palette-in{display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--line)}
+#fw-root .fw-palette-in input{flex:1; min-width:0; background:none; border:none; outline:none; color:var(--text); font-size:14px}
+#fw-root .fw-palette-list{max-height:340px; overflow-y:auto; padding:6px}
+#fw-root .fw-pitem{display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; cursor:pointer; font-size:13px}
+#fw-root .fw-pitem:hover{background:var(--panel2)}
+#fw-root .fw-pitem .fw-pkind{font-family:var(--mono); font-size:9.5px; color:var(--faint); margin-left:auto; text-transform:uppercase}
+#fw-root .fw-pitem .fw-pdot{width:8px; height:8px; border-radius:3px; flex:none}
+
+#fw-root .fw-toasts{position:absolute; bottom:70px; left:50%; transform:translateX(-50%); z-index:70; display:flex; flex-direction:column; gap:8px; align-items:center}
+#fw-root .fw-toast{display:flex; align-items:center; gap:11px; padding:11px 16px; border-radius:11px; background:var(--raise); border:1px solid var(--line2); box-shadow:var(--shadow); font-size:12.5px; animation:fw-rise .28s cubic-bezier(.2,.8,.2,1)}
+@keyframes fw-rise{from{opacity:0; transform:translateY(12px)}to{opacity:1; transform:translateY(0)}}
+#fw-root .fw-toast .fw-ticon{width:24px; height:24px; border-radius:7px; display:grid; place-items:center; flex:none}
+#fw-root .fw-toast button{font-weight:600; color:var(--teal); font-size:12px; margin-left:6px}
+
+#fw-root .fw-newd{background:var(--panel); border:1px dashed var(--line2); border-radius:10px; padding:12px; margin-bottom:12px}
+#fw-root .fw-newd input{width:100%; background:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px 11px; color:var(--text); font-size:13px; outline:none; margin-bottom:9px}
+#fw-root .fw-newd textarea{width:100%; background:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px 11px; color:var(--text); font-size:13px; outline:none; margin-bottom:9px; min-height:52px; resize:vertical}
+#fw-root .fw-newd-row{display:flex; gap:8px; align-items:center}
+#fw-root .fw-sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0)}
+@media (max-width:1080px){
+  #fw-root .fw-body{grid-template-columns:200px 1fr}
+  #fw-root .fw-tissue{display:none}
+}
+@media (max-width:720px){
+  #fw-root .fw-app{height:auto; min-height:100vh}
+  #fw-root .fw-body{grid-template-columns:1fr}
+  #fw-root .fw-rail{flex-direction:row; flex-wrap:wrap; border-right:none; border-bottom:1px solid var(--line)}
+  #fw-root .fw-rail>div{min-width:0; flex:1 1 160px}
+  #fw-root .fw-rail-foot{display:none}
+  #fw-root .fw-brand{min-width:0}
+  #fw-root .fw-search{min-width:0}
+  #fw-root .fw-search input{min-width:0}
+  #fw-root .fw-fleetstat{display:none}
+  #fw-root .fw-lens-body{overflow:visible; padding:6px 12px 16px}
+  #fw-root .fw-lens-head{padding:12px 12px 8px}
+  #fw-root .fw-tools{margin-left:0; width:100%}
+  #fw-root .fw-proj{min-width:0}
+  #fw-root .fw-thread,#fw-root .fw-inbox,#fw-root .fw-facts,#fw-root .fw-cal{max-width:none}
+  #fw-root .fw-dgrid,#fw-root .fw-lgrid,#fw-root .fw-fgrid{grid-template-columns:1fr}
+  #fw-root .fw-palette{width:calc(100% - 20px); left:10px; transform:translateY(-8px)}
+  #fw-root .fw-palette.show{transform:translateY(0)}
+}
+@media (prefers-reduced-motion:reduce){
+  #fw-root *{animation:none !important; transition:none !important}
+}
+</style>
+
+<div id="fw-root" data-theme="night" data-density="comfortable" data-tissue="on">
+  <canvas class="fw-amb" aria-hidden="true"></canvas>
+  <div class="fw-grain" aria-hidden="true"></div>
+  <div class="fw-app">
+    <header class="fw-top">
+      <div class="fw-brand">
+        <div class="fw-mark"><i data-lucide="anchor" style="width:19px;height:19px"></i></div>
+        <div>
+          <h1>Fleet</h1>
+          <div class="fw-sub" id="fw-sub">the workspace · one graph</div>
+        </div>
+      </div>
+      <div class="fw-search" id="fw-searchbar">
+        <i data-lucide="search" style="width:15px;height:15px"></i>
+        <input id="fw-search" type="text" placeholder="Search the workspace — deliverables, facts, lessons, grades…" aria-label="Search workspace">
+        <span class="fw-kbd">⌘K</span>
+      </div>
+      <div class="fw-fleetstat" id="fw-fleetstat"><span class="fw-dot"></span><span>2 instances · 1 live</span></div>
+      <button class="fw-iconbtn" id="fw-sound" aria-pressed="false" aria-label="Toggle sound" data-tooltip="Sound"><i data-lucide="volume-x" style="width:17px;height:17px"></i></button>
+      <button class="fw-iconbtn" id="fw-theme" aria-label="Toggle theme" data-tooltip="Night / Day watch"><i data-lucide="moon" style="width:17px;height:17px"></i></button>
+    </header>
+
+    <div class="fw-body">
+      <nav class="fw-rail" aria-label="Workspace">
+        <div>
+          <div class="fw-rail-h">Mission</div>
+          <div class="fw-proj">
+            <i data-lucide="compass" style="width:17px;height:17px;color:var(--teal)"></i>
+            <div><div class="fw-pname">Harbor Launch</div><div class="fw-pmeta" id="fw-pmeta">0.7.0 · 5 deliverables</div></div>
+          </div>
+        </div>
+        <div>
+          <div class="fw-rail-h">Surfaces</div>
+          <div class="fw-nav" id="fw-nav"></div>
+        </div>
+        <div>
+          <div class="fw-rail-h">Saved <button class="fw-saveview" id="fw-saveview" style="margin:0;padding:0"><i data-lucide="plus" style="width:12px;height:12px"></i></button></div>
+          <div class="fw-views" id="fw-views"></div>
+        </div>
+        <div class="fw-rail-foot">
+          <b>The tissue</b> is the same graph with or without armada — the surfaces connect either way. Flip <b>Armada</b> in the console and watch the graph grow.
+        </div>
+      </nav>
+
+      <main class="fw-center">
+        <div class="fw-lens-head">
+          <div>
+            <div class="fw-lens-title" id="fw-lens-title">Desk</div>
+            <div class="fw-lens-sub" id="fw-lens-sub">Deliverables moving through the loop, graded by the gate</div>
+          </div>
+          <div class="fw-tools" id="fw-tools"></div>
+        </div>
+        <div class="fw-lens-body" id="fw-lens-body" aria-live="polite"></div>
+      </main>
+
+      <aside class="fw-tissue" aria-label="Connective tissue">
+        <div class="fw-tissue-h">
+          <i data-lucide="waypoints" style="width:16px;height:16px;color:var(--teal)"></i>
+          <span class="fw-th-title">The tissue</span>
+          <span class="fw-th-sub" id="fw-tissue-sub">live graph</span>
+        </div>
+        <div class="fw-graphwrap"><svg id="fw-graph" viewBox="0 0 300 300" role="img" aria-label="Work-object graph"></svg></div>
+        <div class="fw-legend" id="fw-legend"></div>
+        <div class="fw-focus" id="fw-focus"></div>
+      </aside>
+    </div>
+
+    <footer class="fw-console" aria-label="View console">
+      <span class="fw-console-h"><i data-lucide="sliders-horizontal" style="width:13px;height:13px"></i> Console</span>
+      <div class="fw-ctl"><label for="fw-c-armada">Armada</label><button class="fw-switch" id="fw-c-armada" aria-pressed="false" aria-label="Toggle armada"></button></div>
+      <div class="fw-ctl"><label for="fw-c-density">Density</label>
+        <select id="fw-c-density"><option value="comfortable">Comfort</option><option value="compact">Compact</option></select></div>
+      <div class="fw-ctl"><label for="fw-c-accent">Signal</label>
+        <select id="fw-c-accent"><option value="teal">Teal</option><option value="green">Green</option><option value="cyan">Cyan</option><option value="magenta">Magenta</option></select></div>
+      <div class="fw-ctl"><label for="fw-c-speed">Live feed</label><input type="range" id="fw-c-speed" min="0.5" max="3" step="0.5" value="1"><span class="fw-val" id="fw-c-speed-v">1×</span></div>
+      <div class="fw-ctl"><label for="fw-c-spread">Graph</label><input type="range" id="fw-c-spread" min="60" max="120" step="5" value="92"><span class="fw-val" id="fw-c-spread-v">92</span></div>
+      <div class="fw-ctl"><label>Motion</label><button class="fw-switch" id="fw-c-motion" aria-pressed="true" aria-label="Toggle motion"></button></div>
+      <div class="fw-ctl"><label>Tissue</label><button class="fw-switch" id="fw-c-tissue" aria-pressed="true" aria-label="Toggle tissue pane"></button></div>
+      <div class="fw-ctl"><label>Labels</label><button class="fw-switch" id="fw-c-labels" aria-pressed="true" aria-label="Toggle graph labels"></button></div>
+      <span class="fw-spacer"></span>
+      <button class="fw-btn" id="fw-c-reset"><i data-lucide="rotate-ccw" style="width:13px;height:13px"></i> Reset</button>
+      <button class="fw-btn" id="fw-c-export"><i data-lucide="download" style="width:13px;height:13px"></i> Export</button>
+    </footer>
+  </div>
+
+  <div class="fw-scrim" id="fw-scrim"></div>
+  <aside class="fw-drawer" id="fw-drawer" aria-label="Object details"></aside>
+  <div class="fw-palette" id="fw-palette" role="dialog" aria-label="Command palette">
+    <div class="fw-palette-in"><i data-lucide="command" style="width:16px;height:16px;color:var(--muted)"></i>
+      <input id="fw-palette-input" type="text" placeholder="Jump to an object or run a command…" aria-label="Command palette"></div>
+    <div class="fw-palette-list" id="fw-palette-list"></div>
+  </div>
+  <div class="fw-toasts" id="fw-toasts" aria-live="polite"></div>
+  <div class="fw-sr" id="fw-live" aria-live="polite"></div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var root=document.getElementById("fw-root");
+if(!root) return;
+var $=function(s){return root.querySelector(s);};
+var icons=function(){ if(window.lucide&&window.lucide.createIcons){ try{window.lucide.createIcons({attrs:{width:16,height:16}});}catch(e){} } };
+
+var KIND={
+  deliverable:{c:"var(--green)",bg:"var(--green-d)",icon:"package",label:"Deliverable"},
+  thread:{c:"var(--cyan)",bg:"var(--cyan-d)",icon:"messages-square",label:"Thread"},
+  bot:{c:"var(--magenta)",bg:"var(--magenta-d)",icon:"bot",label:"Bot"},
+  lesson:{c:"var(--gold)",bg:"var(--gold-d)",icon:"lightbulb",label:"Lesson"},
+  fact:{c:"var(--teal)",bg:"var(--teal-d)",icon:"brain",label:"Fact"},
+  instance:{c:"var(--blue)",bg:"var(--blue-d)",icon:"server",label:"Instance"},
+  calib:{c:"var(--amber)",bg:"var(--amber-d)",icon:"scale",label:"Grade"}
+};
+var STAGES=["brief","sources","coverage","draft","digest"];
+var STAGE_LABEL={brief:"Brief",sources:"Sources",coverage:"Coverage",draft:"Draft",digest:"Digest"};
+
+function seed(){
+  return {
+    bots:[
+      {id:"b-carto",kind:"bot",name:"cartographer",role:"design"},
+      {id:"b-ship",kind:"bot",name:"shipwright",role:"engineer"},
+      {id:"b-harbor",kind:"bot",name:"harbormaster",role:"review"}
+    ],
+    instances:[
+      {id:"i-flag",kind:"instance",name:"flagship",host:"local · this machine",live:true,cap:82,rel:0.96,settled:48,version:"0.7.0",flag:true},
+      {id:"i-reef",kind:"instance",name:"reef-1",host:"vps · fra1",live:true,cap:44,rel:0.88,settled:25,version:"0.7.0"}
+    ],
+    deliverables:[
+      {id:"d1",kind:"deliverable",name:"Fleet board UI",claim:"A genuinely visual armada board: liveness, capacity, reliability.",stage:4,gate:"pass",coverage:94,facts:["f1","f3"],thread:"th1",lesson:"l1",calib:"c1",order:0},
+      {id:"d2",kind:"deliverable",name:"Authority transport",claim:"Frames verified before obeying; forged assertions refused.",stage:3,gate:null,coverage:71,facts:["f1","f2"],thread:"th2",lesson:null,calib:null,refusals:["threat model names no adversary for a stolen relay token"],order:1},
+      {id:"d3",kind:"deliverable",name:"Fresh-install bootstrap",claim:"Clone the mind, mint a new identity, register un-calibrated.",stage:4,gate:"pass",coverage:98,facts:["f4"],thread:"th3",lesson:"l2",calib:"c2",order:2},
+      {id:"d4",kind:"deliverable",name:"Inbox identity graph",claim:"One principal across telegram, webhook, and relay.",stage:2,gate:null,coverage:55,facts:["f2"],thread:"th4",lesson:null,calib:null,order:3},
+      {id:"d5",kind:"deliverable",name:"Reliability report",claim:"Dispatch autonomy earned by measured settles, never arrival.",stage:1,gate:null,coverage:20,facts:["f3"],thread:"th5",lesson:null,calib:null,order:4}
+    ],
+    threads:[
+      {id:"th1",kind:"thread",name:"Fleet board UI",deliverable:"d1"},
+      {id:"th2",kind:"thread",name:"Authority transport",deliverable:"d2"},
+      {id:"th3",kind:"thread",name:"Fresh-install bootstrap",deliverable:"d3"},
+      {id:"th4",kind:"thread",name:"Inbox identity graph",deliverable:"d4"},
+      {id:"th5",kind:"thread",name:"Reliability report",deliverable:"d5"}
+    ],
+    lessons:[
+      {id:"l1",kind:"lesson",name:"Liveness is earned",body:"A heartbeat earns liveness; registration never assumes it. The board reads freshness, not a flag.",props:[{t:"the board reads freshness",held:true},{t:"a join sets the flag",held:true},{t:"the relay grades liveness",held:false}],practice:{held:9,total:11},deliverable:"d1"},
+      {id:"l2",kind:"lesson",name:"Inherit the mind, not the self",body:"A fresh install clones the corpus but mints its own install-id — identity is not in the corpus.",props:[{t:"identity rides the install-id",held:true},{t:"the corpus carries the owner",held:true}],practice:{held:6,total:7},deliverable:"d3"}
+    ],
+    facts:[
+      {id:"f1",kind:"fact",name:"verify-before-obey",basis:"validated",body:"The instance verifies the flagship signature before obeying any privileged frame."},
+      {id:"f2",kind:"fact",name:"relay-is-dumb",basis:"stated",body:"The relay routes frames without parsing verbs or holding authority."},
+      {id:"f3",kind:"fact",name:"autonomy-earned",basis:"validated",body:"Dispatch autonomy is earned by measured reliability over settled runs, never by arrival."},
+      {id:"f4",kind:"fact",name:"corpus-merge-sums",basis:"inferred",body:"Recall counters sum across installs on merge; supersede rides the basis ladder."},
+      {id:"f5",kind:"fact",name:"one-derivation",basis:"stated",body:"A huddle stays a session; the graph stores references, never a parallel store."},
+      {id:"f7",kind:"fact",name:"route-cache-trust",basis:"inferred",body:"A route cache seeded from a judged plan can be served without re-judging — inferred from three sessions, unvalidated."},
+      {id:"f6",kind:"fact",name:"never-green-by-assertion",basis:"stated",tier:"anti-vector",body:"A demo once shipped green by assertion; every claim now names the gate that graded it."}
+    ],
+    calib:[
+      {id:"c1",kind:"calib",workload:"standard_code",decision:"sys1 → blend1",confidence:.91,outcome:"held",agree:null,deliverable:"d1"},
+      {id:"c2",kind:"calib",workload:"deep_context",decision:"sys1 → shipwright",confidence:.84,outcome:"held",agree:null,deliverable:"d3"},
+      {id:"c3",kind:"calib",workload:"prose",decision:"lane_prose",confidence:.62,outcome:"missed",agree:null,deliverable:null},
+      {id:"c4",kind:"calib",workload:"quick",decision:"sys1 d1",confidence:.78,outcome:"held",agree:"up",deliverable:null},
+      {id:"c5",kind:"calib",workload:"vision_qc",decision:"gen1 judge",confidence:.70,outcome:"held",agree:null,deliverable:null},
+      {id:"c6",kind:"calib",workload:"standard_code",decision:"sys1 → blend1",confidence:.55,outcome:"missed",agree:null,deliverable:null}
+    ],
+    messages:[
+      {id:"m1",chan:"telegram",who:"Alejandro",principal:"owner",text:"Hold reef-1's dispatch until the threat model names the adversary.",out:"delivered",dir:"in",arm:false},
+      {id:"m2",chan:"webhook",who:"GitHub",principal:"svc:ci",text:"gate green on 65acf2c · v0.7.0 tagged",out:"delivered",dir:"in",arm:false},
+      {id:"m3",chan:"relay",who:"reef-1",principal:"inst:reef",text:"Admitted. Capacity 44% free, reliability 0.88 over 25 settles.",out:"delivered",dir:"in",arm:true},
+      {id:"m4",chan:"telegram",who:"Alejandro",principal:"owner",text:"The desk grades the draft, not me — let the gate speak.",out:"queued",dir:"out",arm:false}
+    ],
+    activity:[
+      {c:"var(--green)",t:"Fleet board UI · end gate passed · 94% coverage"},
+      {c:"var(--gold)",t:"lesson born: Inherit the mind, not the self"},
+      {c:"var(--red)",t:"Authority transport · 1 unsourced claim named"},
+      {c:"var(--amber)",t:"prose route missed · confidence .62"}
+    ]
+  };
+}
+
+var DB=seed();
+var state={
+  lens:"desk", focus:{kind:"deliverable",id:"d2"},
+  filterStage:"all", filterGate:"all", sort:"order", query:"",
+  selected:{}, bulk:false, armada:false,
+  savedViews:[{name:"Needs sources",lens:"desk",filterStage:"sources",query:""}],
+  speed:1, spread:92, motion:true, labels:true, sound:false, paletteOpen:false
+};
+var LENSES=[
+  {id:"desk",icon:"package",label:"Desk",sub:"Deliverables moving through the loop, graded by the gate"},
+  {id:"threads",icon:"messages-square",label:"Threads",sub:"The conversation each deliverable was worked in"},
+  {id:"learning",icon:"lightbulb",label:"Learning",sub:"Lessons with their propositions and practice"},
+  {id:"memory",icon:"brain",label:"Memory",sub:"The corpus — facts with provenance, dream, anti-vectors"},
+  {id:"calibration",icon:"scale",label:"Calibration",sub:"Every decision graded against its outcome — your word rides the row"},
+  {id:"inbox",icon:"inbox",label:"Inbox",sub:"One omnichannel stream, identity resolved"},
+  {id:"fleet",icon:"server",label:"Fleet",sub:"Instances — the same workspace, more minds",arm:true}
+];
+
+function byId(kind,id){
+  var arr={deliverable:DB.deliverables,thread:DB.threads,bot:DB.bots,lesson:DB.lessons,fact:DB.facts,instance:DB.instances,calib:DB.calib}[kind];
+  if(!arr) return null;
+  for(var i=0;i<arr.length;i++) if(arr[i].id===id) return arr[i];
+  return null;
+}
+function obj(ref){ return ref?byId(ref.kind,ref.id):null; }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
+function announce(t){ var l=$("#fw-live"); if(l) l.textContent=t; }
+function linkedObjects(ref){
+  var out=[];
+  if(ref.kind==="deliverable"){
+    var d=obj(ref);
+    if(d){ if(d.thread)out.push({kind:"thread",id:d.thread}); if(d.facts)d.facts.forEach(function(f){out.push({kind:"fact",id:f});});
+      if(d.lesson)out.push({kind:"lesson",id:d.lesson}); if(d.calib)out.push({kind:"calib",id:d.calib});
+      var bot=byId("bot","b-ship"); if(bot)out.push({kind:"bot",id:bot.id});
+      if(state.armada){ var inst=byId("instance","i-flag"); if(inst)out.push({kind:"instance",id:inst.id}); } }
+  } else {
+    DB.deliverables.forEach(function(d){
+      if((ref.kind==="thread"&&d.thread===ref.id)||(ref.kind==="lesson"&&d.lesson===ref.id)||(ref.kind==="calib"&&d.calib===ref.id)||(ref.kind==="fact"&&d.facts&&d.facts.indexOf(ref.id)>=0)) out.push({kind:"deliverable",id:d.id});
+    });
+    if(ref.kind==="lesson"){ var l=obj(ref); if(l&&l.deliverable)out.push({kind:"deliverable",id:l.deliverable}); }
+    if(ref.kind==="calib"){ var c=obj(ref); if(c&&c.deliverable)out.push({kind:"deliverable",id:c.deliverable}); }
+    if(ref.kind==="instance"&&state.armada){ DB.deliverables.slice(0,2).forEach(function(d){out.push({kind:"deliverable",id:d.id});}); }
+  }
+  return out;
+}
+function toast(msg,icon,color,action){
+  var wrap=$("#fw-toasts"); var el=document.createElement("div"); el.className="fw-toast";
+  el.innerHTML='<span class="fw-ticon" style="background:'+(color||"var(--teal-d)")+';color:'+(color?color:"var(--teal)")+'"><i data-lucide="'+(icon||"check")+'" style="width:14px;height:14px"></i></span><span>'+esc(msg)+'</span>';
+  if(action){ var b=document.createElement("button"); b.textContent=action.label; b.onclick=function(){action.fn(); el.remove();}; el.appendChild(b); }
+  wrap.appendChild(el); icons();
+  setTimeout(function(){ el.style.transition="opacity .3s"; el.style.opacity="0"; setTimeout(function(){el.remove();},320); }, action?6000:3400);
+}
+function ping(freq){
+  if(!state.sound) return;
+  try{ var ac=ping.ac||(ping.ac=new (window.AudioContext||window.webkitAudioContext)());
+    var o=ac.createOscillator(), g=ac.createGain(); o.type="sine"; o.frequency.value=freq||660;
+    g.gain.setValueAtTime(0.0001,ac.currentTime); g.gain.exponentialRampToValueAtTime(0.06,ac.currentTime+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+0.4); o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime+0.42); }catch(e){}
+}
+function setLens(id){ state.lens=id; state.selected={}; renderNav(); renderLens(); }
+function focusOn(kind,id,switchLens){
+  state.focus={kind:kind,id:id};
+  if(switchLens){ var map={deliverable:"desk",thread:"threads",fact:"memory",lesson:"learning",calib:"calibration",bot:"learning",instance:"fleet"}; if(map[kind]) state.lens=map[kind]; }
+  renderNav(); renderLens(); renderTissue();
+  announce("Focused "+kind);
+}
+function renderNav(){
+  var nav=$("#fw-nav"); nav.innerHTML="";
+  LENSES.forEach(function(L){
+    if(L.arm&&!state.armada) return;
+    var count={desk:DB.deliverables.length,threads:DB.threads.length,learning:DB.lessons.length,memory:DB.facts.length,calibration:DB.calib.length,inbox:DB.messages.filter(function(m){return state.armada||!m.arm;}).length,fleet:DB.instances.length}[L.id];
+    var b=document.createElement("button"); b.className=(state.lens===L.id?"active":"");
+    b.innerHTML='<i data-lucide="'+L.icon+'" style="width:16px;height:16px"></i><span>'+L.label+'</span><span class="fw-count">'+count+'</span>';
+    b.onclick=function(){setLens(L.id);}; nav.appendChild(b);
+  });
+  var v=$("#fw-views"); v.innerHTML="";
+  state.savedViews.forEach(function(sv){
+    var b=document.createElement("button"); b.innerHTML='<span class="fw-vdot"></span>'+esc(sv.name);
+    b.onclick=function(){ state.lens=sv.lens; state.filterStage=sv.filterStage||"all"; state.query=sv.query||""; $("#fw-search").value=state.query; renderNav(); renderLens(); toast("View restored: "+sv.name,"bookmark","var(--gold)"); };
+    v.appendChild(b);
+  });
+  $("#fw-pmeta").textContent="0.7.0 · "+DB.deliverables.length+" deliverables"+(state.armada?" · armada":"");
+  $("#fw-sub").textContent=state.armada?"armada · one mind":"the workspace · one graph";
+  $("#fw-fleetstat").style.display=state.armada?"flex":"none";
+  icons();
+}
+function renderLens(){
+  var L=LENSES.filter(function(x){return x.id===state.lens;})[0];
+  $("#fw-lens-title").textContent=L.label; $("#fw-lens-sub").textContent=L.sub;
+  var tools=$("#fw-tools"); tools.innerHTML="";
+  var body=$("#fw-lens-body");
+  if(state.lens==="desk") renderDesk(tools,body);
+  else if(state.lens==="threads") renderThreads(tools,body);
+  else if(state.lens==="learning") renderLearning(tools,body);
+  else if(state.lens==="memory") renderMemory(tools,body);
+  else if(state.lens==="calibration") renderCalibration(tools,body);
+  else if(state.lens==="inbox") renderInbox(tools,body);
+  else if(state.lens==="fleet") renderFleet(tools,body);
+  icons();
+}
+function matchQuery(text){ return !state.query || text.toLowerCase().indexOf(state.query.toLowerCase())>=0; }
+
+/* ---------- DESK ---------- */
+function renderDesk(tools,body){
+  tools.innerHTML=
+    '<button class="fw-chip '+(state.filterStage==="all"?"on":"")+'" data-fs="all">All stages</button>'+
+    STAGES.map(function(s){ return '<button class="fw-chip '+(state.filterStage===s?"on":"")+'" data-fs="'+s+'">'+STAGE_LABEL[s]+'</button>'; }).join("")+
+    '<select class="fw-select" id="fw-sort" aria-label="Sort"><option value="order">Loop order</option><option value="coverage">Coverage</option><option value="name">Name A–Z</option></select>'+
+    '<button class="fw-btn fw-btn-primary" id="fw-new"><i data-lucide="plus" style="width:14px;height:14px"></i> New brief</button>';
+  tools.querySelectorAll("[data-fs]").forEach(function(c){ c.onclick=function(){state.filterStage=c.getAttribute("data-fs"); renderLens();}; });
+  var sortSel=tools.querySelector("#fw-sort"); sortSel.value=state.sort; sortSel.onchange=function(){state.sort=sortSel.value; renderLens();};
+  tools.querySelector("#fw-new").onclick=function(){ openNewBrief(body); };
+
+  body.innerHTML="";
+  if(state.bulk && Object.keys(state.selected).length){
+    var bar=document.createElement("div"); bar.className="fw-bulk";
+    bar.innerHTML='<b>'+Object.keys(state.selected).length+' selected</b>';
+    var adv=document.createElement("button"); adv.className="fw-btn fw-btn-primary"; adv.innerHTML='<i data-lucide="fast-forward" style="width:13px;height:13px"></i> Advance loop';
+    adv.onclick=function(){ Object.keys(state.selected).forEach(function(id){advance(id);}); state.selected={}; state.bulk=false; renderLens(); };
+    var del=document.createElement("button"); del.className="fw-btn fw-btn-danger"; del.innerHTML='<i data-lucide="trash-2" style="width:13px;height:13px"></i> Delete';
+    del.onclick=function(){ deleteDeliverables(Object.keys(state.selected)); };
+    var clr=document.createElement("button"); clr.className="fw-btn"; clr.textContent="Clear"; clr.onclick=function(){state.selected={};state.bulk=false;renderLens();};
+    bar.appendChild(adv); bar.appendChild(del); bar.appendChild(clr); body.appendChild(bar);
+  }
+  var grid=document.createElement("div"); grid.className="fw-dgrid";
+  var items=DB.deliverables.filter(function(d){
+    if(state.filterStage!=="all"&&STAGES[d.stage]!==state.filterStage) return false;
+    return matchQuery(d.name+" "+d.claim);
+  });
+  items.sort(function(a,b){ if(state.sort==="coverage")return b.coverage-a.coverage; if(state.sort==="name")return a.name.localeCompare(b.name); return a.order-b.order; });
+  items.forEach(function(d){ grid.appendChild(dcard(d)); });
+  if(!items.length){ var em=document.createElement("div"); em.className="fw-empty"; em.textContent="Nothing on the desk at this stage."; grid.appendChild(em); }
+  body.appendChild(grid);
+  var strip=document.createElement("div"); strip.className="fw-bulk"; strip.style.borderColor="var(--line)";
+  strip.innerHTML='<span style="color:var(--muted)"><b style="color:var(--green)">Settled · graded against outcome</b> — the gate speaks, the desk keeps the named refusals, and every grade rides a calibration row.</span>';
+  body.appendChild(strip);
+}
+function dcard(d){
+  var el=document.createElement("div"); el.className="fw-dcard"+(state.selected[d.id]?" sel":""); el.draggable=true;
+  var bot=DB.bots[0];
+  var stages=STAGES.map(function(s,i){
+    return '<span class="fw-stage'+(i<d.stage?" done":(i===d.stage?" now":""))+'"></span>';
+  }).join("");
+  var stageLabels=STAGES.map(function(s){return '<span>'+STAGE_LABEL[s]+'</span>';}).join("");
+  var refusals=(d.refusals||[]).map(function(r){ return '<span class="fw-refusal"><i data-lucide="shield-alert" style="width:11px;height:11px"></i>'+esc(r)+'</span>'; }).join("");
+  var gate="";
+  if(d.gate==="pass") gate='<div class="fw-refusal" style="color:var(--green);background:var(--green-d)"><i data-lucide="shield-check" style="width:11px;height:11px"></i>end gate passed · '+d.coverage+'% coverage</div>';
+  else if(d.gate==="refused") gate='<div class="fw-refusal"><i data-lucide="shield-alert" style="width:11px;height:11px"></i>refused · named above</div>';
+  el.innerHTML='<h3><button class="fw-check '+(state.selected[d.id]?"on":"")+'" aria-label="Select"><i data-lucide="check" style="width:11px;height:11px"></i></button>'+esc(d.name)+'</h3>'+
+    '<p>'+esc(d.claim)+'</p>'+
+    '<div class="fw-stages">'+stages+'</div><div class="fw-stage-l">'+stageLabels+'</div>'+
+    '<div class="fw-meter"><i style="width:'+d.coverage+'%"></i></div>'+
+    (refusals?'<div class="fw-refusals">'+refusals+'</div>':"")+gate+
+    '<div class="fw-dactions">'+
+    '<button class="fw-btn" data-adv><i data-lucide="fast-forward" style="width:12px;height:12px"></i> '+(d.stage<4?"Advance":"Settle")+'</button>'+
+    '<button class="fw-btn" data-thread><i data-lucide="messages-square" style="width:12px;height:12px"></i> Thread</button>'+
+    (state.armada?'<button class="fw-btn" data-dispatch><i data-lucide="send" style="width:12px;height:12px"></i> Dispatch</button>':"")+
+    '</div>'+(state.running&&state.running[d.id]?'<div class="fw-running"></div>':"");
+  el.querySelector(".fw-check").onclick=function(e){ e.stopPropagation(); if(state.selected[d.id])delete state.selected[d.id]; else state.selected[d.id]=true; state.bulk=Object.keys(state.selected).length>0; renderLens(); };
+  el.querySelector("[data-adv]").onclick=function(e){ e.stopPropagation(); advance(d.id); };
+  el.querySelector("[data-thread]").onclick=function(e){ e.stopPropagation(); focusOn("thread",d.thread,true); };
+  var dp=el.querySelector("[data-dispatch]"); if(dp)dp.onclick=function(e){ e.stopPropagation(); dispatchDesk(d.id); };
+  el.onclick=function(){ focusOn("deliverable",d.id,false); openDrawer("deliverable",d.id); };
+  el.addEventListener("dragstart",function(e){ e.dataTransfer.setData("text/plain",d.id); el.classList.add("dragging"); });
+  el.addEventListener("dragend",function(){ el.classList.remove("dragging"); });
+  el.addEventListener("dragover",function(e){ e.preventDefault(); });
+  el.addEventListener("drop",function(e){ e.preventDefault();
+    var src=e.dataTransfer.getData("text/plain"); if(!src||src===d.id)return;
+    var a=byId("deliverable",src); if(!a)return;
+    var ao=a.order; a.order=d.order; d.order=ao; renderLens(); toast("Reordered the desk","arrow-up-down","var(--teal)"); });
+  return el;
+}
+function advance(id){
+  var d=byId("deliverable",id); if(!d)return;
+  if(d.stage<4){ d.stage++; d.coverage=Math.min(98,d.coverage+18+Math.floor(Math.random()*8));
+    if(d.stage===2&&!d.refusals&&Math.random()>0.5){ d.refusals=["1 claim lacks a verbatim source"]; }
+    DB.activity.unshift({c:"var(--teal)",t:d.name+" → "+STAGE_LABEL[d.stage]});
+    toast(d.name+" → "+STAGE_LABEL[d.stage],"fast-forward","var(--teal)"); ping(620);
+    renderLens(); renderTissue();
+    if(d.stage===4) setTimeout(function(){ settleDesk(d); },900/state.speed);
+  } else { settleDesk(d); }
+}
+function settleDesk(d){
+  if(d.gate) return;
+  var pass=!(d.refusals&&d.refusals.length);
+  d.gate=pass?"pass":"refused";
+  var cid="c"+(Date.now()%100000);
+  DB.calib.unshift({id:cid,kind:"calib",workload:pass?"standard_code":"review",decision:pass?"sys1 → blend1":"harbormaster gate",confidence:pass?0.88:0.4,outcome:pass?"held":"missed",agree:null,deliverable:d.id});
+  d.calib=cid;
+  if(pass){ var lid="l"+(Date.now()%100000);
+    DB.lessons.push({id:lid,kind:"lesson",name:d.name,body:"Earned by the end gate: the deliverable passed with sourced claims, graded against evidence.",props:[{t:"the gate speaks last",held:true}],practice:{held:1,total:1},deliverable:d.id});
+    d.lesson=lid; }
+  DB.activity.unshift({c:pass?"var(--green)":"var(--red)",t:d.name+(pass?" · end gate passed":" · refused, named")});
+  focusOn("deliverable",d.id,false);
+  toast(pass?"End gate passed · lesson born":"Refused · the named claims are on the card",pass?"shield-check":"shield-alert",pass?"var(--green)":"var(--red)");
+  ping(pass?880:300);
+  renderNav(); renderLens(); renderTissue();
+}
+function dispatchDesk(id){
+  var d=byId("deliverable",id); if(!d||!state.armada)return;
+  state.running=state.running||{}; state.running[id]=true; renderLens();
+  toast("Dispatched to reef-1 · the guard reads the principal","send","var(--blue)");
+  focusOn("deliverable",id,false); state.lens="threads"; renderNav();
+  setTimeout(function(){ state.running[id]=false; if(d.stage<4)d.stage=4; settleDesk(d); },2200/state.speed);
+}
+function openNewBrief(body){
+  if(body.querySelector(".fw-newd")) return;
+  var box=document.createElement("div"); box.className="fw-newd";
+  box.innerHTML='<input type="text" id="fw-nd-name" placeholder="What is the deliverable?" aria-label="New brief name">'+
+    '<textarea id="fw-nd-claim" placeholder="The claim it will make — the gate will demand sources"></textarea>'+
+    '<div class="fw-newd-row"><button class="fw-btn fw-btn-primary" id="fw-nd-add"><i data-lucide="plus" style="width:13px;height:13px"></i> Open the brief</button></div>';
+  body.insertBefore(box,body.querySelector(".fw-dgrid"));
+  var inp=box.querySelector("#fw-nd-name"); inp.focus();
+  function add(){
+    var name=inp.value.trim(); if(!name){inp.focus();return;}
+    var id="d"+(Date.now()%100000); var th="th"+id;
+    DB.deliverables.push({id:id,kind:"deliverable",name:name,claim:box.querySelector("#fw-nd-claim").value.trim()||"The claim is the brief.",stage:0,gate:null,coverage:5,facts:[],thread:th,lesson:null,calib:null,order:DB.deliverables.length});
+    DB.threads.push({id:th,kind:"thread",name:name,deliverable:id});
+    box.remove(); renderNav(); renderLens(); focusOn("deliverable",id,false);
+    toast("Brief opened at Brief stage","file-plus","var(--teal)"); ping(720);
+  }
+  box.querySelector("#fw-nd-add").onclick=add;
+  inp.addEventListener("keydown",function(e){ if(e.key==="Enter")add(); if(e.key==="Escape")box.remove(); });
+  icons();
+}
+function deleteDeliverables(ids){
+  var removed=DB.deliverables.filter(function(d){return ids.indexOf(d.id)>=0;});
+  DB.deliverables=DB.deliverables.filter(function(d){return ids.indexOf(d.id)<0;});
+  state.selected={}; state.bulk=false; renderNav(); renderLens(); renderTissue();
+  toast(removed.length+" deliverable"+(removed.length>1?"s":"")+" deleted","trash-2","var(--red)",{label:"Undo",fn:function(){ removed.forEach(function(d){DB.deliverables.push(d);}); renderNav(); renderLens(); renderTissue(); toast("Restored","rotate-ccw","var(--green)"); }});
+}
+
+/* ---------- THREADS ---------- */
+var threadMsgs={};
+function renderThreads(tools,body){
+  var d=state.focus.kind==="deliverable"?obj(state.focus):DB.deliverables[0];
+  if(state.focus.kind==="thread"){ var th=obj(state.focus); d=(th&&byId("deliverable",th.deliverable))||d; }
+  if(!d){ body.innerHTML='<div class="fw-empty">Open a brief to start a thread.</div>'; tools.innerHTML=""; return; }
+  tools.innerHTML='<span class="fw-chip on"><i data-lucide="messages-square" style="width:12px;height:12px"></i> '+esc(d.name)+'</span>'+
+    (state.armada?'<button class="fw-btn fw-btn-primary" id="fw-dispatch"><i data-lucide="send" style="width:13px;height:13px"></i> Dispatch</button>':"");
+  var dp=tools.querySelector("#fw-dispatch"); if(dp)dp.onclick=function(){ dispatchDesk(d.id); };
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fw-thread";
+  var msgs=threadMsgs[d.id]||defaultThread(d);
+  msgs.forEach(function(m){ wrap.appendChild(msgEl(m)); });
+  var comp=document.createElement("div"); comp.className="fw-composer";
+  comp.innerHTML='<textarea placeholder="Message the thread… @mention a bot to invoke it" aria-label="Message"></textarea>'+
+    '<div class="fw-composer-bar"><span class="fw-mention">@shipwright</span><span class="fw-mention">@harbormaster</span>'+
+    '<button class="fw-btn fw-btn-primary" style="margin-left:auto" id="fw-send"><i data-lucide="arrow-up" style="width:13px;height:13px"></i> Send</button></div>';
+  wrap.appendChild(comp); body.appendChild(wrap);
+  comp.querySelector("#fw-send").onclick=function(){
+    var ta=comp.querySelector("textarea"); var v=ta.value.trim(); if(!v)return;
+    msgs.push({who:"You",color:"var(--teal)",text:v,time:"now"}); ta.value=""; renderLens();
+    var mention=v.match(/@(\w+)/); var bot=mention?DB.bots.filter(function(b){return b.name===mention[1];})[0]:DB.bots[0];
+    setTimeout(function(){ streamBot(d,bot||DB.bots[0],msgs); },400/state.speed);
+  };
+  body.scrollTop=body.scrollHeight;
+}
+function defaultThread(d){
+  return [
+    {who:"You",color:"var(--teal)",text:"Work “"+d.name+"”: ground it in the corpus, land the deliverable, let the gate grade it.",time:"09:12"},
+    {who:"shipwright",color:"var(--magenta)",text:"On it. Reading the substrate first — I compose last, on what the harness established.",time:"09:12",tool:"recall · "+(d.facts.length||2)+" facts"}
+  ];
+}
+function msgEl(m){
+  var el=document.createElement("div"); el.className="fw-msg";
+  var initial=(m.who||"?").charAt(0).toUpperCase();
+  el.innerHTML='<div class="fw-av" style="background:'+(m.color||"var(--teal)")+'">'+esc(initial)+'</div>'+
+    '<div class="fw-msg-body"><div class="fw-msg-h"><span class="fw-msg-name">'+esc(m.who)+'</span><span class="fw-msg-time">'+esc(m.time||"")+'</span></div>'+
+    '<div class="fw-msg-text">'+esc(m.text)+(m.streaming?'<span class="fw-cursor"></span>':"")+'</div>'+
+    (m.tool?'<div class="fw-toolcall"><i data-lucide="terminal" style="width:12px;height:12px"></i>'+esc(m.tool)+' <span class="fw-ok">✓</span></div>':"")+'</div>';
+  return el;
+}
+function streamBot(d,bot,msgs){
+  bot=bot||DB.bots[0];
+  var steps=[
+    {text:"Grounding in the corpus — the facts this claim stands on, pulled before I compose.",tool:"recall · "+(d.facts.length||2)+" facts"},
+    {text:"Working the loop. Arithmetic is computed, judgment is closed-set, and I write last.",tool:"edit · draft"},
+    {text:"Handing it to the desk — the end gate grades it, not my say-so."}
+  ];
+  var i=0;
+  function next(){
+    if(i>=steps.length){ if(d.stage<4){d.stage=4;} settleDesk(d); return; }
+    var s=steps[i++]; var m={who:bot.name,color:"var(--magenta)",text:"",time:"now",streaming:true,tool:s.tool};
+    msgs.push(m); renderLens();
+    var full=s.text, k=0;
+    var iv=setInterval(function(){
+      k+=2; m.text=full.slice(0,k); renderLens();
+      if(k>=full.length){ clearInterval(iv); m.streaming=false; renderLens(); setTimeout(next,300/state.speed); }
+    },16/state.speed);
+  }
+  next();
+}
+
+/* ---------- LEARNING ---------- */
+function renderLearning(tools,body){
+  tools.innerHTML='<span class="fw-chip on">'+DB.lessons.length+' lessons · propositions pinned</span>';
+  body.innerHTML=""; var grid=document.createElement("div"); grid.className="fw-lgrid";
+  DB.lessons.filter(function(l){return matchQuery(l.name+" "+l.body);}).forEach(function(l){
+    var c=document.createElement("div"); c.className="fw-lcard";
+    var held=l.practice.held,total=l.practice.total,pct=total?Math.round(held/total*100):0;
+    c.innerHTML='<h3>'+esc(l.name)+'</h3><p>'+esc(l.body)+'</p>'+
+      '<div class="fw-props">'+l.props.map(function(p){ return '<span class="fw-prop"><i data-lucide="'+(p.held?"check-circle-2":"x-circle")+'" style="width:12px;height:12px;color:'+(p.held?"var(--green)":"var(--red)")+'"></i>'+esc(p.t)+(p.held?'<span class="fw-held">held</span>':'<span class="fw-missed">missed</span>')+'</span>'; }).join("")+'</div>'+
+      '<div class="fw-inst-row" style="margin-top:12px"><span>Practice</span><b>'+held+'/'+total+' held</b></div>'+
+      '<div class="fw-meter"><i style="width:'+pct+'%;background:linear-gradient(90deg,var(--gold),var(--green))"></i></div>'+
+      '<div class="fw-dactions"><button class="fw-btn" data-practice><i data-lucide="graduation-cap" style="width:12px;height:12px"></i> Practice</button></div>';
+    c.querySelector("[data-practice]").onclick=function(e){ e.stopPropagation(); practice(l); };
+    c.onclick=function(e){ if(e.target.closest("button"))return; focusOn("lesson",l.id,false); openDrawer("lesson",l.id); };
+    grid.appendChild(c);
+  });
+  body.appendChild(grid);
+}
+function practice(l){
+  var ok=Math.random()>0.25;
+  l.practice.total++; if(ok)l.practice.held++;
+  l.props.push({t:"practice "+l.practice.total+": recalled under questioning",held:ok});
+  DB.activity.unshift({c:ok?"var(--green)":"var(--red)",t:"practice · "+l.name+(ok?" held":" missed")});
+  toast(ok?"Held · the lesson sticks":"Missed · kept as the friction the loop reads","graduation-cap",ok?"var(--green)":"var(--red)");
+  ping(ok?760:320);
+  renderNav(); renderLens(); renderTissue();
+}
+
+/* ---------- MEMORY ---------- */
+function renderMemory(tools,body){
+  var anti=DB.facts.filter(function(f){return f.tier==="anti-vector";}).length;
+  tools.innerHTML='<span class="fw-chip on">'+DB.facts.length+' facts · git-synced</span>'+
+    (anti?'<span class="fw-chip on" style="color:var(--red)">'+anti+' anti-vector'+(anti>1?"s":"")+'</span>':"")+
+    '<button class="fw-btn" id="fw-dream"><i data-lucide="moon-star" style="width:13px;height:13px"></i> Dream</button>';
+  tools.querySelector("#fw-dream").onclick=dream;
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fw-facts";
+  var basisColor={stated:"var(--cyan)",inferred:"var(--amber)",validated:"var(--green)",episodic:"var(--gold)"};
+  DB.facts.filter(function(f){return matchQuery(f.name+" "+f.body);}).forEach(function(f){
+    var el=document.createElement("div"); el.className="fw-fact"; el.style.borderLeftColor=basisColor[f.basis]||"var(--teal)";
+    el.innerHTML='<div class="fw-fact-h"><span class="fw-fact-name">'+esc(f.name)+'</span>'+
+      (f.tier?'<span class="fw-basis" style="background:var(--red-d);color:var(--red)">'+esc(f.tier)+'</span>':"")+
+      '<span class="fw-basis" style="background:var(--panel2);color:'+(basisColor[f.basis]||"var(--teal)")+'">'+esc(f.basis)+'</span></div>'+
+      '<div class="fw-fact-body">'+esc(f.body)+'</div>';
+    el.onclick=function(){ focusOn("fact",f.id,false); openDrawer("fact",f.id); };
+    wrap.appendChild(el);
+  });
+  body.appendChild(wrap);
+}
+function dream(){
+  var inferred=DB.facts.filter(function(f){return f.basis==="inferred"&&!f.tier;});
+  var el=$("#fw-dream"); if(el)el.classList.add("fw-dreaming");
+  setTimeout(function(){
+    if(el)el.classList.remove("fw-dreaming");
+    if(inferred.length>=2){
+      var gone=inferred.slice(0,2);
+      DB.facts=DB.facts.filter(function(f){return gone.indexOf(f)<0;});
+      DB.facts.push({id:"f-e"+(Date.now()%100000),kind:"fact",name:"episodic · "+gone.map(function(f){return f.name;}).join(" + "),basis:"episodic",body:"The night pass compressed "+gone.length+" stale inferences into one episodic summary, superseding them — archived, not lost."});
+      DB.activity.unshift({c:"var(--gold)",t:"dream · "+gone.length+" inferences → 1 episodic summary"});
+      toast("Dreamed · stale inferences compressed, superseded — archived, not lost","moon-star","var(--gold)");
+      ping(520);
+    } else { toast("Nothing stale to consolidate tonight","moon-star","var(--gold)"); }
+    renderNav(); renderLens(); renderTissue();
+  },1400/state.speed);
+}
+
+/* ---------- CALIBRATION ---------- */
+function renderCalibration(tools,body){
+  var held=DB.calib.filter(function(c){return c.outcome==="held";}).length;
+  tools.innerHTML='<span class="fw-chip on" style="color:var(--green)">'+held+' held</span>'+
+    '<span class="fw-chip on" style="color:var(--red)">'+(DB.calib.length-held)+' missed</span>';
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fw-cal";
+  DB.calib.forEach(function(c){
+    var row=document.createElement("div"); row.className="fw-crow"+(c.agree?" owner-word":"");
+    var oc=c.outcome==="held"?"var(--green)":"var(--red)";
+    var ob=c.outcome==="held"?"var(--green-d)":"var(--red-d)";
+    row.innerHTML='<span class="fw-cwork">'+esc(c.workload)+'</span>'+
+      '<span class="fw-cdec">'+esc(c.decision)+'</span>'+
+      '<span class="fw-cconf"><span class="fw-meter"><i style="width:'+(c.confidence*100)+'%;background:'+(c.confidence>0.75?"var(--green)":c.confidence>0.6?"var(--amber)":"var(--red)")+'"></i></span>'+c.confidence.toFixed(2)+'</span>'+
+      '<span class="fw-cout" style="background:'+ob+';color:'+oc+'">'+c.outcome+'</span>'+
+      '<span class="fw-cagree">'+
+      '<button data-a="up" class="'+(c.agree==="up"?"on-up":"")+'" aria-label="Agree" data-tooltip="Your word rides the row"><i data-lucide="thumbs-up" style="width:13px;height:13px"></i></button>'+
+      '<button data-a="down" class="'+(c.agree==="down"?"on-down":"")+'" aria-label="Disagree" data-tooltip="Disagree — same row, your word"><i data-lucide="thumbs-down" style="width:13px;height:13px"></i></button>'+
+      '</span>';
+    row.querySelectorAll("[data-a]").forEach(function(b){
+      b.onclick=function(e){ e.stopPropagation();
+        var v=b.getAttribute("data-a");
+        c.agree=(c.agree===v)?null:v;
+        toast(c.agree?"Your "+c.agree+" rides the same append-only row as ground truth":"Word withdrawn","scale","var(--gold)");
+        renderLens();
+      };
+    });
+    row.onclick=function(e){ if(e.target.closest("button"))return; focusOn("calib",c.id,false); openDrawer("calib",c.id); };
+    wrap.appendChild(row);
+  });
+  body.appendChild(wrap);
+}
+
+/* ---------- INBOX ---------- */
+function renderInbox(tools,body){
+  tools.innerHTML='<span class="fw-chip on"><i data-lucide="inbox" style="width:12px;height:12px"></i> omnichannel'+(state.armada?" · relay":"")+'</span>';
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fw-inbox";
+  var chanColor={telegram:"var(--cyan)",relay:"var(--blue)",webhook:"var(--magenta)"};
+  DB.messages.filter(function(m){return (state.armada||!m.arm)&&matchQuery(m.who+" "+m.text);}).forEach(function(m){
+    var row=document.createElement("div"); row.className="fw-inrow";
+    var oc=m.out==="delivered"?"var(--green)":m.out==="queued"?"var(--amber)":"var(--red)";
+    row.innerHTML='<span class="fw-chan" style="background:var(--panel2);color:'+(chanColor[m.chan]||"var(--cyan)")+'">'+esc(m.chan)+'</span>'+
+      '<div class="fw-inbody"><div class="fw-inwho">'+esc(m.who)+' <span class="fw-principal">'+esc(m.principal)+'</span></div><div class="fw-intext">'+esc(m.text)+'</div></div>'+
+      '<span class="fw-outbox" style="background:var(--panel2);color:'+oc+'">'+(m.dir==="out"?"outbox · ":"")+esc(m.out)+'</span>';
+    wrap.appendChild(row);
+  });
+  body.appendChild(wrap);
+}
+
+/* ---------- FLEET (armada) ---------- */
+function renderFleet(tools,body){
+  if(!state.armada){ body.innerHTML='<div class="fw-empty">Armada is off — flip it in the console to grow the fleet.</div>'; tools.innerHTML=""; return; }
+  var live=DB.instances.filter(function(i){return i.live;}).length;
+  tools.innerHTML='<span class="fw-chip on"><span class="fw-dot"></span>'+live+' / '+DB.instances.length+' live</span>'+
+    '<button class="fw-btn" id="fw-provision"><i data-lucide="plus" style="width:13px;height:13px"></i> Provision instance</button>';
+  tools.querySelector("#fw-provision").onclick=function(){
+    var n=DB.instances.length+1; var id="i-new"+n;
+    DB.instances.push({id:id,kind:"instance",name:"isle-"+n,host:"vps · provisioning",live:false,cap:100,rel:0,settled:0,version:"0.7.0"});
+    renderNav(); renderLens(); renderTissue();
+    toast("Provisioning isle-"+n+" · inherits the corpus, un-calibrated until it settles","server","var(--blue)");
+    setTimeout(function(){ var i=byId("instance",id); if(i){i.host="vps · ams1"; i.live=true; renderLens(); renderTissue(); toast("isle-"+n+" joined · heartbeat earned","check","var(--green)");} },2600/state.speed);
+  };
+  body.innerHTML=""; var grid=document.createElement("div"); grid.className="fw-fgrid";
+  DB.instances.forEach(function(i){
+    var c=document.createElement("div"); c.className="fw-inst";
+    var relColor=i.rel>0.8?"var(--green)":i.rel>0?"var(--amber)":"var(--faint)";
+    c.innerHTML=(i.live?'<span class="fw-heart"></span>':"")+
+      '<div class="fw-inst-h"><div class="fw-inst-ic"><i data-lucide="'+(i.flag?"flag":"server")+'" style="width:19px;height:19px"></i></div>'+
+      '<div><div class="fw-inst-name">'+esc(i.name)+(i.flag?' <span style="font-size:10px;color:var(--gold)">★</span>':"")+'</div><div class="fw-inst-host">'+esc(i.host)+'</div></div>'+
+      '<span class="fw-live '+(i.live?"on":"off")+'">'+(i.live?"live":"not live")+'</span></div>'+
+      '<div class="fw-inst-row"><span>Capacity free</span><b>'+i.cap+'%</b></div><div class="fw-gauge"><i style="width:'+i.cap+'%;background:linear-gradient(90deg,var(--blue),var(--cyan))"></i></div>'+
+      '<div class="fw-inst-row"><span>Reliability · '+i.settled+' settled</span><b style="color:'+relColor+'">'+(i.settled?Math.round(i.rel*100)+"%":"un-calibrated")+'</b></div>'+
+      '<div class="fw-gauge"><i style="width:'+(i.rel*100)+'%;background:'+relColor+'"></i></div>'+
+      '<div class="fw-inst-actions"><button class="fw-btn" data-heart><i data-lucide="activity" style="width:12px;height:12px"></i> Heartbeat</button></div>';
+    c.querySelector("[data-heart]").onclick=function(){ i.live=true; renderLens(); renderTissue(); toast(i.name+" heartbeat · live","activity","var(--green)"); ping(600); };
+    grid.appendChild(c);
+  });
+  body.appendChild(grid);
+}
+
+/* ---------- TISSUE ---------- */
+function renderTissue(){
+  var svg=$("#fw-graph"); if(!svg)return;
+  var center=state.focus; var cobj=obj(center);
+  var links=linkedObjects(center);
+  var nodes=[{ref:center,center:true}]; links.forEach(function(l){nodes.push({ref:l});});
+  var R=state.spread, cx=150, cy=150;
+  var pos={}; pos[center.kind+":"+center.id]={x:cx,y:cy};
+  var n=links.length;
+  links.forEach(function(l,i){ var a=(i/Math.max(1,n))*Math.PI*2 - Math.PI/2; pos[l.kind+":"+l.id]={x:cx+Math.cos(a)*R,y:cy+Math.sin(a)*R}; });
+  var html="";
+  links.forEach(function(l){ var p=pos[l.kind+":"+l.id]; var hot=state.running&&state.running[center.id];
+    html+='<path class="fw-edge'+(hot?" hot":"")+'" d="M'+cx+','+cy+' L'+p.x.toFixed(1)+','+p.y.toFixed(1)+'"/>'; });
+  nodes.forEach(function(nd){
+    var p=pos[nd.ref.kind+":"+nd.ref.id]; var k=KIND[nd.ref.kind]; var o=obj(nd.ref);
+    var label=o?(o.title||o.name||o.id):nd.ref.id; label=label.length>16?label.slice(0,15)+"…":label;
+    var r=nd.center?20:13;
+    var live=nd.ref.kind==="instance"&&o&&o.live;
+    var above=p.y<cy-10; var ly=above?-(r+10):(r+15);
+    html+='<g class="fw-node'+(nd.center?" center":"")+'" data-kind="'+nd.ref.kind+'" data-id="'+nd.ref.id+'" transform="translate('+p.x.toFixed(1)+','+p.y.toFixed(1)+')">'+
+      (live?'<circle r="'+(r+5)+'" fill="none" stroke="var(--green)" stroke-width="1" opacity=".5"><animate attributeName="r" values="'+(r+3)+';'+(r+9)+'" dur="2.4s" repeatCount="indefinite"/><animate attributeName="opacity" values=".5;0" dur="2.4s" repeatCount="indefinite"/></circle>':"")+
+      '<circle r="'+r+'" fill="'+k.bg+'" stroke="'+k.c+'" stroke-width="'+(nd.center?2:1.4)+'"/>'+
+      '<circle r="'+(nd.center?6:4)+'" fill="'+k.c+'"/>'+
+      (state.labels&&!nd.center?'<text y="'+ly+'">'+esc(label)+'</text>':"")+
+      '</g>';
+  });
+  svg.innerHTML=html;
+  svg.querySelectorAll(".fw-node").forEach(function(g){ g.onclick=function(){ focusOn(g.getAttribute("data-kind"),g.getAttribute("data-id"),true); }; });
+  $("#fw-tissue-sub").textContent=(cobj?(cobj.title||cobj.name):"")+" · "+links.length+" links"+(state.armada?" · armada":"");
+  var leg=$("#fw-legend"); leg.innerHTML="";
+  Object.keys(KIND).forEach(function(k){
+    if(k==="instance"&&!state.armada) return;
+    leg.innerHTML+='<span class="fw-leg"><i style="background:'+KIND[k].c+'"></i>'+KIND[k].label+'</span>';
+  });
+  renderFocus();
+}
+function renderFocus(){
+  var f=$("#fw-focus"); var o=obj(state.focus); if(!o){f.innerHTML="";return;}
+  var k=KIND[state.focus.kind]; var links=linkedObjects(state.focus);
+  var meta="";
+  if(state.focus.kind==="deliverable"){ meta='<span>Stage · <b style="color:var(--teal)">'+STAGE_LABEL[STAGES[o.stage]]+'</b></span><span>End gate · '+(o.gate||"pending")+'</span><span>Coverage · '+o.coverage+'%</span>'; }
+  else if(state.focus.kind==="fact"){ meta='<span>Basis · '+o.basis+(o.tier?" · "+o.tier:"")+'</span>'; }
+  else if(state.focus.kind==="calib"){ meta='<span>Outcome · '+o.outcome+'</span><span>Confidence · '+o.confidence.toFixed(2)+'</span>'+(o.agree?'<span style="color:var(--gold)">your word rides the row</span>':""); }
+  else if(state.focus.kind==="lesson"){ meta='<span>Practice · '+o.practice.held+"/"+o.practice.total+' held</span>'; }
+  else if(state.focus.kind==="instance"){ meta='<span>'+esc(o.host)+'</span><span>Reliability · '+(o.settled?Math.round(o.rel*100)+"%":"un-calibrated")+'</span>'; }
+  else if(state.focus.kind==="bot"){ meta='<span>Role · '+esc(o.role)+'</span>'; }
+  else if(state.focus.kind==="thread"){ meta='<span>The conversation this work lives in</span>'; }
+  var actions="";
+  if(state.focus.kind==="deliverable") actions='<button class="fw-btn fw-btn-primary" id="fw-f-adv"><i data-lucide="fast-forward" style="width:12px;height:12px"></i> '+(o.stage<4?"Advance":"Settle")+'</button><button class="fw-btn" id="fw-f-thread">Thread</button>'+(state.armada?'<button class="fw-btn" id="fw-f-dispatch">Dispatch</button>':"");
+  else if(state.focus.kind==="thread") actions='<button class="fw-btn fw-btn-primary" id="fw-f-thread">Open thread</button>';
+  else actions='<button class="fw-btn" id="fw-f-details">Details</button>';
+  var linkedHtml="";
+  links.forEach(function(l){ var lo=obj(l); var lk=KIND[l.kind]; linkedHtml+='<button data-kind="'+l.kind+'" data-id="'+l.id+'"><span class="fw-ldot" style="background:'+lk.c+'"></span>'+esc(lo?(lo.title||lo.name):l.id)+'</button>'; });
+  f.innerHTML='<div class="fw-focus-kind" style="color:'+k.c+'"><i data-lucide="'+k.icon+'" style="width:12px;height:12px"></i>'+k.label+'</div>'+
+    '<div class="fw-focus-title">'+esc(o.title||o.name||o.id)+'</div>'+
+    '<div class="fw-focus-meta">'+meta+'</div>'+
+    '<div class="fw-focus-actions">'+actions+'</div>'+
+    (links.length?'<div class="fw-linked"><div class="fw-linked-h">Connected tissue</div>'+linkedHtml+'</div>':"");
+  var adv=f.querySelector("#fw-f-adv"); if(adv)adv.onclick=function(){advance(o.id);};
+  var th=f.querySelector("#fw-f-thread"); if(th)th.onclick=function(){ var tid=state.focus.kind==="deliverable"?o.thread:(state.focus.kind==="thread"?o.id:null); if(tid)focusOn("thread",tid,true); else openDrawer(state.focus.kind,o.id); };
+  var dp=f.querySelector("#fw-f-dispatch"); if(dp)dp.onclick=function(){dispatchDesk(o.id);};
+  var det=f.querySelector("#fw-f-details"); if(det)det.onclick=function(){openDrawer(state.focus.kind,o.id);};
+  f.querySelectorAll(".fw-linked button").forEach(function(b){ b.onclick=function(){focusOn(b.getAttribute("data-kind"),b.getAttribute("data-id"),true);}; });
+  icons();
+}
+
+/* ---------- DRAWER ---------- */
+function openDrawer(kind,id){
+  var o=obj({kind:kind,id:id}); if(!o)return;
+  var dr=$("#fw-drawer"); var k=KIND[kind];
+  var fields="";
+  if(kind==="deliverable"){
+    fields='<div class="fw-field"><label>Name</label><input id="fw-d-title" value="'+esc(o.name)+'"></div>'+
+      '<div class="fw-field"><label>Claim</label><textarea id="fw-d-body">'+esc(o.claim)+'</textarea></div>'+
+      '<div class="fw-field"><label>Stage</label><select id="fw-d-stage">'+STAGES.map(function(s,i){return '<option value="'+i+'"'+(o.stage===i?" selected":"")+'>'+STAGE_LABEL[s]+'</option>';}).join("")+'</select></div>';
+  } else {
+    fields='<div class="fw-field"><label>Name</label><input id="fw-d-title" value="'+esc(o.name||"")+'"></div>'+
+      (o.body?'<div class="fw-field"><label>Body</label><textarea id="fw-d-body">'+esc(o.body)+'</textarea></div>':"");
+  }
+  var acts=DB.activity.slice(0,5).map(function(a){return '<div class="fw-act"><i style="background:'+a.c+'"></i>'+esc(a.t)+'</div>';}).join("");
+  dr.innerHTML='<div class="fw-drawer-h"><span style="color:'+k.c+'"><i data-lucide="'+k.icon+'" style="width:20px;height:20px"></i></span><h2>'+esc(o.title||o.name||o.id)+'</h2><button class="fw-iconbtn" id="fw-d-close" aria-label="Close"><i data-lucide="x" style="width:17px;height:17px"></i></button></div>'+
+    '<div class="fw-drawer-body">'+fields+'<div class="fw-field"><label>Activity</label><div class="fw-activity">'+acts+'</div></div></div>'+
+    '<div class="fw-drawer-foot"><button class="fw-btn fw-btn-primary" id="fw-d-save"><i data-lucide="check" style="width:13px;height:13px"></i> Save</button>'+
+    (kind==="deliverable"?'<button class="fw-btn fw-btn-danger" id="fw-d-del"><i data-lucide="trash-2" style="width:13px;height:13px"></i> Delete</button>':"")+
+    '<button class="fw-btn" id="fw-d-cancel" style="margin-left:auto">Close</button></div>';
+  dr.classList.add("show"); $("#fw-scrim").classList.add("show");
+  dr.querySelector("#fw-d-close").onclick=closeDrawer; dr.querySelector("#fw-d-cancel").onclick=closeDrawer;
+  dr.querySelector("#fw-d-save").onclick=function(){
+    var ti=dr.querySelector("#fw-d-title"); if(ti)o.name=ti.value;
+    var bo=dr.querySelector("#fw-d-body"); if(bo){ if(o.body!==undefined)o.body=bo.value; if(o.claim!==undefined)o.claim=bo.value; }
+    var st=dr.querySelector("#fw-d-stage"); if(st)o.stage=parseInt(st.value,10);
+    closeDrawer(); renderNav(); renderLens(); renderTissue(); toast("Saved","check","var(--green)");
+  };
+  var del=dr.querySelector("#fw-d-del"); if(del)del.onclick=function(){ closeDrawer(); deleteDeliverables([id]); };
+  icons();
+}
+function closeDrawer(){ $("#fw-drawer").classList.remove("show"); $("#fw-scrim").classList.remove("show"); }
+
+/* ---------- PALETTE ---------- */
+function allObjects(){
+  var out=[];
+  ["deliverable","thread","lesson","fact","calib","bot"].forEach(function(k){
+    var arr={deliverable:DB.deliverables,thread:DB.threads,lesson:DB.lessons,fact:DB.facts,calib:DB.calib,bot:DB.bots}[k];
+    arr.forEach(function(o){ out.push({kind:k,id:o.id,label:o.name||o.title||o.id}); });
+  });
+  if(state.armada) DB.instances.forEach(function(o){ out.push({kind:"instance",id:o.id,label:o.name}); });
+  return out;
+}
+function openPalette(){ $("#fw-palette").classList.add("show"); $("#fw-scrim").classList.add("show"); var inp=$("#fw-palette-input"); inp.value=""; renderPalette(""); setTimeout(function(){inp.focus();},50); }
+function closePalette(){ $("#fw-palette").classList.remove("show"); if(!$("#fw-drawer").classList.contains("show"))$("#fw-scrim").classList.remove("show"); }
+function renderPalette(q){
+  var list=$("#fw-palette-list"); list.innerHTML="";
+  var cmds=[{label:"Go to Desk",icon:"package",fn:function(){setLens("desk");}},{label:"Go to Calibration",icon:"scale",fn:function(){setLens("calibration");}},{label:"Go to Memory",icon:"brain",fn:function(){setLens("memory");}},{label:"New brief",icon:"plus",fn:function(){setLens("desk");setTimeout(function(){openNewBrief($("#fw-lens-body"));},60);}},{label:state.armada?"Turn armada off":"Turn armada on",icon:"server",fn:function(){toggleArmada();}}];
+  var items=[];
+  cmds.forEach(function(c){ if(!q||c.label.toLowerCase().indexOf(q.toLowerCase())>=0) items.push({cmd:c}); });
+  allObjects().forEach(function(o){ if(!q||o.label.toLowerCase().indexOf(q.toLowerCase())>=0) items.push({obj:o}); });
+  items.slice(0,12).forEach(function(it){
+    var el=document.createElement("div"); el.className="fw-pitem";
+    if(it.cmd){ el.innerHTML='<i data-lucide="'+it.cmd.icon+'" style="width:15px;height:15px;color:var(--teal)"></i>'+esc(it.cmd.label)+'<span class="fw-pkind">command</span>'; el.onclick=function(){closePalette(); it.cmd.fn();}; }
+    else { var k=KIND[it.obj.kind]; el.innerHTML='<span class="fw-pdot" style="background:'+k.c+'"></span>'+esc(it.obj.label)+'<span class="fw-pkind">'+k.label+'</span>'; el.onclick=function(){closePalette(); focusOn(it.obj.kind,it.obj.id,true);}; }
+    list.appendChild(el);
+  });
+  if(!items.length) list.innerHTML='<div class="fw-empty">No matches</div>';
+  icons();
+}
+
+/* ---------- CONSOLE ---------- */
+function toggleArmada(){
+  state.armada=!state.armada;
+  $("#fw-c-armada").setAttribute("aria-pressed",state.armada?"true":"false");
+  if(state.lens==="fleet"&&!state.armada) state.lens="desk";
+  renderNav(); renderLens(); renderTissue();
+  toast(state.armada?"Armada on — the same workspace, more minds in the graph":"Armada off — fleet alone, the tissue unchanged","server",state.armada?"var(--blue)":"var(--teal)");
+  announce(state.armada?"armada on":"armada off");
+}
+function bindConsole(){
+  $("#fw-c-armada").onclick=toggleArmada;
+  $("#fw-c-density").onchange=function(){ root.setAttribute("data-density",this.value); };
+  $("#fw-c-accent").onchange=function(){ var v=this.value; root.style.setProperty("--teal",{teal:"#2dd6bf",green:"#37e2a4",cyan:"#3ad4f2",magenta:"#f757c2"}[v]); };
+  var sp=$("#fw-c-speed"); sp.oninput=function(){ state.speed=parseFloat(this.value); $("#fw-c-speed-v").textContent=this.value+"×"; };
+  var spr=$("#fw-c-spread"); spr.oninput=function(){ state.spread=parseInt(this.value,10); $("#fw-c-spread-v").textContent=this.value; renderTissue(); };
+  function sw(id,fn){ var b=$(id); b.onclick=function(){ var on=b.getAttribute("aria-pressed")!=="true"; b.setAttribute("aria-pressed",on?"true":"false"); fn(on); }; }
+  sw("#fw-c-motion",function(on){ state.motion=on; var c=root.querySelector(".fw-amb"); if(c)c.style.display=on?"block":"none"; });
+  sw("#fw-c-tissue",function(on){ root.setAttribute("data-tissue",on?"on":"off"); });
+  sw("#fw-c-labels",function(on){ state.labels=on; renderTissue(); });
+  $("#fw-c-reset").onclick=function(){ DB=seed(); threadMsgs={}; state.running={}; state.selected={}; state.armada=false; state.focus={kind:"deliverable",id:"d2"}; state.query=""; $("#fw-search").value=""; $("#fw-c-armada").setAttribute("aria-pressed","false"); renderNav(); renderLens(); renderTissue(); toast("Workspace reset","rotate-ccw","var(--teal)"); };
+  $("#fw-c-export").onclick=function(){
+    var data=JSON.stringify({exported:"fleet-workspace",version:"0.7.0",armada:state.armada,deliverables:DB.deliverables,calib:DB.calib,facts:DB.facts},null,2);
+    try{ var blob=new Blob([data],{type:"application/json"}); var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="fleet-desk.json"; a.click(); toast("Workspace exported","download","var(--green)"); }
+    catch(e){ toast("Export ready (snapshot in console)","download","var(--green)"); console.log(data); }
+  };
+}
+
+/* ---------- CHROME ---------- */
+function bindChrome(){
+  $("#fw-theme").onclick=function(){ var day=root.getAttribute("data-theme")==="day"; root.setAttribute("data-theme",day?"night":"day"); this.innerHTML='<i data-lucide="'+(day?"moon":"sun")+'" style="width:17px;height:17px"></i>'; icons(); drawAmb(true); };
+  $("#fw-sound").onclick=function(){ state.sound=!state.sound; this.setAttribute("aria-pressed",state.sound?"true":"false"); this.innerHTML='<i data-lucide="'+(state.sound?"volume-2":"volume-x")+'" style="width:17px;height:17px"></i>'; icons(); if(state.sound)ping(660); };
+  $("#fw-searchbar").onclick=function(){ $("#fw-search").focus(); };
+  $("#fw-search").addEventListener("input",function(){ state.query=this.value; renderLens(); });
+  $("#fw-saveview").onclick=function(){ var name="View "+(state.savedViews.length+1); state.savedViews.push({name:name,lens:state.lens,filterStage:state.filterStage,query:state.query}); renderNav(); toast("View saved: "+name,"bookmark","var(--gold)"); };
+  $("#fw-scrim").onclick=function(){ closeDrawer(); closePalette(); };
+  $("#fw-palette-input").addEventListener("input",function(){ renderPalette(this.value); });
+  document.addEventListener("keydown",function(e){
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){ e.preventDefault(); $("#fw-palette").classList.contains("show")?closePalette():openPalette(); }
+    if(e.key==="Escape"){ closePalette(); closeDrawer(); }
+  });
+}
+
+/* ---------- AMBIENT ---------- */
+var amb={parts:[],raf:null};
+function drawAmb(reset){
+  var c=root.querySelector(".fw-amb"); if(!c)return;
+  var ctx=c.getContext("2d"); var dpr=Math.min(2,window.devicePixelRatio||1);
+  c.width=c.offsetWidth*dpr; c.height=c.offsetHeight*dpr;
+  if(reset||!amb.parts.length){ amb.parts=[]; for(var i=0;i<46;i++){ amb.parts.push({x:Math.random(),y:Math.random(),r:Math.random()*1.8+0.4,s:Math.random()*0.00012+0.00003,h:Math.random()}); } }
+  if(amb.raf)cancelAnimationFrame(amb.raf);
+  var day=root.getAttribute("data-theme")==="day";
+  function frame(){
+    ctx.clearRect(0,0,c.width,c.height);
+    for(var i=0;i<amb.parts.length;i++){ var p=amb.parts[i];
+      p.y-=p.s; if(p.y<-0.02){p.y=1.02; p.x=Math.random();}
+      var x=p.x*c.width, y=p.y*c.height, r=p.r*dpr;
+      var col=day?"rgba(12,156,139,":"rgba(45,214,191,";
+      if(p.h>0.82)col=day?"rgba(201,126,0,":"rgba(255,178,36,";
+      ctx.beginPath(); ctx.arc(x,y,r,0,6.283); ctx.fillStyle=col+(0.18+p.h*0.22)+")"; ctx.fill();
+    }
+    if(state.motion)amb.raf=requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+/* ---------- INIT ---------- */
+function init(){
+  renderNav(); renderLens(); renderTissue(); bindConsole(); bindChrome(); icons(); drawAmb(true);
+  if(window.ResizeObserver){ var ro=new ResizeObserver(function(){ drawAmb(false); }); ro.observe(root); }
+}
+init();
+})();
+</script>

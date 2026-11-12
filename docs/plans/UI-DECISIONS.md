@@ -197,8 +197,48 @@ Rules (the D-ledger's, applied to design):
 
 ---
 
+## Fleet-core — the same system, the owner's own surfaces (2026-11-12)
+
+The armada direction expanded into fleet itself. The reference implementation
+is [`../design/fleet-workspace-mockup.html`](../design/fleet-workspace-mockup.html)
+— same shell, same tokens, same tissue; the lenses are fleet's own surfaces.
+
+- **U29 — Armada is additive, never a second product.** One workspace, one
+  shell, one tissue. Flipping **Armada** on grows the graph — instance nodes,
+  the Fleet lens, relay traffic in the inbox, Dispatch actions — and flipping
+  it off leaves fleet whole: nothing reflows, nothing fleet needs disappears.
+  The console carries the switch; the brand sub-line reads *"the workspace ·
+  one graph"* off and *"armada · one mind"* on. A person using fleet with or
+  without armada has the same connective tissue. *Constrains:* every
+  surface's armada integration, the onboarding path.
+- **U30 — The desk renders the loop, not a list.** Each deliverable card
+  shows the five-stage pipeline (Brief → Sources → Coverage → Draft → Digest)
+  as a stage track with the current stage lit, a coverage meter, and named
+  refusals as red chips **on the card**. Advancing is a visible act; settling
+  grades (end gate pass/refused), lands a calibration row, and births a
+  lesson on pass — the graph grows the edges in the same beat. *Constrains:*
+  the desk lens, `desk.rs` surfaces.
+- **U31 — Calibration is the epistemology rendered.** Every row shows
+  workload, decision, a confidence meter, the graded outcome, and
+  agree/disagree — and the owner's word **rides the same append-only row**
+  (gold border when it does). Held/missed counts live in the lens header.
+  This is "trust is earned by measurements" (D4) as a surface. *Constrains:*
+  the calibration lens, the demand map.
+- **U32 — Memory shows provenance and the dream.** Basis chips (stated cyan /
+  inferred amber / validated green), anti-vectors tiered in red, and a Dream
+  action that compresses stale inferences into an episodic summary —
+  superseded, archived, never lost. *Constrains:* the memory lens, the
+  consolidation surface.
+- **U33 — Learning shows what held.** Lesson cards carry their propositions
+  with held/missed marks and a practice meter; Practice lands its outcome on
+  the card and the activity strip. *Constrains:* the learning lens, the
+  lesson surface.
+
+---
+
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the
-interactive mockup built in this session, informed by the three credited
-inspirations — muxin (instance cards, fleet-at-a-glance), omni (the
+armada interactive mockup ([`../design/armada-workspace-mockup.html`](../design/armada-workspace-mockup.html));
+U29–U33 from the fleet-core mockup the same day. Both informed by the three
+credited inspirations — muxin (instance cards, fleet-at-a-glance), omni (the
 omnichannel inbox with resolved identity), orbit (the board and saved views) —
 borrowed as patterns, never as code, per the README's Foundations section.

@@ -19,11 +19,15 @@ the product is built:
 - [`ARMADA-CONTRACTS.md`](ARMADA-CONTRACTS.md) — the **interfaces**, what each
   module OFFERS / EXPECTS / is CONSUMED BY, so the seams compose without
   guesswork.
-- [`UI-DECISIONS.md`](UI-DECISIONS.md) — the **design system** (U0–U28): the
+- [`UI-DECISIONS.md`](UI-DECISIONS.md) — the **design system** (U0–U33): the
   signal-palette law, the shell/tissue layout contract, and the interaction
-  law that keeps every surface one workspace. The reference implementation is
+  law that keeps every surface one workspace — fleet-core and armada alike.
+  The reference implementations are the live, interactive mockups
+  [`../design/fleet-workspace-mockup.html`](../design/fleet-workspace-mockup.html)
+  (fleet: desk, threads, learning, memory, calibration, inbox — with the
+  Armada switch) and
   [`../design/armada-workspace-mockup.html`](../design/armada-workspace-mockup.html)
-  — a live, interactive mockup; open it before building any surface.
+  (armada: board, fleet, dispatch); open them before building any surface.
 
 Read the decomposition to see *what to build and in what order*; the choices
 before drafting; the contracts before building a module.
