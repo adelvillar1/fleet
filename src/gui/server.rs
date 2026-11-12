@@ -1782,6 +1782,31 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
             }
         }
+        // The board's reads and moves (U14/U21, S4): the tasks the board
+        // lens renders, and the optimistic-then-settled status move.
+        ("GET", "/api/tasks") => write_reply(&mut stream, api(200, bridge.tasks().await)).await,
+        ("POST", "/api/tasks/status") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            let id = parsed["id"].as_str().unwrap_or("").to_string();
+            let status = parsed["status"].as_str().unwrap_or("").to_string();
+            if id.is_empty() || status.is_empty() {
+                return write_reply(
+                    &mut stream,
+                    bad_request("a status move names a task and a status"),
+                )
+                .await;
+            }
+            write_reply(
+                &mut stream,
+                api(200, bridge.task_status(&id, &status).await),
+            )
+            .await
+        }
         ("GET", "/api/desk") => {
             let mut projects: Vec<serde_json::Value> = Vec::new();
             let mut unreadable: Vec<serde_json::Value> = Vec::new();

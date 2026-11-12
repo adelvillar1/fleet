@@ -940,6 +940,63 @@ impl Bridge {
         }))
     }
 
+    /// The board's read (U14, S4): the workspace's tasks, each with its
+    /// lifecycle status — the working/blocked/done columns the board lens
+    /// renders. One read over the graph log, the same fold the tissue reads.
+    pub async fn tasks(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            let graph = crate::workspace::read(&home);
+            let tasks: Vec<Value> = graph
+                .tasks
+                .values()
+                .map(|task| {
+                    json!({
+                        "id": task.id,
+                        "title": task.title,
+                        "status": task.status.as_str(),
+                        "assignee": task.assignee.as_str(),
+                        "binding": task.binding,
+                    })
+                })
+                .collect();
+            json!({ "type": "tasks", "tasks": tasks })
+        })
+        .await
+        .unwrap_or_else(|_| json!({"type": "tasks", "refused": ["the tasks read did not land"]}))
+    }
+
+    /// A task's status move (U21, S4): optimistic-then-settled — the face
+    /// moves the card at once, this writes the append-only record, and the
+    /// read-back is the graded truth. The status vocabulary is the store's
+    /// own; an unknown word is refused by name.
+    pub async fn task_status(&self, task_id: &str, status: &str) -> Value {
+        let parsed = match status {
+            "working" => crate::workspace::Status::Working,
+            "blocked" => crate::workspace::Status::Blocked,
+            "done" => crate::workspace::Status::Done,
+            _ => {
+                return json!({
+                    "type": "tasks",
+                    "refused": [format!("`{status}` is not a status — working, blocked, or done")],
+                })
+            }
+        };
+        let home = self.home.clone();
+        let task_id = task_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            match crate::workspace::set_status(&home, &task_id, parsed) {
+                Ok(task) => json!({
+                    "type": "tasks", "settled": true,
+                    "id": task.id, "status": task.status.as_str(),
+                }),
+                Err(reason) => json!({"type": "tasks", "refused": [reason]}),
+            }
+        })
+        .await
+        .unwrap_or_else(|_| json!({"type": "tasks", "refused": ["the status move did not land"]}))
+    }
+
     /// Break a phase out of a room (the huddles plan's C9): a child room
     /// carrying its own phase brief or the parent's standing goal, and the
     /// membership it inherited plus anyone the owner adds. The child names

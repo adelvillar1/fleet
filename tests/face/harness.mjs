@@ -391,6 +391,23 @@ function boot(options) {
         }),
       });
     }
+    // The board's reads and moves (U14/U21, S4).
+    if (pathOnly === '/api/tasks' && method === 'GET') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.tasks || { type: 'tasks', tasks: [] }),
+      });
+    }
+    if (pathOnly === '/api/tasks/status' && method === 'POST') {
+      const parsed = JSON.parse((init && init.body) || '{}');
+      const listing = documents.tasks || (documents.tasks = { type: 'tasks', tasks: [] });
+      const task = (listing.tasks || []).find((t) => t.id === parsed.id);
+      if (!task) {
+        return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'tasks', refused: ['the task does not exist'] }) });
+      }
+      task.status = parsed.status;
+      return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'tasks', settled: true, id: parsed.id, status: parsed.status }) });
+    }
     // The owner's word on a judged row (U31): the disposition verb, the
     // same append-only store the CLI writes — the POST echoes the row's
     // new word, and a refused word names itself.
@@ -11048,14 +11065,14 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
-    check('ICONS the main rail lists nineteen destinations (skills folded into Intelligence, U40)', links.length === 19,
+    check('ICONS the main rail lists twenty destinations (the board joins, S4)', links.length === 20,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 19,
+      shapes.every(Boolean) && new Set(shapes).size === 20,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 
@@ -12737,6 +12754,61 @@ async function theArmadaSwitchGrowsTheGraph() {
     'armada=' + page.window.localStorage.getItem('fleet-armada'));
 }
 
+// S4 (U14/U21/U23): the board renders working/blocked/done columns, bulk
+// selection is explicit, and a status move is optimistic-then-settled.
+const boardTasks = () => ({
+  type: 'tasks',
+  tasks: [
+    { id: 't1', title: 'write the release notes', status: 'working', assignee: 'owner', binding: null },
+    { id: 't2', title: 'fix the fold', status: 'blocked', assignee: 'owner', binding: null },
+    { id: 't3', title: 'ship the reskin', status: 'done', assignee: 'owner', binding: null },
+  ],
+});
+async function theBoardRendersColumnsAndSettlesMoves() {
+  const page = boot({ documents: { tasks: boardTasks(), state: (asked) => emptyState(asked) }, hash: '#/board' });
+  page.open();
+  await flush(80);
+  const cols = page.rows('.board-col');
+  check('S4 the board renders three columns', cols.length === 3, 'cols=' + cols.length);
+  check('S4 the cards land in their status columns',
+    page.text('board-board').includes('write the release notes') &&
+      page.rows('.board-card').length === 3,
+    'cards=' + page.rows('.board-card').length);
+  // Bulk is explicit: a check selects, the bulk bar appears.
+  const check1 = page.rows('.board-check')[0];
+  check1.click();
+  await flush(40);
+  check('S4 bulk selection shows the bulk bar',
+    page.rows('.board-bulk').length === 1 && page.rows('.board-bulk')[0].hidden === false,
+    'bulk bar present');
+  // Optimistic-then-settled: a move posts the status and the card moves.
+  const moveBtn = page.rows('.board-move').filter((b) => b.textContent === 'done')[0];
+  moveBtn.click();
+  await flush(80);
+  const posts = page.calls.filter((c) => c.url === '/api/tasks/status' && c.method === 'POST');
+  check('S4 the status move posts and settles',
+    posts.length >= 1 && JSON.parse(posts[0].body).status === 'done',
+    JSON.stringify(posts.map((c) => c.body)));
+}
+
+// S4 (U17): the inbox row wears the resolved principal chip when it carries
+// one — never an invented identity.
+async function theInboxRowWearsThePrincipalChip() {
+  const page = boot({
+    documents: {
+      inbox: { type: 'inbox', waiting: 1, asks: [{ key: 'a1', kind: 'ask', from: 'reef', words: 'may I proceed?', at: '2026-11-12T10:00:00Z' }], seats: [], onboard: [], cron: [], doctor: [], dismissed: [], archived: [] },
+      state: (asked) => emptyState(asked),
+    },
+    hash: '#/inbox',
+  });
+  page.open();
+  await flush(80);
+  const chips = page.rows('.ib-principal');
+  check('S4 the inbox row wears the resolved principal chip',
+    chips.length === 1 && chips[0].textContent === 'reef',
+    'chips=' + chips.length);
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -12903,6 +12975,8 @@ const cases = [
   ['S3 the chrome search filters the active lens', theChromeSearchFiltersTheActiveLens],
   ['S3 the console controls apply live', theConsoleControlsApplyLive],
   ['S3 the armada switch grows the graph', theArmadaSwitchGrowsTheGraph],
+  ['S4 the board renders columns and settles moves', theBoardRendersColumnsAndSettlesMoves],
+  ['S4 the inbox row wears the principal chip', theInboxRowWearsThePrincipalChip],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

@@ -11447,3 +11447,152 @@ body[data-labels="off"] .tissue-node-label { display: none; }
 
 /* Armada (U29): off leaves fleet whole — the Fleet lens stands down. */
 body[data-armada="off"] .surfaces-link[data-address="armada"] { display: none; }
+
+/* ==================================================================
+   The board (U14/U21/U23, S4): working/blocked/done columns, the task
+   cards with their bulk check, tags, link dots and running sweep, the
+   explicit bulk bar, and the activity strip beneath. */
+
+.board-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--gap, 14px);
+  align-items: start;
+}
+
+.board-col {
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--dsw-alias-surface) 50%, transparent);
+  min-width: 0;
+}
+
+.board-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+}
+
+.board-col-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.board-col-name { font-family: var(--disp); font-weight: 600; font-size: 13px; }
+.board-col-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.board-col-well { display: grid; gap: 8px; padding: 10px; min-height: 60px; }
+.board-col-empty { color: var(--faint); font-size: 11.5px; margin: 4px; }
+
+.board-card {
+  position: relative;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--r-sm);
+  background: var(--card-bg);
+  padding: 10px 12px;
+  display: grid;
+  gap: 7px;
+  cursor: grab;
+  overflow: hidden;
+  transition: border-color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+.board-card:hover { border-color: var(--dsw-alias-hairline-strong); transform: translateY(-1px); }
+
+/* The running sweep (U14): a cyan light crosses the working card. */
+.board-card.running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, var(--cyan-d) 50%, transparent 70%);
+  background-size: 220% 100%;
+  animation: board-sweep 2.2s linear infinite;
+  pointer-events: none;
+}
+@keyframes board-sweep { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+body[data-motion="off"] .board-card.running::after { animation: none; }
+
+.board-card-top { display: flex; align-items: flex-start; gap: 8px; }
+.board-check {
+  flex: 0 0 auto;
+  width: 16px; height: 16px;
+  border: 1.5px solid var(--dsw-alias-hairline-strong);
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  margin-top: 1px;
+}
+.board-check.on { background: var(--teal); border-color: var(--teal); }
+.board-card-title { font-size: 12.5px; font-weight: 500; line-height: 1.4; min-width: 0; }
+
+.board-card-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.board-tag {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  border: 1px solid var(--dsw-alias-hairline);
+  color: var(--dsw-alias-ink-secondary);
+}
+.board-tag.mono { font-family: var(--mono); }
+
+.board-card-dots { display: flex; gap: 6px; }
+.board-dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  border: 0;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.board-dot:hover { opacity: 1; }
+
+.board-card-moves { display: flex; flex-wrap: wrap; gap: 5px; }
+.board-move {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--dsw-alias-hairline);
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  cursor: pointer;
+}
+.board-move:hover { color: var(--dsw-alias-ink); border-color: var(--dsw-alias-hairline-strong); }
+
+.board-bulk {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--dsw-alias-accent);
+  border-radius: var(--r-sm);
+  background: var(--dsw-alias-accent-wash);
+}
+.board-bulk-count { font-size: 12px; font-weight: 600; color: var(--dsw-alias-accent-lift); }
+
+.board-activity {
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 900px) {
+  .board-columns { grid-template-columns: 1fr; }
+}
+
+/* The resolved principal chip (U17, D31): cyan, the principal signal. */
+.ib-principal {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 9px;
+  border-radius: 20px;
+  border: 1px solid var(--cyan);
+  background: var(--cyan-d);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}

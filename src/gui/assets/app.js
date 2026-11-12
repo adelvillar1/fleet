@@ -237,6 +237,7 @@
   // a page and a surface that is not built yet can say so honestly.
   var ROUTES = [
     ['chat', 'the conversation'],
+    ['board', 'the board'],
     ['inbox', 'the inbox'],
     ['router', 'router'],
     ['delegation', 'delegation'],
@@ -280,6 +281,7 @@
   var GROUPS = [
     ['work', 'work', [
       ['chat', 'conversation'],
+      ['board', 'board'],
       // The inbox sits directly below the conversation (the owner's
       // ruling): one queue of everything waiting on the owner — seats,
       // onboarding steps, huddle questions, cron failures, doctor
@@ -510,6 +512,11 @@
   var ICONS = {
     // the main rail's fifteen
     chat: [['path', { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }]],
+    board: [
+      ['rect', { x: '3.5', y: '4', width: '5', height: '16', rx: '1' }],
+      ['rect', { x: '9.5', y: '4', width: '5', height: '10', rx: '1' }],
+      ['rect', { x: '15.5', y: '4', width: '5', height: '13', rx: '1' }]
+    ],
     // the inbox: a tray with the lip the rows land in
     inbox: [
       ['path', { d: 'M22 12h-6l-2 3h-4l-2-3H2' }],
@@ -963,6 +970,8 @@
     roomArchive: document.getElementById('room-archive'),
     roomEmpty: document.getElementById('room-empty'),
     composerTo: document.getElementById('composer-to'),
+    panelBoard: document.getElementById('panel-board'),
+    boardBoard: document.getElementById('board-board'),
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelWorkspaceHistory: document.getElementById('panel-workspace-history'),
@@ -5103,6 +5112,15 @@
           why = row.why || '';
         }
         what.appendChild(node('div', 'ib-title', title));
+        // The resolved principal chip (U17, D31): who this is from, named
+        // by the identity graph — cyan, the principal signal. Only rows
+        // that carry a principal wear it; never an invented identity.
+        var who = row.principal || row.from || '';
+        if (who) {
+          var chip = node('span', 'ib-principal', who);
+          chip.title = 'the resolved principal';
+          what.appendChild(chip);
+        }
         if (where) what.appendChild(node('div', 'ib-where', where));
         if (why) what.appendChild(node('div', 'ib-why', why));
         if (kind.cls === 'ask' && row.at) {
@@ -9250,6 +9268,176 @@
       .catch(function () {
         connectionDown('the workflows read');
         window.setTimeout(function () { readWorkflows(true); }, 5000);
+      });
+  }
+
+  // --- the board (U14/U21/U23, S4) ------------------------------------
+  // The work as working/blocked/done columns. A card carries its bulk
+  // check, its tags, its link dots (a press pivots the workspace), and the
+  // running sweep while it works. Moving a card is optimistic-then-settled:
+  // the card moves at once, the status write lands, the read-back is the
+  // graded truth. Bulk is explicit — checks select, a bulk bar appears.
+  function readTasks(force) {
+    var now = Date.now();
+    if (!force && face.tasksRead && now - face.tasksAt < 4000) return Promise.resolve();
+    face.tasksAt = now;
+    return fetch('/api/tasks', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.tasksRead = doc;
+        if (face.panel === 'board') paintBoard();
+      })
+      .catch(function () {
+        connectionDown('the tasks read');
+        window.setTimeout(function () { readTasks(true); }, 5000);
+      });
+  }
+
+  var BOARD_COLUMNS = [
+    ['working', 'working', 'var(--amber)'],
+    ['blocked', 'blocked', 'var(--red)'],
+    ['done', 'done', 'var(--green)']
+  ];
+
+  function boardSelected() {
+    face.boardSel = face.boardSel || {};
+    return face.boardSel;
+  }
+
+  function paintBoard() {
+    if (!el.boardBoard) return;
+    var read = face.tasksRead;
+    el.boardBoard.textContent = '';
+    el.boardBoard.appendChild(pageHead('Work', 'The board',
+      'the work as it stands — drag a card between columns to move it; the move settles against the record.', null));
+    if (!read) {
+      var waiting = boardCard(12, 'reading', null, null);
+      waiting.appendChild(node('p', 'board-empty', 'The tasks read has not landed yet.'));
+      el.boardBoard.appendChild(waiting);
+      return;
+    }
+    var tasks = read.tasks || [];
+    var sel = boardSelected();
+    var selectedCount = Object.keys(sel).filter(function (id) { return sel[id]; }).length;
+
+    // The bulk bar (U23): explicit selection, never implicit.
+    var bulk = node('div', 'board-bulk');
+    bulk.hidden = selectedCount === 0;
+    bulk.appendChild(node('span', 'board-bulk-count', selectedCount + ' selected'));
+    [['clear', function () { face.boardSel = {}; paintBoard(); }]].forEach(function (pair) {
+      var act = node('button', 'row-action', pair[0]);
+      act.type = 'button';
+      act.addEventListener('click', pair[1]);
+      bulk.appendChild(act);
+    });
+    el.boardBoard.appendChild(bulk);
+
+    var columns = node('div', 'board-columns');
+    BOARD_COLUMNS.forEach(function (col) {
+      var status = col[0];
+      var column = node('div', 'board-col');
+      column.dataset.status = status;
+      var head = node('div', 'board-col-head');
+      var dot = node('span', 'board-col-dot');
+      dot.style.background = col[2];
+      head.appendChild(dot);
+      var inCol = tasks.filter(function (t) { return t.status === status; });
+      head.appendChild(node('span', 'board-col-name', col[1]));
+      head.appendChild(node('span', 'board-col-count', String(inCol.length)));
+      column.appendChild(head);
+      var well = node('div', 'board-col-well');
+      well.dataset.status = status;
+      // Drop target: a card dragged here moves its status (U21).
+      well.addEventListener('dragover', function (event) { event.preventDefault(); });
+      well.addEventListener('drop', function (event) {
+        event.preventDefault();
+        var id = event.dataTransfer.getData('text/plain');
+        if (id) moveTaskStatus(id, status);
+      });
+      inCol.forEach(function (task) { well.appendChild(boardCardTask(task, sel)); });
+      if (!inCol.length) well.appendChild(node('p', 'board-col-empty', 'nothing ' + status));
+      column.appendChild(well);
+      columns.appendChild(column);
+    });
+    el.boardBoard.appendChild(columns);
+
+    // The activity strip (U14): the graded story, never filler cards.
+    var strip = node('p', 'board-activity',
+      tasks.length + ' tasks \u00b7 settled against the record, graded by the outcome');
+    el.boardBoard.appendChild(strip);
+  }
+
+  function boardCardTask(task, sel) {
+    var card = node('div', 'board-card' + (task.status === 'working' ? ' running' : ''));
+    card.draggable = true;
+    card.dataset.id = task.id;
+    card.addEventListener('dragstart', function (event) {
+      event.dataTransfer.setData('text/plain', task.id);
+    });
+    var top = node('div', 'board-card-top');
+    var check = node('button', 'board-check' + (sel[task.id] ? ' on' : ''));
+    check.type = 'button';
+    check.setAttribute('aria-pressed', String(!!sel[task.id]));
+    check.setAttribute('aria-label', 'select ' + task.title);
+    check.addEventListener('click', function () {
+      sel[task.id] = !sel[task.id];
+      paintBoard();
+    });
+    top.appendChild(check);
+    top.appendChild(node('span', 'board-card-title', task.title));
+    card.appendChild(top);
+    var tags = node('div', 'board-card-tags');
+    if (task.assignee) tags.appendChild(node('span', 'board-tag', task.assignee));
+    if (task.binding) tags.appendChild(node('span', 'board-tag mono', task.binding));
+    card.appendChild(tags);
+    // The link dots: a press pivots the workspace to the task's thread.
+    var dots = node('div', 'board-card-dots');
+    var threadDot = node('button', 'board-dot');
+    threadDot.type = 'button';
+    threadDot.title = 'open the task\u2019s thread';
+    threadDot.style.background = 'var(--cyan)';
+    threadDot.addEventListener('click', function () { pivotTo('task', task.id, task.title); });
+    dots.appendChild(threadDot);
+    card.appendChild(dots);
+    // The status move buttons (the keyboard path beside the drag).
+    var moves = node('div', 'board-card-moves');
+    BOARD_COLUMNS.forEach(function (col) {
+      if (col[0] === task.status) return;
+      var move = node('button', 'board-move', col[1]);
+      move.type = 'button';
+      move.addEventListener('click', function () { moveTaskStatus(task.id, col[0]); });
+      moves.appendChild(move);
+    });
+    card.appendChild(moves);
+    return card;
+  }
+
+  // Optimistic-then-settled (U21): the card moves at once, the write lands,
+  // the read-back is the graded truth. A refusal snaps the card back.
+  function moveTaskStatus(id, status) {
+    var read = face.tasksRead;
+    var task = read && (read.tasks || []).filter(function (t) { return t.id === id; })[0];
+    if (!task || task.status === status) return;
+    var before = task.status;
+    task.status = status;
+    paintBoard();
+    post('/api/tasks/status', { id: id, status: status })
+      .then(function (reply) {
+        if (reply.status === 200 && reply.body && reply.body.settled) {
+          readTasks(true);
+          return;
+        }
+        task.status = before;
+        paintBoard();
+        notice('the move was refused', (reply.body.refused || []).join(' ') || 'the write refused it');
+      })
+      .catch(function () {
+        task.status = before;
+        paintBoard();
+        notice('the move did not cross', 'the server did not answer');
       });
   }
 
@@ -26744,6 +26932,7 @@
   // can never forget to hide another — the failure mode the explicit
   // hide-lists were one new surface away from.
   var PANEL_EL = {
+    board: document.getElementById('panel-board'),
     inbox: document.getElementById('panel-inbox'),
     chat: el.panelChat,
     router: el.panelRouter,
@@ -26848,6 +27037,7 @@
     // The conversation is live from the log; every board paints now and
     // again when its own read lands.
     var arrive = {
+      board: function () { paintBoard(); readTasks(true).then(paintBoard); },
       router: function () { paintRouter(); readRouter(true).then(paintRouter); },
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
       memory: function () {
@@ -28435,7 +28625,7 @@
   // This is the ONE list the rail does not derive, so it drifts: it called
   // two built surfaces (design, huddles) "later" and carried a phantom
   // (tower). The harness pins it against the rail's own addresses.
-  var BUILT = ['chat', 'inbox', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
+  var BUILT = ['chat', 'board', 'inbox', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
     'sessions', 'calibration', 'second-brain', 'workspace-history', 'armada', 'bots', 'vault',
     'settings', 'plugins', 'learning', 'about'];
 
