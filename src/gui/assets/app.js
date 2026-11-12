@@ -240,8 +240,10 @@
     ['inbox', 'the inbox'],
     ['router', 'router'],
     ['delegation', 'delegation'],
-    ['memory', 'memory'],
-    ['skills', 'skills'],
+    ['memory', 'intelligence'],
+    // The skills surface folded into Intelligence (U40) as its Skills
+    // segment; the address stays honest for deep links and redirects.
+    ['skills', 'intelligence \u00b7 skills'],
     ['sessions', 'sessions'],
     // Learning is work the owner opens the way they open a chat: a
     // lesson, the proposition graph, a practice, the history.
@@ -306,8 +308,10 @@
       ['delegation', 'delegation']
     ]],
     ['knowledge', 'knowledge', [
-      ['memory', 'memory'],
-      ['skills', 'skills'],
+      // Intelligence (U40): the lens formerly named Memory — the corpus,
+      // the skills, the tools and the workflows are its segments, so the
+      // skills destination folded into it and #/skills redirects.
+      ['memory', 'intelligence'],
       ['second-brain', 'second brain'],
       ['workspace-history', 'workspace history']
     ]],
@@ -727,6 +731,12 @@
     tools: [
       ['path', { d: 'M5 7l5 5-5 5' }],
       ['path', { d: 'M12.5 17H19' }]
+    ],
+    workflows: [
+      ['rect', { x: '3.5', y: '9.5', width: '5.5', height: '5.5', rx: '1' }],
+      ['rect', { x: '15', y: '3.5', width: '5.5', height: '5.5', rx: '1' }],
+      ['rect', { x: '15', y: '15', width: '5.5', height: '5.5', rx: '1' }],
+      ['path', { d: 'M9 12.2h3.5M12.5 12.2V6.2h2.5M12.5 12.2v6h2.5' }]
     ],
     curation: [['path', { d: 'M4 5h16l-6 7.5V19l-4 2v-8.5z' }]],
     declined: [
@@ -7247,9 +7257,211 @@
           var recalls = face.events.filter(function (event) { return event.type === 'memory'; });
           return [memHits(read, read.hits || [], recalls)];
         }
+      },
+      // U40's segments: the lens is Intelligence — everything the
+      // harness knows AND can do. Skills, Tools and Workflows ride the
+      // same section rail the memory segments do; teal is the family's
+      // hue in the tissue (hue = the family, icon+label the kind).
+      {
+        id: 'skills', name: 'skills',
+        badge: face.skills ? (face.skills.skills || []).length : null,
+        badgeTitle: 'skills in reach',
+        paint: intelligenceSkillsCard
+      },
+      {
+        id: 'tools', name: 'tools',
+        badge: intelligenceToolCount(),
+        badgeTitle: 'tools the harness can call',
+        paint: intelligenceToolsCard
+      },
+      {
+        id: 'workflows', name: 'workflows',
+        badge: intelligenceWorkflowCount(),
+        badgeTitle: 'declared chains',
+        paint: intelligenceWorkflowsCard
       }
     );
     return sections;
+  }
+
+  // --- U40's capability segments --------------------------------------
+
+  function intelligenceToolCount() {
+    if (!face.tools) return null;
+    var read = face.tools;
+    return (read.built_ins || []).length + (read.lanes || []).length + (read.mcp || []).length;
+  }
+
+  function intelligenceWorkflowCount() {
+    if (!face.workflows || !face.workflows.declared) return null;
+    return (face.workflows.nodes || []).filter(function (one) {
+      return (one.workflows || []).length > 0;
+    }).length;
+  }
+
+  // The Skills segment: the active library in gold, the proposals in
+  // amber waiting at the gate — the same rows the skills surface drew,
+  // riding the same apply verb (never a silent promotion).
+  function intelligenceSkillsCard() {
+    var read = face.skills;
+    var card = boardCard(12, 'skills',
+      read ? (read.skills || []).length + ' in reach' : null,
+      'the procedural memory: what the runs drew on, and what waits for the owner\u2019s word at the gate.');
+    if (!read) {
+      card.appendChild(node('p', 'board-empty',
+        'The library read has not landed yet. It reads the canonical skills directory and the '
+        + 'home\u2019s own proposals, both of which are this machine\u2019s.'));
+      return [card];
+    }
+    var skills = read.skills || [];
+    var proposals = pendingProposals(read);
+    var strip = node('div', 'home-stats');
+    [
+      [skills.length, 'in reach'],
+      [skills.filter(function (skill) { return skill.uses > 0; }).length, 'used'],
+      [proposals.length, 'at the gate', proposals.length ? 'live' : null],
+      [(read.retired || []).length, 'retired', read.retired.length ? 'down' : null]
+    ].forEach(function (stat) {
+      var cell = node('div', 'home-stat');
+      cell.appendChild(node('span', 'home-stat-value', String(stat[0])));
+      cell.appendChild(node('span', 'home-stat-label', stat[1]));
+      if (stat[2]) cell.dataset.tone = stat[2];
+      strip.appendChild(cell);
+    });
+    card.appendChild(strip);
+    if (proposals.length) {
+      var queue = node('div', 'rail-list');
+      proposals.forEach(function (proposal) {
+        var row = node('div', 'rail-row');
+        row.appendChild(node('b', null, proposal.name));
+        row.appendChild(node('p', null,
+          proposal.kind + ' \u00b7 ' + clip(proposal.evidence, 120)));
+        var acts = node('div', 'row-actions');
+        var approve = node('button', 'row-action row-action-primary', 'apply through the gate');
+        approve.type = 'button';
+        approve.title = 'apply this proposal — the gate runs first';
+        approve.addEventListener('click', function () { approveProposal(proposal, approve); });
+        acts.appendChild(approve);
+        row.appendChild(acts);
+        queue.appendChild(row);
+      });
+      card.appendChild(queue);
+    }
+    // The library itself: the same one-line rows the skills surface
+    // drew — the uses mark, the budget press naming what sits behind
+    // it, the row's press opening the skill's pane card — reused whole,
+    // so the fold changes where the rows live and nothing about them.
+    // The order is the surface's own: most used first, names tied.
+    var ordered = skills.slice().sort(function (left, right) {
+      return (right.uses || 0) - (left.uses || 0)
+        || String(left.name).localeCompare(String(right.name));
+    });
+    var open = !!face.intelSkillsOpen;
+    card.appendChild(budgetRows(ordered.map(skillItem), 30, 'skills', open, function () {
+      face.intelSkillsOpen = !open;
+      paintMemorySection('skills');
+    }));
+    return [card];
+  }
+
+  // The Tools segment: the bounded surface — every tool the harness can
+  // call, its kind and its declaration's class. The class a call TAKES
+  // is decided at the gate per call; the chip names the declaration's.
+  function intelligenceToolsCard() {
+    var read = face.tools;
+    var card = boardCard(12, 'tools',
+      read ? intelligenceToolCount() + ' callable' : null,
+      'the bounded surface: built-ins, the vendored lanes, and the MCP registry — each carrying its class.');
+    if (!read) {
+      card.appendChild(node('p', 'board-empty',
+        'The registry read has not landed yet. It reads the compiled declarations, the lane '
+        + 'roster and the home\u2019s MCP registry, all of which are this machine\u2019s.'));
+      return [card];
+    }
+    var rows = [];
+    (read.built_ins || []).forEach(function (tool) {
+      rows.push([tool.name, 'builtin', tool.class, tool.description]);
+    });
+    (read.lanes || []).forEach(function (lane) {
+      rows.push([lane.name, 'lane', 'guarded at the gate',
+        (lane.role || '') + ((lane.health_tools || []).length
+          ? ' \u00b7 health: ' + lane.health_tools.join(', ') : '')]);
+    });
+    (read.mcp || []).forEach(function (server) {
+      rows.push([server.name, 'mcp', server.enabled ? 'enabled' : 'disabled',
+        server.program || '']);
+    });
+    var list = node('div', 'rail-list');
+    rows.forEach(function (row) {
+      var line = node('div', 'intel-row');
+      var head = node('div', 'intel-row-head');
+      var chip = node('span', 'tissue-kind', row[1]);
+      if (row[2] === 'write') chip.style.borderColor = 'var(--amber)';
+      if (row[2] === 'shell') chip.style.borderColor = 'var(--red)';
+      head.appendChild(chip);
+      head.appendChild(node('b', null, row[0]));
+      head.appendChild(node('span', 'tissue-where', row[2]));
+      line.appendChild(head);
+      if (row[3]) line.appendChild(node('p', 'intel-desc', clip(row[3], 150)));
+      list.appendChild(line);
+    });
+    card.appendChild(list);
+    return [card];
+  }
+
+  // The Workflows segment: the declared graph's chains as their nodes —
+  // what the chain is called, which node carries it, what must verify
+  // first. A home with no declared graph says so by name (U2/U35).
+  function intelligenceWorkflowsCard() {
+    var read = face.workflows;
+    var card = boardCard(12, 'workflows',
+      read && read.declared ? intelligenceWorkflowCount() + ' declared' : null,
+      'the composed chains: the skill chains the graph declares, every node\u2019s prerequisites named.');
+    if (!read) {
+      card.appendChild(node('p', 'board-empty',
+        'The chains read has not landed yet. It reads the home\u2019s declared graph.'));
+      return [card];
+    }
+    if (!read.declared) {
+      card.appendChild(node('p', 'board-empty',
+        'This home declares no graph yet — `fleet graph` writes one, and the chains the plans '
+        + 'declare land here when it does.'));
+      return [card];
+    }
+    var carriers = (read.nodes || []).filter(function (one) {
+      return (one.workflows || []).length > 0;
+    });
+    if (!carriers.length) {
+      card.appendChild(node('p', 'board-empty',
+        'The graph is declared and no node names a workflow chain yet.'));
+      return [card];
+    }
+    var list = node('div', 'rail-list');
+    carriers.forEach(function (carrier) {
+      var line = node('div', 'rail-row');
+      var name = node('b', null, (carrier.workflows || []).join(', '));
+      // The node's own status rides the chain (U30's status law): the
+      // stage the declaring node stands on — working amber, done green,
+      // blocked red, pending the muted word.
+      var status = carrier.status || 'pending';
+      var mark = node('span', 'tissue-where', status);
+      if (status === 'working') mark.style.color = 'var(--amber)';
+      if (status === 'done') mark.style.color = 'var(--green)';
+      if (status === 'blocked') mark.style.color = 'var(--red)';
+      name.appendChild(mark);
+      line.appendChild(name);
+      line.appendChild(node('p', null, 'on ' + carrier.id
+        + ((carrier.prereqs || []).length ? ' \u00b7 after ' + carrier.prereqs.join(', ') : '')
+        + ((carrier.tools || []).length ? ' \u00b7 tools: ' + carrier.tools.join(', ') : '')));
+      list.appendChild(line);
+    });
+    card.appendChild(list);
+    var path = read.critical_path || [];
+    if (path.length) {
+      card.appendChild(node('p', 'board-note',
+        'the critical path: ' + path.join(' \u2192 ')));
+    }
+    return [card];
   }
 
   function paintMemoryRail(read) {
@@ -7311,8 +7523,8 @@
     var read = face.memory;
     el.memoryBoard.textContent = '';
     if (!read) {
-      el.memoryBoard.appendChild(surfaceHead('Knowledge', 'Memory',
-        'One fact per file: what this run recalled, and what the corpus already knows.', null));
+      el.memoryBoard.appendChild(surfaceHead('Intelligence', 'Intelligence',
+        'Everything the harness knows and can do: the corpus, the skills, the tools, and the chains they compose into.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The corpus read has not landed yet. It reads the memories tree and the day\u2019s ' +
@@ -7344,8 +7556,8 @@
           }
         }
       ]);
-    el.memoryBoard.appendChild(surfaceHead('Knowledge', 'Memory',
-      'One fact per file: what this run recalled, and what the corpus already knows.', instrument));
+    el.memoryBoard.appendChild(surfaceHead('Intelligence', 'Intelligence',
+      'Everything the harness knows and can do: the corpus, the skills, the tools, and the chains they compose into.', instrument));
     el.memoryBoard.appendChild(surfaceStrip([
       [facts.length, 'facts'],
       [live.length, 'live'],
@@ -8860,11 +9072,53 @@
       .then(function (doc) {
         face.skills = doc;
         if (face.panel === 'skills') paintSkills();
+        if (face.panel === 'memory') paintMemory();
       })
       .catch(function () {
         // KI-380: re-armed, never swallowed.
         connectionDown('the skills read');
         window.setTimeout(function () { readSkills(true); }, 5000);
+      });
+  }
+
+  // The Intelligence surface's other two reads (U40): the capability
+  // registry and the declared graph's chains — the same pattern the
+  // skills read rides, each landing into face.* and repainting the lens.
+  function readTools(force) {
+    var now = Date.now();
+    if (!force && face.tools && now - face.toolsAt < 8000) return Promise.resolve();
+    face.toolsAt = now;
+    return fetch('/api/tools', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.tools = doc;
+        if (face.panel === 'memory') paintMemory();
+      })
+      .catch(function () {
+        connectionDown('the tools read');
+        window.setTimeout(function () { readTools(true); }, 5000);
+      });
+  }
+
+  function readWorkflows(force) {
+    var now = Date.now();
+    if (!force && face.workflows && now - face.workflowsAt < 8000) return Promise.resolve();
+    face.workflowsAt = now;
+    return fetch('/api/workflows', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.workflows = doc;
+        if (face.panel === 'memory') paintMemory();
+      })
+      .catch(function () {
+        connectionDown('the workflows read');
+        window.setTimeout(function () { readWorkflows(true); }, 5000);
       });
   }
 
@@ -26199,8 +26453,24 @@
     var arrive = {
       router: function () { paintRouter(); readRouter(true).then(paintRouter); },
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
-      memory: function () { paintMemory(); readMemory(true).then(paintMemory); },
-      skills: function () { paintSkills(); readSkills(true).then(paintSkills); },
+      memory: function () {
+        paintMemory();
+        readMemory(true).then(paintMemory);
+        // The capability segments (U40) ride the same arrival: the
+        // corpus paints first, the skills, tools and chains fill in as
+        // their reads land — never a spinner that lies.
+        readSkills(true);
+        readTools(true);
+        readWorkflows(true);
+      },
+      skills: function () {
+        // The skills surface folded into Intelligence (U40); the old
+        // address walks to its segment, and the surface's own reads run
+        // so the segment paints from its data.
+        window.location.hash = '#/memory/skills';
+        paintMemory();
+        readSkills(true).then(paintMemory);
+      },
       learning: function () {
         // The right column is the app's pane, the same one the other
         // work surfaces carry; it stays the owner's to close.

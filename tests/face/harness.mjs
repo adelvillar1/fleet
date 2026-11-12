@@ -848,6 +848,22 @@ function boot(options) {
         json: () => Promise.resolve(documents.tissue || emptyTissue()),
       });
     }
+    // The Intelligence surface's two reads (U40): the capability
+    // registry and the declared graph's chains, or the honest empties
+    // the segments' waiting cards paint from.
+    if (pathOnly === '/api/tools') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.tools || { type: 'tools', built_ins: [], lanes: [], mcp: [] }),
+      });
+    }
+    if (pathOnly === '/api/workflows') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.workflows
+          || { type: 'workflows', declared: false, nodes: [], critical_path: [] }),
+      });
+    }
     if (pathOnly === '/api/web/frame') {
       const asked = new URL('http://x' + url).searchParams.get('url') || '';
       return Promise.resolve({
@@ -3475,7 +3491,8 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
       .filter((link) => link.closest('.surfaces-section') === knowledge[0])
       .map((link) => link.textContent.trim());
     check('the entry is named workspace history beside its siblings',
-      entries.length === 4 && entries[3] === 'workspace history', entries.join(' | '));
+      entries.length === 3 && entries[0] === 'intelligence' && entries[2] === 'workspace history',
+      entries.join(' | '));
   }
   // The surface announces itself once, above the cards.
   const title = page.rows('.surface-title').map((n) => n.textContent.trim());
@@ -9334,65 +9351,58 @@ async function theSkillsRailCarriesOneSectionAtATime() {
       onboard: onboardDoc({ door: false }) },
   });
 
+  // U40 folded the skills surface into Intelligence as its Skills
+  // segment: the old address walks to the segment, and the rows are the
+  // same rows the surface drew — the uses mark, the budget press, the
+  // row's pane card — reused whole. The surface's own section rail and
+  // the retired/declined views retired with it (the ledger records the
+  // supersession; `fleet skills` still lists every state).
   const page = bootSkills('#/skills');
   await flush();
   page.open();
   await flush(80);
+  check('SKILL the old address walks to the Intelligence Skills segment',
+    page.window.location.hash === '#/memory/skills',
+    'hash=' + page.window.location.hash);
+  check('SKILL the segment renders one section body',
+    page.rows('.section-body').length === 1 &&
+      page.rows('.section-body')[0].dataset.section === 'skills',
+    page.rows('.section-body').map((b) => b.dataset.section).join(','));
 
-  // The rail: needs you leads, the categories the document holds follow,
-  // the tails close it, and an empty fallback row never renders.
-  const railRows = page.rows('.section-rail-row');
-  const railText = railRows.map((row) => row.textContent);
-  check('SKILL the rail leads with needs you and names the sections',
-    railRows.length === 7 &&
-      railText[0].includes('needs you') &&
-      railText[1].includes('building') && railText[2].includes('web') &&
-      railText[3].includes('media') &&
-      railText[4].includes('declined') && railText[6].includes('retired') &&
-      !railText.join('|').includes('everything else'),
-    railText.join(' | '));
-  check('SKILL one section renders at a time', page.rows('.section-body').length === 1 &&
-    page.rows('.section-body')[0].dataset.section === 'needs-you',
-  page.rows('.section-body').map((b) => b.dataset.section).join(','));
-
-  // The needs-you section carries the proposal with its approve.
-  check('SKILL needs you carries the proposal and its approve',
-    page.text('skills-board').includes('bash-recovery') &&
+  // The needs-you proposal rides the segment with its apply verb.
+  check('SKILL the segment carries the proposal and its apply',
+    page.text('memory-board').includes('bash-recovery') &&
+      page.text('memory-board').includes('apply through the gate') &&
       page.rows('.row-action-primary').length === 1,
     String(page.rows('.row-action-primary').length));
 
-  // A category section is an address, and its rows are one line with
-  // the uses mark the owner asked for.
-  const routed = bootSkills('#/skills/building');
+  // A category is an address no more; the rows are the same one-line
+  // items with the uses mark, budgeted at 30 with the press naming the
+  // rest.
+  const routed = bootSkills('#/memory/skills');
   await flush();
   routed.open();
   await flush(80);
-  check('SKILL a category is an address',
-    routed.rows('.section-body')[0].dataset.section === 'building', 'building route');
   const items = routed.rows('.cfg-item');
   check('SKILL the rows are one-line items with the uses mark',
     items.length === 30 &&
       items.every((row) => row.querySelector('.cfg-item-name')) &&
       items.some((row) => row.textContent.includes('uses')),
     String(items.length));
-
-  // The budget: the first 30 and the count named; the press reveals —
-  // and the revealed tail carries the never-selected mark.
   const more = routed.rows('.budget-more');
   check('SKILL the budget names what is behind the press',
-    more.length === 1 && more[0].textContent.includes('2 more skills'),
+    more.length === 1 && more[0].textContent.includes('4 more skills'),
     more.length ? more[0].textContent : 'no budget press');
   more[0].click();
   await flush(40);
   const revealed = routed.rows('.cfg-item');
   check('SKILL the press reveals the rest, never selected among them',
-    revealed.length === 32 &&
+    revealed.length === 34 &&
       revealed.some((row) => row.textContent.includes('never selected')),
     String(revealed.length));
 
   // A row's press opens the pane card with the body and the actions —
-  // the tabs stood down, the uses count named. The section sorts by
-  // uses, so the first row is the most-used skill.
+  // the same card the surface opened, now from the segment.
   revealed[0].click();
   await flush(60);
   check('SKILL a row opens its card in the pane',
@@ -9411,8 +9421,8 @@ async function theSkillsRailCarriesOneSectionAtATime() {
   check('SKILL closing returns the pane\u2019s tabs',
     routed.body.dataset.objectCard !== 'open', String(routed.body.dataset.objectCard));
 
-  // The approve: the row's press posts the name, the reply repaints.
-  const deciding = bootSkills('#/skills');
+  // The apply: the segment's press posts the name, the read repaints.
+  const deciding = bootSkills('#/memory/skills');
   await flush();
   deciding.open();
   await flush(80);
@@ -9420,53 +9430,11 @@ async function theSkillsRailCarriesOneSectionAtATime() {
   await flush(60);
   const posted = deciding.calls.filter((call) =>
     call.url === '/api/skill' && call.method === 'POST');
-  check('SKILL the approve posts the proposal\u2019s name',
+  check('SKILL the apply posts the proposal\u2019s name',
     posted.length === 1 && JSON.parse(posted[0].body).name === 'bash-recovery',
     JSON.stringify(posted.map((call) => call.body)));
-
-  // A query turns the body into the results card across every section:
-  // the match lives in web, the rail stood on building.
-  const box = routed.rows('.panel-search-box');
-  check('SKILL the search sits above the section',
-    box.length === 1, String(box.length));
-  box[0].value = 'web-one';
-  box[0].fire('input', {});
-  await flush(60);
-  const searched = routed.rows('.cfg-item');
-  check('SKILL a query searches every section',
-    routed.rows('.section-body')[0].dataset.section === 'matches' &&
-      searched.length === 1 && searched[0].textContent.includes('web-one'),
-    searched.map((row) => row.textContent).join(' | ').slice(0, 120));
-
-  // The retired section carries the return.
-  const gone = bootSkills('#/skills/retired');
-  await flush();
-  gone.open();
-  await flush(80);
-  check('SKILL the retired section carries the return',
-    gone.rows('.section-body')[0].dataset.section === 'retired' &&
-      gone.text('skills-board').includes('old-one') &&
-      gone.text('skills-board').includes('unretire'),
-    gone.rows('.section-body')[0].dataset.section);
-
-  // The retire, from the pane card: the press posts the name and the
-  // read repaints — the library never written (KI-215).
-  const retiring = bootSkills('#/skills/building');
-  await flush();
-  retiring.open();
-  await flush(80);
-  retiring.rows('.cfg-item')[0].click();
-  await flush(60);
-  Array.from(retiring.rows('.replay-button'))
-    .find((button) => button.textContent === 'retire from every run').click();
-  await flush(60);
-  const retiredPost = retiring.calls.filter((call) =>
-    call.url === '/api/skill/retire' && call.method === 'POST');
-  check('SKILL the retire posts the name and repaints',
-    retiredPost.length === 1 &&
-      JSON.parse(retiredPost[0].body).name === 'skill-31',
-    JSON.stringify(retiredPost.map((call) => call.body)));
 }
+
 
 
 // The memory surface's document, in the bridge's own shape: sections
@@ -9664,13 +9632,16 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
   const railRows = page.rows('.section-rail-row');
   const railText = railRows.map((row) => row.textContent);
   check('MEM the rail leads with needs you and carries the type words',
-    railRows.length === 7 &&
+    railRows.length === 10 &&
       railText[0].includes('needs you') &&
       railText[1].includes('feedback') && railText[2].includes('project') &&
       railText.some((t) => t.includes('everything else')) &&
       railText.some((t) => t.includes('retired')) &&
       railText.some((t) => t.includes('archive')) &&
-      railText.some((t) => t.includes('today')),
+      railText.some((t) => t.includes('today')) &&
+      railText.some((t) => t.includes('skills')) &&
+      railText.some((t) => t.includes('tools')) &&
+      railText.some((t) => t.includes('workflows')),
     railText.join(' | '));
   check('MEM one section renders at a time',
     page.rows('.section-body').length === 1 &&
@@ -11021,14 +10992,14 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
-    check('ICONS the main rail lists twenty destinations', links.length === 20,
+    check('ICONS the main rail lists nineteen destinations (skills folded into Intelligence, U40)', links.length === 19,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 20,
+      shapes.every(Boolean) && new Set(shapes).size === 19,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 
@@ -12288,6 +12259,75 @@ async function anEmptyTissueNamesWhatFillsIt() {
       ' said=' + page.IDS['tissue-empty'].textContent);
 }
 
+// U40's Tools and Workflows segments: the capability registry reads
+// paint classed rows; a home with no declared graph says so by name —
+// never a fake chain.
+const toolsDocument = () => ({
+  type: 'tools',
+  built_ins: [
+    { name: 'bash', kind: 'builtin', class: 'shell', description: 'run a command' },
+    { name: 'write_file', kind: 'builtin', class: 'write', description: 'write a file' },
+    { name: 'read_file', kind: 'builtin', class: 'read', description: 'read a file' },
+  ],
+  lanes: [{ name: 'sys1', kind: 'lane', role: 'judgment', health_tools: ['sys1_health'] }],
+  mcp: [{ name: 'docs', kind: 'mcp', program: 'docs-server', enabled: true, env_names: [] }],
+});
+async function theToolsSegmentNamesTheRegistryAndItsClasses() {
+  const page = boot({ documents: { tools: toolsDocument() }, hash: '#/memory/tools' });
+  page.open();
+  await flush(80);
+  const body = page.rows('.section-body');
+  check('INTEL the tools segment renders from its read',
+    body.length === 1 && body[0].dataset.section === 'tools', body.map((b) => b.dataset.section).join(','));
+  const text = page.text('memory-board');
+  check('INTEL every tool row names its class',
+    text.includes('bash') && text.includes('shell') &&
+      text.includes('write_file') && text.includes('write') &&
+      text.includes('read_file') && text.includes('read'),
+    'rows painted');
+  check('INTEL the lanes and the mcp registry ride the same card',
+    text.includes('sys1') && text.includes('guarded at the gate') &&
+      text.includes('docs') && text.includes('enabled'),
+    'lanes+mcp painted');
+}
+
+async function anUnworkflowsHomeSaysSoByName() {
+  const page = boot({ documents: {}, hash: '#/memory/workflows' });
+  page.open();
+  await flush(80);
+  const text = page.text('memory-board');
+  check('INTEL an undeclared graph names itself, never a fake chain',
+    page.rows('.section-body')[0].dataset.section === 'workflows' &&
+      text.includes('declares no graph yet') && text.includes('fleet graph'),
+    text.slice(0, 160));
+}
+
+async function theWorkflowsSegmentCarriesTheDeclaredChains() {
+  const page = boot({
+    documents: {
+      workflows: {
+        type: 'workflows', declared: true,
+        nodes: [
+          { id: 'plan', workflows: ['the-plan-chain'], tools: ['read_file'], prereqs: [] },
+          { id: 'build', workflows: [], tools: [], prereqs: ['plan'] },
+        ],
+        critical_path: ['plan', 'build'],
+      },
+    },
+    hash: '#/memory/workflows',
+  });
+  page.open();
+  await flush(80);
+  const text = page.text('memory-board');
+  
+  check('INTEL the declared chain paints with its node and its prereqs',
+    text.includes('the-plan-chain') && text.includes('on plan') && text.includes('after build') === false,
+    'chain painted');
+  check('INTEL the critical path names the order',
+    text.includes('the critical path: plan \u2192 build'),
+    'path painted');
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -12439,8 +12479,12 @@ const cases = [
   ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],
   ['RESKIN the tissue paints the graph and pivots', theTissuePaintsTheGraphAndPivots],
   ['RESKIN an empty tissue names what fills it', anEmptyTissueNamesWhatFillsIt],
+  ['INTEL the tools segment names the registry and its classes', theToolsSegmentNamesTheRegistryAndItsClasses],
+  ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],
+  ['INTEL the workflows segment carries the declared chains', theWorkflowsSegmentCarriesTheDeclaredChains],
 ];
 
+process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));
 for (const [name, run] of cases) {
   try {
     await run();

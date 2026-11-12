@@ -11057,3 +11057,40 @@ body[data-motion="off"] .tissue-edge.hot { animation: none; }
 
 /* The lens-head's sub line is `.page-note`, carried by the shared
    pageHead() builder — one pattern, every section (U9). */
+
+/* The Intelligence segments' row heads (U40): chip, name and class on
+   one flex line, wrapping when the description is long — never
+   overlapping. */
+.intel-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.intel-row-head .tissue-where {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.intel-row {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.intel-row:last-child { border-bottom: 0; }
+
+.intel-row .intel-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
