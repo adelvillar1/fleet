@@ -742,6 +742,14 @@ pub enum ArmadaAction {
     Status { sid: Option<String> },
     /// Trigger the L4 corpus sync.
     Sync,
+    /// Provision a fresh install (governance, step-up): lay out the home, mint
+    /// a fresh install-id, and clone the corpus remote (L9).
+    Deploy {
+        home: String,
+        remote: Option<String>,
+    },
+    /// Dispatch a task to an instance through the control plane (L9).
+    Dispatch { sid: String, task: String },
 }
 
 /// Options for `fleet improve`. The bare command lists the proposals;
@@ -2233,8 +2241,34 @@ fn parse_armada(args: &[String]) -> Result<Command, String> {
             sid: rest.first().cloned(),
         })),
         "sync" => Ok(Command::Armada(ArmadaAction::Sync)),
+        "deploy" => {
+            let Some(home) = rest.first().cloned() else {
+                return Err("armada deploy needs a home path".to_string());
+            };
+            let mut remote = None;
+            let mut index = 1;
+            while index < rest.len() {
+                if rest[index] == "--remote" {
+                    remote = rest.get(index + 1).cloned();
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+            }
+            Ok(Command::Armada(ArmadaAction::Deploy { home, remote }))
+        }
+        "dispatch" => {
+            let Some(sid) = rest.first().cloned() else {
+                return Err("armada dispatch needs a sid".to_string());
+            };
+            let task = rest[1..].join(" ");
+            if task.trim().is_empty() {
+                return Err("armada dispatch needs a task".to_string());
+            }
+            Ok(Command::Armada(ArmadaAction::Dispatch { sid, task }))
+        }
         other => Err(format!(
-            "unknown armada subcommand `{other}` (roster, status, sync)"
+            "unknown armada subcommand `{other}` (roster, status, sync, deploy, dispatch)"
         )),
     }
 }

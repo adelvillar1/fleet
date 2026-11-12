@@ -1752,6 +1752,104 @@ impl Bridge {
         )
     }
 
+    /// The armada panel's document (armada L9, C3): the flagship roster
+    /// with each instance's earned liveness and measured reliability,
+    /// and the flagship role named. One read off the async worker — the
+    /// roster file and a journal grade per instance — so a page request
+    /// never holds the runtime while they are read.
+    pub async fn armada(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|span| span.as_secs())
+                .unwrap_or_default();
+            let roster = crate::armada::roster::load(&home);
+            let instances: Vec<Value> = roster
+                .instances
+                .values()
+                .map(|instance| {
+                    let grade = crate::armada::control::grade(&home, &instance.sid);
+                    json!({
+                        "sid": instance.sid,
+                        "install_id": instance.install_id,
+                        "version": instance.version,
+                        "capacity_kib": instance.capacity_kib,
+                        "live": instance.live(now),
+                        "settled": grade.settled,
+                        "calibrated": grade.calibrated,
+                        "reliability": grade.reliability,
+                    })
+                })
+                .collect();
+            json!({
+                "type": "armada",
+                "flagship": crate::armada::is_flagship(&home),
+                "instances": instances,
+            })
+        })
+        .await
+        .unwrap_or_else(|_| json!({"type": "armada", "refused": ["the armada read did not land"]}))
+    }
+
+    /// The dispatch composer's act (armada L9, C3): a task named for one
+    /// instance, signed under the owner principal and admitted through
+    /// the control plane before it obeys — authority, then the instance's
+    /// own guard. The key is load-or-mint at the flagship; a refusal is
+    /// named, never a panic.
+    pub async fn armada_dispatch(&self, body: &str) -> Result<Value, String> {
+        let arguments: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("the dispatch is not a JSON object: {error}"))?;
+        let sid = arguments
+            .get("sid")
+            .and_then(serde_json::Value::as_str)
+            .filter(|sid| !sid.trim().is_empty())
+            .ok_or_else(|| "the dispatch names the instance's sid".to_string())?
+            .to_string();
+        let task = arguments
+            .get("task")
+            .and_then(serde_json::Value::as_str)
+            .filter(|task| !task.trim().is_empty())
+            .ok_or_else(|| "the dispatch names a task".to_string())?
+            .to_string();
+        let home = self.home.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|span| span.as_secs())
+                .unwrap_or_default();
+            let key = crate::armada::authority::mint_flagship_key(&home)?;
+            let public = crate::armada::authority::load_public_key(&home)
+                .ok_or_else(|| "the flagship public key could not be read".to_string())?;
+            let principal = crate::identity::principal_for(&home);
+            let frame = crate::armada::authority::sign_frame(
+                &key,
+                "dispatch",
+                &sid,
+                principal.as_str(),
+                json!({ "task": task }),
+                &format!("face-dispatch-{now}"),
+                now,
+                crate::security::ActionClass::Dispatch,
+                &format!("instance:{sid}"),
+                &sid,
+            );
+            let admitted = crate::armada::control::admit(&home, &frame, &public, now)?;
+            match crate::armada::control::execute(&home, &admitted)? {
+                crate::armada::control::Outcome::Dispatch { task, principal } => Ok(json!({
+                    "type": "armada-dispatch",
+                    "sid": sid,
+                    "principal": principal,
+                    "task": task,
+                })),
+                _ => Err("the dispatch did not obey to a dispatch".to_string()),
+            }
+        })
+        .await
+        .map_err(|_| "the dispatch did not land".to_string())??;
+        Ok(outcome)
+    }
+
     pub async fn learning(&self, asked: Option<String>) -> Value {
         let home = self.home.clone();
         let memories = self.memories.clone();

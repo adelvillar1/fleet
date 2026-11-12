@@ -67,9 +67,38 @@ silent stop.
 
 ## Surface
 
-`fleet armada {roster|status|sync}` is the first surface (terminal-first): the
-roster with earned liveness, an instance's measured reliability, and the corpus
-sync. The richer dispatch verb, TUI board, face section, and Tauri shell are L9.
+`fleet armada {roster|status|sync|deploy|dispatch}` drives the control plane
+headlessly: the roster with earned liveness, an instance's measured
+reliability, the corpus sync, provisioning a fresh install, and dispatching a
+task through the guard.
+
+## Deployment — fleet deploying fleet (L9, D51/D52/D57)
+
+`deploy.rs` provisions a target with the self-contained binary (hard rule 12),
+no foreign control-plane service. A **local spawn** lays out a new home, mints
+a fresh install-id (L1), and bootstraps the corpus by cloning the remote —
+inheriting the mind, not the identity (D29). A **VPS** is reached over SSH and
+dropped the same binary from the release raw-binary channel; the command
+sequence is pure (credentials resolve out-of-band via the SSH agent/env, never
+the corpus). The fresh install registers with the flagship roster (L8) and is
+**trusted only after it passes doctor and settles runs** — graded by
+measurement, never by arrival (D57). Provision is a governance action
+(step-up, D18/D19).
+
+## The surface progression (L9, D53–D56)
+
+One `src/armada` library, four surfaces — fleet's proven progression reused,
+not a parallel app:
+
+- **CLI** — `fleet armada …` (terminal-first).
+- **TUI armada board** — a ratatui pane: instances with a colored liveness dot,
+  version, capacity (GiB) bars, and a reliability gauge (calibrated → percent,
+  un-calibrated → named). Genuinely visual, not a plain-text table.
+- **Face armada section** — the roster board, a dispatch composer, and a corpus
+  view in the centre-conversation + context-pane shape; the chat composer is
+  borrowed, never rebuilt. `GET /api/armada` + `POST /api/armada/dispatch`.
+- **fleet-desktop** — wraps the same face over the same server/bridge: no
+  second frontend, no second transport. The section appears automatically.
 
 ## Verification
 
@@ -77,5 +106,8 @@ sync. The richer dispatch verb, TUI board, face section, and Tauri shell are L9.
 verify + forge/unsigned/stale refusal, key custody (flagship only, 0600), verb
 classes, admission gating + audit, the second-factor step-up, corpus-sync
 reaching L4, the reliability grade (un-calibrated until settled), relay-down
-named, and the no-roster install unchanged. The full gate confirms a
+named, the no-roster install unchanged, and deployment (corpus inheritance,
+fresh-install registration, the doctor+settles trust grade, the VPS command
+sequence). The TUI render test pins the armada board; the face harness
+(`tests/face/harness.mjs`) pins the armada section. The full gate confirms a
 single-instance fleet behaves as today.

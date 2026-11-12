@@ -254,6 +254,9 @@
     ['settings', 'settings'],
     ['second-brain', 'second brain'],
     ['workspace-history', 'workspace history'],
+    // The armada (armada L9, C3): the flagship's roster, the dispatch
+    // composer, and the corpus view — one board, read from /api/armada.
+    ['armada', 'armada'],
     ['bots', 'bots'],
     ['plugins', 'plugins'],
     // The update work's own pane (2026-11-08): this build's version,
@@ -314,6 +317,9 @@
       ['settings', 'settings'],
       ['calibration', 'calibration'],
       ['plugins', 'plugins'],
+      // The flagship's hand (armada L9): the roster it commands, the
+      // dispatch it admits, and the corpus the instances share.
+      ['armada', 'armada'],
       ['about', 'about']
     ]]
   ];
@@ -595,6 +601,13 @@
       ['circle', { cx: 6, cy: 18, r: 2.1 }],
       ['circle', { cx: 17.5, cy: 10, r: 2.1 }],
       ['path', { d: 'M6 13.5h6.5a3 3 0 0 0 3-3' }]
+    ],
+    // the armada: a flagship and two escorts on one heading
+    armada: [
+      ['path', { d: 'M12 3.5l3.5 6h-7z' }],
+      ['path', { d: 'M5.5 11.5l2.5 4.5H3z' }],
+      ['path', { d: 'M18.5 11.5l2.5 4.5h-5z' }],
+      ['path', { d: 'M4 20h16' }]
     ],
     // a face with a stem: the robot, cut to what reads at 17px
     bots: [
@@ -924,6 +937,7 @@
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelWorkspaceHistory: document.getElementById('panel-workspace-history'),
+    panelArmada: document.getElementById('panel-armada'),
     panelBots: document.getElementById('panel-bots'),
     panelVault: document.getElementById('panel-vault'),
     panelSettings: document.getElementById('panel-settings'),
@@ -998,6 +1012,8 @@
     brainBoard: document.getElementById('brain-board'),
     workspaceHistoryBoard: document.getElementById('workspace-history-board'),
     workspaceHistoryRail: document.getElementById('workspace-history-rail'),
+    armadaBoard: document.getElementById('armada-board'),
+    armadaRail: document.getElementById('armada-rail'),
     botsRail: document.getElementById('bots-rail'),
     botsBoard: document.getElementById('bots-board'),
     vaultBoard: document.getElementById('vault-board'),
@@ -16515,6 +16531,210 @@
     }
   }
 
+  /// The armada read (armada L9, C3): one document — the roster with
+  /// each instance's earned liveness and measured reliability, and the
+  /// flagship role named. The five-second freshness window is the one
+  /// the other board reads hold, so a poll-driven face never pays one
+  /// spawn per repaint.
+  function readArmada(force) {
+    var now = Date.now();
+    if (!force && face.armada && now - face.armadaAt < 5000) return Promise.resolve();
+    face.armadaAt = now;
+    return fetch('/api/armada', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.armada = doc;
+        if (face.panel === 'armada') paintArmada();
+      })
+      .catch(function () { });
+  }
+
+  function paintArmadaRail(read) {
+    if (!el.armadaRail) return;
+    if (face.armadaRailFolded == null) {
+      try {
+        face.armadaRailFolded = window.localStorage.getItem('fleet-armada-rail') === 'folded';
+      } catch (error) { face.armadaRailFolded = false; }
+    }
+    var instances = (read && read.instances) || [];
+    var sections = instances.map(function (instance) {
+      return {
+        id: instance.sid,
+        icon: 'armada',
+        name: instance.sid,
+        badge: instance.live ? 'live' : 'idle',
+        badgeTitle: instance.live
+          ? 'a heartbeat inside the window'
+          : 'no recent heartbeat — liveness is earned'
+      };
+    });
+    var current = face.armadaSid
+      && instances.some(function (one) { return one.sid === face.armadaSid; })
+      ? face.armadaSid : (instances[0] || {}).sid || '';
+    sectionRail(el.armadaRail, sections, {
+      current: current,
+      folded: !!face.armadaRailFolded,
+      store: 'fleet-armada-rail',
+      onPick: function (id) {
+        face.armadaSid = id;
+        paintArmada();
+      },
+      onFold: function (folded) {
+        face.armadaRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-armada-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintArmada();
+      }
+    });
+  }
+
+  function paintArmada() {
+    var read = face.armada;
+    el.armadaBoard.textContent = '';
+    // Paint-before-read: the loading card says the read has not landed;
+    // it never invents a roster the server has not named.
+    if (!read) {
+      el.armadaBoard.appendChild(surfaceHead('System', 'Armada',
+        'The flagship\u2019s hand: the roster it commands, the dispatch it admits, and the ' +
+        'corpus the instances share.', null));
+      var waiting = boardCard(12, 'reading', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The armada read has not landed yet. It reads the roster file and grades each ' +
+        'instance\u2019s settled dispatches over the journal.'));
+      el.armadaBoard.appendChild(waiting);
+      paintArmadaRail(null);
+      return;
+    }
+    paintArmadaRail(read);
+    if (refusals(read)) {
+      el.armadaBoard.appendChild(surfaceHead('System', 'Armada',
+        'The flagship\u2019s hand: the roster it commands, the dispatch it admits, and the ' +
+        'corpus the instances share.', null));
+      el.armadaBoard.appendChild(refusedCard(read.refused));
+      return;
+    }
+    var instances = read.instances || [];
+    var live = instances.filter(function (one) { return one.live; }).length;
+    var calibrated = instances.filter(function (one) { return one.calibrated; }).length;
+    var instrument = surfaceInstrument('the roster',
+      read.flagship ? 'flagship' : 'no roster',
+      instances.length + (instances.length === 1 ? ' instance' : ' instances') +
+      ' \u00b7 ' + live + ' live',
+      [{
+        label: 'refresh',
+        run: function () { readArmada(true).then(paintArmada); }
+      }]);
+    el.armadaBoard.appendChild(surfaceHead('System', 'Armada',
+      'Liveness is earned by heartbeats and reliability by settled dispatches \u2014 never ' +
+      'by registration. The corpus syncs over git whether the relay is up or down.', instrument));
+    el.armadaBoard.appendChild(surfaceStrip([
+      [instances.length, 'instances'],
+      [live, 'live'],
+      [calibrated, 'calibrated']
+    ], read.flagship ? 'this install holds the roster' : 'an ordinary single-instance fleet'));
+    // The roster board: one line per instance — the sid, its version,
+    // the liveness it earned, its capacity in GiB, and the reliability
+    // its settles measured. A fresh instance says un-calibrated.
+    var roster = boardCard(12, 'the roster', 'liveness earned, not assumed');
+    if (!instances.length) {
+      roster.appendChild(node('p', 'board-empty', 'no instances registered'));
+    } else {
+      instances.forEach(function (instance) {
+        var line = node('div', 'svc-line');
+        line.appendChild(node('strong', null, instance.sid));
+        var gib = Math.round(((instance.capacity_kib || 0) / 1048576) * 100) / 100;
+        var reliability = instance.calibrated
+          ? Math.round((instance.reliability || 0) * 100) + '% reliable'
+          : 'un-calibrated';
+        line.appendChild(document.createTextNode(
+          ' \u00b7 ' + (instance.version || 'unknown') +
+          ' \u00b7 ' + (instance.live ? 'live' : 'not live') +
+          ' \u00b7 ' + gib + ' GiB' +
+          ' \u00b7 ' + reliability +
+          (instance.calibrated ? ' (' + instance.settled + ' settled)' : '')));
+        roster.appendChild(line);
+      });
+    }
+    el.armadaBoard.appendChild(roster);
+    // The dispatch composer: a task named for one instance, admitted
+    // under the owner principal before it obeys. The note is state, not
+    // a transient DOM write (KI-447): the refresh after the press
+    // repaints it rather than erasing what the owner just did.
+    var composer = boardCard(12, 'dispatch', 'admitted under the owner principal');
+    var form = node('div', 'svc-line');
+    var pick = node('select', 'hook-input');
+    pick.setAttribute('aria-label', 'the instance to dispatch to');
+    instances.forEach(function (instance) {
+      var option = node('option', null, instance.sid);
+      option.value = instance.sid;
+      pick.appendChild(option);
+    });
+    var asked = face.armadaSid
+      && instances.some(function (one) { return one.sid === face.armadaSid; })
+      ? face.armadaSid : (instances[0] || {}).sid || '';
+    if (asked) pick.value = asked;
+    pick.addEventListener('change', function () { face.armadaSid = pick.value; });
+    var task = node('input', 'hook-input');
+    task.type = 'text';
+    task.placeholder = 'the task to dispatch';
+    task.setAttribute('aria-label', 'the task to dispatch');
+    task.value = face.armadaTask || '';
+    task.addEventListener('input', function () { face.armadaTask = task.value; });
+    var send = node('button', 'foot-btn', 'dispatch');
+    send.type = 'button';
+    send.addEventListener('click', function () {
+      var sid = pick.value;
+      var words = task.value.trim();
+      if (!sid || !words) {
+        face.armadaDispatchNote = 'a dispatch names an instance and a task';
+        paintArmada();
+        return;
+      }
+      face.armadaDispatchNote = 'dispatching\u2026';
+      send.disabled = true;
+      post('/api/armada/dispatch', { sid: sid, task: words })
+        .then(function (reply) {
+          face.armadaDispatchNote = reply.status !== 200
+            ? 'refused \u00b7 ' + ((reply.body && reply.body.error) || 'the dispatch did not land')
+            : 'admitted \u00b7 ' + (reply.body.sid || sid) +
+              ' \u00b7 ' + (reply.body.principal || 'owner');
+          if (reply.status === 200) {
+            face.armadaTask = '';
+            readArmada(true).then(paintArmada);
+          } else {
+            paintArmada();
+          }
+        })
+        .catch(function () {
+          face.armadaDispatchNote = 'refused \u00b7 the dispatch did not land';
+          paintArmada();
+        });
+    });
+    form.appendChild(pick);
+    form.appendChild(task);
+    form.appendChild(send);
+    composer.appendChild(form);
+    if (face.armadaDispatchNote) {
+      composer.appendChild(node('p', 'board-empty', face.armadaDispatchNote));
+    }
+    el.armadaBoard.appendChild(composer);
+    // The corpus view: the shared corpus's standing, named by the
+    // flagship role — the sync itself rides the control plane's verb.
+    var corpus = boardCard(12, 'the corpus',
+      read.flagship ? 'the flagship\u2019s view' : 'no roster');
+    corpus.appendChild(node('p', 'board-empty', read.flagship
+      ? 'This install holds the roster and the flagship key: the corpus the instances share ' +
+        'syncs over git, independent of the relay \u2014 when the relay is down the instances ' +
+        'run autonomously and live control resumes when it returns.'
+      : 'No roster is registered: this is an ordinary single-instance fleet. The corpus is ' +
+        'this install\u2019s own, and the flagship role is additive \u2014 a roster makes it a hand.'));
+    el.armadaBoard.appendChild(corpus);
+  }
+
   // The live feed's page: one read per refresh, riding `since` so a
   // poll answers only what moved. Traces off is a named absence.
   function readWorkspaceCalls(force) {
@@ -25871,6 +26091,7 @@
     design: el.panelDesign,
     'second-brain': el.panelSecondBrain,
     'workspace-history': el.panelWorkspaceHistory,
+    armada: el.panelArmada,
     bots: el.panelBots,
     vault: el.panelVault,
     settings: el.panelSettings,
@@ -26054,6 +26275,7 @@
         readWorkspaceHistory(true).then(paintWorkspaceHistory);
         readWorkspaceCalls(true);
       },
+      armada: function () { paintArmada(); readArmada(true).then(paintArmada); },
       vault: function () { paintVault(); readSettings(true).then(paintVault); },
       settings: function () {
         // `#/settings/<section>/<item>` opens the item's card (U3): the
@@ -27528,7 +27750,7 @@
   // two built surfaces (design, huddles) "later" and carried a phantom
   // (tower). The harness pins it against the rail's own addresses.
   var BUILT = ['chat', 'inbox', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
-    'sessions', 'calibration', 'second-brain', 'workspace-history', 'bots', 'vault',
+    'sessions', 'calibration', 'second-brain', 'workspace-history', 'armada', 'bots', 'vault',
     'settings', 'plugins', 'learning', 'about'];
 
   // The rail's badge: the surface that has something waiting says so,

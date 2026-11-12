@@ -1040,6 +1040,14 @@
     <div class="board" id="workspace-history-board"></div>
   </main>
 
+  <!-- The armada (armada L9, C3): the flagship's roster board, the
+       dispatch composer, and the corpus view. Keyed panel like its
+       siblings — the board is built by the face from /api/armada. -->
+  <main class="stage stage-board stage-split" id="panel-armada" hidden>
+    <nav class="section-rail" id="armada-rail" aria-label="armada"></nav>
+    <div class="board" id="armada-board"></div>
+  </main>
+
   <!-- The other addresses of the plan's route table. They are keyed
        panels, not routes: the browser never asks the server for a page,
        and a surface that is not built yet says so instead of pretending. -->

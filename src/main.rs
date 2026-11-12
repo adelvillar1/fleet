@@ -4169,6 +4169,77 @@ fn armada_command(action: fleet::cli::ArmadaAction) -> ExitCode {
                 ExitCode::from(1)
             }
         },
+        ArmadaAction::Deploy {
+            home: target_home,
+            remote,
+        } => {
+            // Provision is a governance action (D18/D19): the owner's own
+            // invocation is the in-turn approval; the act is journaled, and
+            // the fresh install is un-calibrated until it settles (D57).
+            let target = std::path::PathBuf::from(&target_home);
+            match fleet::armada::deploy::provision_local(&target, remote.as_deref()) {
+                Ok(report) => {
+                    fleet::armada::deploy::journal_provision(
+                        &target,
+                        &report.install_id,
+                        "local",
+                        report.corpus_cloned,
+                    );
+                    println!(
+                        "armada deploy: install={} corpus_cloned={} calibrated={}",
+                        report.install_id, report.corpus_cloned, report.calibrated
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("armada deploy: {error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        ArmadaAction::Dispatch { sid, task } => {
+            // The flagship signs a dispatch frame under the owner principal,
+            // admits it through the control plane (authority + guard), and
+            // obeys to the run seam (the caller reuses bridge.run).
+            let key = match fleet::armada::authority::mint_flagship_key(&home) {
+                Ok(key) => key,
+                Err(error) => {
+                    eprintln!("armada dispatch: {error}");
+                    return ExitCode::from(1);
+                }
+            };
+            let public = fleet::armada::authority::load_public_key(&home).unwrap_or_default();
+            let frame = fleet::armada::authority::sign_frame(
+                &key,
+                "dispatch",
+                &sid,
+                "owner",
+                serde_json::json!({ "task": task }),
+                "cli-dispatch",
+                now,
+                fleet::security::ActionClass::Dispatch,
+                &format!("instance:{sid}"),
+                &sid,
+            );
+            match fleet::armada::control::admit(&home, &frame, &public, now)
+                .and_then(|admitted| fleet::armada::control::execute(&home, &admitted))
+            {
+                Ok(fleet::armada::control::Outcome::Dispatch { task, principal }) => {
+                    println!(
+                        "armada dispatch: admitted sid={sid} principal={principal} task={task}"
+                    );
+                    ExitCode::SUCCESS
+                }
+                Ok(_) => {
+                    println!("armada dispatch: admitted sid={sid}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("armada dispatch: {error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
     }
 }
 

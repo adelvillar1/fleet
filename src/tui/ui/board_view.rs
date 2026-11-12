@@ -1,7 +1,8 @@
 //! The composed boards: the router's model mix as a real bar chart and
 //! the day's served-rate as a labelled gauge, the tower's reports-vs-
-//! commits series and project ranking, and the line composers that stay
-//! lines because their width is 42 columns.
+//! commits series and project ranking, the armada's instance cards with
+//! their reliability gauges, and the line composers that stay lines
+//! because their width is 42 columns.
 //!
 //! The charts are fed by the snapshots the boards already read. The
 //! tower's series comes from the brain slot (`reports.report_daily` and
@@ -18,7 +19,9 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::boards::{self, BoardData, BoardKind, BrainSnapshot, RouterSnapshot, TowerSnapshot};
+use crate::boards::{
+    self, ArmadaSnapshot, BoardData, BoardKind, BrainSnapshot, RouterSnapshot, TowerSnapshot,
+};
 use crate::tui::ui::palette;
 
 /// The router board: the model mix as bars and the day's served rate as
@@ -282,6 +285,195 @@ fn render_project_bars(frame: &mut Frame<'_>, snapshot: &TowerSnapshot, area: Re
         .value_style(Style::new().fg(palette::TEXT))
         .label_style(Style::new().fg(palette::DIM));
     frame.render_widget(chart, area);
+}
+
+/// The armada board: the roster as per-instance cards — the earned-
+/// liveness dot on each card's border, the version and capacity beneath
+/// it, and the measured reliability as a gauge. The capacity comparison
+/// rides above the cards when there is more than one instance to compare.
+/// An empty roster is a named state, not a panic; a pane too short for a
+/// whole card falls back to the line shape rather than clipping one.
+pub(super) fn render_armada(frame: &mut Frame<'_>, snapshot: &ArmadaSnapshot, area: Rect) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let live = snapshot.instances.iter().filter(|one| one.live).count();
+    let header = Line::from(vec![
+        Span::styled(
+            format!(" {} instance(s)", snapshot.instances.len()),
+            Style::new().fg(palette::TEXT),
+        ),
+        Span::styled(
+            format!(" \u{b7} {live} live"),
+            Style::new().fg(palette::DIM),
+        ),
+    ]);
+    if snapshot.instances.is_empty() {
+        render_lines(
+            frame,
+            vec![
+                header,
+                Line::from(""),
+                Line::from(Span::styled(
+                    " no instances registered",
+                    Style::new().fg(palette::DIM),
+                )),
+            ],
+            area,
+        );
+        return;
+    }
+    // One card is four rows: the bordered title, the facts line, the
+    // reliability gauge, the bottom border.
+    const CARD_H: u16 = 4;
+    // The capacity bars only when there is more than one instance to
+    // compare and the room to spare: a single-instance "bar chart" is a
+    // line with a block on it (the router board's own rule).
+    let bars_h = if snapshot.instances.len() > 1 && area.height >= 16 {
+        (snapshot.instances.len() as u16).clamp(1, 4)
+    } else {
+        0
+    };
+    // As many whole cards as fit after the header and the bars; the rest
+    // are named on a holdback line rather than clipped mid-border.
+    let rest_h = area.height.saturating_sub(1 + bars_h);
+    let mut fit = (rest_h / CARD_H) as usize;
+    let hidden = snapshot.instances.len().saturating_sub(fit);
+    if hidden > 0 {
+        fit = (rest_h.saturating_sub(1) / CARD_H) as usize;
+    }
+    if fit == 0 {
+        render_lines(
+            frame,
+            super::armada_lines(snapshot, area.width as usize),
+            area,
+        );
+        return;
+    }
+    let [header_area, bars_area, rest] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(bars_h),
+        Constraint::Min(1),
+    ])
+    .areas(area);
+    frame.render_widget(Paragraph::new(header), header_area);
+    if bars_h > 0 {
+        render_capacity_bars(frame, snapshot, bars_area);
+    }
+    let cards = Layout::vertical(vec![Constraint::Length(CARD_H); fit]).split(rest);
+    for (instance, card) in snapshot.instances.iter().take(fit).zip(cards.iter()) {
+        render_instance_card(frame, instance, *card);
+    }
+    if hidden > 0 {
+        let marker = Rect {
+            x: rest.x,
+            y: rest.y + fit as u16 * CARD_H,
+            width: rest.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(" +{hidden} more"),
+                Style::new().fg(palette::DIM),
+            ))),
+            marker,
+        );
+    }
+}
+
+/// The instances' declared capacities as horizontal bars: the same
+/// comparison the router's model mix draws, so a small VPS beside a large
+/// host reads at a glance. The bar's magnitude is the roster's KiB; the
+/// value at the row's end is the GiB the budget is spoken in.
+fn render_capacity_bars(frame: &mut Frame<'_>, snapshot: &ArmadaSnapshot, area: Rect) {
+    let bars: Vec<Bar> = snapshot
+        .instances
+        .iter()
+        .take(area.height as usize)
+        .map(|instance| {
+            Bar::with_label(clip(&instance.sid, 14), instance.capacity_kib)
+                .text_value(boards::gib(instance.capacity_kib))
+        })
+        .collect();
+    let max = snapshot
+        .instances
+        .iter()
+        .map(|one| one.capacity_kib)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let chart = BarChart::horizontal(bars)
+        .max(max)
+        .bar_width(1)
+        .bar_gap(0)
+        .bar_style(Style::new().fg(palette::ACCENT))
+        .value_style(Style::new().fg(palette::TEXT))
+        .label_style(Style::new().fg(palette::DIM));
+    frame.render_widget(chart, area);
+}
+
+/// One instance's card: the sid and its earned-liveness dot on the
+/// border, the version, capacity and health beneath, and the reliability
+/// gauge as the second line. An un-calibrated instance names itself
+/// instead of drawing a zero gauge — a zero bar reads as failure, which
+/// is a different fact from "not yet measured" (D49).
+fn render_instance_card(frame: &mut Frame<'_>, instance: &boards::ArmadaInstance, area: Rect) {
+    let (dot, color) = if instance.live {
+        ("\u{25cf}", palette::DONE)
+    } else {
+        ("\u{25cb}", palette::DENIED)
+    };
+    let health = if instance.live { "live" } else { "not live" };
+    let title_width = (area.width as usize).saturating_sub(6);
+    let block = Block::bordered()
+        .title(format!(" {dot} {} ", clip(&instance.sid, title_width)))
+        .title_style(Style::new().fg(color))
+        .border_style(Style::new().fg(palette::DIM));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+    let [facts_area, grade_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(inner);
+    let facts = Line::from(vec![
+        Span::styled(
+            format!(" {}", instance.version),
+            Style::new().fg(palette::TEXT),
+        ),
+        Span::styled(
+            format!("  {}", boards::gib(instance.capacity_kib)),
+            Style::new().fg(palette::DIM),
+        ),
+        Span::styled(format!("  {health}"), Style::new().fg(color)),
+    ]);
+    frame.render_widget(Paragraph::new(facts), facts_area);
+    if instance.calibrated {
+        let percent = (instance.reliability * 100.0).round() as u64;
+        let gauge = Gauge::default()
+            .ratio(instance.reliability.clamp(0.0, 1.0))
+            .label(format!(
+                " {percent}% reliable \u{b7} {} settled ",
+                instance.settled
+            ))
+            .gauge_style(Style::new().fg(if instance.reliability >= 0.9 {
+                palette::DONE
+            } else if instance.reliability >= 0.7 {
+                palette::PENDING
+            } else {
+                palette::DENIED
+            }))
+            .use_unicode(true);
+        frame.render_widget(gauge, grade_area);
+    } else {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " un-calibrated \u{b7} no dispatches settled",
+                Style::new().fg(palette::DIM),
+            ))),
+            grade_area,
+        );
+    }
 }
 
 /// One day's two counts, aligned over the same union of days.

@@ -1,13 +1,14 @@
-//! The boards: three read-only surfaces over this machine's own sources,
+//! The boards: four read-only surfaces over this machine's own sources,
 //! mounted in the TUI's board pane.
 //!
-//! The three boards and their sources:
+//! The four boards and their sources:
 //!
 //! | Board | Source | What it renders |
 //! |---|---|---|
 //! | router | Fleet's own routing state: the declared chain, the workload preference table, the gates, and the route rows Fleet writes for every run it serves | the workload tier chains with their candidates, what Fleet just served, and the day's counts |
 //! | second-brain | the six derived state files under the second-brain home (`gates_state`, `harness_state`, `loops_state`, `reports_state`, `maturity_state`, `tower_data`) | the earned-autonomy gate board, the HITL inbox, the quality loops and their graded rows, the maturity sparkline, the doing/conflict counts |
 //! | tower | git facts per project under `~/Projects` | per-project cards: branch, dirty dot, head commit, the trailing-thirty-day count, ahead/behind |
+//! | armada | the flagship roster under the fleet home (`roster.json`) and the dispatch outcomes the journal settles per sid | per-instance cards: the earned-liveness dot, version, capacity, and the measured reliability gauge |
 //!
 //! **The router board reads nothing over the network.** Fleet's router is
 //! this crate's own [`crate::route::select`] — sys1 asks for a workload
@@ -29,7 +30,7 @@
 //!
 //! **The refresh.** [`spawn_refresher`] owns one thread with its own
 //! current-thread runtime — the `spawn_consolidator`/`open_lanes_view`
-//! precedent — reads all three boards concurrently at start and every
+//! precedent — reads all four boards concurrently at start and every
 //! [`BOARD_REFRESH_SECS`], and reads again the moment a
 //! [`BoardCommand::Refresh`] arrives (the cycle keybinding). Every read is
 //! bounded, so a slow or hung source names itself instead of stalling the
@@ -59,9 +60,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 // --- the seam ----------------------------------------------------------------
 
-/// How often the refresher reads all three boards. The fork's boards carry
+/// How often the refresher reads all four boards. The fork's boards carry
 /// their own cadence (60s for the router and second-brain boards, 30
-/// minutes for the tower); one cadence for all three keeps the pane's
+/// minutes for the tower); one cadence for all four keeps the pane's
 /// contract in one place, and the tower scan's cost (~2s of bounded `git`
 /// calls over thirty repos) is what sets it.
 pub const BOARD_REFRESH_SECS: u64 = 30;
@@ -100,17 +101,23 @@ pub const FILE_READ_TIMEOUT_SECS: u64 = 5;
 /// children on a background thread.
 pub const MAX_PROJECTS: usize = 64;
 
-/// The three boards, in the order the cycle keybinding walks them.
+/// The four boards, in the order the cycle keybinding walks them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoardKind {
     Router,
     Brain,
     Tower,
+    Armada,
 }
 
 impl BoardKind {
     /// Every board, in cycle order.
-    pub const ALL: [BoardKind; 3] = [BoardKind::Router, BoardKind::Brain, BoardKind::Tower];
+    pub const ALL: [BoardKind; 4] = [
+        BoardKind::Router,
+        BoardKind::Brain,
+        BoardKind::Tower,
+        BoardKind::Armada,
+    ];
 
     /// The board's name, as the pane title and the status bar carry it.
     pub fn label(&self) -> &'static str {
@@ -118,6 +125,7 @@ impl BoardKind {
             BoardKind::Router => "router",
             BoardKind::Brain => "second-brain",
             BoardKind::Tower => "tower",
+            BoardKind::Armada => "armada",
         }
     }
 
@@ -126,7 +134,8 @@ impl BoardKind {
         match self {
             BoardKind::Router => BoardKind::Brain,
             BoardKind::Brain => BoardKind::Tower,
-            BoardKind::Tower => BoardKind::Router,
+            BoardKind::Tower => BoardKind::Armada,
+            BoardKind::Armada => BoardKind::Router,
         }
     }
 
@@ -136,6 +145,7 @@ impl BoardKind {
             BoardKind::Router => 0,
             BoardKind::Brain => 1,
             BoardKind::Tower => 2,
+            BoardKind::Armada => 3,
         }
     }
 }
@@ -144,7 +154,7 @@ impl BoardKind {
 /// was read. Each variant carries its own `read_at`, the minute of the
 /// last good read, which is what the pane names beside a refusal.
 ///
-/// All three variants are boxed. A snapshot is a message, not a value the
+/// All four variants are boxed. A snapshot is a message, not a value the
 /// caller holds: it is built once per read, carried over the update
 /// channel, matched by reference, and dropped — so the box costs one
 /// allocation per refresh and buys an enum the size of a pointer rather
@@ -157,6 +167,7 @@ pub enum BoardData {
     Router(Box<RouterSnapshot>),
     Brain(Box<BrainSnapshot>),
     Tower(Box<TowerSnapshot>),
+    Armada(Box<ArmadaSnapshot>),
 }
 
 impl BoardData {
@@ -166,6 +177,7 @@ impl BoardData {
             BoardData::Router(snapshot) => &snapshot.read_at,
             BoardData::Brain(snapshot) => &snapshot.read_at,
             BoardData::Tower(snapshot) => &snapshot.read_at,
+            BoardData::Armada(snapshot) => &snapshot.read_at,
         }
     }
 }
@@ -207,13 +219,13 @@ pub struct Slot {
     pub loading: bool,
 }
 
-/// The three boards' pane state and which one is showing. Owned by the
+/// The four boards' pane state and which one is showing. Owned by the
 /// TUI's state machine; the refresher thread only ever reports finished
 /// reads into it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Boards {
     pub active: BoardKind,
-    slots: [Slot; 3],
+    slots: [Slot; 4],
 }
 
 impl Default for Boards {
@@ -223,7 +235,7 @@ impl Default for Boards {
 }
 
 impl Boards {
-    /// Three empty slots, the router board active, all three loading:
+    /// Four empty slots, the router board active, all four loading:
     /// the refresher's opening read is in flight from the moment the
     /// interface starts.
     pub fn new() -> Boards {
@@ -234,7 +246,7 @@ impl Boards {
         };
         Boards {
             active: BoardKind::Router,
-            slots: [loading.clone(), loading.clone(), loading],
+            slots: [loading.clone(), loading.clone(), loading.clone(), loading],
         }
     }
 
@@ -278,6 +290,8 @@ pub struct Sources {
     pub router: RouterState,
     pub brain_home: Option<PathBuf>,
     pub tower_root: PathBuf,
+    /// The fleet home the armada board reads its roster and journal from.
+    pub fleet_home: PathBuf,
     pub bounds: Bounds,
 }
 
@@ -341,6 +355,7 @@ pub fn resolve_sources(home: &Path, dotenv: &HashMap<String, String>) -> Sources
         router: router_state(home, dotenv),
         brain_home: brain_home(&setting),
         tower_root: tower_root(&setting),
+        fleet_home: home.to_path_buf(),
         bounds: Bounds::default(),
     }
 }
@@ -3198,12 +3213,79 @@ fn git(directory: &Path, bin: &str, args: &[&str], timeout: Duration) -> Option<
     output
 }
 
+// --- the armada board --------------------------------------------------------
+
+/// One board read of the flagship roster: the registered instances with
+/// their earned liveness and their measured reliability. An empty roster
+/// is an ordinary fleet (a single-instance home behaves as today), so it
+/// lands as a snapshot with no instances rather than a refusal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArmadaSnapshot {
+    pub read_at: String,
+    /// The roster's instances, in sid order.
+    pub instances: Vec<ArmadaInstance>,
+}
+
+/// One registered instance as the board carries it: the roster's own
+/// facts plus the two readings the board computes — liveness earned
+/// against the heartbeat window, and the reliability the journal's
+/// settled dispatches grade (D49).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArmadaInstance {
+    pub sid: String,
+    pub install_id: String,
+    pub version: String,
+    /// The instance's declared run budget, in KiB.
+    pub capacity_kib: u64,
+    /// A heartbeat inside the window: earned, never assumed.
+    pub live: bool,
+    /// The dispatch outcomes the journal has settled for this sid.
+    pub settled: usize,
+    /// False until the first dispatch settles — autonomy is earned by
+    /// measurement, never by registration.
+    pub calibrated: bool,
+    pub reliability: f64,
+}
+
+/// Read the roster and grade each instance. The roster's own load treats
+/// an absent or unreadable file as an empty roster, so the only readings
+/// here are the clock (liveness is measured against now) and the journal
+/// (the reliability grade is a beat over the settled dispatches).
+pub fn read_armada(home: &Path) -> Result<ArmadaSnapshot, String> {
+    let roster = crate::armada::roster::load(home);
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let instances = roster
+        .instances
+        .into_values()
+        .map(|instance| {
+            let grade = crate::armada::control::grade(home, &instance.sid);
+            ArmadaInstance {
+                live: instance.live(now_secs),
+                sid: instance.sid,
+                install_id: instance.install_id,
+                version: instance.version,
+                capacity_kib: instance.capacity_kib,
+                settled: grade.settled,
+                calibrated: grade.calibrated,
+                reliability: grade.reliability,
+            }
+        })
+        .collect();
+    Ok(ArmadaSnapshot {
+        read_at: now_stamp(),
+        instances,
+    })
+}
+
 // --- the refresher -----------------------------------------------------------
 
 /// One instruction to the refresher.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoardCommand {
-    /// Read all three boards now, whatever the cadence says.
+    /// Read all four boards now, whatever the cadence says.
     Refresh,
     /// The active board changed to this one. KI-118: the cadence reads
     /// only the active board, so the board the owner just cycled to is
@@ -3219,14 +3301,14 @@ pub struct BoardUpdate {
 }
 
 /// Spawn the board refresher: one thread, its own current-thread runtime,
-/// an opening read of all three boards and one every
+/// an opening read of all four boards and one every
 /// [`BOARD_REFRESH_SECS`], plus one immediately per
 /// [`BoardCommand::Refresh`]. A refresh asked for while a read is already
 /// running is satisfied by that read rather than queued behind it, so N
 /// presses of the cycle key cost one read, not N. The reads run on the
-/// runtime's blocking pool, so the three boards are read concurrently and
+/// runtime's blocking pool, so the four boards are read concurrently and
 /// the slowest source sets a refresh's cost rather than the sum of all
-/// three. Every read is bounded, so a hung source names itself instead of
+/// four. Every read is bounded, so a hung source names itself instead of
 /// stalling the interface: the event loop only ever receives finished
 /// reads.
 pub fn spawn_refresher(
@@ -3259,8 +3341,8 @@ pub fn spawn_refresher(
             // is five bounded git calls per repository over up to
             // sixty-four repos, and paying it every thirty seconds
             // whether or not anyone is looking is two seconds of child
-            // processes for nothing. The opening read is all three —
-            // the interface starts with three loading slots — and the
+            // processes for nothing. The opening read is all four —
+            // the interface starts with four loading slots — and the
             // cycle tells this thread which board became active, which
             // is read immediately.
             let mut active = BoardKind::Router;
@@ -3280,7 +3362,7 @@ pub fn spawn_refresher(
                             return;
                         };
                         match command {
-                            // A full refresh reads all three, whatever
+                            // A full refresh reads all four, whatever
                             // the cadence would have read.
                             BoardCommand::Refresh => full = true,
                             BoardCommand::Active(kind) => {
@@ -3323,20 +3405,22 @@ pub fn spawn_refresher(
     (command_tx, update_rx)
 }
 
-/// One read of all three boards, concurrently.
+/// One read of all four boards, concurrently.
 async fn read_all(sources: &Sources) -> Vec<BoardUpdate> {
     let router = sources.router.clone();
     let brain_home = sources.brain_home.clone();
     let tower_root = sources.tower_root.clone();
+    let fleet_home = sources.fleet_home.clone();
     let brain_bounds = sources.bounds.clone();
     let tower_bounds = sources.bounds.clone();
     // The router board reads Fleet's own stream, so its day is today's —
     // the same day the router's own rows are stamped with.
     let day = crate::calib::today();
-    let (router, brain, tower) = tokio::join!(
+    let (router, brain, tower, armada) = tokio::join!(
         tokio::task::spawn_blocking(move || Ok(read_router(&router, &day))),
         tokio::task::spawn_blocking(move || read_brain_source(&brain_home, &brain_bounds)),
         tokio::task::spawn_blocking(move || read_tower(&tower_root, &tower_bounds)),
+        tokio::task::spawn_blocking(move || read_armada(&fleet_home)),
     );
     // A read that panicked on the blocking pool is named, never swallowed:
     // the board keeps its last snapshot and the pane says the read died.
@@ -3364,6 +3448,13 @@ async fn read_all(sources: &Sources) -> Vec<BoardUpdate> {
             outcome: landed(
                 tower.map(|inner| inner.map(|snapshot| BoardData::Tower(Box::new(snapshot)))),
                 "tower",
+            ),
+        },
+        BoardUpdate {
+            kind: BoardKind::Armada,
+            outcome: landed(
+                armada.map(|inner| inner.map(|snapshot| BoardData::Armada(Box::new(snapshot)))),
+                "armada",
             ),
         },
     ]
@@ -3402,6 +3493,13 @@ async fn read_one(sources: &Sources, kind: BoardKind) -> Vec<BoardUpdate> {
             {
                 Ok(inner) => inner.map(|snapshot| BoardData::Tower(Box::new(snapshot))),
                 Err(error) => Err(format!("the tower read could not run: {error}")),
+            }
+        }
+        BoardKind::Armada => {
+            let fleet_home = sources.fleet_home.clone();
+            match tokio::task::spawn_blocking(move || read_armada(&fleet_home)).await {
+                Ok(inner) => inner.map(|snapshot| BoardData::Armada(Box::new(snapshot))),
+                Err(error) => Err(format!("the armada read could not run: {error}")),
             }
         }
     };
@@ -3467,6 +3565,13 @@ pub fn grouped(value: u64) -> String {
         out.push(character);
     }
     out
+}
+
+/// One capacity in GiB, the roster's KiB budget read at the scale an
+/// instance's run budget is spoken in: one decimal, so a small VPS and a
+/// large host keep their column.
+pub fn gib(kib: u64) -> String {
+    format!("{:.1} GiB", kib as f64 / (1024.0 * 1024.0))
 }
 
 /// A proportional bar in eighths: `value` against `max`, drawn `width`
@@ -3703,21 +3808,22 @@ mod tests {
             router: state(&scratch),
             brain_home: Some(brain),
             tower_root: scratch.path().to_path_buf(),
+            fleet_home: scratch.path().to_path_buf(),
             bounds: Bounds::default(),
         };
         let (tx, rx) = spawn_refresher(sources);
         let bridged = bridge(rx);
-        // The opening read is all three.
+        // The opening read is all four.
         let mut opening = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while opening.len() < 3 && std::time::Instant::now() < deadline {
+        while opening.len() < 4 && std::time::Instant::now() < deadline {
             let Ok(update) = bridged.recv() else { break };
             opening.push(update.kind);
         }
-        assert_eq!(opening.len(), 3, "{opening:?}");
+        assert_eq!(opening.len(), 4, "{opening:?}");
 
         // The cycle names the tower: the read that follows is the
-        // tower's alone, not all three again.
+        // tower's alone, not all four again.
         let _ = tx.send(BoardCommand::Active(BoardKind::Tower));
         let mut cycled = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
@@ -4107,9 +4213,10 @@ mod tests {
 
     #[test]
     fn the_boards_read_the_machines_real_sources() {
-        // The three boards against the machine's REAL sources: Fleet's own
+        // The four boards against the machine's REAL sources: Fleet's own
         // routing state under `~/.fleet`, the second-brain's derived state
-        // files, and the git facts per project under `~/Projects`.
+        // files, the git facts per project under `~/Projects`, and the
+        // flagship roster under the fleet home.
         //
         // Ignored like the repo's live-API e2e, because it reads live local
         // state the deterministic gate must not depend on. Run it with
@@ -4182,6 +4289,19 @@ mod tests {
             }
             Err(reason) => eprintln!("tower: refused \u{b7} {reason}"),
         }
+
+        // An empty roster is an ordinary fleet, so this read always lands.
+        let armada = read_armada(&sources.fleet_home).expect("the roster read lands");
+        eprintln!(
+            "armada: {} \u{b7} {} instance(s), {} live",
+            sources.fleet_home.display(),
+            armada.instances.len(),
+            armada
+                .instances
+                .iter()
+                .filter(|instance| instance.live)
+                .count()
+        );
     }
 
     // --- the second-brain board ----------------------------------------------
@@ -4985,7 +5105,7 @@ mod tests {
     }
 
     #[test]
-    fn the_cycle_walks_the_three_boards_in_order() {
+    fn the_cycle_walks_the_four_boards_in_order() {
         let mut boards = Boards::new();
         assert_eq!(boards.active, BoardKind::Router);
         assert_eq!(boards.active.label(), "router");
@@ -4995,10 +5115,63 @@ mod tests {
         boards.cycle();
         assert_eq!(boards.active, BoardKind::Tower);
         boards.cycle();
+        assert_eq!(boards.active, BoardKind::Armada);
+        assert!(boards.slot(BoardKind::Armada).loading);
+        boards.cycle();
         assert_eq!(boards.active, BoardKind::Router);
         // Every slot is independent: one board's refusal is not another's.
         boards.apply(BoardKind::Tower, Err("named".to_string()));
         assert!(boards.slot(BoardKind::Router).error.is_none());
+    }
+
+    /// The armada board reads the roster's own facts and computes the two
+    /// readings: liveness earned against the heartbeat window, and the
+    /// reliability the journal's settled dispatches grade. An empty roster
+    /// is an ordinary fleet, not a refusal.
+    #[test]
+    fn the_armada_board_reads_the_roster_and_grades_each_instance() {
+        let scratch = Scratch::new("armada");
+        let home = scratch.path();
+        // An absent roster file is an empty snapshot, not an error.
+        let empty = read_armada(home).expect("an empty roster is a valid snapshot");
+        assert!(empty.instances.is_empty());
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the clock is after the epoch")
+            .as_secs();
+        crate::armada::roster::register(home, "install-a", "sid-a", "0.6.37", 2_000_000, now)
+            .unwrap();
+        crate::armada::roster::heartbeat(home, "sid-a", now).unwrap();
+        // sid-b registers but never beats: registered, not live.
+        crate::armada::roster::register(home, "install-b", "sid-b", "0.6.36", 1_000_000, now)
+            .unwrap();
+        let mut journal = crate::journal::Journal::open(home).unwrap();
+        for outcome in ["finished", "failed"] {
+            journal
+                .append(
+                    "dispatch",
+                    Some("owner"),
+                    Some("sid-a"),
+                    serde_json::json!({"sid": "sid-a", "outcome": outcome}),
+                )
+                .unwrap();
+        }
+        let snapshot = read_armada(home).expect("the roster read lands");
+        assert_eq!(snapshot.instances.len(), 2);
+        // The roster is keyed by sid, so the instances ride in sid order.
+        let live = &snapshot.instances[0];
+        assert_eq!(live.sid, "sid-a");
+        assert_eq!(live.install_id, "install-a");
+        assert_eq!(live.capacity_kib, 2_000_000);
+        assert!(live.live, "a fresh heartbeat earns liveness");
+        assert!(live.calibrated);
+        assert_eq!(live.settled, 2);
+        assert!((live.reliability - 0.5).abs() < 1e-9);
+        let stale = &snapshot.instances[1];
+        assert_eq!(stale.sid, "sid-b");
+        assert!(!stale.live, "a registration with no heartbeat is not live");
+        assert!(!stale.calibrated, "no settled dispatch is un-calibrated");
     }
 
     // --- the read-only contract -----------------------------------------------
@@ -5696,6 +5869,7 @@ mod tests {
             router: state(&scratch),
             brain_home: Some(brain),
             tower_root: scratch.path().to_path_buf(),
+            fleet_home: scratch.path().to_path_buf(),
             bounds: Bounds::default(),
         };
         // The sender is dropped at the end of the test, which is what ends
@@ -5704,7 +5878,7 @@ mod tests {
 
         let mut landed = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while landed.len() < 3 && std::time::Instant::now() < deadline {
+        while landed.len() < 4 && std::time::Instant::now() < deadline {
             // `None` is the refresher ending: its sender is gone.
             let Some(update) = rx.blocking_recv() else {
                 break;
@@ -5715,7 +5889,7 @@ mod tests {
             landed.push(update.kind);
         }
         landed.sort_by_key(|kind| kind.index());
-        assert_eq!(landed, BoardKind::ALL.to_vec(), "all three boards landed");
+        assert_eq!(landed, BoardKind::ALL.to_vec(), "all four boards landed");
     }
 
     /// A std channel fed by the refresher's own, so a test can wait for
@@ -5749,6 +5923,7 @@ mod tests {
             router: state(&scratch),
             brain_home: Some(brain),
             tower_root: scratch.path().to_path_buf(),
+            fleet_home: scratch.path().to_path_buf(),
             bounds: Bounds {
                 scan_budget: Duration::MAX,
                 ..Bounds::default()
@@ -5759,7 +5934,7 @@ mod tests {
 
         let mut landed = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while landed.len() < 3 && std::time::Instant::now() < deadline {
+        while landed.len() < 4 && std::time::Instant::now() < deadline {
             let Ok(update) = bridged.recv() else { break };
             match update.outcome {
                 Ok(_) => landed.push(update.kind),
@@ -5771,7 +5946,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(landed.len(), 3, "{landed:?}");
+        assert_eq!(landed.len(), 4, "{landed:?}");
         assert!(landed.contains(&BoardKind::Router), "{landed:?}");
         assert!(landed.contains(&BoardKind::Brain), "{landed:?}");
 
@@ -5780,11 +5955,11 @@ mod tests {
         let _ = tx.send(BoardCommand::Refresh);
         let mut again = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while again.len() < 3 && std::time::Instant::now() < deadline {
+        while again.len() < 4 && std::time::Instant::now() < deadline {
             let Ok(update) = bridged.recv() else { break };
             again.push(update.kind);
         }
-        assert_eq!(again.len(), 3, "the refresher kept reading: {again:?}");
+        assert_eq!(again.len(), 4, "the refresher kept reading: {again:?}");
     }
 
     #[test]
@@ -5801,6 +5976,7 @@ mod tests {
             router: state(&scratch),
             brain_home: Some(brain),
             tower_root: scratch.path().to_path_buf(),
+            fleet_home: scratch.path().to_path_buf(),
             bounds: Bounds {
                 git_bin: bin.display().to_string(),
                 git_timeout: Duration::from_millis(100),
@@ -5816,11 +5992,11 @@ mod tests {
 
         let mut landed = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while landed.len() < 3 && std::time::Instant::now() < deadline {
+        while landed.len() < 4 && std::time::Instant::now() < deadline {
             let Ok(update) = bridged.recv() else { break };
             landed.push(update.kind);
         }
-        assert_eq!(landed.len(), 3, "{landed:?}");
+        assert_eq!(landed.len(), 4, "{landed:?}");
         // Those three refreshes were satisfied by the read that was
         // already running: nothing else arrives, where a queued refresh
         // would have cost another full scan inside this window.

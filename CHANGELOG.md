@@ -12,6 +12,37 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.7.0 — 2026-11-12
+
+The armada feature set complete: fleet deploying fleet, and the surfaces.
+
+**The 0.7.0 milestone** — this release completes the armada build program
+(layers L1–L9). Every contract armada needs now works for one owner; lane 2
+(the org) is a generalization — more principals, roles as grant templates,
+per-user factors, team/org scopes — not a rewrite.
+
+**Part of the armada vision** — layer L9 (deployment + surfaces), the body and
+the face. The plan is `docs/plans/2026-11-11-armada-l9-deployment.md`.
+
+- **Deployment, fleet deploying fleet** — provision a target with the
+  self-contained binary: a local spawn lays out a home, mints a fresh
+  install-id, and clones the corpus remote (inheriting the mind, not the
+  identity); a VPS is reached over SSH and dropped the same binary from the
+  release channel, credentials out-of-band. The fresh install registers with
+  the flagship and is trusted only after doctor + settles — never by arrival.
+- **The surface progression** — one `src/armada` library, four surfaces:
+  `fleet armada {roster|status|sync|deploy|dispatch}`; a genuinely visual TUI
+  armada board (liveness, capacity bars, reliability gauges); a face armada
+  section (roster board, dispatch composer, corpus view) in the
+  centre-conversation + context-pane shape; fleet-desktop wraps the same face
+  over the same server/bridge — no second frontend, no second transport.
+
+**The armada stack, delivered across 0.6.31–0.7.0:** L1 identity, L2 journal,
+L3 security, L4 corpus sync, L5 communication, L6 relay broker, L7 workspace,
+L8 control plane, L9 deployment + surfaces. Trust is earned by measurement at
+every layer; authority rides signed in the frame and is verified before
+obeying; the relay stays a dumb broker.
+
 ## v0.6.38 — 2026-11-12
 
 The armada control plane: the hand that commands instances over the relay.

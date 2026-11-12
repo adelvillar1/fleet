@@ -115,11 +115,11 @@ choices that span atoms are noted in the layer header.
 *Layer-level choice: D57 (deployment graded by doctor + settles).*
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L9.1 | provision→register→join (local + VPS) | L4.4, L8.1 | D51, D52 | drafted |
-| L9.2 | the `fleet armada` CLI verbs | L8.3 | D53 | drafted |
-| L9.3 | the TUI armada board | L8.3 | D54 | drafted |
-| L9.4 | the face armada section | L8.3 | D55 | drafted |
-| L9.5 | fleet-desktop wraps the armada face | L9.4 | D56 | drafted |
+| L9.1 | provision→register→join (local + VPS) | L4.4, L8.1 | D51, D52 | done |
+| L9.2 | the `fleet armada` CLI verbs | L8.3 | D53 | done |
+| L9.3 | the TUI armada board | L8.3 | D54 | done |
+| L9.4 | the face armada section | L8.3 | D55 | done |
+| L9.5 | fleet-desktop wraps the armada face | L9.4 | D56 | done |
 
 ## The atom-level build order
 

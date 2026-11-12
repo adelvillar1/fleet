@@ -1,7 +1,7 @@
 ---
-status: draft
+status: completed
 created: 2026-11-11
-updated: 2026-11-11
+updated: 2026-11-12
 slug: armada-l9-deployment
 ---
 
@@ -60,14 +60,14 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0: provision drops the self-contained binary on a target (local spawn and VPS over SSH) and runs install; the fresh install mints a new install-id and clones the corpus remote (inherits the facts, not the identity).
-- [ ] C1: the fresh install registers with the flagship roster and is reported un-calibrated until it settles runs (a test pins it).
-- [ ] C2: the TUI armada board renders instances, health, capacity, and dispatch (genuinely visual, not a plain-text table).
-- [ ] C3: the face armada section renders the roster board, dispatch composer, and corpus view in the centre-conversation + context-pane shape; the face harness pins it.
-- [ ] C4: fleet-desktop wraps the armada face over the same server/bridge (no second frontend, no second transport).
-- [ ] C5: `fleet armada {roster|dispatch|status|sync|deploy}` drives the control plane headlessly.
-- [ ] C6: provision is a governance action (step-up, D18/D19); a fresh install is trusted only after it passes doctor and settles runs (graded, not by arrival).
-- [ ] C7: the four-leg gate passes, the face harness is green, and a single-instance fleet is unchanged.
+- [x] C0: provision drops the self-contained binary on a target (local spawn and VPS over SSH) and runs install; the fresh install mints a new install-id and clones the corpus remote (inherits the facts, not the identity).
+- [x] C1: the fresh install registers with the flagship roster and is reported un-calibrated until it settles runs (a test pins it).
+- [x] C2: the TUI armada board renders instances, health, capacity, and dispatch (genuinely visual, not a plain-text table).
+- [x] C3: the face armada section renders the roster board, dispatch composer, and corpus view in the centre-conversation + context-pane shape; the face harness pins it.
+- [x] C4: fleet-desktop wraps the armada face over the same server/bridge (no second frontend, no second transport).
+- [x] C5: `fleet armada {roster|dispatch|status|sync|deploy}` drives the control plane headlessly.
+- [x] C6: provision is a governance action (step-up, D18/D19); a fresh install is trusted only after it passes doctor and settles runs (graded, not by arrival).
+- [x] C7: the four-leg gate passes, the face harness is green, and a single-instance fleet is unchanged.
 
 ## Files to be touched
 

@@ -888,6 +888,28 @@ function boot(options) {
         }),
       });
     }
+    // The armada roster (armada L9, C3): the instances with their earned
+    // liveness and measured reliability. A case scripts the roster through
+    // `documents.armada`; the default is a flagship with no instances.
+    if (pathOnly === '/api/armada') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.armada || {
+          type: 'armada', flagship: true, instances: [],
+        }),
+      });
+    }
+    // The dispatch composer's act: the admitted dispatch names the sid,
+    // the principal it obeyed under, and the task.
+    if (pathOnly === '/api/armada/dispatch' && method === 'POST') {
+      const parsed = JSON.parse((init && init.body) || '{}');
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents['armada-dispatch'] || {
+          type: 'armada-dispatch', sid: parsed.sid, principal: 'owner', task: parsed.task,
+        }),
+      });
+    }
     // The bundle's page, read as bytes: the route answers HTML, and the
     // face reads it into `srcdoc` because the route's CSP forbids being
     // framed. A name the case did not supply is absent, not empty.
@@ -3848,6 +3870,52 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   check('the unregistered folder draws no tree',
     empty.rows('.dag-band').length === 0 && empty.rows('.dag-leaf').length === 0,
     String(empty.rows('.dag-band').length));
+}
+
+// C3's face (armada L9): the armada section draws the roster it reads —
+// the rail entry under system, the surface's own title, one line per
+// instance with its earned liveness and measured reliability, and the
+// un-calibrated marker for a fresh instance.
+async function theArmadaSectionDrawsTheRosterItRead() {
+  const page = boot({
+    hash: '#/armada',
+    documents: {
+      armada: {
+        type: 'armada', flagship: true,
+        instances: [
+          { sid: 'sid-a', install_id: 'i-a', version: '0.6.38', capacity_kib: 2000000, live: true, settled: 3, calibrated: true, reliability: 0.67 },
+          { sid: 'sid-b', install_id: 'i-b', version: '0.6.38', capacity_kib: 1000000, live: false, settled: 0, calibrated: false, reliability: 0 },
+        ],
+      },
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+
+  // The rail carries the destination under system, beside its siblings.
+  const system = page.rows('.surfaces-section')
+    .filter((section) => section.dataset.group === 'system');
+  check('the system group carries armada', system.length === 1, String(system.length));
+  if (system.length === 1) {
+    const entries = page.rows('.surfaces-link')
+      .filter((link) => link.closest('.surfaces-section') === system[0])
+      .map((link) => link.dataset.address);
+    check('the entry is named armada beside its siblings',
+      entries.includes('armada'), entries.join(' | '));
+  }
+  // The surface announces itself once, above the cards.
+  const title = page.rows('.surface-title').map((n) => n.textContent.trim());
+  check('the section names itself armada', title.includes('Armada'), title.join(' | '));
+  // The roster board: both instances, the calibrated one's measured
+  // percentage, and the fresh one's un-calibrated marker.
+  const board = page.text('armada-board');
+  check('the board draws the roster it read',
+    board.includes('sid-a') && board.includes('sid-b'), board.slice(0, 200));
+  check('the calibrated instance wears its reliability',
+    board.includes('67%'), board.slice(0, 200));
+  check('the fresh instance is un-calibrated',
+    board.includes('un-calibrated'), board.slice(0, 200));
 }
 
 // The archive: the one end a session can come to. A handback reads as
@@ -10925,7 +10993,7 @@ async function theConnectCardSaysWhatHappened() {
       open ? 'folded=' + open.dataset.folded : 'no section');
   }
 
-  // Eighteen destinations, eighteen drawings (C4): no destination shares
+  // Twenty destinations, twenty drawings (C4): no destination shares
   // a mark with another, and none wears the unknown state.
   async function theMainRailDrawsEighteenMarks() {
     const page = boot({ documents: {} });
@@ -10933,14 +11001,14 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
-    check('ICONS the main rail lists nineteen destinations', links.length === 19,
+    check('ICONS the main rail lists twenty destinations', links.length === 20,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 19,
+      shapes.every(Boolean) && new Set(shapes).size === 20,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 
@@ -12066,6 +12134,7 @@ const cases = [
   ['C3 a command row names what ran', aCommandRowNamesWhatRan],
   ['C4 the strip lines open their record', theStripsLinesOpenTheirRecord],
   ['C5 the workspace-history section draws the tree it read', theWorkspaceHistorySectionDrawsTheTreeItRead],
+  ['ARMADA the armada section draws the roster it reads', theArmadaSectionDrawsTheRosterItRead],
   ['ARCH the archive is the one end and the owner\u2019s verb', theArchiveIsTheOneEndAndTheOwnersVerb],
   ['REVIEW the chat counts exchanges and shows its controls', theChatCountsExchangesAndShowsItsControls],
   ['TURN the turn controls grade, fork, and hook', theTurnControlsGradeForkAndHook],

@@ -185,7 +185,7 @@ pub enum ToolStatus {
     Done,
 }
 
-/// The right pane's surface: the live run, or one of the three boards.
+/// The right pane's surface: the live run, or one of the four boards.
 /// A tab, not a cycle hidden behind a key, so where the owner is stays
 /// visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,13 +194,20 @@ pub enum Pane {
     Router,
     Tower,
     Brain,
+    Armada,
 }
 
 impl Pane {
     /// Every pane, in tab order. Run leads because it is the surface a
-    /// run is watched on; the boards keep the router → brain → tower
-    /// order the old Ctrl-B cycle used.
-    pub const ALL: [Pane; 4] = [Pane::Run, Pane::Router, Pane::Brain, Pane::Tower];
+    /// run is watched on; the boards keep the router → brain → tower →
+    /// armada order the old Ctrl-B cycle used.
+    pub const ALL: [Pane; 5] = [
+        Pane::Run,
+        Pane::Router,
+        Pane::Brain,
+        Pane::Tower,
+        Pane::Armada,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -208,6 +215,7 @@ impl Pane {
             Pane::Router => "router",
             Pane::Tower => "tower",
             Pane::Brain => "brain",
+            Pane::Armada => "armada",
         }
     }
 
@@ -218,6 +226,7 @@ impl Pane {
             Pane::Router => Some(BoardKind::Router),
             Pane::Tower => Some(BoardKind::Tower),
             Pane::Brain => Some(BoardKind::Brain),
+            Pane::Armada => Some(BoardKind::Armada),
         }
     }
 
@@ -226,7 +235,8 @@ impl Pane {
             Pane::Run => Pane::Router,
             Pane::Router => Pane::Brain,
             Pane::Brain => Pane::Tower,
-            Pane::Tower => Pane::Run,
+            Pane::Tower => Pane::Armada,
+            Pane::Armada => Pane::Run,
         }
     }
 
@@ -828,7 +838,7 @@ pub struct App {
     pub panel_filter: usize,
     /// Why the open panel's read did not land, if it did not.
     pub panel_note: Option<String>,
-    /// The three read-only boards: each one's last snapshot with its
+    /// The four read-only boards: each one's last snapshot with its
     /// named refusal.
     pub boards: Boards,
     /// The latest explanation card's lines, or `None` when today's
@@ -2601,6 +2611,11 @@ impl App {
                 label: "tower",
                 detail: "the projects and their evidence",
                 action: Action::OpenPane(Pane::Tower),
+            },
+            PaletteItem {
+                label: "armada",
+                detail: "the instances and their earned reliability",
+                action: Action::OpenPane(Pane::Armada),
             },
             PaletteItem {
                 label: "memory",

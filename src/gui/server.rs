@@ -1718,6 +1718,22 @@ async fn serve_connection(
         ("GET", "/api/projects") => {
             write_reply(&mut stream, api(200, bridge.projects().await)).await
         }
+        // The armada panel's roster (armada L9, C3): the instances with
+        // their earned liveness and measured reliability, one read.
+        ("GET", "/api/armada") => write_reply(&mut stream, api(200, bridge.armada().await)).await,
+        // The dispatch composer's act: a task named for one instance,
+        // admitted under the owner principal before it obeys. A refusal
+        // is the control plane's own named reason.
+        ("POST", "/api/armada/dispatch") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.armada_dispatch(&body).await {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
+            }
+        }
         ("GET", "/api/desk") => {
             let mut projects: Vec<serde_json::Value> = Vec::new();
             let mut unreadable: Vec<serde_json::Value> = Vec::new();

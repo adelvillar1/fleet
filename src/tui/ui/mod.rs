@@ -42,7 +42,7 @@ mod palette {
 }
 
 /// The board pane's width. Slice 3 mounted the pane at 26 columns as a
-/// placeholder; the three boards are composed surfaces — cards, dots,
+/// placeholder; the four boards are composed surfaces — cards, dots,
 /// bars — and a card with a name and its facts does not fit in 24 inner
 /// columns, so the pane takes what it needs and the conversation keeps
 /// the rest.
@@ -123,6 +123,7 @@ fn render_pane(frame: &mut Frame<'_>, app: &App, area: Rect) {
             BoardKind::Router => 0,
             BoardKind::Brain => 1,
             BoardKind::Tower => 2,
+            BoardKind::Armada => 3,
         }
     };
     let titles = Pane::ALL.iter().map(|pane| pane.label());
@@ -589,7 +590,7 @@ fn welcome_facts(app: &App) -> Option<String> {
     }
 }
 
-/// The board pane: one of the three read-only surfaces, whichever is
+/// The board pane: one of the four read-only surfaces, whichever is
 /// active. The pane's title names it, the status bar repeats the name, and
 /// a refused read keeps the last snapshot on screen with the reason on one
 /// named line beside the time of the last good read. A healthy board names
@@ -661,6 +662,7 @@ fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect, kind: BoardKind) {
     match &slot.snapshot {
         Some(BoardData::Router(snapshot)) => board_view::render_router(frame, snapshot, content),
         Some(BoardData::Tower(snapshot)) => board_view::render_tower(frame, app, snapshot, content),
+        Some(BoardData::Armada(snapshot)) => board_view::render_armada(frame, snapshot, content),
         Some(BoardData::Brain(snapshot)) => board_view::render_lines(
             frame,
             brain_lines(snapshot, content.width as usize),
@@ -722,6 +724,7 @@ fn board_lines(kind: BoardKind, slot: &Slot, width: usize) -> Vec<Line<'static>>
         BoardData::Router(snapshot) => router_lines(snapshot, width),
         BoardData::Brain(snapshot) => brain_lines(snapshot, width),
         BoardData::Tower(snapshot) => tower_lines(snapshot, width),
+        BoardData::Armada(snapshot) => armada_lines(snapshot, width),
     }
 }
 
@@ -1378,6 +1381,85 @@ pub(super) fn tower_lines(snapshot: &boards::TowerSnapshot, width: usize) -> Vec
     if snapshot.unread > 0 {
         let read = snapshot.projects.len() + snapshot.skipped.len();
         lines.extend(truncated_lines(read, snapshot.unread, width));
+    }
+    lines
+}
+
+/// The armada board: the roster's instances with their earned liveness
+/// and measured reliability, in the card family's two-line shape. The
+/// composed board draws these as cards with a reliability gauge; these
+/// lines are the shape a pane too short for cards falls back to.
+pub(super) fn armada_lines(snapshot: &boards::ArmadaSnapshot, width: usize) -> Vec<Line<'static>> {
+    let live = snapshot.instances.iter().filter(|one| one.live).count();
+    let mut lines = vec![
+        line_of(
+            vec![
+                (" fleet ".to_string(), Style::new().fg(palette::DIM)),
+                (
+                    format!("{} instance(s)", snapshot.instances.len()),
+                    Style::new().fg(palette::TEXT),
+                ),
+                (format!("  {live} live"), Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ),
+        Line::from(""),
+    ];
+    if snapshot.instances.is_empty() {
+        lines.push(line_of(
+            vec![(
+                " no instances registered".to_string(),
+                Style::new().fg(palette::DIM),
+            )],
+            width,
+        ));
+        return lines;
+    }
+    for instance in &snapshot.instances {
+        let (dot, color) = if instance.live {
+            ("\u{25cf}", palette::DONE)
+        } else {
+            ("\u{25cb}", palette::DENIED)
+        };
+        let health = if instance.live { "live" } else { "not live" };
+        lines.push(line_of(
+            vec![
+                (format!(" {dot} "), Style::new().fg(color)),
+                (
+                    boards::cell(&instance.sid, 16),
+                    Style::new().fg(palette::TEXT),
+                ),
+                (
+                    format!(" {}", instance.version),
+                    Style::new().fg(palette::DIM),
+                ),
+                (
+                    format!("  {}", boards::gib(instance.capacity_kib)),
+                    Style::new().fg(palette::DIM),
+                ),
+                (format!("  {health}"), Style::new().fg(color)),
+            ],
+            width,
+        ));
+        // The dispatch grade underneath: a calibrated instance names its
+        // measured rate and its settled count; a fresh one is named
+        // un-calibrated rather than shown a zero that reads as a failure.
+        let grade = if instance.calibrated {
+            format!(
+                "{:.0}% reliable \u{b7} {} settled",
+                instance.reliability * 100.0,
+                instance.settled
+            )
+        } else {
+            "un-calibrated \u{b7} no dispatches settled".to_string()
+        };
+        lines.push(line_of(
+            vec![
+                ("   \u{2514} ".to_string(), Style::new().fg(palette::DIM)),
+                (grade, Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ));
     }
     lines
 }
@@ -3611,6 +3693,34 @@ mod tests {
         }
     }
 
+    fn armada_snapshot() -> crate::boards::ArmadaSnapshot {
+        crate::boards::ArmadaSnapshot {
+            read_at: "2026-11-12T09:41Z".to_string(),
+            instances: vec![
+                crate::boards::ArmadaInstance {
+                    sid: "sid-a".to_string(),
+                    install_id: "install-a".to_string(),
+                    version: "0.6.37".to_string(),
+                    capacity_kib: 2_000_000,
+                    live: true,
+                    settled: 3,
+                    calibrated: true,
+                    reliability: 2.0 / 3.0,
+                },
+                crate::boards::ArmadaInstance {
+                    sid: "sid-b".to_string(),
+                    install_id: "install-b".to_string(),
+                    version: "0.6.36".to_string(),
+                    capacity_kib: 1_000_000,
+                    live: false,
+                    settled: 0,
+                    calibrated: false,
+                    reliability: 0.0,
+                },
+            ],
+        }
+    }
+
     fn board_app(kind: crate::boards::BoardKind, snapshot: crate::boards::BoardData) -> App {
         let mut app = fresh();
         app.boards.apply(kind, Ok(snapshot));
@@ -3773,6 +3883,55 @@ mod tests {
         assert!(drawn.contains("second-brain"), "{drawn}");
         assert!(drawn.contains("91c0f31"), "{drawn}");
         assert!(drawn.contains("skipped"), "{drawn}");
+    }
+
+    /// C2: the armada board renders the roster's instances with their
+    /// health, capacity, and dispatch grade — cards and gauges, never a
+    /// plain-text table. An empty roster is a named state, not a panic.
+    #[test]
+    fn the_armada_board_renders_instances_health_capacity_and_dispatch() {
+        let mut app = board_app(
+            crate::boards::BoardKind::Armada,
+            crate::boards::BoardData::Armada(Box::new(armada_snapshot())),
+        );
+        app.pane = crate::tui::app::Pane::Armada;
+        let drawn = draw(&app, 120, 40);
+        // The pane's title names the board, and the status bar repeats it.
+        assert!(drawn.contains("board \u{2014} armada"), "{drawn}");
+        assert!(drawn.contains("armada"), "{drawn}");
+        // Both instances, with their versions and their GiB capacities.
+        assert!(drawn.contains("sid-a"), "{drawn}");
+        assert!(drawn.contains("sid-b"), "{drawn}");
+        assert!(drawn.contains("0.6.37"), "{drawn}");
+        assert!(drawn.contains("0.6.36"), "{drawn}");
+        assert!(drawn.contains("1.9 GiB"), "{drawn}");
+        // The header's counts, and the two health states named apart.
+        assert!(drawn.contains("2 instance(s)"), "{drawn}");
+        assert!(drawn.contains("1 live"), "{drawn}");
+        assert!(drawn.contains("not live"), "{drawn}");
+        // Dispatch: the calibrated grade and the un-calibrated state.
+        assert!(drawn.contains("67% reliable"), "{drawn}");
+        assert!(drawn.contains("3 settled"), "{drawn}");
+        assert!(drawn.contains("un-calibrated"), "{drawn}");
+        // The board is genuinely visual: the gauge's block glyphs.
+        assert!(drawn.contains('\u{2588}'), "{drawn}");
+        // The narrow terminal keeps the instances and their grades.
+        let narrow = draw(&app, 80, 24);
+        assert!(narrow.contains("sid-a"), "{narrow}");
+        assert!(narrow.contains("un-calibrated"), "{narrow}");
+
+        // An empty roster renders its named state rather than panicking.
+        let mut empty = board_app(
+            crate::boards::BoardKind::Armada,
+            crate::boards::BoardData::Armada(Box::new(crate::boards::ArmadaSnapshot {
+                read_at: "2026-11-12T09:41Z".to_string(),
+                instances: Vec::new(),
+            })),
+        );
+        empty.pane = crate::tui::app::Pane::Armada;
+        let drawn = draw(&empty, 120, 40);
+        assert!(drawn.contains("0 instance(s)"), "{drawn}");
+        assert!(drawn.contains("no instances registered"), "{drawn}");
     }
 
     #[test]

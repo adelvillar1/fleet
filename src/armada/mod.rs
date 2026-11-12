@@ -12,6 +12,7 @@
 
 pub mod authority;
 pub mod control;
+pub mod deploy;
 pub mod roster;
 
 use std::path::{Path, PathBuf};
