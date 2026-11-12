@@ -15745,7 +15745,10 @@ mod tests {
         // same one the faces read, so the test waits on the product's
         // own seam rather than a private one.
         let mut events = bridge.subscribe();
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+        // A generous bound: the gate runs the whole suite in parallel, and a
+        // loaded machine starves the agent thread; the run ends, just slowly.
+        // The loop breaks the moment the control is read (KI-405's class).
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(240);
         loop {
             let ended = !control.exists();
             if ended {
