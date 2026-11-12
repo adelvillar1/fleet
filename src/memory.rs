@@ -1168,11 +1168,15 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(27_321);
 /// budget per try, paid once per load.
 const PROBE_RETRY_PAUSE: Duration = Duration::from_millis(750);
 
-/// How many paused retries follow the probe's first try — three tries
-/// in all. One was not enough under a loaded suite: a try can fail
-/// before it ever reaches the backend, and the flap's own length is
-/// nobody's to promise.
-const PROBE_RETRIES: usize = 2;
+/// How many paused retries follow the probe's first try — five tries
+/// in all. One was not enough under a loaded suite, and three still
+/// starved under the gate's parallel load: a try can fail before it
+/// ever reaches the backend (a reset or refused handshake burns a
+/// connection while advancing the fixture nothing), and the flap's own
+/// length is nobody's to promise. The extra tries are the load margin;
+/// a genuinely-dead backend refuses in milliseconds, so they cost only
+/// their pauses.
+const PROBE_RETRIES: usize = 4;
 
 /// How many TCP attempts one `HttpEmbedder::embed` call makes: the
 /// immediate retry that absorbs a pooled connection the server closed
