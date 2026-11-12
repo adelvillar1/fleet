@@ -12188,6 +12188,14 @@
       });
     } else {
       paintDeskWelcome(shell.center);
+      // The shelf rides the landing (U30): the deliverable cards with
+      // their stage tracks and refusal chips — the loop visible where
+      // the work is, the moment the read lands.
+      readDesk(false).then(function () {
+        if (!face.deskOpenDesk && (face.desk || []).length) {
+          paintDeskShelf(shell.center);
+        }
+      });
     }
     if (face.wantContext && paneContextAvailable() && !el.pane.hidden) {
       face.wantContext = false;
@@ -12416,6 +12424,42 @@
     evidence.appendChild(count);
     evidence.appendChild(node('span', 'dk-upd mono', 'updated ' + (desk.updated || '\u2014')));
     card.appendChild(evidence);
+
+    // The stage track rides the card (U30): the five stages as five
+    // beads with the current stage lit — the loop is visible where the
+    // work is, not only in the detail view.
+    var stages = desk.stages || [];
+    if (stages.length) {
+      var track = node('div', 'dk-track');
+      stages.forEach(function (entry, index) {
+        var mark = entry.state === 'done' ? 'done' : entry.state === 'running' ? 'run'
+          : entry.state === 'refused' ? 'refused' : 'pending';
+        var bead = node('span', 'dk-tb ' + mark, mark === 'done' ? '\u2713'
+          : mark === 'refused' ? '!' : String(index + 1));
+        bead.title = entry.stage + ' \u00b7 ' + mark;
+        track.appendChild(bead);
+        if (index < stages.length - 1) track.appendChild(node('span', 'dk-tl'));
+      });
+      card.appendChild(track);
+    }
+    // The named refusals stand ON the card (U30): red chips, each
+    // naming its own refusal — the end gate's truth, not a count.
+    var refusals = (desk.refusals || []).slice(0, 2);
+    (desk.number_refusals || []).slice(0, 2).forEach(function (refusal) {
+      refusals.push({ assertion: 'unsourced number ' + (refusal.raw || '') });
+    });
+    if (refusals.length) {
+      var chips = node('div', 'dk-refusals');
+      refusals.forEach(function (refusal) {
+        var chip = node('span', 'dk-refusal',
+          clip(refusal.assertion || 'a refusal', 60));
+        chip.title = refusal.assertion || 'a refusal stands';
+        chips.appendChild(chip);
+      });
+      var more = (desk.refusals || []).length + (desk.number_refusals || []).length - refusals.length;
+      if (more > 0) chips.appendChild(node('span', 'dk-refusal', '+' + more + ' more'));
+      card.appendChild(chips);
+    }
 
     card.appendChild(dkCoverage(desk));
     return card;
@@ -14998,7 +15042,9 @@
         paint: function () {
           return [named[0] === 'eval_corpus'
             ? calibrationEvalCard(read, rows)
-            : calibrationOpCard(named[0], named[1], rows)];
+            : named[0] === 'route_judged'
+              ? calibrationJudgedCard(read, rows)
+              : calibrationOpCard(named[0], named[1], rows)];
         }
       });
     });
@@ -15174,6 +15220,100 @@
       return row;
     });
     card.appendChild(budgetRows(items, 30, 'cells', false, function () { }));
+    return card;
+  }
+
+  /// The judged rows as U31 renders them (the epistemology surface):
+  /// workload, the decision, a confidence meter, the graded outcome,
+  /// and the owner's word riding the same append-only row — a row with
+  /// a disposition wears the gold border and its word; a row without
+  /// one offers agree / disagree / waive. Held and missed live in the
+  /// lens head; this card is the rows themselves.
+  function calibrationJudgedCard(read, rows) {
+    var tally = { right: 0, wrong: 0, insufficient: 0, disposed: 0 };
+    rows.forEach(function (row) {
+      if (row.verdict === 'right') tally.right += 1;
+      else if (row.verdict === 'wrong') tally.wrong += 1;
+      else if (row.verdict) tally.insufficient += 1;
+      if (row.disposition) tally.disposed += 1;
+    });
+    var card = boardCard(12, 'the judged rows',
+      rows.length + ' judged \u00b7 ' + tally.right + ' held \u00b7 ' + tally.wrong + ' missed',
+      'the day\u2019s judged routes: the decision, its confidence, and the owner\u2019s word '
+      + 'riding the same append-only row. A word lands as a new row with the same key.');
+    card.classList.add('lib-card');
+    if (!rows.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No judged routes for ' + read.day + ' yet \u2014 `fleet judge` grades a day\u2019s '
+        + 'route rows through the sys1 lane.'));
+      return card;
+    }
+    var list = node('div', 'rail-list');
+    rows.slice().reverse().forEach(function (row) {
+      var line = node('div', 'intel-row cal-judged' + (row.disposition ? ' cal-disposed' : ''));
+      var head = node('div', 'intel-row-head');
+      var verdictChip = node('span', 'tissue-kind', row.verdict || 'unjudged');
+      if (row.verdict === 'right') verdictChip.style.borderColor = 'var(--green)';
+      if (row.verdict === 'wrong') verdictChip.style.borderColor = 'var(--red)';
+      if (row.verdict === 'insufficient') verdictChip.style.borderColor = 'var(--amber)';
+      head.appendChild(verdictChip);
+      head.appendChild(node('b', null, row.workload || '?'));
+      // The confidence meter: one gradient track, no decorative borders
+      // (U19's meter law) — the width IS the number.
+      var meter = node('span', 'cal-meter');
+      var fill = node('i');
+      var conf = typeof row.confidence === 'number' ? Math.max(0, Math.min(1, row.confidence)) : null;
+      if (conf != null) fill.style.width = Math.round(conf * 100) + '%';
+      meter.appendChild(fill);
+      meter.title = 'confidence ' + (conf != null ? fmtRate(conf) : 'not recorded');
+      head.appendChild(meter);
+      head.appendChild(node('span', 'tissue-where',
+        conf != null ? fmtRate(conf) : '\u2014'));
+      if (row.disposition) {
+        head.appendChild(node('span', 'cal-word', row.disposition));
+      }
+      line.appendChild(head);
+      var actions = node('div', 'row-actions');
+      [
+        ['agreed', 'the judge was right \u2014 the owner confirms it'],
+        ['disagreed', 'the judge was wrong \u2014 the owner\u2019s grading is the ground truth'],
+        ['waived', 'neither right nor wrong \u2014 set aside, counted apart'],
+      ].forEach(function (pair) {
+        var act = node('button', 'row-action', pair[0]);
+        act.type = 'button';
+        act.title = pair[1];
+        if (row.disposition) act.disabled = true;
+        act.addEventListener('click', function () {
+          act.disabled = true;
+          act.textContent = 'writing\u2026';
+          post('/api/calibration/dispose', { key: row.route_key, word: pair[0] })
+            .then(function (reply) {
+              if (reply.status === 200 && reply.body.disposed) {
+                notice('the word landed', (reply.body.disposition || pair[0])
+                  + ' \u00b7 the row is appended, never rewritten');
+                readCalibration(true);
+                return;
+              }
+              act.disabled = false;
+              act.textContent = pair[0];
+              notice('the word was refused',
+                (reply.body.refused || []).join(' ') || 'the write refused it');
+            })
+            .catch(function () {
+              act.disabled = false;
+              act.textContent = pair[0];
+              notice('the word did not cross', 'the server did not answer');
+            });
+        });
+        actions.appendChild(act);
+      });
+      if (row.disposition) {
+        actions.appendChild(node('span', 'board-note', 'the word rides the row'));
+      }
+      line.appendChild(actions);
+      list.appendChild(line);
+    });
+    card.appendChild(list);
     return card;
   }
 

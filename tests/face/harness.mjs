@@ -375,6 +375,28 @@ function boot(options) {
     if (pathOnly === '/api/sessions') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.sessions || emptySessions()) });
     }
+    // The owner's word on a judged row (U31): the disposition verb, the
+    // same append-only store the CLI writes — the POST echoes the row's
+    // new word, and a refused word names itself.
+    if (pathOnly === '/api/calibration/dispose' && method === 'POST') {
+      const parsed = JSON.parse((init && init.body) || '{}');
+      if (!['agreed', 'disagreed', 'waived'].includes(parsed.word)) {
+        return Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve({
+            type: 'calibration',
+            refused: [parsed.word + ' is not a disposition'],
+          }),
+        });
+      }
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({
+          type: 'calibration', disposed: true, day: '2026-11-12',
+          key: parsed.key, verdict: 'right', disposition: parsed.word,
+        }),
+      });
+    }
     // The clipboard read (the composer's paste): a case scripts what the
     // system clipboard holds — text, an image, nothing, or a refusal —
     // because the harness must never touch the owner's real pasteboard.
@@ -12428,6 +12450,82 @@ async function theThreadPaneCollapsesAndPersists() {
     'attr=' + reopen.IDS['panel-chat'].dataset.threadPane);
 }
 
+// U31: the judged rows carry the meter, the gold border when the
+// owner's word rides the row, and the disposition verb posts to the
+// same append-only store the CLI writes.
+const judgedRows = () => [
+  { ts: '2026-11-12T10:00:00Z', op: 'route_judged', route_key: 'rk-1',
+    workload: 'plan', verdict: 'right', confidence: 0.82, disposition: null },
+  { ts: '2026-11-12T11:00:00Z', op: 'route_judged', route_key: 'rk-2',
+    workload: 'plan_gate', verdict: 'wrong', confidence: 0.4,
+    disposition: 'agreed' },
+];
+async function theJudgedRowsCarryTheMeterAndTheWord() {
+  const page = boot({
+    documents: { calibration: { type: 'calibration', day: '2026-11-12', read_at: 'now',
+      root: '/r', cap: 500, rows_read: 2, gate: { informs_failover: false, name: 'g' },
+      fit_rule: { rows: 5, span: 3 }, cells: [], stream: { route_judged: judgedRows() } } },
+    hash: '#/calibration/route_judged',
+  });
+  page.open();
+  await flush(80);
+  const body = page.rows('.section-body');
+  check('CAL the judged section renders the U31 card',
+    body.length === 1 && body[0].dataset.section === 'route_judged',
+    body.map((b) => b.dataset.section).join(','));
+  const meters = page.rows('.cal-meter');
+  check('CAL every judged row carries its confidence meter',
+    meters.length === 2, 'meters=' + meters.length);
+  const text = page.text('calibration-board');
+  check('CAL held and missed live in the card head',
+    text.includes('2 judged') && text.includes('1 held') && text.includes('1 missed'),
+    text.slice(0, 120));
+  const disposed = page.rows('.cal-judged.cal-disposed');
+  check('CAL a row with the owner\u2019s word wears the gold border',
+    disposed.length === 1 && disposed[0].textContent.includes('agreed'),
+    'disposed=' + disposed.length);
+  // The word: the agree press posts the key, the read repaints.
+  const agree = page.rows('.row-action').filter((one) =>
+    one.textContent === 'agreed' && !one.disabled)[0];
+  agree.click();
+  await flush(60);
+  const posts = page.calls.filter((call) =>
+    call.url === '/api/calibration/dispose' && call.method === 'POST');
+  check('CAL the agree press posts the row key and the word',
+    posts.length === 1 &&
+      JSON.parse(posts[0].body).key === 'rk-1' &&
+      JSON.parse(posts[0].body).word === 'agreed',
+    JSON.stringify(posts.map((call) => call.body)));
+}
+
+// U30: the five-stage track and the named refusals ride the desk card.
+async function theDeskCardCarriesTheStageTrackAndTheRefusals() {
+  const page = boot({ documents: { desk: { projects: [{
+    slug: 'the-notes', name: 'the notes', claim: 'the claim', shape: 'presentation',
+    project: null, sources: [],
+    stages: [
+      { stage: 'brief', state: 'done' }, { stage: 'sources', state: 'done' },
+      { stage: 'coverage', state: 'running' }, { stage: 'draft', state: 'pending' },
+      { stage: 'digest', state: 'pending' },
+    ],
+    claims: [], refusals: [{ assertion: 'the market grew 40%' }],
+    number_refusals: [], stands: null, updated: '2026-11-12 12:00',
+  }] } }, hash: '#/desk' });
+  page.open();
+  await flush(80);
+  const card = page.rows('.dk-card')[0];
+  check('DESK the card carries the five-stage track',
+    !!card && card.querySelectorAll('.dk-tb').length === 5,
+    card ? 'beads=' + card.querySelectorAll('.dk-tb').length : 'no card');
+  const lit = card.querySelectorAll('.dk-tb.run');
+  check('DESK the current stage is lit on the card',
+    lit.length === 1, 'lit=' + lit.length);
+  const chips = card.querySelectorAll('.dk-refusal');
+  check('DESK the named refusal stands as a red chip on the card',
+    chips.length === 1 && chips[0].textContent.includes('the market grew 40%'),
+    chips.length ? chips[0].textContent : 'no chips');
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -12585,6 +12683,8 @@ const cases = [
   ['INTEL the mcp toggle writes the registry', theMcpToggleWritesTheRegistry],
   ['THREAD the pane carries the receipts', theThreadPaneCarriesTheReceipts],
   ['THREAD the pane collapses and persists', theThreadPaneCollapsesAndPersists],
+  ['CAL the judged rows carry the meter and the word', theJudgedRowsCarryTheMeterAndTheWord],
+  ['DESK the card carries the stage track and the refusals', theDeskCardCarriesTheStageTrackAndTheRefusals],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

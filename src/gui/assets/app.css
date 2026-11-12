@@ -11211,3 +11211,85 @@ body[data-motion="off"] .thread-row.fresh { animation: none; }
   #panel-chat { display: flex; flex-direction: column; }
   #panel-chat .column { flex: 1 1 auto; min-height: 0; }
 }
+
+/* The judged rows (U31): the confidence meter is one gradient track —
+   the width IS the number, no decorative borders (U19's meter law) —
+   and a row carrying the owner's word wears the gold border. */
+.cal-judged .cal-meter {
+  flex: 0 0 90px;
+  height: 8px;
+  border-radius: 20px;
+  background: var(--panel2);
+  overflow: hidden;
+  display: inline-block;
+}
+
+.cal-judged .cal-meter i {
+  display: block;
+  height: 100%;
+  border-radius: 20px;
+  background: linear-gradient(90deg, var(--teal), var(--green));
+}
+
+.cal-judged.cal-disposed {
+  border-left: 2px solid var(--gold);
+  padding-left: 10px;
+}
+
+.cal-judged .cal-word {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+/* The desk card's own stage track and refusal chips (U30): the loop
+   visible where the work is — five beads, the current stage lit, the
+   named refusals as red chips with their words. */
+.dk-track {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 8px 0 0;
+}
+
+.dk-tb {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.dk-tb.done { border-color: var(--dsw-alias-ok); color: var(--dsw-alias-ok); }
+.dk-tb.run { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }
+.dk-tb.refused { border-color: var(--dsw-alias-down); color: var(--dsw-alias-down); }
+
+.dk-tl {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--dsw-alias-hairline);
+}
+
+.dk-refusals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 8px 0 0;
+}
+
+.dk-refusal {
+  padding: 3px 9px;
+  border-radius: 20px;
+  border: 1px solid var(--red-d);
+  background: var(--red-d);
+  color: var(--red);
+  font-size: 10.5px;
+  line-height: 1.4;
+}

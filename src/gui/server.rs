@@ -1949,6 +1949,32 @@ async fn serve_connection(
             let day = (!day.is_empty()).then_some(day);
             write_reply(&mut stream, api(200, bridge.calibration(day).await)).await
         }
+        // The owner's word on a judged row (the U-reskin, U31): the CLI
+        // disposition verb, surfaced — the same append-only store, the
+        // same refusals named.
+        ("POST", "/api/calibration/dispose") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            let key = parsed["key"].as_str().unwrap_or("").to_string();
+            let word = parsed["word"].as_str().unwrap_or("").to_string();
+            if key.is_empty() || word.is_empty() {
+                write_reply(
+                    &mut stream,
+                    bad_request("a disposition needs a row key and a word"),
+                )
+                .await
+            } else {
+                write_reply(
+                    &mut stream,
+                    api(200, bridge.calibration_dispose(&key, &word).await),
+                )
+                .await
+            }
+        }
         ("GET", "/api/clipboard") => {
             // What the owner copied, read on the click that asked. The
             // webview will not hand an image to the page, so the page

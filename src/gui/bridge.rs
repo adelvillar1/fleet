@@ -3123,6 +3123,46 @@ impl Bridge {
         }
     }
 
+    /// The owner's word on a judged row (the U-reskin, U31): the
+    /// disposition the CLI's `fleet judge --disposition` writes, exposed
+    /// to the face — the same verb, the same append-only store, the same
+    /// refusals named. The word is validated here against the store's
+    /// own vocabulary, so a face bug cannot invent a fourth disposition.
+    pub async fn calibration_dispose(&self, key: &str, word: &str) -> Value {
+        if !crate::calib::DISPOSITIONS.contains(&word) {
+            return json!({
+                "type": "calibration",
+                "refused": [format!(
+                    "`{word}` is not a disposition — one of {}",
+                    crate::calib::DISPOSITIONS.join(", ")
+                )],
+            });
+        }
+        let home = self.home.clone();
+        let key = key.to_string();
+        let word = word.to_string();
+        tokio::task::spawn_blocking(move || {
+            let user_home = std::env::var("HOME").ok();
+            let root = crate::calib::resolve_root(&home, user_home.as_deref());
+            let day = crate::calib::today();
+            match crate::judge::disposition(&root, &day, &key, &word) {
+                Ok(row) => json!({
+                    "type": "calibration",
+                    "disposed": true,
+                    "day": day,
+                    "key": row.route_key,
+                    "verdict": row.verdict,
+                    "disposition": row.disposition,
+                }),
+                Err(reason) => json!({"type": "calibration", "refused": [reason]}),
+            }
+        })
+        .await
+        .unwrap_or_else(
+            |_| json!({"type": "calibration", "refused": ["the disposition did not land"]}),
+        )
+    }
+
     /// What the owner has on the clipboard, read on their gesture.
     ///
     /// A webview will not hand an image to the page, so the page asks
