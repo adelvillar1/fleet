@@ -257,3 +257,14 @@ more principals and team scopes over the same graph, not a rebuild. The
 non-breaking shape (references derived live, folder-keyed output preserved,
 huddle stays a session) is what lets it land without changing what the owner
 does today. Approve this and the ledger carries D37–D43 into L8.
+
+**Delivered 2026-11-12, cut v0.6.37.** All ten criteria (C0–C9) met and
+tested; the four-leg gate green on `27216c6` (lib + 172 integration + 7 face
+harness, settle clean). The published feed reads back 0.6.37 with the cli
+row's sha256 matching the served raw binary (`5a82890b1213…`); the installed
+CLI answers `fleet 0.6.37`. Two load-sensitive defects the gate surfaced were
+fixed at the mechanism, not the flake (KI-426's class): the telegram offset
+now persists atomically (a temp + rename, no empty window), and five
+integration tests hold the ambient-env lock across the whole run instead of
+acquire-and-drop, so a concurrent test cannot swap the process-global
+FLEET_HOME under the health probe.
