@@ -4339,15 +4339,14 @@ impl Drop for AmbientKey {
 /// shape (KI-493): a provisioned substrate whose worker does not
 /// answer, so the old path refused the child at 0 turns.
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // ambient serial lock held across the run by design
 async fn a_dead_substrate_degrades_the_child_instead_of_refusing_it() {
-    {
-        // The lock scopes the env setup; the AmbientKey holds the
-        // restore, the guard does not cross an await.
-        let lock = AMBIENT_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        drop(lock);
-    }
+    // The ambient lock is held for the whole test: the run reads the
+    // process-global FLEET_HOME mid-flight, so a concurrent ambient test
+    // must not swap it under us (KI-426's class).
+    let _lock = AMBIENT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // The child streams: the script is SSE frames, not a document.
     let mock = MockApi::start(vec![stream(vec![
         content_delta("the child's answer"),
@@ -4453,15 +4452,14 @@ async fn a_dead_substrate_degrades_the_child_instead_of_refusing_it() {
 /// could ever reach a child again is a named degradation onto the
 /// parent's route, never a refusal.
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // ambient serial lock held across the run by design
 async fn a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_it() {
-    {
-        // The lock scopes the env setup; the AmbientKey holds the
-        // restore, the guard does not cross an await.
-        let lock = AMBIENT_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        drop(lock);
-    }
+    // The ambient lock is held for the whole test: the run reads the
+    // process-global FLEET_HOME mid-flight, so a concurrent ambient test
+    // must not swap it under us (KI-426's class).
+    let _lock = AMBIENT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // The child's own turns are the only calls: the route judgment is
     // served from the route cache or the fallback, never the mock.
     let mock = MockApi::start(vec![stream(vec![
@@ -4596,15 +4594,16 @@ async fn a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_
 /// the model's bash attempt at the repair lands as a tool result, the
 /// attempt and its outcome both reconstructable (hard rule 5).
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // ambient serial lock held across the run by design
 async fn a_down_service_rides_the_repair_note_and_the_models_bash_attempt_is_logged() {
-    {
-        // The lock scopes the env setup; the AmbientKey holds the
-        // restore, the guard does not cross an await.
-        let lock = AMBIENT_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        drop(lock);
-    }
+    // The ambient lock is held for the WHOLE test, not just the env setup:
+    // the health probe reads the process-global FLEET_HOME mid-run, so a
+    // concurrent ambient test must not swap it under us. The acquire-and-drop
+    // let it race — under the parallel suite the repair note read another
+    // test's home and named no down service (KI-426's class).
+    let _lock = AMBIENT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // Turn one: the model answers the note with a bash probe of fleet
     // itself. Turn two: the final words.
     let mock = MockApi::start(vec![
@@ -4875,16 +4874,16 @@ async fn two_spawned_calls_share_one_server() {
 /// spawns the REAL sem1 lane on that call, the call succeeds, and turn 2
 /// answers — with the lane's tools in the model's tool set from then on.
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // ambient serial lock held across the run by design
 async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The world is pinned: a scratch FLEET_HOME with no provisioning,
     // so the run-time health note has nothing to name and this test's
     // message counts ride the fixture alone.
-    {
-        let lock = AMBIENT_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        drop(lock);
-    }
+    // Held for the whole test: the run reads the process-global FLEET_HOME
+    // mid-flight, so a concurrent ambient test must not swap it (KI-426).
+    let _lock = AMBIENT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _world = {
         let scratch = temp_home("world-pin");
         std::fs::create_dir_all(&scratch).unwrap();
@@ -10709,16 +10708,16 @@ async fn one_compaction_per_crossing_and_the_tool_loop_survives_it() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // ambient serial lock held across the run by design
 async fn a_compacted_session_resumes_from_disk_and_continues_coherently() {
     // The world is pinned: a scratch FLEET_HOME with no provisioning,
     // so the run-time health note has nothing to name and this test's
     // message counts ride the fixture alone.
-    {
-        let lock = AMBIENT_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        drop(lock);
-    }
+    // Held for the whole test: the run reads the process-global FLEET_HOME
+    // mid-flight, so a concurrent ambient test must not swap it (KI-426).
+    let _lock = AMBIENT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _world = {
         let scratch = temp_home("world-pin");
         std::fs::create_dir_all(&scratch).unwrap();
@@ -13238,16 +13237,16 @@ async fn the_reference_relay_carries_sealed_frames() {
 /// is turn-scoped: the next request does not carry it. The log's
 /// `curated` record names the turn, the shape, and the facts.
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // ambient serial lock held across the run by design
 async fn a_drifted_steer_recurates_memory_at_the_message_tail_and_the_prompt_holds() {
     // The world is pinned: a scratch FLEET_HOME with no provisioning,
     // so the run-time health note has nothing to name and this test's
     // message counts ride the fixture alone.
-    {
-        let lock = AMBIENT_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        drop(lock);
-    }
+    // Held for the whole test: the run reads the process-global FLEET_HOME
+    // mid-flight, so a concurrent ambient test must not swap it (KI-426).
+    let _lock = AMBIENT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _world = {
         let scratch = temp_home("world-pin");
         std::fs::create_dir_all(&scratch).unwrap();
