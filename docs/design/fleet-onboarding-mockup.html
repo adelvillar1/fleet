@@ -425,7 +425,7 @@ var LENSES=[
   {id:"setup",icon:"sprout",label:"Setup",sub:"Each step adds a node to the tissue — watch the graph grow as you connect"},
   {id:"desk",icon:"package",label:"Desk",fill:"prove"},
   {id:"threads",icon:"messages-square",label:"Threads",fill:"prove"},
-  {id:"memory",icon:"brain",label:"Memory",fill:"account"},
+  {id:"intelligence",icon:"brain",label:"Intelligence",fill:"account"},
   {id:"calibration",icon:"scale",label:"Calibration",fill:"prove"},
   {id:"inbox",icon:"inbox",label:"Inbox",fill:"reef"},
   {id:"fleet",icon:"server",label:"Fleet",fill:"reef"}
@@ -489,7 +489,7 @@ function markBorn(id){ DB.born[id]=Date.now(); }
 function setLens(id){ state.lens=id; renderNav(); renderLens(); }
 function focusOn(kind,id,switchLens){
   state.focus={kind:kind,id:id};
-  if(switchLens){ var map={deliverable:"desk",thread:"threads",fact:"memory",calib:"calibration",instance:"fleet",workspace:"setup",bot:"setup"}; if(map[kind]) state.lens=map[kind]; }
+  if(switchLens){ var map={deliverable:"desk",thread:"threads",fact:"intelligence",calib:"calibration",instance:"fleet",workspace:"setup",bot:"setup"}; if(map[kind]) state.lens=map[kind]; }
   renderNav(); renderLens(); renderTissue();
 }
 function progress(){
@@ -518,7 +518,7 @@ function renderProgress(){
 function renderNav(){
   var nav=$("#fo-nav"); nav.innerHTML="";
   LENSES.forEach(function(L){
-    var count={setup:0,desk:DB.deliverables.length,threads:DB.threads.length,memory:DB.facts.length,calibration:DB.calib.length,inbox:DB.messages.length,fleet:DB.instances.filter(function(i){return !i.home;}).length}[L.id];
+    var count={setup:0,desk:DB.deliverables.length,threads:DB.threads.length,intelligence:DB.facts.length,calibration:DB.calib.length,inbox:DB.messages.length,fleet:DB.instances.filter(function(i){return !i.home;}).length}[L.id];
     var b=document.createElement("button"); b.className=(state.lens===L.id?"active":"");
     b.innerHTML='<i data-lucide="'+L.icon+'" style="width:16px;height:16px"></i><span>'+L.label+'</span><span class="fw-count fo-count">'+count+'</span>';
     b.onclick=function(){setLens(L.id);}; nav.appendChild(b);
@@ -534,7 +534,7 @@ function renderLens(){
   if(state.lens==="setup") renderSetup(body);
   else if(state.lens==="desk") renderDesk(tools,body);
   else if(state.lens==="threads") renderThreads(tools,body);
-  else if(state.lens==="memory") renderMemory(tools,body);
+  else if(state.lens==="intelligence") renderMemory(tools,body);
   else if(state.lens==="calibration") renderCalibration(tools,body);
   else if(state.lens==="inbox") renderInbox(tools,body);
   else if(state.lens==="fleet") renderFleet(tools,body);
@@ -759,7 +759,7 @@ function checkWhole(){
 /* ---------- other lenses: honest empties that onboard ---------- */
 function emptyLens(body,fillStep){
   var map={
-    account:{t:"Memory fills from the first connection",p:"The corpus — one fact per file, every claim naming how it is known — starts with your lane account.",step:"Connect an account",icon:"brain"},
+    account:{t:"Intelligence fills from the first connection",p:"The capability surface — memories, skills, tools, workflows — starts with your lane account. One fact per file; every claim names how it is known.",step:"Connect an account",icon:"brain"},
     prove:{t:"Threads arrive with the first answer",p:"The conversation every piece of work lives in starts with the proof question.",step:"Prove it with a real answer",icon:"messages-square"},
     provethread:{t:"Threads arrive with the first answer",p:"The conversation every piece of work lives in starts with the proof question.",step:"Prove it with a real answer",icon:"messages-square"},
     provework:{t:"The desk arrives with the first brief",p:"Deliverables the gate grades. Finish the proof, then open your first brief.",step:"Prove it with a real answer",icon:"package"},

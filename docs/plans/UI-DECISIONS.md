@@ -289,6 +289,28 @@ Same shell, same tokens; the Setup lens on a fresh home.
 
 ---
 
+## Intelligence — the capability surface (2026-11-12)
+
+- **U40 — "Intelligence" is the capability surface, not a memory list.** The
+  lens formerly named Memory becomes **Intelligence** — everything the harness
+  knows *and can do* — organized in segments with live counts: **Memories**
+  (the basis ladder, anti-vectors in red, the Dream that compresses stale
+  inferences), **Skills** (procedural memory — active in gold, proposals in
+  amber waiting at the gate with their drafted-from provenance, applied only
+  through the gate, never silently), **Tools** (the bounded surface —
+  builtin/lane/MCP, each carrying its read/write/destructive class and an
+  enable switch), **Workflows** (composed chains rendered as a stage track,
+  every run graded). In the tissue, the intelligence family shares the teal
+  signal — **hue encodes the family, icon and label the kind**, so no tenth
+  hue is needed (U4 holds). Skills link to the deliverables that used them and
+  the workflows that chain them; the thread pane lists the skills a deliverable
+  drew on. *Rationale:* "memory" undersold the surface — the owner's framing
+  is one place for everything the harness knows and can do. *Constrains:* the
+  face's memory/skills/tools surfaces, the substrate rendering, the armada
+  intelligence, the onboarding empty state.
+
+---
+
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the
 armada interactive mockup ([`../design/armada-workspace-mockup.html`](../design/armada-workspace-mockup.html));
 U29–U33 from the fleet-core mockup the same day; U34–U38 from the onboarding

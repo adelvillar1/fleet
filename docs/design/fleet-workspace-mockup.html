@@ -457,6 +457,9 @@ var KIND={
   bot:{c:"var(--magenta)",bg:"var(--magenta-d)",icon:"bot",label:"Bot"},
   lesson:{c:"var(--gold)",bg:"var(--gold-d)",icon:"lightbulb",label:"Lesson"},
   fact:{c:"var(--teal)",bg:"var(--teal-d)",icon:"brain",label:"Fact"},
+  skill:{c:"var(--teal)",bg:"var(--teal-d)",icon:"sparkles",label:"Skill"},
+  tool:{c:"var(--teal)",bg:"var(--teal-d)",icon:"wrench",label:"Tool"},
+  workflow:{c:"var(--teal)",bg:"var(--teal-d)",icon:"workflow",label:"Workflow"},
   instance:{c:"var(--blue)",bg:"var(--blue-d)",icon:"server",label:"Instance"},
   calib:{c:"var(--amber)",bg:"var(--amber-d)",icon:"scale",label:"Grade"}
 };
@@ -475,9 +478,9 @@ function seed(){
       {id:"i-reef",kind:"instance",name:"reef-1",host:"vps · fra1",live:true,cap:44,rel:0.88,settled:25,version:"0.7.0"}
     ],
     deliverables:[
-      {id:"d1",kind:"deliverable",name:"Fleet board UI",claim:"A genuinely visual armada board: liveness, capacity, reliability.",stage:4,gate:"pass",coverage:94,facts:["f1","f3"],thread:"th1",lesson:"l1",calib:"c1",order:0},
+      {id:"d1",kind:"deliverable",name:"Fleet board UI",claim:"A genuinely visual armada board: liveness, capacity, reliability.",stage:4,gate:"pass",coverage:94,facts:["f1","f3"],skills:["s1"],thread:"th1",lesson:"l1",calib:"c1",order:0},
       {id:"d2",kind:"deliverable",name:"Authority transport",claim:"Frames verified before obeying; forged assertions refused.",stage:3,gate:null,coverage:71,facts:["f1","f2"],thread:"th2",lesson:null,calib:null,refusals:["threat model names no adversary for a stolen relay token"],order:1},
-      {id:"d3",kind:"deliverable",name:"Fresh-install bootstrap",claim:"Clone the mind, mint a new identity, register un-calibrated.",stage:4,gate:"pass",coverage:98,facts:["f4"],thread:"th3",lesson:"l2",calib:"c2",order:2},
+      {id:"d3",kind:"deliverable",name:"Fresh-install bootstrap",claim:"Clone the mind, mint a new identity, register un-calibrated.",stage:4,gate:"pass",coverage:98,facts:["f4"],skills:["s1"],thread:"th3",lesson:"l2",calib:"c2",order:2},
       {id:"d4",kind:"deliverable",name:"Inbox identity graph",claim:"One principal across telegram, webhook, and relay.",stage:2,gate:null,coverage:55,facts:["f2"],thread:"th4",lesson:null,calib:null,order:3},
       {id:"d5",kind:"deliverable",name:"Reliability report",claim:"Dispatch autonomy earned by measured settles, never arrival.",stage:1,gate:null,coverage:20,facts:["f3"],thread:"th5",lesson:null,calib:null,order:4}
     ],
@@ -500,6 +503,22 @@ function seed(){
       {id:"f5",kind:"fact",name:"one-derivation",basis:"stated",body:"A huddle stays a session; the graph stores references, never a parallel store."},
       {id:"f7",kind:"fact",name:"route-cache-trust",basis:"inferred",body:"A route cache seeded from a judged plan can be served without re-judging — inferred from three sessions, unvalidated."},
       {id:"f6",kind:"fact",name:"never-green-by-assertion",basis:"stated",tier:"anti-vector",body:"A demo once shipped green by assertion; every claim now names the gate that graded it."}
+    ],
+    skills:[
+      {id:"s1",kind:"skill",name:"board-reading",desc:"Reads the armada board — instances, liveness, capacity, reliability — and says what it sees.",state:"active",trigger:"when asked about the fleet",drafted:null},
+      {id:"s2",kind:"skill",name:"gate-triage",desc:"Triage an end-gate refusal: name the unsourced claims, find the nearest verified sentence.",state:"active",trigger:"when a deliverable is refused",drafted:null},
+      {id:"s3",kind:"skill",name:"provision-runbook",desc:"Provision a fresh install: drop the payload, clone the mind, register, watch it settle.",state:"proposal",trigger:"when the owner says 'add an instance'",drafted:"drafted from the 0.7.0 deployment session"}
+    ],
+    tools:[
+      {id:"tl-bash",kind:"tool",name:"bash",tkind:"builtin",cls:"destructive · at the seat",desc:"Runs commands in the sandbox; the destructive class answers at the approval seat.",on:true},
+      {id:"tl-edit",kind:"tool",name:"edit_file",tkind:"builtin",cls:"write",desc:"Edits files inside the granted folder — never outside the workspace.",on:true},
+      {id:"tl-recall",kind:"tool",name:"recall",tkind:"builtin",cls:"read",desc:"Vectors and ranked evidence over the corpus — never the model's memory.",on:true},
+      {id:"tl-sys1",kind:"tool",name:"sys1 · judgment",tkind:"lane",cls:"read",desc:"Closed-set classification with a confidence — it cannot invent a category.",on:true},
+      {id:"tl-gh",kind:"tool",name:"github MCP",tkind:"mcp",cls:"write",desc:"Issues and PRs through the MCP registry; keys resolve from env names only.",on:false}
+    ],
+    workflows:[
+      {id:"w1",kind:"workflow",name:"warmup → plan → build → recap",steps:["warmup","plan","build","recap"],runs:14,runStep:0,skills:["s1"],deliverable:"d1"},
+      {id:"w2",kind:"workflow",name:"delegation graph",steps:["fan-out","join","grade"],runs:6,runStep:0,skills:["s2"],deliverable:null}
     ],
     calib:[
       {id:"c1",kind:"calib",workload:"standard_code",decision:"sys1 → blend1",confidence:.91,outcome:"held",agree:null,deliverable:"d1"},
@@ -529,7 +548,7 @@ var DB=seed();
 var state={
   lens:"desk", focus:{kind:"deliverable",id:"d2"},
   filterStage:"all", filterGate:"all", sort:"order", query:"",
-  selected:{}, bulk:false, armada:false, threadPane:true,
+  selected:{}, bulk:false, armada:false, threadPane:true, intelSeg:"memories",
   savedViews:[{name:"Needs sources",lens:"desk",filterStage:"sources",query:""}],
   speed:1, spread:92, motion:true, labels:true, sound:false, paletteOpen:false
 };
@@ -537,14 +556,14 @@ var LENSES=[
   {id:"desk",icon:"package",label:"Desk",sub:"Deliverables moving through the loop, graded by the gate"},
   {id:"threads",icon:"messages-square",label:"Threads",sub:"The conversation each deliverable was worked in"},
   {id:"learning",icon:"lightbulb",label:"Learning",sub:"Lessons with their propositions and practice"},
-  {id:"memory",icon:"brain",label:"Memory",sub:"The corpus — facts with provenance, dream, anti-vectors"},
+  {id:"intelligence",icon:"brain",label:"Intelligence",sub:"Everything the harness knows and can do — memories, skills, tools, workflows"},
   {id:"calibration",icon:"scale",label:"Calibration",sub:"Every decision graded against its outcome — your word rides the row"},
   {id:"inbox",icon:"inbox",label:"Inbox",sub:"One omnichannel stream, identity resolved"},
   {id:"fleet",icon:"server",label:"Fleet",sub:"Instances — the same workspace, more minds",arm:true}
 ];
 
 function byId(kind,id){
-  var arr={deliverable:DB.deliverables,thread:DB.threads,bot:DB.bots,lesson:DB.lessons,fact:DB.facts,instance:DB.instances,calib:DB.calib}[kind];
+  var arr={deliverable:DB.deliverables,thread:DB.threads,bot:DB.bots,lesson:DB.lessons,fact:DB.facts,instance:DB.instances,calib:DB.calib,skill:DB.skills,tool:DB.tools,workflow:DB.workflows}[kind];
   if(!arr) return null;
   for(var i=0;i<arr.length;i++) if(arr[i].id===id) return arr[i];
   return null;
@@ -557,9 +576,19 @@ function linkedObjects(ref){
   if(ref.kind==="deliverable"){
     var d=obj(ref);
     if(d){ if(d.thread)out.push({kind:"thread",id:d.thread}); if(d.facts)d.facts.forEach(function(f){out.push({kind:"fact",id:f});});
+      if(d.skills)d.skills.forEach(function(sk){out.push({kind:"skill",id:sk});});
       if(d.lesson)out.push({kind:"lesson",id:d.lesson}); if(d.calib)out.push({kind:"calib",id:d.calib});
       var bot=byId("bot","b-ship"); if(bot)out.push({kind:"bot",id:bot.id});
       if(state.armada){ var inst=byId("instance","i-flag"); if(inst)out.push({kind:"instance",id:inst.id}); } }
+  } else if(ref.kind==="skill"){
+    DB.deliverables.forEach(function(d){ if(d.skills&&d.skills.indexOf(ref.id)>=0) out.push({kind:"deliverable",id:d.id}); });
+    DB.workflows.forEach(function(w){ if(w.skills&&w.skills.indexOf(ref.id)>=0) out.push({kind:"workflow",id:w.id}); });
+  } else if(ref.kind==="workflow"){
+    var w=obj(ref);
+    if(w&&w.skills)w.skills.forEach(function(sk){out.push({kind:"skill",id:sk});});
+    if(w&&w.deliverable)out.push({kind:"deliverable",id:w.deliverable});
+  } else if(ref.kind==="tool"){
+    out.push({kind:"instance",id:"i-flag"});
   } else {
     DB.deliverables.forEach(function(d){
       if((ref.kind==="thread"&&d.thread===ref.id)||(ref.kind==="lesson"&&d.lesson===ref.id)||(ref.kind==="calib"&&d.calib===ref.id)||(ref.kind==="fact"&&d.facts&&d.facts.indexOf(ref.id)>=0)) out.push({kind:"deliverable",id:d.id});
@@ -588,7 +617,7 @@ function ping(freq){
 function setLens(id){ state.lens=id; state.selected={}; renderNav(); renderLens(); }
 function focusOn(kind,id,switchLens){
   state.focus={kind:kind,id:id};
-  if(switchLens){ var map={deliverable:"desk",thread:"threads",fact:"memory",lesson:"learning",calib:"calibration",bot:"learning",instance:"fleet"}; if(map[kind]) state.lens=map[kind]; }
+  if(switchLens){ var map={deliverable:"desk",thread:"threads",fact:"intelligence",skill:"intelligence",tool:"intelligence",workflow:"intelligence",lesson:"learning",calib:"calibration",bot:"learning",instance:"fleet"}; if(map[kind]) state.lens=map[kind]; }
   renderNav(); renderLens(); renderTissue();
   announce("Focused "+kind);
 }
@@ -596,7 +625,7 @@ function renderNav(){
   var nav=$("#fw-nav"); nav.innerHTML="";
   LENSES.forEach(function(L){
     if(L.arm&&!state.armada) return;
-    var count={desk:DB.deliverables.length,threads:DB.threads.length,learning:DB.lessons.length,memory:DB.facts.length,calibration:DB.calib.length,inbox:DB.messages.filter(function(m){return state.armada||!m.arm;}).length,fleet:DB.instances.length}[L.id];
+    var count={desk:DB.deliverables.length,threads:DB.threads.length,learning:DB.lessons.length,intelligence:DB.facts.length+DB.skills.length+DB.tools.length+DB.workflows.length,calibration:DB.calib.length,inbox:DB.messages.filter(function(m){return state.armada||!m.arm;}).length,fleet:DB.instances.length}[L.id];
     var b=document.createElement("button"); b.className=(state.lens===L.id?"active":"");
     b.innerHTML='<i data-lucide="'+L.icon+'" style="width:16px;height:16px"></i><span>'+L.label+'</span><span class="fw-count">'+count+'</span>';
     b.onclick=function(){setLens(L.id);}; nav.appendChild(b);
@@ -620,7 +649,7 @@ function renderLens(){
   if(state.lens==="desk") renderDesk(tools,body);
   else if(state.lens==="threads") renderThreads(tools,body);
   else if(state.lens==="learning") renderLearning(tools,body);
-  else if(state.lens==="memory") renderMemory(tools,body);
+  else if(state.lens==="intelligence") renderIntelligence(tools,body);
   else if(state.lens==="calibration") renderCalibration(tools,body);
   else if(state.lens==="inbox") renderInbox(tools,body);
   else if(state.lens==="fleet") renderFleet(tools,body);
@@ -771,6 +800,7 @@ function threadObjects(d){
   var out=[];
   if(d) out.push({kind:"deliverable",id:d.id,label:d.name,meta:STAGE_LABEL[STAGES[d.stage]]+" · "+d.coverage+"%",gate:d.gate});
   (d&&d.facts||[]).forEach(function(f){ var o=byId("fact",f); if(o)out.push({kind:"fact",id:f,label:o.name,meta:o.basis}); });
+  (d&&d.skills||[]).forEach(function(sk){ var o=byId("skill",sk); if(o)out.push({kind:"skill",id:sk,label:o.name,meta:o.state}); });
   if(d&&d.calib){ var c=byId("calib",d.calib); if(c)out.push({kind:"calib",id:c.id,label:c.workload+" · "+c.decision,meta:c.outcome+" "+c.confidence.toFixed(2)}); }
   if(d&&d.lesson){ var l=byId("lesson",d.lesson); if(l)out.push({kind:"lesson",id:l.id,label:l.name,meta:"held "+l.practice.held+"/"+l.practice.total}); }
   if(state.armada){ var i=byId("instance","i-flag"); if(i)out.push({kind:"instance",id:i.id,label:i.name,meta:i.live?"live":"un-calibrated"}); }
@@ -893,13 +923,22 @@ function practice(l){
 }
 
 /* ---------- MEMORY ---------- */
-function renderMemory(tools,body){
+function renderIntelligence(tools,body){
+  var segs=[["memories","Memories",DB.facts.length],["skills","Skills",DB.skills.length],["tools","Tools",DB.tools.length],["workflows","Workflows",DB.workflows.length]];
+  tools.innerHTML=segs.map(function(sg){ return '<button class="fw-chip '+(state.intelSeg===sg[0]?"on":"")+'" data-seg="'+sg[0]+'">'+sg[1]+' <span style="color:var(--faint)">'+sg[2]+'</span></button>'; }).join("")+
+    (state.intelSeg==="memories"?'<button class="fw-btn" id="fw-dream"><i data-lucide="moon-star" style="width:13px;height:13px"></i> Dream</button>':"");
+  tools.querySelectorAll("[data-seg]").forEach(function(c){ c.onclick=function(){ state.intelSeg=c.getAttribute("data-seg"); renderLens(); }; });
+  var dream=tools.querySelector("#fw-dream"); if(dream)dream.onclick=dreamPass;
+  body.innerHTML="";
+  if(state.intelSeg==="memories") renderMemories(body);
+  else if(state.intelSeg==="skills") renderSkills(body);
+  else if(state.intelSeg==="tools") renderToolsList(body);
+  else renderWorkflows(body);
+  icons();
+}
+function renderMemories(body){
   var anti=DB.facts.filter(function(f){return f.tier==="anti-vector";}).length;
-  tools.innerHTML='<span class="fw-chip on">'+DB.facts.length+' facts · git-synced</span>'+
-    (anti?'<span class="fw-chip on" style="color:var(--red)">'+anti+' anti-vector'+(anti>1?"s":"")+'</span>':"")+
-    '<button class="fw-btn" id="fw-dream"><i data-lucide="moon-star" style="width:13px;height:13px"></i> Dream</button>';
-  tools.querySelector("#fw-dream").onclick=dream;
-  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fw-facts";
+  var wrap=document.createElement("div"); wrap.className="fw-facts";
   var basisColor={stated:"var(--cyan)",inferred:"var(--amber)",validated:"var(--green)",episodic:"var(--gold)"};
   DB.facts.filter(function(f){return matchQuery(f.name+" "+f.body);}).forEach(function(f){
     var el=document.createElement("div"); el.className="fw-fact"; el.style.borderLeftColor=basisColor[f.basis]||"var(--teal)";
@@ -910,9 +949,78 @@ function renderMemory(tools,body){
     el.onclick=function(){ focusOn("fact",f.id,false); openDrawer("fact",f.id); };
     wrap.appendChild(el);
   });
+  if(anti){ var n=document.createElement("div"); n.className="fw-bulk"; n.style.borderColor="var(--line)";
+    n.innerHTML='<span style="color:var(--muted)"><b style="color:var(--red)">'+anti+' anti-vector'+(anti>1?"s":"")+'</b> — the harness\u2019s own failures, kept so it does not repeat them.</span>'; wrap.appendChild(n); }
   body.appendChild(wrap);
 }
-function dream(){
+function renderSkills(body){
+  var grid=document.createElement("div"); grid.className="fw-lgrid";
+  DB.skills.filter(function(sk){return matchQuery(sk.name+" "+sk.desc);}).forEach(function(sk){
+    var c=document.createElement("div"); c.className="fw-lcard"; c.style.borderLeftColor=sk.state==="proposal"?"var(--amber)":"var(--gold)";
+    c.innerHTML='<h3 style="color:'+(sk.state==="proposal"?"var(--amber)":"var(--gold)")+'">'+esc(sk.name)+
+      (sk.state==="proposal"?' <span class="fw-basis" style="background:var(--amber-d);color:var(--amber)">proposal</span>':"")+'</h3>'+
+      '<p>'+esc(sk.desc)+'</p>'+
+      '<div class="fw-props"><span class="fw-prop"><i data-lucide="crosshair" style="width:12px;height:12px;color:var(--faint)"></i>'+esc(sk.trigger)+'</span>'+
+      (sk.drafted?'<span class="fw-prop"><i data-lucide="pen-line" style="width:12px;height:12px;color:var(--amber)"></i>'+esc(sk.drafted)+'</span>':"")+'</div>'+
+      '<div class="fw-dactions">'+(sk.state==="proposal"
+        ?'<button class="fw-btn fw-btn-primary" data-apply><i data-lucide="check" style="width:12px;height:12px"></i> Apply through the gate</button>'
+        :'<span class="fw-basis" style="background:var(--gold-d);color:var(--gold)">active · procedural memory</span>')+'</div>';
+    var ap=c.querySelector("[data-apply]");
+    if(ap)ap.onclick=function(e){ e.stopPropagation();
+      sk.state="active"; sk.drafted=null;
+      DB.activity.unshift({c:"var(--gold)",t:"skill applied through the gate: "+sk.name});
+      toast("Skill active — it applied through the gate, measured before it is kept","sparkles","var(--gold)");
+      ping(840); renderNav(); renderLens(); renderTissue(); };
+    c.onclick=function(e){ if(e.target.closest("button"))return; focusOn("skill",sk.id,false); openDrawer("skill",sk.id); };
+    grid.appendChild(c);
+  });
+  body.appendChild(grid);
+}
+function renderToolsList(body){
+  var wrap=document.createElement("div"); wrap.className="fw-facts";
+  var clsColor={"read":"var(--cyan)","write":"var(--amber)","destructive · at the seat":"var(--red)"};
+  DB.tools.filter(function(t){return matchQuery(t.name+" "+t.desc);}).forEach(function(t){
+    var el=document.createElement("div"); el.className="fw-fact"; el.style.borderLeftColor=clsColor[t.cls]||"var(--teal)";
+    el.innerHTML='<div class="fw-fact-h"><span class="fw-fact-name">'+esc(t.name)+'</span>'+
+      '<span class="fw-basis" style="background:var(--panel2);color:var(--muted)">'+esc(t.tkind)+'</span>'+
+      '<span class="fw-basis" style="background:var(--panel2);color:'+(clsColor[t.cls]||"var(--teal)")+'">'+esc(t.cls)+'</span>'+
+      '<label style="margin-left:10px;display:inline-flex;align-items:center"><input type="checkbox" '+(t.on?"checked":"")+' data-toggle style="accent-color:var(--teal)" aria-label="Enable '+esc(t.name)+'"></label></div>'+
+      '<div class="fw-fact-body">'+esc(t.desc)+'</div>';
+    el.querySelector("[data-toggle]").addEventListener("change",function(e){
+      e.stopPropagation(); t.on=e.target.checked;
+      toast(t.name+(t.on?" enabled — its tools join the declaration":" disabled — the surface narrows"), "wrench", t.on?"var(--teal)":"var(--muted)");
+      renderLens();
+    });
+    el.onclick=function(e){ if(e.target.closest("input,label"))return; focusOn("tool",t.id,false); openDrawer("tool",t.id); };
+    wrap.appendChild(el);
+  });
+  body.appendChild(wrap);
+}
+function renderWorkflows(body){
+  var grid=document.createElement("div"); grid.className="fw-lgrid";
+  DB.workflows.filter(function(w){return matchQuery(w.name);}).forEach(function(w){
+    var c=document.createElement("div"); c.className="fw-lcard"; c.style.borderLeftColor="var(--teal)";
+    c.innerHTML='<h3 style="color:var(--teal)">'+esc(w.name)+'</h3>'+
+      '<div class="fw-stages">'+w.steps.map(function(st,i){ return '<span class="fw-stage'+(i<w.runStep?" done":"")+'"></span>'; }).join("")+'</div>'+
+      '<div class="fw-stage-l">'+w.steps.map(function(st){return '<span>'+st+'</span>';}).join("")+'</div>'+
+      '<div class="fw-inst-row" style="margin-top:10px"><span>Runs · graded each time</span><b>'+w.runs+'</b></div>'+
+      '<div class="fw-dactions"><button class="fw-btn" data-run><i data-lucide="play" style="width:12px;height:12px"></i> Run</button></div>';
+    c.querySelector("[data-run]").onclick=function(e){ e.stopPropagation();
+      w.runStep=0;
+      var iv=setInterval(function(){
+        w.runStep++;
+        if(w.runStep>=w.steps.length){ clearInterval(iv); w.runStep=0; w.runs++;
+          DB.activity.unshift({c:"var(--teal)",t:"workflow ran: "+w.name+" · graded"});
+          toast("Workflow complete — every step graded against its outcome","workflow","var(--teal)");
+          ping(780); renderLens(); renderTissue();
+        } else { renderLens(); }
+      },700/state.speed);
+    };
+    grid.appendChild(c);
+  });
+  body.appendChild(grid);
+}
+function dreamPass(){
   var inferred=DB.facts.filter(function(f){return f.basis==="inferred"&&!f.tier;});
   var el=$("#fw-dream"); if(el)el.classList.add("fw-dreaming");
   setTimeout(function(){
@@ -920,15 +1028,14 @@ function dream(){
     if(inferred.length>=2){
       var gone=inferred.slice(0,2);
       DB.facts=DB.facts.filter(function(f){return gone.indexOf(f)<0;});
-      DB.facts.push({id:"f-e"+(Date.now()%100000),kind:"fact",name:"episodic · "+gone.map(function(f){return f.name;}).join(" + "),basis:"episodic",body:"The night pass compressed "+gone.length+" stale inferences into one episodic summary, superseding them — archived, not lost."});
-      DB.activity.unshift({c:"var(--gold)",t:"dream · "+gone.length+" inferences → 1 episodic summary"});
-      toast("Dreamed · stale inferences compressed, superseded — archived, not lost","moon-star","var(--gold)");
+      DB.facts.push({id:"f-e"+(Date.now()%100000),kind:"fact",name:"episodic \u00b7 "+gone.map(function(f){return f.name;}).join(" + "),basis:"episodic",body:"The night pass compressed "+gone.length+" stale inferences into one episodic summary, superseding them \u2014 archived, not lost."});
+      DB.activity.unshift({c:"var(--gold)",t:"dream \u00b7 "+gone.length+" inferences \u2192 1 episodic summary"});
+      toast("Dreamed \u00b7 stale inferences compressed, superseded \u2014 archived, not lost","moon-star","var(--gold)");
       ping(520);
     } else { toast("Nothing stale to consolidate tonight","moon-star","var(--gold)"); }
     renderNav(); renderLens(); renderTissue();
   },1400/state.speed);
 }
-
 /* ---------- CALIBRATION ---------- */
 function renderCalibration(tools,body){
   var held=DB.calib.filter(function(c){return c.outcome==="held";}).length;
@@ -1050,6 +1157,9 @@ function renderFocus(){
   var meta="";
   if(state.focus.kind==="deliverable"){ meta='<span>Stage · <b style="color:var(--teal)">'+STAGE_LABEL[STAGES[o.stage]]+'</b></span><span>End gate · '+(o.gate||"pending")+'</span><span>Coverage · '+o.coverage+'%</span>'; }
   else if(state.focus.kind==="fact"){ meta='<span>Basis · '+o.basis+(o.tier?" · "+o.tier:"")+'</span>'; }
+  else if(state.focus.kind==="skill"){ meta='<span>'+(o.state==="proposal"?"proposal — waits at the gate":"active · procedural memory")+'</span><span>Triggers '+esc(o.trigger)+'</span>'; }
+  else if(state.focus.kind==="tool"){ meta='<span>'+esc(o.tkind)+' · '+esc(o.cls)+'</span><span>'+(o.on?"on the declaration":"off the surface")+'</span>'; }
+  else if(state.focus.kind==="workflow"){ meta='<span>'+o.runs+' graded runs</span>'; }
   else if(state.focus.kind==="calib"){ meta='<span>Outcome · '+o.outcome+'</span><span>Confidence · '+o.confidence.toFixed(2)+'</span>'+(o.agree?'<span style="color:var(--gold)">your word rides the row</span>':""); }
   else if(state.focus.kind==="lesson"){ meta='<span>Practice · '+o.practice.held+"/"+o.practice.total+' held</span>'; }
   else if(state.focus.kind==="instance"){ meta='<span>'+esc(o.host)+'</span><span>Reliability · '+(o.settled?Math.round(o.rel*100)+"%":"un-calibrated")+'</span>'; }
@@ -1109,8 +1219,8 @@ function closeDrawer(){ $("#fw-drawer").classList.remove("show"); $("#fw-scrim")
 /* ---------- PALETTE ---------- */
 function allObjects(){
   var out=[];
-  ["deliverable","thread","lesson","fact","calib","bot"].forEach(function(k){
-    var arr={deliverable:DB.deliverables,thread:DB.threads,lesson:DB.lessons,fact:DB.facts,calib:DB.calib,bot:DB.bots}[k];
+  ["deliverable","thread","lesson","fact","skill","tool","workflow","calib","bot"].forEach(function(k){
+    var arr={deliverable:DB.deliverables,thread:DB.threads,lesson:DB.lessons,fact:DB.facts,skill:DB.skills,tool:DB.tools,workflow:DB.workflows,calib:DB.calib,bot:DB.bots}[k];
     arr.forEach(function(o){ out.push({kind:k,id:o.id,label:o.name||o.title||o.id}); });
   });
   if(state.armada) DB.instances.forEach(function(o){ out.push({kind:"instance",id:o.id,label:o.name}); });
