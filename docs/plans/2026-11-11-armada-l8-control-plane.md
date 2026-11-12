@@ -182,3 +182,11 @@ before obeying (the relay stays dumb), and an instance earns autonomy by
 measured reliability — the flagship cannot overwhelm a small VPS because the
 VPS admits for itself, and cannot trust a fresh install until it settles.
 Approve this and the ledger carries D44–D50 into L9.
+
+**Delivered 2026-11-12, cut v0.6.38.** All eight criteria (C0–C8) met and
+tested (16 module tests); the four-leg gate green on `12ec4b3`. The published
+feed reads back 0.6.38 with the cli row's sha256 matching the served raw
+binary (`2c126222077b…`); the installed CLI answers `fleet 0.6.38`. The cut's
+anonymous read-back hit KI-526 (GitHub's `latest` redirect lagged past the old
+30s window and read as a false refusal); the release was verified published
+independently, and the window was widened to 90s so it does not recur.

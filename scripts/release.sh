@@ -451,7 +451,11 @@ echo "uploaded: latest.json (the updater's channel + the cli row)"
 echo "== reading the feed back anonymously =="
 READBACK=/tmp/latest-readback.json
 attempt=1
-while [ "$attempt" -le 6 ]; do
+# GitHub's `latest` redirect can lag a fresh upload by more than 30s (KI-526:
+# the v0.6.38 cut published just past the old window and read back as a false
+# refusal). 18 tries × 5s = 90s rides the lag out; the loop still breaks the
+# moment the feed names the version, so the common case pays nothing.
+while [ "$attempt" -le 18 ]; do
   if curl -fsSL "https://github.com/adelvillar1/fleet/releases/latest/download/latest.json" -o "$READBACK" 2>/dev/null &&
     python3 -c "import json,sys;d=json.load(open('$READBACK'));sys.exit(0 if d.get('version')=='$VERSION' else 1)" 2>/dev/null; then
     break
@@ -459,7 +463,7 @@ while [ "$attempt" -le 6 ]; do
   sleep 5
   attempt=$((attempt + 1))
 done
-[ "$attempt" -le 6 ] || die "the published feed does not name $VERSION after 30s — the release is not published"
+[ "$attempt" -le 18 ] || die "the published feed does not name $VERSION after 90s — the release is not published"
 python3 - "$READBACK" "$RAW" <<'PYEOF'
 import hashlib, json, sys, urllib.request
 feed_path, raw = sys.argv[1], sys.argv[2]
