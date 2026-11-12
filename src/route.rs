@@ -2744,17 +2744,24 @@ async fn judge(
 /// is the tool's own schema (`tools/list`): `sys1_classify` takes `text`
 /// (required) and `task` (the registered task name).
 async fn judge_live(server: &McpServer, task: &str) -> Option<RouteJudgment> {
-    if server.initialize().await.is_err() {
-        return None;
-    }
-    let call = match server
-        .call_tool("sys1_classify", json!({ "task": JUDGE_TASK, "text": task }))
-        .await
-    {
-        Ok(call) => call,
-        Err(_) => return None,
-    };
-    parse_workload(&call.text())
+    // A bounded ask, never a hang: a lane that spawns but never answers
+    // falls back by name rather than stalling the route (the absent-lane
+    // case the gate surfaced).
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        if server.initialize().await.is_err() {
+            return None;
+        }
+        let call = match server
+            .call_tool("sys1_classify", json!({ "task": JUDGE_TASK, "text": task }))
+            .await
+        {
+            Ok(call) => call,
+            Err(_) => return None,
+        };
+        parse_workload(&call.text())
+    })
+    .await
+    .unwrap_or(None)
 }
 
 /// Read the workload verdict — and the execution head beside it — out
@@ -2908,18 +2915,25 @@ pub async fn judge_goal_work(
     let spec = crate::lanes::spec_for(JUDGE_LANE).ok()?;
     let text = format!("goal: {goal}\ntask: {task}");
     let server = McpServer::spawn(&spec).ok()?;
-    let outcome = if server.initialize().await.is_ok() {
-        server
-            .call_tool(
-                "sys1_classify",
-                json!({ "task": "goal_work", "text": text }),
-            )
-            .await
-            .ok()
-            .and_then(|call| parse_goal_work(&call.text()))
-    } else {
-        None
-    };
+    // A judgment is a bounded ask, never a hang: an absent or wedged lane
+    // falls back by name (the route judges the literal words). Without the
+    // bound, a lane that spawns but never answers stalls the whole route.
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        if server.initialize().await.is_ok() {
+            server
+                .call_tool(
+                    "sys1_classify",
+                    json!({ "task": "goal_work", "text": text }),
+                )
+                .await
+                .ok()
+                .and_then(|call| parse_goal_work(&call.text()))
+        } else {
+            None
+        }
+    })
+    .await
+    .unwrap_or(None);
     let _ = server.close().await;
     outcome
 }

@@ -139,7 +139,11 @@ async fn a_real_run_streams_over_sse_tokens_turn_and_end() {
     std::fs::create_dir_all(&home).expect("the home");
     // The roster: one candidate, the mock, the plan's default workload
     // walking it. The key env name is never set — a keyless candidate is
-    // still dialable when the mock does not check the header.
+    // still dialable when the mock does not check the header. The small
+    // declared reserve pins the resource admission so the run is carried
+    // regardless of the host's own free space — a disk-constrained machine
+    // would otherwise queue the run and the stream would never finish
+    // (the same lever `write_concurrent_roster` pulls).
     std::fs::write(
         home.join("config.json"),
         serde_json::json!({
@@ -149,7 +153,8 @@ async fn a_real_run_streams_over_sse_tokens_turn_and_end() {
                 "key_env": "FLEET_TEST_SSE_KEY_ABSENT",
                 "key_required": false,
                 "models": ["m"]
-            }]
+            }],
+            "footprint": { "reserve_gib": 1 }
         })
         .to_string(),
     )
@@ -164,7 +169,7 @@ async fn a_real_run_streams_over_sse_tokens_turn_and_end() {
                 { "workload": "prose", "candidates": ["mock/m"] },
                 { "workload": "deep_context", "candidates": ["mock/m"] }
             ],
-            "gates": { "default_workload": "standard_code" }
+            "gates": { "default_workload": "standard_code", "allow_api_models": true }
         })
         .to_string(),
     )
@@ -236,7 +241,9 @@ async fn a_real_run_streams_over_sse_tokens_turn_and_end() {
     loop {
         assert!(
             std::time::Instant::now() < deadline,
-            "the run never finished; the stream so far:\n{read}"
+            "the run never finished; the stream so far:\n{read}\n--- mock stderr ---\n{}\n--- requests ---\n{}",
+            std::fs::read_to_string(m.scratch.join("mock-stderr.log")).unwrap_or_default(),
+            std::fs::read_to_string(m.scratch.join("requests.jsonl")).unwrap_or_default(),
         );
         let mut chunk = [0u8; 8192];
         match tokio::time::timeout(std::time::Duration::from_secs(2), stream.read(&mut chunk)).await
