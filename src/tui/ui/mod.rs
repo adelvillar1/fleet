@@ -36,9 +36,23 @@ mod palette {
     pub const DENIED: Color = Color::Red;
     pub const DONE: Color = Color::Green;
     pub const WORKING: Color = Color::Yellow;
+    pub const BLOCKED: Color = Color::Red;
     pub const IDLE: Color = Color::Green;
     /// Text drawn on an accent-filled cell, as the palette's selection is.
     pub const ON_ACCENT: Color = Color::Black;
+
+    /// The status color law (U15): working amber, blocked red, done green —
+    /// the same three on every surface, so a status never changes color
+    /// between the face and the terminal. An unknown word is dim, never a
+    /// fourth color.
+    pub fn status_color(status: &str) -> Color {
+        match status {
+            "working" => WORKING,
+            "blocked" => BLOCKED,
+            "done" => DONE,
+            _ => DIM,
+        }
+    }
 }
 
 /// The board pane's width. Slice 3 mounted the pane at 26 columns as a

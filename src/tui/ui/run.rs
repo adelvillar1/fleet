@@ -250,11 +250,15 @@ fn branch_lines(app: &App, width: usize) -> Vec<Line<'static>> {
 }
 
 fn branch_line(branch: &Branch, width: usize) -> Line<'static> {
+    // The status color law (U15): working amber, blocked red, done green —
+    // the same three the face wears, so a status never changes color
+    // between the terminal and the browser.
     let (dot, color) = match branch.stage.as_str() {
         "done" if branch.outcome == "completed" => ("\u{25cf}", palette::DONE),
         "done" => ("\u{25cf}", palette::DENIED),
-        "working" => ("\u{25c9}", palette::ACCENT),
-        _ => ("\u{25cb}", palette::DIM),
+        "blocked" => ("\u{25cf}", palette::status_color("blocked")),
+        "working" => ("\u{25c9}", palette::status_color("working")),
+        other => ("\u{25cb}", palette::status_color(other)),
     };
     let note = if branch.stage == "working" {
         format!(
