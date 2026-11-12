@@ -99,10 +99,11 @@ bots, the learning, the design canvas, the calibration: one productive
 surface, organized around *your work*, not the machinery. Three faces over
 one agent core — the browser console (`fleet gui`), the terminal (`fleet`),
 and the headless CLI — each with the conversation first, plus a native
-desktop shell. The direction is to connect them with real tissue: a task
-links to its conversation, its deliverable, the bot that did it, and the
-lesson it taught — one workspace, not a drawer of silos.
-([docs/architecture/surfaces.md](docs/architecture/surfaces.md))
+desktop shell. They are connected with real tissue: a task links to its
+conversation, its deliverable, the bot that did it, and the lesson it taught —
+one work-object graph, the surfaces views over it, not a drawer of silos.
+([docs/architecture/surfaces.md](docs/architecture/surfaces.md),
+[docs/features/workspace.md](docs/features/workspace.md))
 
 ### A responsible citizen on your machine
 
@@ -140,22 +141,54 @@ That is the whole bet: an agent that gets more capable without getting less
 reliable, because every increase in capability is measured against evidence
 before it is kept.
 
+## Armada: one shared mind (0.7.0)
+
+Fleet is one agent whose work you can verify — and, with **0.7.0**, the first
+lane of **armada** is built: many installs, one shared mind. The same
+self-contained binary becomes a fleet — instances on your machines and VPSs,
+commanded from a flagship, thinking from a shared corpus of memories, skills,
+and tools that syncs across them. A memory born on one machine reaches another
+working the same project.
+
+It was built bottom-up, one responsible layer at a time, each gated and cut on
+its own (v0.6.31 → v0.7.0):
+
+- **Identity and a durable journal** — every install has a stable id; every
+  decision rides an append-only event stream you can replay.
+- **A security substrate** — principals, grants, and step-up approval, designed
+  once. Authority rides *signed in the frame* and is verified before an instance
+  obeys; the relay stays a dumb broker that cannot fabricate.
+- **A shared corpus** — git-synced memory with measured merge rules, so two
+  installs converge without losing facts.
+- **A responsible communication edge** — a durable outbox that loses no reply,
+  an identity graph across channels, dispatch gated by the principal's grants.
+- **A work-object graph** — a task links to its conversation, its deliverable,
+  the bot that did it, and the lesson it taught; the surfaces become views over
+  one workspace, not a drawer of silos.
+- **A control plane** — a flagship roster with liveness *earned* by heartbeats,
+  control verbs through each instance's own guard, and dispatch autonomy earned
+  by measured reliability, never by registration.
+- **Deployment and the surfaces** — fleet deploying fleet (a local spawn or a
+  VPS over SSH), a fresh install inheriting the mind and trusted only after it
+  passes doctor and settles runs; a TUI armada board, a face armada section, and
+  the native shell wrapping the same face — one implementation, four surfaces.
+
+It is the same bet scaled: capability you can trust, memory that compounds, a
+harness you govern — at every node. The architecture borrows openly from
+muxin, omni, and orbit (credited under [Foundations](#foundations)); the shared
+corpus, the substrate, and the org are Fleet's own.
+
 ## Where it is heading
 
-Fleet today is one agent whose work you can verify. The direction is
-**armada**: many installs, one shared mind. The same binary becomes a fleet
-— instances on your machines and VPSs, commanded from a flagship, thinking
-from a shared corpus of memories, skills, and tools that syncs across them.
-A memory born on one machine reaches another working the same project. A
-security substrate of principals, grants, and step-up approval is designed
-once, so the fleet can grow into a multi-user org — a team workspace where
-humans and agents collaborate, on the same fact-driven foundation.
-
-It is the same bet scaled: capability you can trust, memory that compounds,
-a harness you govern — at every node. The full direction is
+The direction now is the **org** (lane 2): the substrate generalizes from one
+owner to a team — more principals, roles as grant templates, per-user factors,
+team and org scopes — a team workspace where humans and agents collaborate, on
+the same fact-driven foundation. Not a rewrite: the substrate was built for it
+out of the gate, so the org inherits its admin layer already working. The full
+direction is
 [docs/architecture/2026-11-11-armada-direction.md](docs/architecture/2026-11-11-armada-direction.md).
 
-Fleet is **beta** (0.6.x). The owner's bar is the reliable execution of a
+Fleet is **beta** (0.7.x). The owner's bar is the reliable execution of a
 whole project, and the shakeout is the work mode until then.
 
 ## A look
@@ -238,6 +271,31 @@ owner's own work that predates and feeds this harness.
   [sem1](https://github.com/adelvillar1/sem1),
   [gen1](https://github.com/adelvillar1/gen1),
   [blend1](https://github.com/adelvillar1/blend1), vendored under `services/`.
+
+### Inspiration for armada
+
+The armada layers borrow *architecture* openly, not code — named here rather
+than quietly. Each is a different open-source project whose pattern Fleet
+adapted to its own Rust, fact-driven foundation:
+
+- **[muxin](https://github.com/LumaryLabsLLC/muxin)** (Lumary Labs, Apache-2.0)
+  — "all your machines, one console." The on-machine instance-agent +
+  persistence, agent-first/MCP-first surfaces, mutual cert pinning, and auto-join
+  provisioning. muxin manages machines and sessions; armada shares a *mind* —
+  Fleet keeps its own Tauri surfaces and dial-out relay, and adds the shared
+  corpus, the security substrate, and the org that muxin does not address.
+- **[omni](https://github.com/automagik-si/omni)** (automagik-si) — a universal
+  event-driven omnichannel communication layer for agents. The architecture:
+  the journal as the source of truth, durable consumers, channel plugins, an
+  identity graph, and gated agent dispatch. Fleet borrows the pattern, not the
+  stack (Bun/NATS JetStream/PostgreSQL) — it rides Fleet's own journal and relay,
+  in Rust, self-contained.
+- **[orbit](https://github.com/coollabsio/orbit)** (coollabsio, Apache-2.0) — a
+  self-hosted team workspace (tasks, docs, chat, mail), the open-source
+  Slack/Linear/Notion alternative. The tool set a team actually needs, and an
+  admin layer — roles, audit, rate limits, tokens, export — that maps almost
+  one-to-one onto armada's substrate, independently confirming its shape. The
+  org (lane 2) grows into this.
 
 ## Where things live
 
