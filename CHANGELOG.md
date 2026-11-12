@@ -12,6 +12,37 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.38 — 2026-11-12
+
+The armada control plane: the hand that commands instances over the relay.
+
+**Part of the armada vision** — layer L8 (control plane). The plan is
+`docs/plans/2026-11-11-armada-l8-control-plane.md`.
+
+- **Registration + roster + heartbeat** — an instance registers on join
+  (install-id, sid, version, capacity); the flagship roster holds it. Liveness
+  is earned by heartbeats, not assumed — a sid with no recent heartbeat is
+  reported not-live.
+- **The authority transport** — every control frame carries the principal and,
+  for destructive/governance verbs, a fresh assertion signed by the flagship's
+  Ed25519 key. The instance verifies the signature before obeying; a forged,
+  unsigned, stale, or mismatched assertion is refused by name. The relay stays
+  a dumb broker — it cannot fabricate, an instance cannot escalate, an agent
+  cannot borrow.
+- **Key custody** — the flagship mints the Ed25519 key once (PKCS#8 0600); an
+  instance holds only the public key, distributed out-of-band. It can verify,
+  never sign.
+- **The control vocabulary** — dispatch/state/corpus-sync/version-roll/retire/
+  health/register/heartbeat, each through the instance's own guard and
+  admission after authority is verified; a privileged verb clears step-up (the
+  human second factor). corpus-sync triggers the L4 sync.
+- **Autonomy earned by measurement** — a fresh instance is un-calibrated until
+  it settles runs; a reliability beat grades dispatch outcomes over the journal.
+- **Relay-down is a named degradation** — instances run autonomously, the
+  corpus still syncs over git, live control resumes on return.
+- **The surface** — `fleet armada {roster|status|sync}`. The flagship role is
+  additive: an install with no roster behaves as today.
+
 ## v0.6.37 — 2026-11-12
 
 The armada workspace: the work-object graph that connects the four stores.

@@ -1,7 +1,7 @@
 ---
-status: draft
+status: completed
 created: 2026-11-11
-updated: 2026-11-11
+updated: 2026-11-12
 slug: armada-l8-control-plane
 ---
 
@@ -74,15 +74,15 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0: an instance registers on join (install-id, sid, version, capacity); the flagship roster holds it; a heartbeat updates liveness, and a sid with no recent heartbeat is reported not-live (liveness earned, a test pins it).
-- [ ] C1: a control frame carries the principal + (for destructive/governance) a fresh assertion signed by the flagship; the instance verifies the signature before obeying; a forged or unsigned privileged frame is refused by name (a test pins it).
-- [ ] C2: every control verb runs through the instance's guard (D15) and admission; an ungranted verb is refused by name; `dispatch` reuses `bridge.run` and respects the instance's capacity.
-- [ ] C3: `corpus-sync` triggers the L4 sync (D23); `version-roll`/`retire` are destructive (step-up, D18); `health` is read; each verb's class is correct.
-- [ ] C4: the flagship is a fleet install in a flagship role (role + config, one binary); the signing key is at the flagship and absent from an instance the agent can reach (a test pins the custody).
-- [ ] C5: the human second factor issues a fresh per-action assertion the agent cannot forge; a destructive control verb without it is refused `StepUpRequired`.
-- [ ] C6: a fresh instance is un-calibrated until it settles runs; dispatch autonomy is earned by measured reliability and a dispatch is graded against its outcome before the pattern changes (the reliability beat over the journal).
-- [ ] C7: relay-down is a named degradation — instances run autonomously, the corpus still syncs over git, and live control resumes when the relay returns (a test pins it).
-- [ ] C8: the four-leg gate passes and a single-instance fleet is unchanged (the flagship role is additive; an install with no roster behaves as today).
+- [x] C0: an instance registers on join (install-id, sid, version, capacity); the flagship roster holds it; a heartbeat updates liveness, and a sid with no recent heartbeat is reported not-live (liveness earned, a test pins it).
+- [x] C1: a control frame carries the principal + (for destructive/governance) a fresh assertion signed by the flagship; the instance verifies the signature before obeying; a forged or unsigned privileged frame is refused by name (a test pins it).
+- [x] C2: every control verb runs through the instance's guard (D15) and admission; an ungranted verb is refused by name; `dispatch` reuses `bridge.run` and respects the instance's capacity.
+- [x] C3: `corpus-sync` triggers the L4 sync (D23); `version-roll`/`retire` are destructive (step-up, D18); `health` is read; each verb's class is correct.
+- [x] C4: the flagship is a fleet install in a flagship role (role + config, one binary); the signing key is at the flagship and absent from an instance the agent can reach (a test pins the custody).
+- [x] C5: the human second factor issues a fresh per-action assertion the agent cannot forge; a destructive control verb without it is refused `StepUpRequired`.
+- [x] C6: a fresh instance is un-calibrated until it settles runs; dispatch autonomy is earned by measured reliability and a dispatch is graded against its outcome before the pattern changes (the reliability beat over the journal).
+- [x] C7: relay-down is a named degradation — instances run autonomously, the corpus still syncs over git, and live control resumes when the relay returns (a test pins it).
+- [x] C8: the four-leg gate passes and a single-instance fleet is unchanged (the flagship role is additive; an install with no roster behaves as today).
 
 ## Files to be touched
 

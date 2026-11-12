@@ -102,6 +102,10 @@ pub enum Command {
     /// The scheduled jobs: the bare command lists them, each subcommand
     /// mutates the store by name.
     Cron(CronOptions),
+    /// The armada control plane (L8): the roster, an instance's measured
+    /// reliability, and the corpus sync. The richer dispatch/board surfaces
+    /// are L9.
+    Armada(ArmadaAction),
     /// The MCP server registry: the bare command lists the configured
     /// servers as cards; `scan`, `import`, `enable`, `disable`,
     /// `remove`, and `health` are the rest of the surface.
@@ -728,6 +732,18 @@ pub enum CronAction {
     Seed,
 }
 
+/// The armada control plane's first surface (L8): read the roster, grade an
+/// instance's reliability, or trigger the corpus sync.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ArmadaAction {
+    /// List the registered instances and their earned liveness.
+    Roster,
+    /// Grade an instance's measured dispatch reliability (all if no sid).
+    Status { sid: Option<String> },
+    /// Trigger the L4 corpus sync.
+    Sync,
+}
+
 /// Options for `fleet improve`. The bare command lists the proposals;
 /// each subcommand acts on one by name.
 #[derive(Debug, PartialEq, Eq)]
@@ -1133,6 +1149,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
+        "armada" => parse_armada(rest),
         "tools" => parse_tools(rest),
         "lifecycle" => parse_lifecycle(rest),
         "improve" => parse_improve(rest),
@@ -2202,6 +2219,26 @@ fn parse_mcp(args: &[String]) -> Result<Command, String> {
 /// Every subcommand addresses its job with `--name`, one grammar for the
 /// whole surface, and a missing flag is a named usage error rather than a
 /// silently wrong mutation.
+fn parse_armada(args: &[String]) -> Result<Command, String> {
+    let Some(subcommand) = args.first() else {
+        return Ok(Command::Armada(ArmadaAction::Roster));
+    };
+    if *subcommand == "--help" || *subcommand == "-h" {
+        return Ok(Command::Help);
+    }
+    let rest = &args[1..];
+    match subcommand.as_str() {
+        "roster" => Ok(Command::Armada(ArmadaAction::Roster)),
+        "status" => Ok(Command::Armada(ArmadaAction::Status {
+            sid: rest.first().cloned(),
+        })),
+        "sync" => Ok(Command::Armada(ArmadaAction::Sync)),
+        other => Err(format!(
+            "unknown armada subcommand `{other}` (roster, status, sync)"
+        )),
+    }
+}
+
 fn parse_cron(args: &[String]) -> Result<Command, String> {
     let Some(subcommand) = args.first() else {
         return Ok(Command::Cron(CronOptions {

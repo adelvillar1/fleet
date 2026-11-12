@@ -103,11 +103,11 @@ choices that span atoms are noted in the layer header.
 *Layer-level choices: D49 (autonomy earned by measurement), D50 (relay-down degradation).*
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L8.1 | registration + roster + heartbeat | L1.1, L6.3 | D44 | drafted |
-| L8.2 | the authority transport (sign/verify before obey) | L3.5, L3.2, L6.3 | D45 | drafted |
-| L8.3 | the control vocabulary (reuses bridge verbs) | L8.1, L8.2, L4.4 | D46 | drafted |
-| L8.4 | the flagship role (role + config, key custody) | L8.2 | D47 | drafted |
-| L8.5 | the human second factor (issues the assertion) | L3.7, L8.4 | D48 | drafted |
+| L8.1 | registration + roster + heartbeat | L1.1, L6.3 | D44 | done |
+| L8.2 | the authority transport (sign/verify before obey) | L3.5, L3.2, L6.3 | D45 | done |
+| L8.3 | the control vocabulary (reuses bridge verbs) | L8.1, L8.2, L4.4 | D46 | done |
+| L8.4 | the flagship role (role + config, key custody) | L8.2 | D47 | done |
+| L8.5 | the human second factor (issues the assertion) | L3.7, L8.4 | D48 | done |
 
 ## Wave 5 — the body + face
 

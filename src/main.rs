@@ -174,6 +174,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Grants) => grants_command(),
         Ok(Command::Hygiene) => hygiene_command(),
         Ok(Command::Workspace) => workspace_command(),
+        Ok(Command::Armada(action)) => armada_command(action),
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Demand(options)) => demand_command(&options),
         Ok(Command::Roles) => roles_command(),
@@ -4102,6 +4103,73 @@ fn stale_process_sweep() -> usize {
         }
     }
     stopped
+}
+
+/// The armada control plane's first surface (L8): the roster with earned
+/// liveness, an instance's measured reliability, and the corpus sync. The
+/// richer dispatch/board surfaces are L9.
+fn armada_command(action: fleet::cli::ArmadaAction) -> ExitCode {
+    use fleet::cli::ArmadaAction;
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    match action {
+        ArmadaAction::Roster => {
+            let roster = fleet::armada::roster::load(&home);
+            if roster.instances.is_empty() {
+                println!("armada: no roster — an ordinary single-instance fleet");
+                return ExitCode::SUCCESS;
+            }
+            println!("armada roster: {} instance(s)", roster.instances.len());
+            for inst in roster.instances.values() {
+                println!(
+                    "  {} [{}] install={} version={} capacity={}KiB",
+                    inst.sid,
+                    if inst.live(now) { "live" } else { "not-live" },
+                    inst.install_id,
+                    inst.version,
+                    inst.capacity_kib
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        ArmadaAction::Status { sid } => {
+            let roster = fleet::armada::roster::load(&home);
+            let sids: Vec<String> = match sid {
+                Some(s) => vec![s],
+                None => roster.instances.keys().cloned().collect(),
+            };
+            if sids.is_empty() {
+                println!("armada: no roster — nothing to grade");
+            }
+            for s in sids {
+                let r = fleet::armada::control::grade(&home, &s);
+                println!(
+                    "  {s}: settled={} succeeded={} calibrated={} reliability={:.2}",
+                    r.settled, r.succeeded, r.calibrated, r.reliability
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        ArmadaAction::Sync => match fleet::corpus::sync(&home, None) {
+            Ok(report) => {
+                println!(
+                    "armada corpus-sync: merged={} summed={} resolved={} refused={}",
+                    report.merged, report.summed, report.resolved, report.refused
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("armada corpus-sync: {error}");
+                ExitCode::from(1)
+            }
+        },
+    }
 }
 
 /// The work-object graph (armada L7, C9): the tasks and edges the graph

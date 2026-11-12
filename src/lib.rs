@@ -12,6 +12,7 @@ pub mod anomalies;
 pub mod api;
 pub mod apply_patch;
 pub mod approvals;
+pub mod armada;
 pub mod boards;
 pub mod calib;
 pub mod canvas;
