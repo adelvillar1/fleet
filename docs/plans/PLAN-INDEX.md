@@ -1,5 +1,10 @@
 # Armada — the plan index
 
+> **Status 2026-11-12: lane 1 COMPLETE.** All nine layers (L1–L9) delivered,
+> gated, cut, and feed-verified — v0.6.31…v0.6.38 then the **v0.7.0** milestone
+> (L9 completes the plan). All 40 atoms done; all nine plans `completed`.
+> Lane 2 (the org) is the next generalization, not a rewrite.
+
 The dependency-ordered plan set that fits fleet for armada, built bottom-up.
 The vision is `../architecture/2026-11-11-armada-direction.md`; the
 contract-first atomic decomposition is
