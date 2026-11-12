@@ -164,7 +164,7 @@ changes, `learn` from the settles).
 
 ## L4 — The shared corpus
 
-*Proposed by `2026-11-11-armada-l4-corpus.md` (draft).*
+*Settled by `2026-11-11-armada-l4-corpus.md` (built, shipped v0.6.35).*
 
 - **D23 — `corpus.sync(remote)` = fetch → `corpus.merge(rules)` → push; the
   remote + install-scoped cursor at `<home>/corpus-sync.json`; git is

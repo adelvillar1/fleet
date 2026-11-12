@@ -75,9 +75,9 @@ choices that span atoms are noted in the layer header.
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
 | L4.1 | the corpus remote + sync driver | L1.1 | D23 | done |
-| L4.2 | the recall-count merge rule (sum/delta) | L4.1 | D24 | drafted |
-| L4.3 | distributed supersede / serial-collision rule | L4.1 | D25, D26 | drafted |
-| L4.4 | the RemoteInstance feeder over Source | L4.1, L4.2, L4.3 | D27 | drafted |
+| L4.2 | the recall-count merge rule (sum/delta) | L4.1 | D24 | done |
+| L4.3 | distributed supersede / serial-collision rule | L4.1 | D25, D26 | done |
+| L4.4 | the RemoteInstance feeder over Source | L4.1, L4.2, L4.3 | D27 | done |
 
 ### L5 Communication — plan `2026-11-11-armada-l5-communication.md` · contract §6
 *Layer-level choices: D35 (dispatch graded), D36 (relay is a channel).*
@@ -150,7 +150,7 @@ is its bedrock twin.
 
 ## Status summary
 
-- **40 lane-1 atoms**: L1 (4) + L2 (4) + L3 (7) + L6 (3) `done`, the rest `drafted` (their 9 layer plans are drafted; nothing
+- **40 lane-1 atoms**: L1 (4) + L2 (4) + L3 (7) + L6 (3) + L4 (4) `done`, the rest `drafted` (their 9 layer plans are drafted; nothing
   built yet). 0 `building`, 0 `done`.
 - The cross-cutting **trust-is-earned-by-measurements** obligation (design-
   decisions ledger) attaches a verifiable grading property to each layer; the
