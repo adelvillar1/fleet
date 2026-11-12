@@ -12,6 +12,46 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.7.3 — 2026-11-12
+
+The structural overhaul — the workspace becomes one graph, not a drawer of
+separate boards. The owner's steer mid-flight: *"I'm worried that the project
+you are executing is just a reskinning and not the complete overhaul of the UX
+that was the project's original intent."* The audit agreed: the earlier cuts
+laid the visual system and several panes, but the approved design's core — one
+focus, lenses as views over the graph, dispatch streaming in the workspace —
+was not wired. This release wires it. The plan is
+`docs/plans/2026-11-12-ux-reskin.md` (the structural spine S1–S5).
+
+- **The one focus (U3, S1)** — the shell holds ONE focused object; the
+  connections column, the focus card, and every lens follow one pivot. Opening
+  a deliverable / thread / lesson focuses that node; clicking a node opens its
+  lens. No surface keeps a private second focus.
+- **The dispatch hero flow (U20, S2)** — dispatching a task mints it, opens a
+  thread for it, and the run streams THERE, in the workspace — not a modal. The
+  graph grows the task→thread edge at dispatch and the task→deliverable edge
+  when the work lands on the desk (the task settles against the end gate).
+- **The console + the chrome search + the armada switch (U12/U24/U29, S3)** — a
+  permanently visible control region whose every control applies live (density,
+  connections, labels, motion); the chrome search filters the active lens (the
+  palette is the other door); the armada switch grows the graph with the
+  roster's instances and the shared-mind edges — off leaves fleet whole.
+- **The board (U14/U21/U23, S4)** — the work as working/blocked/done columns
+  with drag, the task cards with their bulk check, tags, link dots and running
+  sweep; bulk is explicit; a status move is optimistic-then-settled. The inbox
+  row wears the resolved principal chip (U17).
+- **The TUI status color law (U15, S5)** — working amber, blocked red, done
+  green, the same three the face wears; fleet-desktop wraps the reskinned face
+  over the same server, no second frontend (U29).
+
+Refinements named on the plan, not hidden: the task→lesson edge rides the
+learning distil flow; a signal-accent picker is not yet a console control; the
+omnichannel outbox states ride the communication layer (lane 2); the armada
+provision gesture is CLI-driven today (`fleet armada deploy`).
+
+The face harness carries it: **1192 checks across 164 cases**; the four-leg gate
+green at every landing.
+
 ## v0.7.2 — 2026-11-12
 
 The U-reskin's second, third and fourth cuts land together: Intelligence,
