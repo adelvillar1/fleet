@@ -45,6 +45,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod outbox;
 pub mod service;
 pub mod telegram;
 pub mod webhook;
@@ -790,87 +791,128 @@ impl Driver {
     /// everywhere. The events name their session, which is what makes
     /// the filtering exact rather than a guess about whose turn it was.
     pub async fn watch(&self, channels: &[Arc<dyn Channel>]) {
+        // Live delivery rides the broadcast; durability rides the journal
+        // (armada L5, C4). On a lag — or a restart, which begins with a
+        // replay — the driver recovers the seats and outcomes it missed from
+        // its persisted journal cursor rather than dropping them: the
+        // broadcast's silent `Lagged` drop is retired. The journal carries
+        // every UI event `record()` settles (L2, D13).
+        let consumer = "channel-driver";
+        self.replay_journal(consumer, channels);
         let mut events = self.bridge.subscribe();
         loop {
             match events.recv().await {
                 Ok(event) => {
-                    let Some(session) = event.get("session").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    // The key names the channel and the peer, so the
-                    // plugin that carries the reply is the one the
-                    // conversation arrived on — not the only one there
-                    // is. A face hosting two channels routes each peer's
-                    // seats to the transport that can actually deliver
-                    // them.
-                    let Some((key, reply)) = self
-                        .sessions
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner())
-                        .iter()
-                        .find(|(_, (owned, _))| owned == session)
-                        .map(|(key, (_, reply))| (key.clone(), reply.clone()))
-                    else {
-                        continue;
-                    };
-                    let Some(channel) = peer_of(&key).and_then(|peer| {
-                        channels
-                            .iter()
-                            .find(|channel| channel.name() == peer.channel)
-                            .cloned()
-                    }) else {
-                        continue;
-                    };
-                    let announce = peer_of(&key);
-                    match event.get("type").and_then(Value::as_str) {
-                        Some("seat") => {
-                            let card = SeatCard {
-                                session: session.to_string(),
-                                tool: event
-                                    .get("tool")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string(),
-                                summary: event
-                                    .get("summary")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string(),
-                            };
-                            channel.present_seat(&reply, &card);
-                            if let Some(peer) = &announce {
-                                crate::channels::service::note_seat(
-                                    &self.bridge.home_path(),
-                                    &peer.channel,
-                                    &peer.id,
-                                    &card,
-                                );
-                            }
-                        }
-                        Some("finished") | Some("failed") => {
-                            // The outcome is the last thing the session
-                            // said: the log is the record, and a reply
-                            // that paraphrases it is a second answer to
-                            // what the run produced.
-                            if let Some(text) = self.last_words(session) {
-                                channel.reply(&reply, &text);
-                                if let Some(peer) = &announce {
-                                    crate::channels::service::note_reply(
-                                        &self.bridge.home_path(),
-                                        &peer.channel,
-                                        &peer.id,
-                                        &reply,
-                                        &text,
-                                    );
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
+                    self.deliver_event(&event, channels);
+                    self.advance_cursor(consumer);
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    self.replay_journal(consumer, channels);
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
+        }
+    }
+
+    /// Replay the journal from the persisted cursor, delivering each event
+    /// and advancing the cursor — the no-loss recovery on lag/restart (C4).
+    fn replay_journal(&self, consumer: &str, channels: &[Arc<dyn Channel>]) {
+        let home = self.bridge.home_path();
+        if let Ok(journal) = crate::journal::Journal::open(&home) {
+            let events = journal.subscribe(consumer).unwrap_or_default();
+            for event in &events {
+                self.deliver_event(&event.payload, channels);
+            }
+            if let Some(last) = events.last() {
+                let _ = journal.advance(consumer, last.seq);
+            }
+        }
+    }
+
+    /// Advance the driver's journal cursor to the latest settled event, so
+    /// the next replay resumes where delivery left off (C4).
+    fn advance_cursor(&self, consumer: &str) {
+        let home = self.bridge.home_path();
+        if let Ok(journal) = crate::journal::Journal::open(&home) {
+            let last = journal.last_seq();
+            let _ = journal.advance(consumer, last);
+        }
+    }
+
+    /// Deliver one UI event to the channel that carries its session's reply
+    /// — a seat becomes a seat card, a finished/failed run becomes the run's
+    /// last words. The session filter routes each peer's events to the
+    /// transport that can actually deliver them.
+    fn deliver_event(&self, event: &Value, channels: &[Arc<dyn Channel>]) {
+        let Some(session) = event.get("session").and_then(Value::as_str) else {
+            return;
+        };
+        // The key names the channel and the peer, so the plugin that carries
+        // the reply is the one the conversation arrived on — not the only
+        // one there is. A face hosting two channels routes each peer's seats
+        // to the transport that can actually deliver them.
+        let Some((key, reply)) = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .iter()
+            .find(|(_, (owned, _))| owned == session)
+            .map(|(key, (_, reply))| (key.clone(), reply.clone()))
+        else {
+            return;
+        };
+        let Some(channel) = peer_of(&key).and_then(|peer| {
+            channels
+                .iter()
+                .find(|channel| channel.name() == peer.channel)
+                .cloned()
+        }) else {
+            return;
+        };
+        let announce = peer_of(&key);
+        match event.get("type").and_then(Value::as_str) {
+            Some("seat") => {
+                let card = SeatCard {
+                    session: session.to_string(),
+                    tool: event
+                        .get("tool")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    summary: event
+                        .get("summary")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                };
+                channel.present_seat(&reply, &card);
+                if let Some(peer) = &announce {
+                    crate::channels::service::note_seat(
+                        &self.bridge.home_path(),
+                        &peer.channel,
+                        &peer.id,
+                        &card,
+                    );
+                }
+            }
+            Some("finished") | Some("failed") => {
+                // The outcome is the last thing the session said: the log is
+                // the record, and a reply that paraphrases it is a second
+                // answer to what the run produced.
+                if let Some(text) = self.last_words(session) {
+                    channel.reply(&reply, &text);
+                    if let Some(peer) = &announce {
+                        crate::channels::service::note_reply(
+                            &self.bridge.home_path(),
+                            &peer.channel,
+                            &peer.id,
+                            &reply,
+                            &text,
+                        );
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -925,10 +967,32 @@ impl Driver {
             .map_err(|_| Refusal::Unknown)?;
         // The peer's message lands in the session's log first, exactly as
         // the composer's does, and the run is accepted or refused by the
-        // same door.
+        // same door. The run acts for the peer's resolved principal (armada
+        // L5, D34/D9): the principal rides into `AgentOptions.principal` so
+        // the guard (L3) reads it. Lane 1's paired peers act for the owner;
+        // an unlinked-but-paired peer bootstraps to the owner (the edge is
+        // written at pairing), never a silent escalation.
+        let home = self.bridge.home_path();
+        let principal = crate::identity::resolve(&home, &inbound.peer.channel, &inbound.peer.id)
+            .ok()
+            .map(|p| p.as_str().to_string());
         self.bridge
-            .run(&session, &inbound.task)
+            .run_as_principal(&session, &inbound.task, principal.clone())
             .map_err(|_| Refusal::Unknown)?;
+        // Every inbound dispatch settles a `dispatch` journal event (D35),
+        // graded against the run's outcome by the layer above.
+        if let Ok(mut journal) = crate::journal::Journal::open(&home) {
+            let _ = journal.append(
+                "dispatch",
+                principal.as_deref().or(Some(crate::identity::OWNER)),
+                Some(&session),
+                serde_json::json!({
+                    "channel": inbound.peer.channel,
+                    "peer": inbound.peer.id,
+                    "admitted": true,
+                }),
+            );
+        }
         Ok(session)
     }
 
@@ -1161,6 +1225,54 @@ mod tests {
                     .push((url.clone(), format!("seat:{}:{}", seat.tool, seat.summary)));
             }
         }
+    }
+
+    /// An inbound delivery runs under the peer's resolved principal and
+    /// settles a `dispatch` journal event (armada L5, C6/C8). Lane 1's
+    /// paired peer acts for the owner; the event names channel, peer,
+    /// principal, and the admission.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_delivery_runs_under_its_principal_and_settles_a_dispatch_event() {
+        let home = temp_home("dispatch");
+        let mut store = PeerStore::default();
+        let token = mint_peer_token().unwrap();
+        store.pair("abc", "the CI box", &token, Capability::Task, "stamp");
+        store.save(&home, "webhook").unwrap();
+        // The pairing edge: the peer acts for the owner (L5, D31).
+        crate::identity::link_peer(
+            &home,
+            "webhook",
+            "abc",
+            &crate::identity::PrincipalId::owner(),
+        )
+        .unwrap();
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let driver = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
+        let inbound = Inbound {
+            peer: Peer::new("webhook", "abc", "the CI box"),
+            session: None,
+            task: "run the tests".to_string(),
+            reply: Reply::Url("http://127.0.0.1:9/callback".to_string()),
+        };
+        let session = driver.deliver(&inbound).expect("accepted");
+        assert!(!session.is_empty());
+        // The dispatch event is journaled with channel, peer, principal.
+        let journal = crate::journal::Journal::open(&home).unwrap();
+        let events = journal.replay(0).unwrap();
+        let dispatch = events
+            .iter()
+            .find(|event| event.kind == "dispatch")
+            .expect("the dispatch event is journaled");
+        assert_eq!(dispatch.payload["channel"], "webhook");
+        assert_eq!(dispatch.payload["peer"], "abc");
+        assert_eq!(dispatch.payload["admitted"], true);
+        assert_eq!(dispatch.principal.as_deref(), Some("owner"));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The watcher presents a seat on the channel the delivery arrived

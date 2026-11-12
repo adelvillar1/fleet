@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-11
 updated: 2026-11-11
 slug: armada-l5-communication
@@ -117,15 +117,15 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0: a channel reply whose first POST fails is persisted in the outbox and delivered once the callback recovers (a test fails then succeeds the POST and pins delivery) — no reply is silently lost.
-- [ ] C1: a reply that fails past the attempt budget is curtailed to a named `undeliverable` degradation recorded in the journal and the channel surface (a test pins the bound and the name).
-- [ ] C2: `identity.resolve` returns one PrincipalId for a Telegram peer, a webhook peer, and a paired device linked to the same principal; lane 1 resolves `owner` (a test pins cross-channel + device resolution).
-- [ ] C3: an unlinked peer resolves to a named refusal, never a silent `owner` fallback, and the peer→principal edges are not writable by the agent (a test pins both).
-- [ ] C4: `Driver::watch` consumes the journal from a persisted cursor and delivers a seat/outcome emitted during a simulated lag or restart (a test pins no-loss), replacing the broadcast's `Lagged` drop.
-- [ ] C5: the telegram poll offset persists across restart so a restarted channel resumes rather than re-polling from zero (a test pins it).
-- [ ] C6: an inbound delivery runs under the resolved principal — the run's `AgentOptions.principal` equals the resolved principal and the guard reads it (a test pins the principal on the run).
-- [ ] C7: single-owner behavior is unchanged — an Observe peer is still refused by name, an owner Task peer still dispatches, the four-leg gate passes, and the existing channel tests' behavior is preserved.
-- [ ] C8: every inbound dispatch settles a `dispatch` journal event carrying channel, peer, resolved principal, session, admitted/refused, and outcome (a test pins it).
+- [x] C0: a channel reply whose first POST fails is persisted in the outbox and delivered once the callback recovers (a test fails then succeeds the POST and pins delivery) — no reply is silently lost.
+- [x] C1: a reply that fails past the attempt budget is curtailed to a named `undeliverable` degradation recorded in the journal and the channel surface (a test pins the bound and the name).
+- [x] C2: `identity.resolve` returns one PrincipalId for a Telegram peer, a webhook peer, and a paired device linked to the same principal; lane 1 resolves `owner` (a test pins cross-channel + device resolution).
+- [x] C3: an unlinked peer resolves to a named refusal, never a silent `owner` fallback, and the peer→principal edges are not writable by the agent (a test pins both).
+- [x] C4: `Driver::watch` consumes the journal from a persisted cursor and delivers a seat/outcome emitted during a simulated lag or restart (a test pins no-loss), replacing the broadcast's `Lagged` drop.
+- [x] C5: the telegram poll offset persists across restart so a restarted channel resumes rather than re-polling from zero (a test pins it).
+- [x] C6: an inbound delivery runs under the resolved principal — the run's `AgentOptions.principal` equals the resolved principal and the guard reads it (a test pins the principal on the run).
+- [x] C7: single-owner behavior is unchanged — an Observe peer is still refused by name, an owner Task peer still dispatches, the four-leg gate passes, and the existing channel tests' behavior is preserved.
+- [x] C8: every inbound dispatch settles a `dispatch` journal event carrying channel, peer, resolved principal, session, admitted/refused, and outcome (a test pins it).
 
 ## Files to be touched
 

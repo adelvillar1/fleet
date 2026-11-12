@@ -156,6 +156,15 @@ impl Telegram {
         let token = self.token.clone();
         let api_base = self.api_base.clone();
         let offset = Arc::clone(&self.offset);
+        // Resume the persisted offset so a restart continues rather than
+        // re-polls from zero (armada L5, C5). The offset is the only state.
+        if let Some(home) = &self.home {
+            if let Ok(text) = std::fs::read_to_string(offset_path(home)) {
+                if let Ok(saved) = text.trim().parse::<i64>() {
+                    *offset.lock().unwrap_or_else(|poison| poison.into_inner()) = saved;
+                }
+            }
+        }
         // A long-poller has no port to bind, so "ready" is the first
         // answered poll: until the platform has heard from this bot,
         // nothing is listening and saying "live" would be a guess. An
@@ -177,6 +186,15 @@ impl Telegram {
                 Ok(Ok(updates)) => {
                     if let Some(ready) = ready.take() {
                         let _ = ready.send(Ok(0));
+                    }
+                    // Persist the offset so a restart resumes (L5, C5).
+                    if let Some(home) = &self.home {
+                        let current = *offset.lock().unwrap_or_else(|poison| poison.into_inner());
+                        let path = offset_path(home);
+                        if let Some(parent) = path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        let _ = std::fs::write(&path, current.to_string());
                     }
                     for update in &updates {
                         if let Some(inbound) = delivery_of(update) {
@@ -257,6 +275,12 @@ fn delivery_of(update: &Value) -> Option<Inbound> {
         task: text.to_string(),
         reply: Reply::Url(format!("telegram://chat/{chat_id}")),
     })
+}
+
+/// The persisted poll offset's path (armada L5, C5): a restart resumes the
+/// long-poll rather than re-reading the whole history.
+fn offset_path(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("channels").join("telegram-offset")
 }
 
 /// One `getUpdates` poll, free of the channel's borrow so the loop can
@@ -485,6 +509,43 @@ mod tests {
             .clone();
         assert_eq!(sent.len(), 1, "the outcome was sent: {sent:?}");
         assert!(sent[0].1.contains("the build is green"), "{sent:?}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The poll offset persists across a restart so the channel resumes
+    /// rather than re-polls from zero (armada L5, C5). The offset is the
+    /// only state: `last_update_id + 1`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_poll_offset_persists_across_a_restart() {
+        let home = temp_home("telegram-offset");
+        let fake = FakeTelegram::new();
+        let base = start_fake(Arc::clone(&fake)).await;
+        let channel = Telegram::with_api_base("test-token".to_string(), base).at_home(home.clone());
+        let served: Arc<dyn Channel> = Arc::new(channel);
+        let serving = Arc::clone(&served);
+        tokio::spawn(async move {
+            let sink: Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync> =
+                Arc::new(|_inbound| Ok("session".to_string()));
+            let (ready, _arrived) = tokio::sync::oneshot::channel();
+            let (_stop, stopped) = tokio::sync::watch::channel(false);
+            let _ = serving.serve(sink, ready, stopped).await;
+        });
+        fake.offer(update(11, 4242, "check the build"));
+        // The offset file appears once the poll lands: offset = 11 + 1 = 12.
+        let path = offset_path(&home);
+        let mut saved = None;
+        for _ in 0..500 {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                saved = Some(text);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            saved.as_deref(),
+            Some("12"),
+            "the offset persisted: {saved:?}"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 

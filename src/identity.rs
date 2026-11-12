@@ -147,9 +147,23 @@ pub struct DeviceLink {
     pub principal: PrincipalId,
 }
 
+/// One peer→principal edge (L5, D31): a channel peer (a Telegram chat, a
+/// webhook caller) resolved to the principal it acts for. The same human on
+/// two channels is two peers linked to one principal — the identity graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerLink {
+    /// The channel the peer arrives on (`telegram`, `webhook`, `relay`).
+    pub channel: String,
+    /// The peer's id on that channel.
+    pub peer: String,
+    /// The principal the peer acts for.
+    pub principal: PrincipalId,
+}
+
 /// The identity registry: the principals this home knows and the
-/// device→principal edges (D8). One store, one home — the communication
-/// layer's identity graph (L5) extends this same store, never a second.
+/// device→principal and peer→principal edges (D8). One store, one home — the
+/// communication layer's identity graph (L5) extends this same store, never
+/// a second.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Registry {
     /// The principals known to this home. Lane 1: just the owner.
@@ -158,6 +172,9 @@ pub struct Registry {
     /// The device→principal edges.
     #[serde(default)]
     pub devices: Vec<DeviceLink>,
+    /// The peer→principal edges (L5, D31).
+    #[serde(default)]
+    pub peers: Vec<PeerLink>,
 }
 
 impl Registry {
@@ -221,6 +238,50 @@ pub fn link_device(home: &Path, device: &str, principal: &PrincipalId) -> Result
     registry.devices.retain(|link| link.device != device);
     registry.devices.push(DeviceLink {
         device: device.to_string(),
+        principal: principal.clone(),
+    });
+    if !registry.principals.contains(principal) {
+        registry.principals.push(principal.clone());
+    }
+    registry
+        .save(home)
+        .map_err(|error| format!("cannot write the identity registry: {error}"))
+}
+
+/// Resolve a channel peer to the principal it acts for (L5, D31/D32). An
+/// unlinked peer is a **named refusal**, never a silent fallback to the
+/// owner — a fallback would be a confused-deputy escalation. The edge is a
+/// measured pairing, not an assertion by the message.
+pub fn resolve(home: &Path, channel: &str, peer: &str) -> Result<PrincipalId, String> {
+    let registry = Registry::load(home)
+        .map_err(|error| format!("cannot read the identity registry: {error}"))?;
+    registry
+        .peers
+        .iter()
+        .find(|link| link.channel == channel && link.peer == peer)
+        .map(|link| link.principal.clone())
+        .ok_or_else(|| {
+            format!("peer `{peer}` on `{channel}` is not linked to a principal — pair it first")
+        })
+}
+
+/// Link a channel peer to a principal (L5, D31) — a governance act at
+/// pairing, never the agent's (D19). Upserts the edge. Lane 1 links every
+/// paired peer to the owner.
+pub fn link_peer(
+    home: &Path,
+    channel: &str,
+    peer: &str,
+    principal: &PrincipalId,
+) -> Result<(), String> {
+    let mut registry = Registry::load(home)
+        .map_err(|error| format!("cannot read the identity registry: {error}"))?;
+    registry
+        .peers
+        .retain(|link| !(link.channel == channel && link.peer == peer));
+    registry.peers.push(PeerLink {
+        channel: channel.to_string(),
+        peer: peer.to_string(),
         principal: principal.clone(),
     });
     if !registry.principals.contains(principal) {
@@ -332,6 +393,48 @@ mod tests {
         let home = scratch();
         fs::write(identity_path(&home), "{ not json").unwrap();
         assert!(Registry::load(&home).is_err());
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_identity_graph_resolves_one_principal_across_channels_and_devices() {
+        let home = scratch();
+        // The same human on Telegram, webhook, and a paired device links to
+        // one principal (L5, D31).
+        link_peer(&home, "telegram", "chat-1", &PrincipalId::owner()).unwrap();
+        link_peer(&home, "webhook", "caller-1", &PrincipalId::owner()).unwrap();
+        link_device(&home, "device-1", &PrincipalId::owner()).unwrap();
+        assert_eq!(
+            resolve(&home, "telegram", "chat-1").unwrap(),
+            PrincipalId::owner()
+        );
+        assert_eq!(
+            resolve(&home, "webhook", "caller-1").unwrap(),
+            PrincipalId::owner()
+        );
+        assert_eq!(
+            device_principal(&home, "device-1"),
+            Some(PrincipalId::owner())
+        );
+        // The edges persist across a reload.
+        let registry = Registry::load(&home).unwrap();
+        assert_eq!(registry.peers.len(), 2);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn an_unlinked_peer_is_a_named_refusal_never_a_silent_owner_fallback() {
+        let home = scratch();
+        let error = resolve(&home, "telegram", "stranger").unwrap_err();
+        assert!(error.contains("not linked to a principal"), "{error}");
+        // Linking then re-resolving succeeds; upsert does not duplicate.
+        link_peer(&home, "telegram", "stranger", &PrincipalId::owner()).unwrap();
+        link_peer(&home, "telegram", "stranger", &PrincipalId::owner()).unwrap();
+        assert_eq!(
+            resolve(&home, "telegram", "stranger").unwrap(),
+            PrincipalId::owner()
+        );
+        assert_eq!(Registry::load(&home).unwrap().peers.len(), 1);
         fs::remove_dir_all(&home).ok();
     }
 }

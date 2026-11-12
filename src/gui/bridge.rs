@@ -77,7 +77,13 @@ pub enum Command {
     /// working in a different conversation. The folder rides here
     /// rather than being read when the thread wakes, so a choice made
     /// while the run was being accepted cannot move under it.
-    Run(String, String, Option<PathBuf>, Vec<crate::api::ImageRef>),
+    Run(
+        String,
+        String,
+        Option<PathBuf>,
+        Vec<crate::api::ImageRef>,
+        Option<String>,
+    ),
     /// Plan this task: the run plans and does not write, and its final
     /// message records as a plan the owner edits and builds.
     Plan(String, String, Option<PathBuf>),
@@ -4651,7 +4657,13 @@ impl Bridge {
         let folder = self.run_folder(session, None)?;
         self.full_access_floor(folder.as_deref(), lock(&self.state).permissions)?;
         self.dispatch(session, task, |session, task| {
-            Command::Run(session.to_string(), task.to_string(), folder, Vec::new())
+            Command::Run(
+                session.to_string(),
+                task.to_string(),
+                folder,
+                Vec::new(),
+                None,
+            )
         })
     }
 
@@ -4728,9 +4740,32 @@ impl Bridge {
             state.provider_pin = pin;
         }
         self.dispatch(session, task, |session, task| {
-            Command::Run(session.to_string(), task.to_string(), folder, images)
+            Command::Run(session.to_string(), task.to_string(), folder, images, None)
         })
         .map_err(RunError::Refused)
+    }
+
+    /// Hand a channel peer's task to the agent thread under the peer's
+    /// resolved principal (armada L5, D34/D9). The principal rides the run
+    /// into `AgentOptions.principal` so the guard (L3) reads it; `None` is
+    /// the owner, the run this crate has always had.
+    pub fn run_as_principal(
+        &self,
+        session: &str,
+        task: &str,
+        principal: Option<String>,
+    ) -> Result<(), String> {
+        let folder = self.run_folder(session, None)?;
+        self.full_access_floor(folder.as_deref(), lock(&self.state).permissions)?;
+        self.dispatch(session, task, |session, task| {
+            Command::Run(
+                session.to_string(),
+                task.to_string(),
+                folder,
+                Vec::new(),
+                principal,
+            )
+        })
     }
 
     /// The same run, with a per-run turn budget named by the composer.
@@ -13192,11 +13227,17 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                 // `mem::take` moves them rather than copying a screenshot
                 // that can be megabytes wide.
                 let images = match &mut command {
-                    Command::Run(_, _, _, images) => std::mem::take(images),
+                    Command::Run(_, _, _, images, _) => std::mem::take(images),
                     _ => Vec::new(),
                 };
+                // The resolved principal a channel peer's run acts for
+                // (armada L5, D9); `None` is the owner's own run.
+                let run_principal = match &command {
+                    Command::Run(_, _, _, _, principal) => principal.clone(),
+                    _ => None,
+                };
                 match command {
-                    Command::Run(driving, task, folder, _)
+                    Command::Run(driving, task, folder, _, _)
                     | Command::Plan(driving, task, folder)
                     | Command::RunAs(driving, task, folder, _, _) => {
 
@@ -13359,6 +13400,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 images,
                                 plan_mode,
                                 learning,
+                                run_principal,
                             ));
                         });
                     }
@@ -13498,6 +13540,7 @@ fn concurrent_admission(
 /// `finished`/`failed` itself, and the early refusals below emit `failed`, so
 /// `record` always clears the session's `running` flag and no phantom run is
 /// left behind (C0/C1).
+#[allow(clippy::too_many_arguments)]
 async fn drive_run(
     ctx: RunCtx,
     driving: String,
@@ -13509,6 +13552,9 @@ async fn drive_run(
     // creation (a lesson is born with its persona); the run body itself reads
     // the lead persona off the log, so the pair does not ride further.
     _learning: Option<(String, String)>,
+    // The resolved principal the run acts for (armada L5, D9); `None` is the
+    // owner's own run. The guard (L3) reads it off `AgentOptions.principal`.
+    principal: Option<String>,
 ) {
     let RunCtx {
         home,
@@ -13703,7 +13749,7 @@ async fn drive_run(
     })
     .unwrap_or_default();
     let options = AgentOptions {
-        principal: None,
+        principal: principal.as_deref().map(crate::identity::PrincipalId::new),
         // The session's standing objective, read per run so a change reaches
         // the next run with no restart.
         goal: session_goal(&home, &driving),
@@ -13990,7 +14036,7 @@ mod goal_tests {
 
         let handed = commands.try_recv().expect("the run must be dispatched");
         match handed {
-            Command::Run(driving, task, folder, _) => {
+            Command::Run(driving, task, folder, _, _) => {
                 assert_eq!(driving, session);
                 assert_eq!(task, "make the claim sharper");
                 // `/var` and `/private/var` are one folder on macOS: the
@@ -14040,7 +14086,7 @@ mod goal_tests {
             .try_recv()
             .expect("the second run must be dispatched");
         match second {
-            Command::Run(driving, task, _, _) => {
+            Command::Run(driving, task, _, _, _) => {
                 assert_eq!(driving, session);
                 assert_eq!(task, "and answer the rollback gap");
             }
