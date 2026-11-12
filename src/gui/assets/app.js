@@ -7380,16 +7380,16 @@
     }
     var rows = [];
     (read.built_ins || []).forEach(function (tool) {
-      rows.push([tool.name, 'builtin', tool.class, tool.description]);
+      rows.push([tool.name, 'builtin', tool.class, tool.description, null]);
     });
     (read.lanes || []).forEach(function (lane) {
       rows.push([lane.name, 'lane', 'guarded at the gate',
         (lane.role || '') + ((lane.health_tools || []).length
-          ? ' \u00b7 health: ' + lane.health_tools.join(', ') : '')]);
+          ? ' \u00b7 health: ' + lane.health_tools.join(', ') : ''), null]);
     });
     (read.mcp || []).forEach(function (server) {
       rows.push([server.name, 'mcp', server.enabled ? 'enabled' : 'disabled',
-        server.program || '']);
+        server.program || '', server]);
     });
     var list = node('div', 'rail-list');
     rows.forEach(function (row) {
@@ -7401,6 +7401,48 @@
       head.appendChild(chip);
       head.appendChild(node('b', null, row[0]));
       head.appendChild(node('span', 'tissue-where', row[2]));
+      // The enable switch (U40) rides the row where a store backs it:
+      // the MCP registry's per-server enabled flag, written through the
+      // settings writer's own server op. A builtin or a lane has no
+      // such store — its row says the gate rules the call, and no
+      // switch lies about a narrowing that does not exist (U26).
+      if (row[4]) {
+        var server = row[4];
+        var toggle = node('button', 'row-action', server.enabled ? 'disable' : 'enable');
+        toggle.type = 'button';
+        toggle.setAttribute('aria-pressed', String(server.enabled));
+        toggle.title = (server.enabled ? 'disable ' : 'enable ') + server.name
+          + ' — writes the registry through the settings writer';
+        toggle.addEventListener('click', function () {
+          toggle.disabled = true;
+          toggle.textContent = 'writing\u2026';
+          post('/api/settings', {
+            op: 'server',
+            name: server.name,
+            config: {
+              program: server.program,
+              args: server.args || [],
+              env_names: server.env_names || [],
+              enabled: !server.enabled
+            }
+          }).then(function (reply) {
+            if (reply.status === 200) {
+              notice(server.name + (server.enabled ? ' disabled' : ' enabled'),
+                reply.body.summary || 'the registry is written');
+              readTools(true);
+              return;
+            }
+            toggle.disabled = false;
+            toggle.textContent = server.enabled ? 'disable' : 'enable';
+            notice('the toggle was refused', reply.body.error || 'the write refused it');
+          }).catch(function () {
+            toggle.disabled = false;
+            toggle.textContent = server.enabled ? 'disable' : 'enable';
+            notice('the toggle did not cross', 'the server did not answer');
+          });
+        });
+        head.appendChild(toggle);
+      }
       line.appendChild(head);
       if (row[3]) line.appendChild(node('p', 'intel-desc', clip(row[3], 150)));
       list.appendChild(line);

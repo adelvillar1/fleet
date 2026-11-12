@@ -12270,7 +12270,7 @@ const toolsDocument = () => ({
     { name: 'read_file', kind: 'builtin', class: 'read', description: 'read a file' },
   ],
   lanes: [{ name: 'sys1', kind: 'lane', role: 'judgment', health_tools: ['sys1_health'] }],
-  mcp: [{ name: 'docs', kind: 'mcp', program: 'docs-server', enabled: true, env_names: [] }],
+  mcp: [{ name: 'docs', kind: 'mcp', program: 'docs-server', args: ['-m', 'docs'], enabled: true, env_names: ['DOCS_KEY'] }],
 });
 async function theToolsSegmentNamesTheRegistryAndItsClasses() {
   const page = boot({ documents: { tools: toolsDocument() }, hash: '#/memory/tools' });
@@ -12326,6 +12326,37 @@ async function theWorkflowsSegmentCarriesTheDeclaredChains() {
   check('INTEL the critical path names the order',
     text.includes('the critical path: plan \u2192 build'),
     'path painted');
+}
+
+// U40's enable switch rides the row where a store backs it: the MCP
+// registry's per-server flag, written through the settings writer's
+// server op with the FULL config (program, args, env_names, enabled) —
+// the builtin and lane rows carry no switch, because no store backs
+// one and a control that lies is the never-list's own sentence.
+async function theMcpToggleWritesTheRegistry() {
+  const page = boot({ documents: { tools: toolsDocument() }, hash: '#/memory/tools' });
+  page.open();
+  await flush(80);
+  const toggles = page.rows('.row-action').filter((one) =>
+    one.textContent === 'disable');
+  check('INTEL the mcp row carries its enable switch, pressed while enabled',
+    toggles.length === 1 && toggles[0].getAttribute('aria-pressed') === 'true',
+    'toggles=' + toggles.length);
+  toggles[0].click();
+  await flush(60);
+  const writes = page.calls.filter((call) =>
+    call.url === '/api/settings' && call.method === 'POST');
+  check('INTEL the toggle posts the server op with the full config',
+    writes.length === 1 &&
+      JSON.parse(writes[0].body).op === 'server' &&
+      JSON.parse(writes[0].body).name === 'docs' &&
+      JSON.parse(writes[0].body).config.enabled === false &&
+      JSON.parse(writes[0].body).config.args[0] === '-m',
+    JSON.stringify(writes.map((call) => call.body)));
+  check('INTEL the built-in rows carry no lying switch',
+    page.rows('.row-action').filter((one) => one.textContent === 'disable').length === 0 ||
+      page.rows('.intel-row').length > 1,
+    'rows painted');
 }
 
 const cases = [
@@ -12482,6 +12513,7 @@ const cases = [
   ['INTEL the tools segment names the registry and its classes', theToolsSegmentNamesTheRegistryAndItsClasses],
   ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],
   ['INTEL the workflows segment carries the declared chains', theWorkflowsSegmentCarriesTheDeclaredChains],
+  ['INTEL the mcp toggle writes the registry', theMcpToggleWritesTheRegistry],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

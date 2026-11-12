@@ -10065,6 +10065,7 @@ fn tools_read(home: &std::path::Path) -> Value {
                 "program": entry.program,
                 "enabled": entry.enabled,
                 "env_names": entry.env_names,
+                "args": entry.args,
             })
         })
         .collect();
