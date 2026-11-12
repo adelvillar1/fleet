@@ -43,7 +43,7 @@ material, not armada builds.
 |---|---|---|
 | `home` | `fleet_home(...) -> PathBuf`; `sessions_dir(home)`; `read_soul(home)` | `src/home.rs:13,29,45` |
 | `filelock` | `FileLock::beside(path)`; `FileLock::take(lock) -> FileLock` | `src/filelock.rs:33,42` |
-| `gui::bridge` | `run(session, task)`; `run_as(session, task, kind, role)`; `state(session) -> Value`; `huddle(goal, personas)`; `hand_to_desk(id)`; `projects() -> Value`; `answer(...)`; `stop(steer)`; `resume(asked)` | `src/gui/bridge.rs:4642,4653,942,748,782,1586,5686,5305,5442` |
+| `gui::bridge` | `run(session, task)`; `run_as(session, task, kind, role)`; `run_as_principal(session, task, principal)` (L5/D34); `state(session) -> Value`; `huddle(goal, personas)`; `hand_to_desk(id)` (as-built: attaches the room's thread + binds the room's workspace + records the thread→deliverable edge, D39); `projects() -> Value` (as-built: a projection of `workspace::view`, D40); `assign_task(task_id, role, task_text, principal)` (L7/D41–D42); `armada() -> Value`; `armada_dispatch(body) -> Result<Value>` (L9); `answer(...)`; `stop(steer)`; `resume(asked)` | `src/gui/bridge.rs` (as-built 0.7.0) |
 | `memory` | `load_facts(root) -> Vec<Fact>`; `Memory::remember(&Remember) -> Fact`; `Memory::supersede(...)`; `rewrite_field(path, key, value)`; `recall(instruction) -> Vec<ScoredFact>`; `archive_fact(...)` | `src/memory.rs:1023,4869,5165,3367,3092` |
 | `memory_pull` | `trait Source { harness(); project(); read() -> Snapshot }`; `pull(source)`; `Snapshot { revision, facts, skips }` | `src/memory_pull.rs:72,731,60` |
 | `contract` | `admits_concurrent(reading, in_flight) -> Admission`; `footprint::admit(available, reserve, estimate)`; `Oversight::measure(now)` | `src/contract.rs:90,266`; `src/footprint.rs:415` |
@@ -236,6 +236,68 @@ Target = Local { home } | Vps { ssh, ... }
 - `tui` / `gui` / `src-tauri` — the surface stack (§9).
 
 **CONSUMED BY** the owner; lane 2 (org provisioning + team surfaces).
+
+## 10a. As-built record — v0.6.38 → v0.7.0 (recorded 2026-11-12)
+
+The L7–L9 sections above were drafted at plan time; these are the signatures
+as built (append-only amendment, per the ledger rules — the drafted text
+stands as intent, this is the contract in force). Everything here is verified
+by the module tests cited in the plans.
+
+**§8 as-built — `src/armada/` (roster, authority, control)**
+
+```text
+roster::register(home, install_id, sid, version, capacity_kib, now) -> Result<Instance>
+roster::heartbeat(home, sid, now) -> Result<()>          // cannot register an unknown sid
+roster::live_instances(home, now) -> Vec<Instance>       // liveness earned, D44
+roster::{load(home) -> Roster, save(home, roster)}      // atomic tmp+rename
+authority::mint_flagship_key(home) -> Result<Ed25519KeyPair>   // once; PKCS#8 0600 (L8 filled the custody gap, D47)
+authority::{load_flagship_key(home), load_public_key(home)}
+authority::sign_frame(key, verb, install, principal, payload, nonce, issued_at, class, scope, target) -> ControlFrame
+authority::verify_frame(frame, class, public_key, now) -> Result<(), String>   // forged/unsigned/stale/mismatch refused by name, D45
+control::Verb { Dispatch|State|CorpusSync|VersionRoll|Retire|Health|Register|Heartbeat }  // .class()/.dimension(), D46
+control::admit(home, frame, public_key, now) -> Result<Admitted>               // authority → guard → step-up, D15/D18/D45
+control::execute(home, admitted) -> Result<Outcome{Done|Dispatch{task,principal}|Destructive{verb,target}}>
+control::grade(home, sid) -> Reliability{settled, succeeded, calibrated, reliability}  // D49
+control::relay_down_note() -> &'static str              // D50, named degradation
+Instance { install_id, sid, version, capacity_kib, last_heartbeat, registered_at }  // .live(now)
+```
+
+**§9 as-built — `src/workspace.rs` (L7)**
+
+```text
+read(home) -> Graph{tasks: BTreeMap<String,Task>, edges: Vec<Edge>}   // append-only JSONL folded on read, D37
+link(home, from: WorkObject, to: WorkObject, kind: EdgeKind) -> Result<(), String>
+                                                                      // dangling/mistyped refused by name, D39
+link_named(home, from_id, from_kind, to_id, to_kind, edge_kind)       // the CLI seam, C0
+view(home, filter: Option<Kind>) -> Vec<ViewRow{object, binding, entry, practice}>  // D40
+create_task(home, title, assignee: PrincipalId, binding) -> Result<Task>
+set_status(home, task_id, status) -> Result<Task>
+admit_assignment(home, task, principal) -> Result<()>                 // L3 guard + guard journal event, D42
+settle_work(home, task_id, deliverable, principal) -> Result<Status>  // graded by the desk end gate, D43
+Kind = task|thread|deliverable|bot|lesson ; Status = working|blocked|done
+```
+
+**§10 as-built — `src/armada/deploy.rs` + the surfaces (L9)**
+
+```text
+deploy::bootstrap_corpus(home, remote) -> Result<()>                  // clone the mind, not the identity, D52
+deploy::provision_local(home, remote: Option<&str>) -> Result<ProvisionReport>
+deploy::vps_commands(host, user, home, payload_url, remote) -> Vec<String>  // pure; credentials out-of-band, D51
+deploy::register_fresh(flagship_home, install_id, sid, version, capacity_kib, now) -> Result<Instance>
+deploy::trusted(home, sid, doctor_passed) -> bool                     // doctor AND settles, D57
+deploy::provision_class() -> ActionClass::Governance                  // step-up, D18/D19
+deploy::journal_provision(home, install_id, target, corpus_cloned)
+fleet armada { roster | status | sync | deploy <home> [--remote <url>] | dispatch <sid> <task> }   // C5
+tui BoardKind::Armada + board_view::render_armada     // the armada board (genuinely visual, hard rule 11)
+gui GET /api/armada ; POST /api/armada/dispatch       // the face section reads the same library
+fleet-desktop wraps the same face                      // no second frontend, U29/D56
+```
+
+**Face seams the reskin consumes (the U-reskin plan's EXPECTS)** — all reads
+over existing stores, no new capability: `/api/skills` (exists), the tools
+registry read (new), the workflow store read (new), `/api/calibration`
+(exists), `/api/desk` (exists), `/api/onboard` (exists).
 
 ## 11. The bidirectional consistency check
 

@@ -8,7 +8,7 @@
 The dependency-ordered plan set that fits fleet for armada, built bottom-up.
 The vision is `../architecture/2026-11-11-armada-direction.md`; the
 contract-first atomic decomposition is
-`../architecture/2026-11-11-armada-atomic-decomposition.md`. Three ledgers
+`../architecture/2026-11-11-armada-atomic-decomposition.md`. Four ledgers
 keep the execution honest — together they are the full understanding of how
 the product is built:
 - [`ARMADA-DECOMPOSITION.md`](ARMADA-DECOMPOSITION.md) — the **build map**: the
@@ -18,20 +18,34 @@ the product is built:
   (D0–D57) that keep the plans from diverging.
 - [`ARMADA-CONTRACTS.md`](ARMADA-CONTRACTS.md) — the **interfaces**, what each
   module OFFERS / EXPECTS / is CONSUMED BY, so the seams compose without
-  guesswork.
-- [`UI-DECISIONS.md`](UI-DECISIONS.md) — the **design system** (U0–U38): the
+  guesswork — including the as-built record (§10a) of what v0.6.38–v0.7.0
+  actually shipped.
+- [`UI-DECISIONS.md`](UI-DECISIONS.md) — the **design system** (U0–U41): the
   signal-palette law, the shell/tissue layout contract, and the interaction
   law that keeps every surface one workspace — fleet-core, armada, and
   onboarding alike. The reference implementations are the live, interactive
   mockups under [`../design/`](../design/): `fleet-onboarding-mockup.html`
   (setup as the graph growing — fresh home to a whole workspace, fleet +
-  armada), `fleet-workspace-mockup.html` (desk, threads, learning, memory,
-  calibration, inbox — with the Armada switch), and
-  `armada-workspace-mockup.html` (board, fleet, dispatch). Open them before
-  building any surface.
+  armada, with the system-one step), `fleet-workspace-mockup.html` (desk,
+  threads, learning, intelligence, calibration, inbox — with the Armada
+  switch and the thread pane), and `armada-workspace-mockup.html` (board,
+  fleet, dispatch). Open them before building any surface.
 
 Read the decomposition to see *what to build and in what order*; the choices
-before drafting; the contracts before building a module.
+before drafting; the contracts before building a module; the U-ledger and the
+mockups before touching a surface.
+
+## The U-reskin — the production faces (drafted 2026-11-12, awaiting activation)
+
+- [`2026-11-12-ux-reskin.md`](2026-11-12-ux-reskin.md) — the plan: implement
+  the approved design system across the production faces in six cuts
+  (tokens+shell → Intelligence → Threads → Desk+Calibration → Onboarding →
+  TUI+desktop), each citing the `U` ids it implements, the harness green
+  between sections.
+- [`2026-11-12-ux-reskin-handoff.md`](2026-11-12-ux-reskin-handoff.md) — the
+  handoff packet: the owner's rulings verbatim, the face conventions, the
+  endpoint inventory, the ten traps, and where to start. **The next agent
+  starts there.**
 
 ## How these plans are drafted (the awareness rule)
 
