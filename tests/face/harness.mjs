@@ -12593,6 +12593,44 @@ async function theInstallNodeStartsTheGraph() {
     focus.slice(0, 60));
 }
 
+// S1 (U3): one focus. Clicking a node pivots the WHOLE workspace — the
+// kind's lens opens and the focus card names the pivoted object. The
+// connections column has no private second focus: it follows the shell.
+async function theFocusLawPivotsTheWholeWorkspace() {
+  const page = boot({
+    documents: {
+      tissue: { type: 'tissue', nodes: [
+        { id: 'install', kind: 'install', label: 'this install', live: true },
+        { id: 'the-notes', kind: 'deliverable', label: 'the notes' },
+        { id: 't1', kind: 'thread', label: 'the thread' },
+      ], edges: [{ from: 'the-notes', to: 't1', kind: 'works_in' }], bounded: 60, omitted: 0 },
+      desk: { projects: [{ slug: 'the-notes', name: 'the notes', claim: 'the claim',
+        shape: 'presentation', project: null, sources: [], stages: [], claims: [],
+        refusals: [], number_refusals: [], stands: null, updated: '2026-11-12 12:00' }] },
+    },
+    hash: '#/chat',
+  });
+  page.open();
+  await flush(80);
+  const nodes = page.IDS['tissue-graph'].querySelectorAll('.tissue-node');
+  const deliverable = Array.from(nodes).find((n) => {
+    const title = n.querySelector('title');
+    return title && title.textContent === 'the notes';
+  });
+  check('S1 the graph offers the deliverable node', !!deliverable, 'node present');
+  deliverable.click();
+  await flush(80);
+  check('S1 clicking a node opens its lens',
+    page.window.location.hash === '#/desk', 'hash=' + page.window.location.hash);
+  check('S1 the focus card names the pivoted object',
+    page.IDS['tissue-focus'].textContent.includes('the notes'),
+    page.IDS['tissue-focus'].textContent.slice(0, 60));
+  // The lens followed: the desk opened the same deliverable the focus names.
+  check('S1 the lens and the focus agree on one object',
+    page.IDS['desk-board'].textContent.includes('the notes'),
+    'desk board names the deliverable');
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -12754,6 +12792,7 @@ const cases = [
   ['DESK the card carries the stage track and the refusals', theDeskCardCarriesTheStageTrackAndTheRefusals],
   ['ONBOARD the judgment step names the preferred ones', theJudgmentStepNamesThePreferredOnes],
   ['ONBOARD the install node starts the graph', theInstallNodeStartsTheGraph],
+  ['S1 the focus law pivots the whole workspace', theFocusLawPivotsTheWholeWorkspace],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

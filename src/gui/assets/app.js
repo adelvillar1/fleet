@@ -12011,6 +12011,7 @@
 
   function openLesson(id) {
     face.learnPick = id;
+    focusOn('lesson', id, null);
     readLearning(true).then(function () {
       if (face.panel === 'learning') paintLearning();
     });
@@ -12621,6 +12622,7 @@
       })
       .then(function (desk) {
         face.deskOpenDesk = desk;
+        focusOn('deliverable', slug, desk.name);
         // A refusal belongs to the desk that issued it, so opening another
         // deliverable does not carry the last one's reason onto it.
         face.deskNote = '';
@@ -14804,6 +14806,7 @@
     // its sentence, the incoming one restores its own.
     swapDraft(face.session, id);
     storeOpenSession(id);
+    focusOn('thread', id, null);
     face.focus = { panel: 'sessions', id: id };
     if (!options.keepHash) {
       try {
@@ -28830,6 +28833,42 @@
     return tissueNodes().filter(function (one) { return one.id === id; })[0] || null;
   }
 
+  // --- the one focus (U3) ---------------------------------------------
+  // The shell holds ONE focused object. The connections column, the focus
+  // card, and every lens follow it — opening a deliverable / thread /
+  // lesson IS focusing that node, and clicking a node opens its lens. No
+  // surface keeps a private second focus (U26).
+  var FOCUS_LENSES = {
+    deliverable: { lens: 'desk', follow: function (id) { openDeskProject(id); } },
+    thread: { lens: 'chat', follow: null },
+    lesson: { lens: 'learning', follow: function (id) { openLesson(id); } },
+    practice: { lens: 'learning', follow: function (id) { openLesson(id); } },
+    bot: { lens: 'bots', follow: null },
+    fact: { lens: 'memory', follow: null },
+    task: { lens: 'desk', follow: null },
+    instance: { lens: 'armada', follow: null },
+    install: { lens: null, follow: null }
+  };
+
+  // Focus without moving: the connections column and the focus card
+  // follow; the lens the owner is reading stays put.
+  function focusOn(kind, id, label) {
+    face.focusObject = { kind: kind, id: id, label: label || null };
+    paintTissue();
+  }
+
+  // The pivot (U3): focus, then the whole workspace follows — the kind's
+  // lens opens and the object opens in it. A thread opens through the
+  // conversation's own opener (it navigates itself).
+  function pivotTo(kind, id, label) {
+    focusOn(kind, id, label);
+    var target = FOCUS_LENSES[kind];
+    if (!target || !target.lens) return;
+    if (kind === 'thread') { openWork(id); return; }
+    if (face.panel !== target.lens) window.location.hash = '#/' + target.lens;
+    if (target.follow) target.follow(id);
+  }
+
   function paintTissue() {
     if (!el.tissueGraph) return;
     var nodes = tissueNodes();
@@ -28849,8 +28888,10 @@
     }
     // The focus (U3): one object. A remembered one first, else the first
     // node the read offers — never a silent blank pane.
-    var focus = tissueNode(face.tissueFocus) || nodes[0];
-    face.tissueFocus = focus.id;
+    var focus = (face.focusObject && tissueNode(face.focusObject.id)) || nodes[0];
+    if (!face.focusObject) {
+      face.focusObject = { kind: focus.kind, id: focus.id, label: focus.label };
+    }
     var W = 288, H = 224, CX = W / 2, CY = H / 2;
     // One positions map for the whole paint: the focus sits at the
     // center, every other node the read holds on the ring, evenly spread
@@ -28905,7 +28946,7 @@
         'text-anchor': 'middle', class: 'tissue-node-label'
       }, tissueDisplay(one.label || one.id)));
       group.appendChild(svg('title', {}, one.label || one.id));
-      group.addEventListener('click', function () { focusTissue(one.id); });
+      group.addEventListener('click', function () { pivotTo(one.kind, one.id, one.label); });
       made.appendChild(group);
     });
     // The center: the focus itself, bigger, unlabeled — the focus card
@@ -28918,13 +28959,14 @@
     }));
     center.appendChild(svg('title', {}, focus.label || focus.id));
     center.addEventListener('click', function () {
-      var kind = TISSUE_KINDS[focus.kind];
-      if (kind && kind.lens) window.location.hash = '#/' + kind.lens;
+      pivotTo(focus.kind, focus.id, focus.label);
     });
     made.appendChild(center);
     el.tissueGraph.appendChild(made);
     paintTissueLegend(nodes);
-    paintTissueFocus(focus);
+    var cardFocus = (face.focusObject && !tissueNode(face.focusObject.id))
+      ? face.focusObject : focus;
+    paintTissueFocus(cardFocus);
   }
 
   function kindHue(kind) {
@@ -28968,16 +29010,11 @@
       var open = node('button', null, 'open ' + kind.name);
       open.type = 'button';
       open.addEventListener('click', function () {
-        window.location.hash = '#/' + kind.lens;
+        pivotTo(focus.kind, focus.id, focus.label);
       });
       actions.appendChild(open);
       el.tissueFocus.appendChild(actions);
     }
-  }
-
-  function focusTissue(id) {
-    face.tissueFocus = id;
-    paintTissue();
   }
 
   // The tissue note in the rail teaches the graph (U10) — visible only
@@ -29029,26 +29066,26 @@
     (face.roomFiles || []).forEach(function (file) {
       var name = String(file.path || '').split('/').filter(Boolean).pop() || file.path;
       rows.push({
-        kind: 'deliverable', label: name, mark: file.note || '',
+        kind: 'deliverable', id: file.path, label: name, mark: file.note || '',
         pivot: '#/desk'
       });
     });
     (face.knowledge && face.knowledge.wrote || []).forEach(function (name) {
-      rows.push({ kind: 'fact', label: name, mark: 'written', pivot: '#/memory' });
+      rows.push({ kind: 'fact', id: name, label: name, mark: 'written', pivot: '#/memory' });
     });
     (face.knowledge && face.knowledge.recalled || []).forEach(function (name) {
-      rows.push({ kind: 'fact', label: name, mark: 'recalled', pivot: '#/memory' });
+      rows.push({ kind: 'fact', id: name, label: name, mark: 'recalled', pivot: '#/memory' });
     });
     (face.tasks || []).forEach(function (task) {
       rows.push({
-        kind: 'task', label: task.step, mark: task.status || 'pending',
+        kind: 'task', id: task.step, label: task.step, mark: task.status || 'pending',
         pivot: '#/desk'
       });
     });
     var feedback = face.feedback || {};
     Object.keys(feedback).forEach(function (exchange) {
       rows.push({
-        kind: 'grade', label: 'exchange ' + exchange, mark: feedback[exchange],
+        kind: 'grade', id: exchange, label: 'exchange ' + exchange, mark: feedback[exchange],
         pivot: '#/calibration'
       });
     });
@@ -29090,7 +29127,7 @@
       line.appendChild(node('span', 'thread-label', row.label));
       if (row.mark) line.appendChild(node('span', 'thread-mark', row.mark));
       line.addEventListener('click', function () {
-        window.location.hash = row.pivot;
+        pivotTo(row.kind, row.id || row.label, row.label);
       });
       el.threadPaneList.appendChild(line);
     });
