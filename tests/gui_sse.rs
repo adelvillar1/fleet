@@ -203,7 +203,10 @@ async fn a_real_run_streams_over_sse_tokens_turn_and_end() {
     // sys1 judgment is live, and a `standard_code` verdict would walk the
     // compiled chain. A pin routes every shape through its provider —
     // the same lever the composer's own picker pulls.
-    let body = r#"{"task":"say the streamed answer","pin":"mock"}"#;
+    // A full provider/model pin skips the sys1 judgment entirely — a bare
+    // provider pin still asks sys1 to judge the workload, which stalls when
+    // the lane is absent. The test pins the route, not the judgment.
+    let body = r#"{"task":"say the streamed answer","pin":"mock/m"}"#;
     let head = format!(
         "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}\r\n",
         body.len(),

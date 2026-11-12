@@ -15736,6 +15736,10 @@ mod tests {
             state: Arc::clone(&bridge.state),
             events: bridge.events.clone(),
         });
+        // A full provider/model pin skips the sys1 judgment — a bare run
+        // asks sys1 to judge the workload, which stalls when the lane is
+        // absent. The test pins the control file, not the judgment.
+        lock(&bridge.state).provider_pin = Some("stand-in/auto".to_string());
         bridge.run(&id, "go").expect("the run is accepted");
         // KI-340: the poll's wall clock was the flake — a loaded machine
         // outran fifteen seconds and the test red with no regression.
