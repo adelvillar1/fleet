@@ -1,0 +1,1040 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+#fo-root{
+  box-sizing:border-box;
+  --ink:#08131a; --ink2:#0c1e27; --panel:#0f2530; --panel2:#12303c; --raise:#16394a;
+  --line:rgba(86,180,200,.16); --line2:rgba(86,180,200,.30);
+  --text:#e9f4f5; --muted:#93aeb6; --faint:#5f7d86;
+  --green:#37e2a4; --cyan:#3ad4f2; --magenta:#f757c2; --amber:#ffb224; --gold:#ffd86b; --red:#ff6060; --teal:#2dd6bf; --blue:#5b9dff;
+  --green-d:rgba(55,226,164,.14); --cyan-d:rgba(58,212,242,.14); --magenta-d:rgba(247,87,194,.14);
+  --amber-d:rgba(255,178,36,.14); --gold-d:rgba(255,216,107,.14); --red-d:rgba(255,96,96,.14); --teal-d:rgba(45,214,191,.14); --blue-d:rgba(91,157,255,.14);
+  --disp:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  --r-lg:16px; --r-md:11px; --r-sm:7px;
+  --shadow:0 18px 50px -18px rgba(0,0,0,.7);
+  --gap:14px;
+  position:relative; width:100%; min-height:860px; color:var(--text);
+  font-family:var(--body); font-size:14px; line-height:1.5;
+  background:
+    radial-gradient(1200px 600px at 82% -10%, rgba(45,214,191,.10), transparent 60%),
+    radial-gradient(900px 520px at 8% 108%, rgba(91,157,255,.08), transparent 60%),
+    linear-gradient(160deg,var(--ink),var(--ink2) 60%,#0a1a22);
+  border-radius:var(--r-lg); overflow:hidden; isolation:isolate;
+  border:1px solid var(--line);
+}
+#fo-root[data-theme="day"]{
+  --ink:#eef0ea; --ink2:#e7eae2; --panel:#fbfaf5; --panel2:#f3f2ea; --raise:#ffffff;
+  --line:rgba(20,60,70,.14); --line2:rgba(20,60,70,.26);
+  --text:#13242b; --muted:#4d6670; --faint:#8397a0;
+  --green:#0fa876; --cyan:#0a93b8; --magenta:#cf2f9c; --amber:#c97e00; --gold:#b98900; --red:#dc3838; --teal:#0c9c8b; --blue:#2f6fd6;
+  --green-d:rgba(15,168,118,.12); --cyan-d:rgba(10,147,184,.12); --magenta-d:rgba(207,47,156,.12);
+  --amber-d:rgba(201,126,0,.13); --gold-d:rgba(185,137,0,.14); --red-d:rgba(220,56,56,.12); --teal-d:rgba(12,156,139,.12); --blue-d:rgba(47,111,214,.12);
+  --shadow:0 18px 44px -22px rgba(20,50,60,.4);
+  background:
+    radial-gradient(1100px 560px at 84% -12%, rgba(12,156,139,.10), transparent 60%),
+    radial-gradient(900px 520px at 6% 110%, rgba(47,111,214,.07), transparent 60%),
+    linear-gradient(160deg,var(--ink),var(--ink2));
+}
+#fo-root *{box-sizing:border-box; margin:0; padding:0}
+#fo-root ::selection{background:rgba(45,214,191,.3)}
+#fo-root ::-webkit-scrollbar{width:10px}
+#fo-root ::-webkit-scrollbar-track{background:transparent}
+#fo-root ::-webkit-scrollbar-thumb{background:var(--line2); border-radius:20px; border:3px solid transparent; background-clip:content-box}
+#fo-root ::-webkit-scrollbar-thumb:hover{background:var(--teal); background-clip:content-box}
+#fo-root button{font-family:inherit; color:inherit; background:none; border:none; cursor:pointer}
+#fo-root input,#fo-root select,#fo-root textarea{font-family:inherit; color:inherit}
+#fo-root canvas.fo-amb{position:absolute; inset:0; z-index:0; pointer-events:none; opacity:.55}
+#fo-root .fo-grain{position:absolute; inset:0; z-index:0; pointer-events:none; opacity:.05; mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+#fo-root .fo-app{position:relative; z-index:1; display:grid; grid-template-rows:auto 1fr auto; height:860px}
+
+#fo-root .fo-top{display:flex; align-items:center; gap:14px; padding:12px 18px; border-bottom:1px solid var(--line)}
+#fo-root .fo-brand{display:flex; align-items:center; gap:11px; min-width:210px}
+#fo-root .fo-mark{width:34px; height:34px; border-radius:10px; display:grid; place-items:center; color:#04121a;
+  background:conic-gradient(from 210deg,var(--teal),var(--green),var(--cyan),var(--teal)); box-shadow:0 0 22px -4px var(--teal)}
+#fo-root .fo-brand h1{font-family:var(--disp); font-size:18px; font-weight:700; line-height:1}
+#fo-root .fo-brand .fo-sub{font-family:var(--mono); font-size:10.5px; color:var(--muted); letter-spacing:.14em; text-transform:uppercase; margin-top:3px}
+#fo-root .fo-search{flex:1; max-width:520px; min-width:0; display:flex; align-items:center; gap:9px; padding:8px 13px; border-radius:10px; background:var(--panel); border:1px solid var(--line); color:var(--muted)}
+#fo-root .fo-search input{flex:1; min-width:0; background:none; border:none; outline:none; color:var(--text); font-size:13px}
+#fo-root .fo-kbd{font-family:var(--mono); font-size:10.5px; padding:2px 6px; border-radius:5px; border:1px solid var(--line2); color:var(--muted)}
+#fo-root .fo-fleetstat{display:flex; align-items:center; gap:8px; margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--muted)}
+#fo-root .fo-fleetstat.hide{display:none}
+#fo-root .fo-dot{width:8px; height:8px; border-radius:50%; background:var(--green); animation:fo-pulse 2.4s infinite}
+@keyframes fo-pulse{0%{box-shadow:0 0 0 0 rgba(55,226,164,.5)}70%{box-shadow:0 0 0 7px rgba(55,226,164,0)}100%{box-shadow:0 0 0 0 rgba(55,226,164,0)}}
+#fo-root .fo-iconbtn{width:34px; height:34px; border-radius:9px; display:grid; place-items:center; color:var(--muted); border:1px solid transparent; transition:.16s}
+#fo-root .fo-iconbtn:hover{color:var(--text); background:var(--panel); border-color:var(--line)}
+
+#fo-root .fo-body{display:grid; grid-template-columns:236px 1fr 320px; min-height:0}
+#fo-root[data-tissue="off"] .fo-body{grid-template-columns:236px 1fr}
+#fo-root[data-tissue="off"] .fo-tissue{display:none}
+
+#fo-root .fo-rail{border-right:1px solid var(--line); padding:14px 12px; overflow-y:auto; display:flex; flex-direction:column; gap:16px; background:rgba(0,0,0,.06)}
+#fo-root .fo-rail-h{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); padding:0 8px; margin-bottom:7px}
+#fo-root .fo-proj{display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:10px; background:var(--panel); border:1px solid var(--line)}
+#fo-root .fo-proj .fo-pname{font-family:var(--disp); font-weight:600; font-size:13.5px}
+#fo-root .fo-proj .fo-pmeta{font-family:var(--mono); font-size:10px; color:var(--muted)}
+#fo-root .fo-progress{padding:9px 10px; border-radius:10px; background:var(--panel); border:1px solid var(--line)}
+#fo-root .fo-progress .fo-pl{font-family:var(--mono); font-size:10px; color:var(--muted); margin-bottom:6px; display:flex; justify-content:space-between}
+#fo-root .fo-progress .fo-meter{height:5px; border-radius:20px; background:var(--line); overflow:hidden}
+#fo-root .fo-progress .fo-meter i{display:block; height:100%; border-radius:20px; background:linear-gradient(90deg,var(--teal),var(--green)); transition:width .5s}
+#fo-root .fo-nav{display:flex; flex-direction:column; gap:2px}
+#fo-root .fo-nav button{display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:9px; color:var(--muted); font-size:13px; font-weight:500; text-align:left; transition:.14s; width:100%}
+#fo-root .fo-nav button:hover{color:var(--text); background:var(--panel)}
+#fo-root .fo-nav button.active{color:var(--text); background:var(--panel2); box-shadow:inset 2px 0 0 var(--teal)}
+#fo-root .fo-nav button .fo-count{margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--faint); background:var(--panel); padding:1px 7px; border-radius:20px}
+#fo-root .fo-nav button.active .fo-count{color:var(--teal)}
+#fo-root .fo-rail-foot{margin-top:auto; padding:10px; border-radius:10px; background:var(--panel); border:1px solid var(--line); font-size:11.5px; color:var(--muted)}
+#fo-root .fo-rail-foot b{color:var(--text); font-family:var(--disp)}
+
+#fo-root .fo-center{min-width:0; display:flex; flex-direction:column; overflow:hidden}
+#fo-root .fo-lens-head{display:flex; align-items:center; gap:12px; padding:16px 22px 10px; flex-wrap:wrap}
+#fo-root .fo-lens-title{font-family:var(--disp); font-size:21px; font-weight:700}
+#fo-root .fo-lens-sub{font-size:12.5px; color:var(--muted); margin-top:2px; max-width:560px}
+#fo-root .fo-tools{display:flex; align-items:center; gap:8px; margin-left:auto; flex-wrap:wrap}
+#fo-root .fo-btn{display:inline-flex; align-items:center; gap:7px; padding:7px 14px; border-radius:9px; font-size:12.5px; font-weight:600; border:1px solid var(--line); color:var(--text); background:var(--panel); transition:.16s}
+#fo-root .fo-btn:hover{border-color:var(--line2); background:var(--panel2)}
+#fo-root .fo-btn-primary{background:linear-gradient(135deg,var(--teal),var(--green)); color:#04121a; border:none; box-shadow:0 6px 20px -8px var(--teal)}
+#fo-root .fo-btn-primary:hover{filter:brightness(1.08)}
+#fo-root .fo-btn-ghost{border-color:transparent; color:var(--muted); background:none}
+#fo-root .fo-btn-ghost:hover{color:var(--text); background:var(--panel)}
+#fo-root .fo-lens-body{flex:1; overflow-y:auto; padding:6px 22px 22px; min-height:0}
+
+/* setup steps */
+#fo-root .fo-welcome{font-family:var(--disp); font-size:17px; font-weight:600; line-height:1.45; max-width:620px; margin-bottom:16px}
+#fo-root .fo-welcome b{color:var(--teal)}
+#fo-root .fo-steps{display:flex; flex-direction:column; gap:12px; max-width:640px}
+#fo-root .fo-step{background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); padding:16px; transition:.16s; position:relative; overflow:hidden}
+#fo-root .fo-step:hover{border-color:var(--line2)}
+#fo-root .fo-step.done{border-left:3px solid var(--green)}
+#fo-root .fo-step.current{border-color:var(--teal); box-shadow:0 0 0 1px var(--teal)}
+#fo-root .fo-step.skipped{opacity:.75; border-left:3px solid var(--faint)}
+#fo-root .fo-step.locked{opacity:.55}
+#fo-root .fo-step-h{display:flex; align-items:flex-start; gap:11px}
+#fo-root .fo-step-ic{width:34px; height:34px; border-radius:9px; display:grid; place-items:center; flex:none}
+#fo-root .fo-step-t{flex:1; min-width:0}
+#fo-root .fo-step-t h3{font-family:var(--disp); font-size:15px; font-weight:600; display:flex; align-items:center; gap:8px}
+#fo-root .fo-step-t p{font-size:12px; color:var(--muted); line-height:1.5; margin-top:3px}
+#fo-root .fo-state{font-family:var(--mono); font-size:9.5px; padding:3px 9px; border-radius:20px; flex:none}
+#fo-root .fo-state.done{color:var(--green); background:var(--green-d)}
+#fo-root .fo-state.current{color:var(--teal); background:var(--teal-d)}
+#fo-root .fo-state.locked{color:var(--faint); background:var(--panel2)}
+#fo-root .fo-state.skipped{color:var(--muted); background:var(--panel2)}
+#fo-root .fo-state.working{color:var(--cyan); background:var(--cyan-d)}
+#fo-root .fo-step-actions{display:flex; gap:8px; margin-top:13px; flex-wrap:wrap; align-items:center}
+#fo-root .fo-step-link{font-size:11.5px; color:var(--cyan); display:inline-flex; align-items:center; gap:5px}
+#fo-root .fo-form{display:flex; gap:8px; margin-top:13px; flex-wrap:wrap}
+#fo-root .fo-form input,#fo-root .fo-form select{padding:8px 11px; border-radius:8px; background:var(--ink); border:1px solid var(--line); color:var(--text); font-size:12.5px; outline:none}
+#fo-root .fo-form input{flex:1; min-width:120px}
+#fo-root .fo-form input:focus,#fo-root .fo-form select:focus{border-color:var(--teal)}
+#fo-root .fo-folders{display:flex; gap:8px; margin-top:13px; flex-wrap:wrap}
+#fo-root .fo-folder{font-family:var(--mono); font-size:11.5px; padding:7px 12px; border-radius:8px; border:1px solid var(--line2); color:var(--muted); transition:.14s; display:inline-flex; gap:6px; align-items:center}
+#fo-root .fo-folder:hover{color:var(--text); border-color:var(--teal); background:var(--teal-d)}
+#fo-root .fo-stream{margin-top:13px; border-radius:9px; background:var(--ink); border:1px solid var(--line); padding:10px 12px; font-family:var(--mono); font-size:11.5px; color:var(--muted); line-height:1.6}
+#fo-root .fo-stream .fw-cursor,#fo-root .fo-stream .fo-cursor{display:inline-block; width:7px; height:13px; background:var(--teal); vertical-align:-2px; animation:fo-blink 1s steps(2) infinite}
+@keyframes fo-blink{50%{opacity:0}}
+#fo-root .fo-section-h{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); margin:18px 0 4px; display:flex; align-items:center; gap:8px}
+#fo-root .fo-whole{max-width:640px; border:1px solid var(--green); border-radius:var(--r-md); padding:18px; background:var(--green-d); margin-top:4px}
+#fo-root .fo-whole h3{font-family:var(--disp); font-size:16px; color:var(--green); margin-bottom:6px}
+#fo-root .fo-whole p{font-size:12.5px; color:var(--muted); line-height:1.55; margin-bottom:12px}
+
+/* empty lenses = onboarding */
+#fo-root .fo-empty{max-width:560px; border:1px dashed var(--line2); border-radius:var(--r-md); padding:26px; text-align:center; margin:20px auto}
+#fo-root .fo-empty h3{font-family:var(--disp); font-size:15px; margin-bottom:6px}
+#fo-root .fo-empty p{font-size:12.5px; color:var(--muted); margin-bottom:14px; line-height:1.55}
+#fo-root .fo-empty .fo-step-link{justify-content:center}
+
+/* desk card (post-onboarding taste) */
+#fo-root .fo-dgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:var(--gap)}
+#fo-root .fo-dcard{background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); padding:15px}
+#fo-root .fo-dcard h3{font-family:var(--disp); font-size:15px; font-weight:600; margin-bottom:6px}
+#fo-root .fo-dcard p{font-size:12px; color:var(--muted); line-height:1.5}
+#fo-root .fo-stages{display:flex; gap:4px; margin-top:12px}
+#fo-root .fo-stage{flex:1; height:5px; border-radius:20px; background:var(--line)}
+#fo-root .fo-stage.done{background:linear-gradient(90deg,var(--teal),var(--green))}
+#fo-root .fo-stage.now{background:var(--teal); box-shadow:0 0 8px var(--var)}
+#fo-root .fo-running{position:relative}
+#fo-root .fo-running::after{content:""; position:absolute; inset:0; border-radius:var(--r-md); background:linear-gradient(90deg,transparent,var(--teal-d),transparent); animation:fo-sweep 1.4s linear infinite; pointer-events:none}
+@keyframes fo-sweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+/* threads / memory / calibration / inbox / fleet reuse */
+#fo-root .fo-thread{display:flex; flex-direction:column; gap:14px; max-width:680px}
+#fo-root .fo-msg{display:flex; gap:11px}
+#fo-root .fo-av{width:32px; height:32px; border-radius:9px; flex:none; display:grid; place-items:center; font-family:var(--disp); font-weight:700; font-size:13px; color:#04121a}
+#fo-root .fo-msg-h{display:flex; align-items:center; gap:8px; margin-bottom:3px}
+#fo-root .fo-msg-name{font-weight:600; font-size:12.5px}
+#fo-root .fo-msg-time{font-family:var(--mono); font-size:10px; color:var(--faint)}
+#fo-root .fo-msg-text{font-size:13px; line-height:1.55}
+#fo-root .fo-toolcall{font-family:var(--mono); font-size:11px; margin-top:7px; padding:7px 10px; border-radius:8px; background:var(--ink); border:1px solid var(--line); color:var(--muted); display:flex; align-items:center; gap:8px}
+#fo-root .fo-toolcall .fo-ok{color:var(--green)}
+#fo-root .fo-facts{display:flex; flex-direction:column; gap:8px; max-width:720px}
+#fo-root .fo-fact{padding:12px 15px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); border-left:3px solid var(--teal); cursor:pointer; transition:.14s}
+#fo-root .fo-fact:hover{border-color:var(--line2)}
+#fo-root .fo-fact-h{display:flex; align-items:center; gap:8px; margin-bottom:4px}
+#fo-root .fo-fact-name{font-family:var(--mono); font-size:12px; font-weight:600}
+#fo-root .fo-basis{font-family:var(--mono); font-size:9.5px; padding:2px 7px; border-radius:5px; margin-left:auto}
+#fo-root .fo-fact-body{font-size:12.5px; color:var(--muted); line-height:1.5}
+#fo-root .fo-cal{display:flex; flex-direction:column; gap:8px; max-width:780px}
+#fo-root .fo-crow{display:grid; grid-template-columns:110px 1fr 90px auto; gap:10px; align-items:center; padding:11px 14px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md)}
+#fo-root .fo-cwork{font-family:var(--mono); font-size:10px; color:var(--cyan); background:var(--cyan-d); padding:3px 8px; border-radius:6px; text-align:center}
+#fo-root .fo-cdec{font-family:var(--mono); font-size:11.5px}
+#fo-root .fo-cout{font-family:var(--mono); font-size:10px; padding:3px 8px; border-radius:6px; text-align:center}
+#fo-root .fo-inbox{display:flex; flex-direction:column; gap:9px; max-width:720px}
+#fo-root .fo-inrow{display:flex; gap:12px; padding:13px 15px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md)}
+#fo-root .fw-chan,#fo-root .fo-chan{font-family:var(--mono); font-size:10px; padding:3px 8px; border-radius:6px; flex:none; margin-top:2px}
+#fo-root .fo-inwho{font-weight:600; font-size:12.5px; display:flex; align-items:center; gap:8px}
+#fo-root .fo-principal{font-family:var(--mono); font-size:10px; color:var(--cyan); background:var(--cyan-d); padding:1px 7px; border-radius:5px}
+#fo-root .fo-intext{font-size:12.5px; color:var(--muted); margin-top:3px}
+#fo-root .fo-fgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:var(--gap)}
+#fo-root .fo-inst{background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); padding:16px; position:relative}
+#fo-root .fo-inst.provisioning{border-style:dashed}
+#fo-root .fo-inst-h{display:flex; align-items:center; gap:10px; margin-bottom:12px}
+#fo-root .fo-inst-ic{width:38px; height:38px; border-radius:10px; display:grid; place-items:center; background:var(--blue-d); color:var(--blue)}
+#fo-root .fo-inst-name{font-family:var(--disp); font-weight:600; font-size:15px}
+#fo-root .fo-inst-host{font-family:var(--mono); font-size:10.5px; color:var(--muted)}
+#fo-root .fo-live{margin-left:auto; font-family:var(--mono); font-size:10px; padding:3px 9px; border-radius:20px}
+#fo-root .fo-live.on{color:var(--green); background:var(--green-d)}
+#fo-root .fo-live.off{color:var(--faint); background:var(--panel2)}
+#fo-root .fo-inst-row{display:flex; justify-content:space-between; font-size:12px; margin-top:9px; color:var(--muted)}
+#fo-root .fo-inst-row b{color:var(--text); font-family:var(--mono); font-weight:500}
+#fo-root .fo-gauge{height:6px; border-radius:20px; background:var(--line); overflow:hidden; margin-top:5px}
+#fo-root .fo-gauge i{display:block; height:100%; border-radius:20px; background:var(--blue)}
+#fo-root .fo-heart{position:absolute; top:14px; right:14px; width:9px; height:9px; border-radius:50%; background:var(--green); animation:fo-pulse 2.4s infinite}
+
+/* tissue */
+#fo-root .fo-tissue{border-left:1px solid var(--line); background:rgba(0,0,0,.08); display:flex; flex-direction:column; min-height:0}
+#fo-root .fo-tissue-h{padding:13px 16px 8px; display:flex; align-items:center; gap:8px}
+#fo-root .fo-tissue-h .fo-th-title{font-family:var(--disp); font-weight:600; font-size:14px}
+#fo-root .fo-tissue-h .fo-th-sub{font-family:var(--mono); font-size:10px; color:var(--faint); margin-left:auto}
+#fo-root .fo-graphwrap{position:relative; height:300px; margin:0 8px; border-radius:var(--r-md); background:radial-gradient(circle at 50% 45%,var(--panel),transparent 75%); border:1px solid var(--line)}
+#fo-root .fo-graphwrap svg{width:100%; height:100%; display:block}
+#fo-root .fo-edge{stroke:var(--line2); stroke-width:1.4; fill:none}
+#fo-root .fo-edge.hot{stroke:var(--teal); stroke-width:2; stroke-dasharray:5 5; animation:fo-flow 1s linear infinite}
+@keyframes fo-flow{to{stroke-dashoffset:-10}}
+#fo-root .fo-edge.grow{stroke:var(--teal); stroke-width:2}
+#fo-root .fo-node{cursor:pointer}
+#fo-root .fo-node circle{transition:.18s}
+#fo-root .fo-node:hover circle{filter:brightness(1.25)}
+#fo-root .fo-node text{font-family:var(--mono); font-size:9px; fill:var(--muted); text-anchor:middle; pointer-events:none}
+#fo-root .fo-node.dashed circle.ring{stroke-dasharray:4 3}
+#fo-root .fo-legend{display:flex; flex-wrap:wrap; gap:7px; padding:10px 16px}
+#fo-root .fo-leg{font-family:var(--mono); font-size:9.5px; color:var(--muted); display:flex; align-items:center; gap:5px}
+#fo-root .fo-leg i{width:8px; height:8px; border-radius:3px}
+#fo-root .fo-focus{margin:4px 12px 12px; padding:13px; border-radius:var(--r-md); background:var(--panel); border:1px solid var(--line); overflow-y:auto}
+#fo-root .fo-focus-kind{font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; margin-bottom:5px; display:flex; align-items:center; gap:6px}
+#fo-root .fo-focus-title{font-family:var(--disp); font-weight:600; font-size:15px; line-height:1.3; margin-bottom:8px}
+#fo-root .fo-focus-meta{font-size:11.5px; color:var(--muted); display:flex; flex-direction:column; gap:4px; margin-bottom:11px}
+#fo-root .fo-focus-actions{display:flex; gap:7px; flex-wrap:wrap}
+#fo-root .fo-linked{margin-top:11px; border-top:1px solid var(--line); padding-top:9px}
+#fo-root .fo-linked-h{font-family:var(--mono); font-size:9.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.12em; margin-bottom:6px}
+#fo-root .fo-linked button{display:flex; align-items:center; gap:7px; width:100%; padding:5px 7px; border-radius:7px; font-size:11.5px; color:var(--muted); text-align:left}
+#fo-root .fo-linked button:hover{background:var(--panel2); color:var(--text)}
+#fo-root .fo-linked .fo-ldot{width:7px; height:7px; border-radius:50%; flex:none}
+
+/* console + overlays */
+#fo-root .fo-console{border-top:1px solid var(--line); background:linear-gradient(0deg,rgba(0,0,0,.12),transparent); padding:10px 18px; display:flex; align-items:center; gap:16px; flex-wrap:wrap}
+#fo-root .fo-console-h{font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:7px}
+#fo-root .fo-ctl{display:flex; align-items:center; gap:8px}
+#fo-root .fo-ctl label{font-family:var(--mono); font-size:10.5px; color:var(--muted)}
+#fo-root .fo-ctl input[type=range]{width:84px; accent-color:var(--teal); height:4px}
+#fo-root .fo-ctl select{font-family:var(--mono); font-size:10.5px; padding:4px 7px; border-radius:7px; background:var(--panel); border:1px solid var(--line); color:var(--text); outline:none}
+#fo-root .fo-switch{position:relative; width:34px; height:19px; border-radius:20px; background:var(--line); transition:.18s; flex:none}
+#fo-root .fo-switch::after{content:""; position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%; background:var(--muted); transition:.18s}
+#fo-root .fo-switch[aria-pressed="true"]{background:var(--teal)}
+#fo-root .fo-switch[aria-pressed="true"]::after{left:17px; background:#04121a}
+#fo-root .fo-console .fo-spacer{margin-left:auto}
+#fo-root .fo-val{font-family:var(--mono); font-size:10px; color:var(--teal); min-width:26px; text-align:right}
+#fo-root .fo-scrim{position:absolute; inset:0; z-index:40; background:rgba(4,10,14,.55); backdrop-filter:blur(3px); opacity:0; pointer-events:none; transition:.2s}
+#fo-root .fo-scrim.show{opacity:1; pointer-events:auto}
+#fo-root .fo-drawer{position:absolute; top:0; right:0; bottom:0; width:380px; max-width:92%; z-index:50; background:var(--panel); border-left:1px solid var(--line2); box-shadow:var(--shadow); transform:translateX(102%); visibility:hidden; transition:transform .26s cubic-bezier(.4,0,.2,1), visibility .26s; overflow-y:auto}
+#fo-root .fo-drawer.show{transform:translateX(0); visibility:visible}
+#fo-root .fo-drawer-h{padding:18px 20px 12px; border-bottom:1px solid var(--line); display:flex; align-items:flex-start; gap:10px}
+#fo-root .fo-drawer-h h2{font-family:var(--disp); font-size:17px; font-weight:700; flex:1}
+#fo-root .fo-drawer-body{padding:18px 20px; display:flex; flex-direction:column; gap:14px}
+#fo-root .fo-palette{position:absolute; top:70px; left:50%; transform:translateX(-50%) translateY(-8px); width:560px; max-width:92%; z-index:60; background:var(--panel); border:1px solid var(--line2); border-radius:14px; box-shadow:var(--shadow); opacity:0; pointer-events:none; transition:.18s; overflow:hidden}
+#fo-root .fo-palette.show{opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0)}
+#fo-root .fo-palette-in{display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--line)}
+#fo-root .fo-palette-in input{flex:1; min-width:0; background:none; border:none; outline:none; color:var(--text); font-size:14px}
+#fo-root .fo-palette-list{max-height:340px; overflow-y:auto; padding:6px}
+#fo-root .fo-pitem{display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; cursor:pointer; font-size:13px}
+#fo-root .fo-pitem:hover{background:var(--panel2)}
+#fo-root .fo-pitem .fo-pkind{font-family:var(--mono); font-size:9.5px; color:var(--faint); margin-left:auto; text-transform:uppercase}
+#fo-root .fo-toasts{position:absolute; bottom:70px; left:50%; transform:translateX(-50%); z-index:70; display:flex; flex-direction:column; gap:8px; align-items:center}
+#fo-root .fo-toast{display:flex; align-items:center; gap:11px; padding:11px 16px; border-radius:11px; background:var(--raise); border:1px solid var(--line2); box-shadow:var(--shadow); font-size:12.5px; animation:fo-rise .28s cubic-bezier(.2,.8,.2,1)}
+@keyframes fo-rise{from{opacity:0; transform:translateY(12px)}to{opacity:1; transform:translateY(0)}}
+#fo-root .fo-toast .fo-ticon{width:24px; height:24px; border-radius:7px; display:grid; place-items:center; flex:none}
+#fo-root .fo-toast button{font-weight:600; color:var(--teal); font-size:12px; margin-left:6px}
+#fo-root .fo-sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0)}
+@media (max-width:1080px){
+  #fo-root .fo-body{grid-template-columns:200px 1fr}
+  #fo-root .fo-tissue{display:none}
+}
+@media (max-width:720px){
+  #fo-root .fo-app{height:auto; min-height:100vh}
+  #fo-root .fo-body{grid-template-columns:1fr}
+  #fo-root .fo-rail{flex-direction:row; flex-wrap:wrap; border-right:none; border-bottom:1px solid var(--line)}
+  #fo-root .fo-rail>div{min-width:0; flex:1 1 160px}
+  #fo-root .fo-rail-foot{display:none}
+  #fo-root .fo-brand{min-width:0}
+  #fo-root .fo-search{min-width:0}
+  #fo-root .fo-fleetstat{display:none}
+  #fo-root .fo-lens-body{overflow:visible; padding:6px 12px 16px}
+  #fo-root .fo-lens-head{padding:12px 12px 8px}
+  #fo-root .fo-palette{width:calc(100% - 20px); left:10px; transform:translateY(-8px)}
+  #fo-root .fo-palette.show{transform:translateY(0)}
+}
+@media (prefers-reduced-motion:reduce){
+  #fo-root *{animation:none !important; transition:none !important}
+}
+</style>
+
+<div id="fo-root" data-theme="night" data-tissue="on">
+  <canvas class="fo-amb" aria-hidden="true"></canvas>
+  <div class="fo-grain" aria-hidden="true"></div>
+  <div class="fo-app">
+    <header class="fo-top">
+      <div class="fo-brand">
+        <div class="fo-mark"><i data-lucide="anchor" style="width:19px;height:19px"></i></div>
+        <div>
+          <h1>Fleet</h1>
+          <div class="fo-sub" id="fo-sub">first launch</div>
+        </div>
+      </div>
+      <div class="fo-search">
+        <i data-lucide="search" style="width:15px;height:15px"></i>
+        <input id="fo-search" type="text" placeholder="Search — it fills as the workspace grows" aria-label="Search">
+        <span class="fo-kbd">⌘K</span>
+      </div>
+      <div class="fo-fleetstat hide" id="fo-fleetstat"><span class="fo-dot"></span><span id="fo-fleettext">1 instance · live</span></div>
+      <button class="fo-iconbtn" id="fo-sound" aria-pressed="false" aria-label="Toggle sound"><i data-lucide="volume-x" style="width:17px;height:17px"></i></button>
+      <button class="fo-iconbtn" id="fo-theme" aria-label="Toggle theme"><i data-lucide="moon" style="width:17px;height:17px"></i></button>
+    </header>
+
+    <div class="fo-body">
+      <nav class="fo-rail" aria-label="Workspace">
+        <div>
+          <div class="fo-rail-h">Mission</div>
+          <div class="fo-proj">
+            <i data-lucide="sprout" style="width:17px;height:17px;color:var(--teal)"></i>
+            <div><div class="fo-pname" id="fo-pname">Fresh home</div><div class="fo-pmeta" id="fo-pmeta">growing…</div></div>
+          </div>
+          <div class="fo-progress" style="margin-top:8px">
+            <div class="fo-pl"><span>connected</span><span id="fo-prog-text">1 node</span></div>
+            <div class="fo-meter"><i id="fo-prog" style="width:10%"></i></div>
+          </div>
+        </div>
+        <div>
+          <div class="fo-rail-h">Surfaces</div>
+          <div class="fo-nav" id="fo-nav"></div>
+        </div>
+        <div class="fo-rail-foot">
+          <b>Setup is the graph growing.</b> Every step adds a node — by the end you know the gesture, because you just used it to build your own workspace.
+        </div>
+      </nav>
+
+      <main class="fo-center">
+        <div class="fo-lens-head">
+          <div>
+            <div class="fo-lens-title" id="fo-lens-title">Setup</div>
+            <div class="fo-lens-sub" id="fo-lens-sub">Each step adds a node to the tissue — watch the graph grow as you connect</div>
+          </div>
+          <div class="fo-tools" id="fo-tools"></div>
+        </div>
+        <div class="fo-lens-body" id="fo-lens-body" aria-live="polite"></div>
+      </main>
+
+      <aside class="fo-tissue" aria-label="Connective tissue">
+        <div class="fo-tissue-h">
+          <i data-lucide="waypoints" style="width:16px;height:16px;color:var(--teal)"></i>
+          <span class="fo-th-title">The tissue</span>
+          <span class="fo-th-sub" id="fo-tissue-sub">1 node</span>
+        </div>
+        <div class="fo-graphwrap"><svg id="fo-graph" viewBox="0 0 300 300" role="img" aria-label="Work-object graph"></svg></div>
+        <div class="fo-legend" id="fo-legend"></div>
+        <div class="fo-focus" id="fo-focus"></div>
+      </aside>
+    </div>
+
+    <footer class="fo-console" aria-label="View console">
+      <span class="fo-console-h"><i data-lucide="sliders-horizontal" style="width:13px;height:13px"></i> Console</span>
+      <div class="fo-ctl"><label for="fo-c-density">Density</label>
+        <select id="fo-c-density"><option value="comfortable">Comfort</option><option value="compact">Compact</option></select></div>
+      <div class="fo-ctl"><label for="fo-c-speed">Live feed</label><input type="range" id="fo-c-speed" min="0.5" max="3" step="0.5" value="1"><span class="fo-val" id="fo-c-speed-v">1×</span></div>
+      <div class="fo-ctl"><label for="fo-c-spread">Graph</label><input type="range" id="fo-c-spread" min="60" max="120" step="5" value="88"><span class="fo-val" id="fo-c-spread-v">88</span></div>
+      <div class="fo-ctl"><label>Motion</label><button class="fo-switch" id="fo-c-motion" aria-pressed="true" aria-label="Toggle motion"></button></div>
+      <div class="fo-ctl"><label>Tissue</label><button class="fo-switch" id="fo-c-tissue" aria-pressed="true" aria-label="Toggle tissue pane"></button></div>
+      <div class="fo-ctl"><label>Labels</label><button class="fo-switch" id="fo-c-labels" aria-pressed="true" aria-label="Toggle graph labels"></button></div>
+      <span class="fo-spacer"></span>
+      <button class="fo-btn" id="fo-c-replay"><i data-lucide="rotate-ccw" style="width:13px;height:13px"></i> Replay setup</button>
+      <button class="fo-btn" id="fo-c-jump"><i data-lucide="fast-forward" style="width:13px;height:13px"></i> Complete all</button>
+    </footer>
+  </div>
+
+  <div class="fo-scrim" id="fo-scrim"></div>
+  <aside class="fo-drawer" id="fo-drawer" aria-label="Object details"></aside>
+  <div class="fo-palette" id="fo-palette" role="dialog" aria-label="Command palette">
+    <div class="fo-palette-in"><i data-lucide="command" style="width:16px;height:16px;color:var(--muted)"></i>
+      <input id="fo-palette-input" type="text" placeholder="Jump to an object or run a command…" aria-label="Command palette"></div>
+    <div class="fo-palette-list" id="fo-palette-list"></div>
+  </div>
+  <div class="fo-toasts" id="fo-toasts" aria-live="polite"></div>
+  <div class="fo-sr" id="fo-live" aria-live="polite"></div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var root=document.getElementById("fo-root");
+if(!root) return;
+var $=function(s){return root.querySelector(s);};
+var icons=function(){ if(window.lucide&&window.lucide.createIcons){ try{window.lucide.createIcons({attrs:{width:16,height:16}});}catch(e){} } };
+
+var KIND={
+  deliverable:{c:"var(--green)",bg:"var(--green-d)",icon:"package",label:"Deliverable"},
+  thread:{c:"var(--cyan)",bg:"var(--cyan-d)",icon:"messages-square",label:"Thread"},
+  bot:{c:"var(--magenta)",bg:"var(--magenta-d)",icon:"bot",label:"Bot"},
+  lesson:{c:"var(--gold)",bg:"var(--gold-d)",icon:"lightbulb",label:"Lesson"},
+  fact:{c:"var(--teal)",bg:"var(--teal-d)",icon:"brain",label:"Fact"},
+  instance:{c:"var(--blue)",bg:"var(--blue-d)",icon:"server",label:"Instance"},
+  calib:{c:"var(--amber)",bg:"var(--amber-d)",icon:"scale",label:"Grade"},
+  workspace:{c:"var(--amber)",bg:"var(--amber-d)",icon:"folder-open",label:"Workspace"}
+};
+
+function seed(){
+  return {
+    bots:[{id:"b-ship",kind:"bot",name:"shipwright",role:"engineer"},{id:"b-harbor",kind:"bot",name:"harbormaster",role:"review"}],
+    instances:[{id:"i-home",kind:"instance",name:"this install",host:"local · identity minted",live:true,cap:100,rel:0,settled:0,version:"0.7.0",flag:true,home:true}],
+    facts:[], threads:[], calib:[], deliverables:[], messages:[],
+    steps:{
+      account:"locked",   // locked | done
+      prove:"locked",
+      folder:"locked",    // locked | done | skipped
+      reef:"locked",      // locked | provisioning | registered | done
+      folderName:null
+    },
+    born:{}
+  };
+}
+var DB=seed();
+var state={
+  lens:"setup", focus:{kind:"instance",id:"i-home"},
+  query:"", speed:1, spread:88, motion:true, labels:true, sound:false,
+  running:{}
+};
+var LENSES=[
+  {id:"setup",icon:"sprout",label:"Setup",sub:"Each step adds a node to the tissue — watch the graph grow as you connect"},
+  {id:"desk",icon:"package",label:"Desk",fill:"prove"},
+  {id:"threads",icon:"messages-square",label:"Threads",fill:"prove"},
+  {id:"memory",icon:"brain",label:"Memory",fill:"account"},
+  {id:"calibration",icon:"scale",label:"Calibration",fill:"prove"},
+  {id:"inbox",icon:"inbox",label:"Inbox",fill:"reef"},
+  {id:"fleet",icon:"server",label:"Fleet",fill:"reef"}
+];
+
+function byId(kind,id){
+  var arr={deliverable:DB.deliverables,thread:DB.threads,bot:DB.bots,lesson:[],fact:DB.facts,instance:DB.instances,calib:DB.calib,workspace:[]}[kind];
+  if(!arr) return null;
+  for(var i=0;i<arr.length;i++) if(arr[i].id===id) return arr[i];
+  return null;
+}
+function obj(ref){ return ref?byId(ref.kind,ref.id):null; }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
+function announce(t){ var l=$("#fo-live"); if(l) l.textContent=t; }
+function stepDone(s){ if(s==="account")return !!byId("fact","f-acct"); if(s==="prove")return !!byId("thread","th-first"); if(s==="folder")return DB.steps.folder==="done"; if(s==="reef")return DB.steps.reef==="done"; return false; }
+function coreDone(){ return stepDone("account")&&stepDone("prove"); }
+function linkedObjects(ref){
+  var out=[];
+  if(ref.kind==="instance"&&ref.id==="i-home"){
+    if(byId("fact","f-acct"))out.push({kind:"fact",id:"f-acct"});
+    if(byId("thread","th-first"))out.push({kind:"thread",id:"th-first"});
+    if(DB.steps.folder==="done")out.push({kind:"workspace",id:"w-folder"});
+    if(byId("instance","i-reef"))out.push({kind:"instance",id:"i-reef"});
+  } else if(ref.kind==="instance"&&ref.id==="i-reef"){
+    out.push({kind:"instance",id:"i-home"});
+    if(byId("fact","f-mind"))out.push({kind:"fact",id:"f-mind"});
+    if(byId("calib","c-reef"))out.push({kind:"calib",id:"c-reef"});
+  } else if(ref.kind==="fact"&&ref.id==="f-mind"){
+    if(byId("instance","i-reef"))out.push({kind:"instance",id:"i-reef"});
+    if(byId("instance","i-home"))out.push({kind:"instance",id:"i-home"});
+  } else if(ref.kind==="thread"&&ref.id==="th-first"){
+    out.push({kind:"instance",id:"i-home"});
+    if(byId("fact","f-acct"))out.push({kind:"fact",id:"f-acct"});
+    if(byId("calib","c-first"))out.push({kind:"calib",id:"c-first"});
+  } else if(ref.kind==="fact"&&ref.id==="f-acct"){
+    out.push({kind:"instance",id:"i-home"});
+    if(byId("thread","th-first"))out.push({kind:"thread",id:"th-first"});
+  } else if(ref.kind==="calib"){
+    if(byId("thread","th-first"))out.push({kind:"thread",id:"th-first"});
+  } else if(ref.kind==="deliverable"){
+    out.push({kind:"thread",id:"th-first"});
+  }
+  return out;
+}
+function toast(msg,icon,color,action){
+  var wrap=$("#fo-toasts"); var el=document.createElement("div"); el.className="fo-toast";
+  el.innerHTML='<span class="fo-ticon" style="background:'+(color||"var(--teal-d)")+';color:'+(color?color:"var(--teal)")+'"><i data-lucide="'+(icon||"check")+'" style="width:14px;height:14px"></i></span><span>'+esc(msg)+'</span>';
+  if(action){ var b=document.createElement("button"); b.textContent=action.label; b.onclick=function(){action.fn(); el.remove();}; el.appendChild(b); }
+  wrap.appendChild(el); icons();
+  setTimeout(function(){ el.style.transition="opacity .3s"; el.style.opacity="0"; setTimeout(function(){el.remove();},320); }, action?6000:3400);
+}
+function ping(freq){
+  if(!state.sound) return;
+  try{ var ac=ping.ac||(ping.ac=new (window.AudioContext||window.webkitAudioContext)());
+    var o=ac.createOscillator(), g=ac.createGain(); o.type="sine"; o.frequency.value=freq||660;
+    g.gain.setValueAtTime(0.0001,ac.currentTime); g.gain.exponentialRampToValueAtTime(0.06,ac.currentTime+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+0.4); o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime+0.42); }catch(e){}
+}
+function markBorn(id){ DB.born[id]=Date.now(); }
+function setLens(id){ state.lens=id; renderNav(); renderLens(); }
+function focusOn(kind,id,switchLens){
+  state.focus={kind:kind,id:id};
+  if(switchLens){ var map={deliverable:"desk",thread:"threads",fact:"memory",calib:"calibration",instance:"fleet",workspace:"setup",bot:"setup"}; if(map[kind]) state.lens=map[kind]; }
+  renderNav(); renderLens(); renderTissue();
+}
+function progress(){
+  var done=1; // the install itself
+  var total=4; // install, account, prove, folder
+  if(stepDone("account"))done++;
+  if(stepDone("prove"))done++;
+  if(DB.steps.folder==="done")done++;
+  if(stepDone("reef"))done++, total=5;
+  return {done:done,total:total,nodes:nodeCount()};
+}
+function nodeCount(){
+  return 1+(byId("fact","f-acct")?1:0)+(byId("thread","th-first")?1:0)+(byId("calib","c-first")?1:0)+(DB.steps.folder==="done"?1:0)+(byId("fact","f-mind")?1:0)+(byId("instance","i-reef")?1:0)+(byId("calib","c-reef")?1:0);
+}
+function renderProgress(){
+  var p=progress();
+  $("#fo-prog-text").textContent=p.nodes+" nodes";
+  $("#fo-prog").style.width=Math.round(p.done/p.total*100)+"%";
+  $("#fo-pmeta").textContent=coreDone()?"workspace whole · "+p.nodes+" nodes":"growing… "+p.nodes+" nodes";
+  $("#fo-pname").textContent=coreDone()?"Harbor Launch":"Fresh home";
+  $("#fo-sub").textContent=state.lens==="setup"?"first launch":(DB.steps.reef==="done"?"armada · one mind":"the workspace · one graph");
+  var fs=$("#fo-fleetstat");
+  if(byId("instance","i-reef")){ fs.classList.remove("hide"); $("#fo-fleettext").textContent="1 instance · "+(byId("instance","i-reef").live?"live":"un-calibrated"); }
+  else fs.classList.add("hide");
+}
+function renderNav(){
+  var nav=$("#fo-nav"); nav.innerHTML="";
+  LENSES.forEach(function(L){
+    var count={setup:0,desk:DB.deliverables.length,threads:DB.threads.length,memory:DB.facts.length,calibration:DB.calib.length,inbox:DB.messages.length,fleet:DB.instances.filter(function(i){return !i.home;}).length}[L.id];
+    var b=document.createElement("button"); b.className=(state.lens===L.id?"active":"");
+    b.innerHTML='<i data-lucide="'+L.icon+'" style="width:16px;height:16px"></i><span>'+L.label+'</span><span class="fw-count fo-count">'+count+'</span>';
+    b.onclick=function(){setLens(L.id);}; nav.appendChild(b);
+  });
+  icons();
+}
+function renderLens(){
+  var L=LENSES.filter(function(x){return x.id===state.lens;})[0];
+  $("#fo-lens-title").textContent=L.label;
+  $("#fo-lens-sub").textContent=L.sub||"";
+  var tools=$("#fo-tools"); tools.innerHTML="";
+  var body=$("#fo-lens-body");
+  if(state.lens==="setup") renderSetup(body);
+  else if(state.lens==="desk") renderDesk(tools,body);
+  else if(state.lens==="threads") renderThreads(tools,body);
+  else if(state.lens==="memory") renderMemory(tools,body);
+  else if(state.lens==="calibration") renderCalibration(tools,body);
+  else if(state.lens==="inbox") renderInbox(tools,body);
+  else if(state.lens==="fleet") renderFleet(tools,body);
+  icons();
+}
+
+/* ---------- SETUP ---------- */
+function renderSetup(body){
+  var whole=coreDone();
+  body.innerHTML='<div class="fo-welcome">'+(whole?
+    'Your workspace is <b>whole</b> — every node connected. The gesture you just used (click a node, follow its tissue) is the whole product.':
+    'Fleet is <b>one graph</b> — your work, its memory, its judgment, connected. Setup is not a wizard: <b>each step grows the tissue</b>, and by the end you know the gesture.')+'</div>'+
+    '<div class="fo-steps" id="fo-steps"></div>';
+  var steps=$("#fo-steps");
+  steps.appendChild(stepCard({
+    id:"install",icon:"server",color:"var(--blue)",title:"This install",
+    desc:"Your agent's identity — minted once at first launch, stable across restarts. It is already in the graph.",
+    state:"done",nodeRef:{kind:"instance",id:"i-home"},
+    meta:"identity · 32-hex · persisted in the home"
+  }));
+  steps.appendChild(stepCard({
+    id:"account",icon:"brain",color:"var(--teal)",title:"An account to think with",
+    desc:"The key routes every judgment call — closed-set classification, arithmetic, embeddings. Set it here or in the environment; credentials never leave your home, and the vault never renders a value.",
+    state:stepDone("account")?"done":"current",
+    nodeRef:{kind:"fact",id:"f-acct"},
+    action:function(el){
+      if(stepDone("account")) return;
+      var form=document.createElement("div"); form.className="fo-form";
+      form.innerHTML='<select id="fo-acct-provider"><option>deepseek</option><option>glm</option><option>anthropic</option><option>local · ollama</option></select>'+
+        '<input id="fo-acct-key" type="password" placeholder="key — stored in your home only" aria-label="API key">'+
+        '<button class="fo-btn fo-btn-primary" id="fo-acct-connect"><i data-lucide="link" style="width:13px;height:13px"></i> Connect</button>'+
+        '<button class="fo-btn fo-btn-ghost" id="fo-acct-env">use env instead</button>';
+      el.appendChild(form);
+      form.querySelector("#fo-acct-connect").onclick=function(){
+        var prov=form.querySelector("#fo-acct-provider").value;
+        addNode("fact","f-acct","lane account · "+prov,{basis:"stated",body:"The routing account Fleet thinks with — resolved from the home, never sent anywhere but the lane."});
+        DB.steps.account="done";
+        toast("Connected · the judgment lane routes through your key","link","var(--teal)");
+        ping(700);
+        afterStep("prove","Prove it with a real answer");
+      };
+      form.querySelector("#fo-acct-env").onclick=function(){
+        addNode("fact","f-acct","lane account · from environment",{basis:"stated",body:"Resolved from the process environment — the standing chain, never a third place."});
+        DB.steps.account="done";
+        toast("Connected from the environment","link","var(--teal)");
+        afterStep("prove","Prove it with a real answer");
+      };
+    }
+  }));
+  steps.appendChild(stepCard({
+    id:"prove",icon:"scale",color:"var(--amber)",title:"Prove it with a real answer",
+    desc:"Before anything else is offered, one real, grounded answer — and it is graded like every decision after it. A calibration row lands in your workspace during setup: trust is earned by measurement from minute one.",
+    state:stepDone("prove")?"done":(stepDone("account")?"current":"locked"),
+    nodeRef:{kind:"thread",id:"th-first"},
+    action:function(el){
+      if(stepDone("prove")) return;
+      if(!stepDone("account")){ var l=document.createElement("div"); l.className="fo-step-link"; l.innerHTML='<i data-lucide="lock" style="width:12px;height:12px"></i> unlocks when the account is connected'; el.appendChild(l); return; }
+      var b=document.createElement("button"); b.className="fo-btn fo-btn-primary"; b.innerHTML='<i data-lucide="play" style="width:13px;height:13px"></i> Ask the first thing';
+      b.onclick=function(){ runProve(el); };
+      el.appendChild(b);
+    }
+  }));
+  steps.appendChild(stepCard({
+    id:"folder",icon:"folder-open",color:"var(--amber)",title:"A workspace folder",
+    desc:"The folder you point Fleet at — the grant that bounds every filesystem tool. Optional now; a run without one refuses filesystem tools by name until a folder is set.",
+    state:DB.steps.folder==="done"?"done":(DB.steps.folder==="skipped"?"skipped":"current"),
+    nodeRef:DB.steps.folder==="done"?{kind:"workspace",id:"w-folder"}:null,
+    action:function(el){
+      if(DB.steps.folder==="done"){ var d=document.createElement("div"); d.className="fo-step-link"; d.innerHTML='<i data-lucide="folder-open" style="width:12px;height:12px"></i> '+esc(DB.steps.folderName); el.appendChild(d); return; }
+      if(DB.steps.folder==="skipped"){ var s=document.createElement("div"); s.className="fo-step-link"; s.style.color="var(--muted)"; s.innerHTML='<i data-lucide="info" style="width:12px;height:12px"></i> skipped — filesystem tools stay ungranted until a folder is set. <button class="fo-btn fo-btn-ghost" style="padding:2px 8px;font-size:11px" id="fo-folder-undo">choose one now</button>'; el.appendChild(s); s.querySelector("#fo-folder-undo").onclick=function(){ DB.steps.folder="locked"; renderLens(); }; return; }
+      var fl=document.createElement("div"); fl.className="fo-folders";
+      ["~/Projects/harbor","~/Projects","/srv/workspace"].forEach(function(p){
+        var b=document.createElement("button"); b.className="fo-folder"; b.innerHTML='<i data-lucide="folder" style="width:12px;height:12px"></i>'+esc(p);
+        b.onclick=function(){ DB.steps.folder="done"; DB.steps.folderName=p;
+          addNode("workspace","w-folder","workspace · "+p.split("/").pop());
+          toast("Folder granted · the work boundary is in the graph","folder-open","var(--amber)");
+          ping(640); checkWhole(); renderNav(); renderLens(); renderTissue(); };
+        fl.appendChild(b);
+      });
+      var skip=document.createElement("button"); skip.className="fo-btn fo-btn-ghost"; skip.textContent="Skip for now — named, not hidden";
+      skip.onclick=function(){ DB.steps.folder="skipped"; toast("Skipped is named: filesystem tools stay ungranted","info","var(--muted)"); renderLens(); };
+      el.appendChild(fl); el.appendChild(skip);
+    }
+  }));
+
+  // armada section
+  var sec=document.createElement("div"); sec.className="fo-section-h";
+  sec.innerHTML='<i data-lucide="server" style="width:13px;height:13px"></i> Grow the fleet — armada'+(stepDone("prove")?"":' · unlocks when the first answer holds');
+  steps.appendChild(sec);
+  steps.appendChild(stepCard({
+    id:"reef",icon:"server",color:"var(--blue)",title:"Provision an instance",
+    desc:"Fleet deploying fleet: the same self-contained binary on another machine, inheriting the shared mind — not the identity. It joins un-calibrated and is trusted only after its first settle.",
+    state:stepDone("reef")?"done":(DB.steps.reef==="registered"?"current":(DB.steps.reef==="provisioning"?"working":(coreDone()?"locked":"locked"))),
+    nodeRef:{kind:"instance",id:"i-reef"},
+    action:function(el){
+      if(stepDone("reef")){ var d=document.createElement("div"); d.className="fo-step-link"; d.innerHTML='<i data-lucide="shield-check" style="width:12px;height:12px;color:var(--green)"></i> trusted · earned by its settle, never by arrival'; el.appendChild(d); return; }
+      if(!coreDone()){ var l=document.createElement("div"); l.className="fo-step-link"; l.innerHTML='<i data-lucide="lock" style="width:12px;height:12px"></i> unlocks when the first answer holds'; el.appendChild(l); return; }
+      if(DB.steps.reef==="registered"){
+        var b=document.createElement("button"); b.className="fo-btn fo-btn-primary"; b.innerHTML='<i data-lucide="activity" style="width:13px;height:13px"></i> Run its first settle';
+        b.onclick=function(){ runFirstSettle(el); };
+        el.appendChild(b);
+        var n=document.createElement("div"); n.className="fo-step-link"; n.style.color="var(--amber)"; n.innerHTML='<i data-lucide="clock" style="width:12px;height:12px"></i> registered · un-calibrated — autonomy is earned, never assumed'; el.appendChild(n);
+        return;
+      }
+      if(DB.steps.reef==="provisioning"){ var w=document.createElement("div"); w.className="fo-step-link"; w.innerHTML='<i data-lucide="loader" style="width:12px;height:12px" class="fo-spin"></i> provisioning · cloning the shared mind…'; el.appendChild(w); return; }
+      var b2=document.createElement("button"); b2.className="fo-btn fo-btn-primary"; b2.innerHTML='<i data-lucide="plus" style="width:13px;height:13px"></i> Provision reef-1';
+      b2.onclick=function(){ provisionReef(el); };
+      el.appendChild(b2);
+    }
+  }));
+  if(whole){
+    var w=document.createElement("div"); w.className="fo-whole";
+    w.innerHTML='<h3>The workspace is whole</h3><p>Every node connected, every step honest. The surfaces now have something to connect — and Setup stays here in the rail for when you grow the fleet or re-run a check.</p><button class="fo-btn fo-btn-primary" id="fo-enter"><i data-lucide="arrow-right" style="width:13px;height:13px"></i> Enter the workspace</button>';
+    steps.appendChild(w);
+    var eb=w.querySelector("#fo-enter"); if(eb)eb.onclick=function(){ setLens("desk"); };
+  }
+  icons();
+  renderProgress();
+}
+function stepCard(o){
+  var el=document.createElement("div");
+  el.className="fo-step "+(o.state==="done"?"done":o.state==="current"?"current":o.state==="skipped"?"skipped":"locked");
+  var ic=o.state==="done"?"check-circle-2":o.state==="current"?"circle-dot":o.state==="skipped"?"circle-slash":"lock";
+  var icColor=o.state==="done"?"var(--green)":o.state==="current"?"var(--teal)":o.state==="skipped"?"var(--muted)":"var(--faint)";
+  el.innerHTML='<div class="fo-step-h"><div class="fo-step-ic" style="background:'+o.color.replace(")",",-0.14)").replace("var(--","rgba(").replace("--","")+'" ></div></div>';
+  // simpler: rebuild icon box with inline style
+  el.innerHTML='<div class="fo-step-h"><div class="fo-step-ic" style="background:'+kindWash(o.color)+'"><i data-lucide="'+o.icon+'" style="width:17px;height:17px;color:'+o.color+'"></i></div>'+
+    '<div class="fo-step-t"><h3>'+esc(o.title)+'<span class="fo-state '+o.state+'">'+o.state+'</span></h3><p>'+esc(o.desc)+'</p></div>'+
+    '<i data-lucide="'+ic+'" style="width:18px;height:18px;color:'+icColor+';flex:none;margin-top:4px"></i></div>'+
+    '<div class="fo-step-actions" data-actions></div>';
+  var actions=el.querySelector("[data-actions]");
+  if(o.nodeRef&&o.state==="done"){
+    var link=document.createElement("button"); link.className="fo-step-link";
+    link.innerHTML='<i data-lucide="waypoints" style="width:12px;height:12px"></i> see it in the tissue';
+    link.onclick=function(){ focusOn(o.nodeRef.kind,o.nodeRef.id,true); };
+    actions.appendChild(link);
+  }
+  if(o.action) o.action(actions);
+  return el;
+}
+function kindWash(color){
+  var map={"var(--blue)":"var(--blue-d)","var(--teal)":"var(--teal-d)","var(--amber)":"var(--amber-d)"};
+  return map[color]||"var(--panel2)";
+}
+function addNode(kind,id,name,extra){
+  var o={id:id,kind:kind,name:name};
+  if(kind==="fact"){ o.basis=(extra&&extra.basis)||"stated"; o.body=(extra&&extra.body)||""; DB.facts.push(o); }
+  else if(kind==="thread"){ DB.threads.push(o); }
+  else if(kind==="calib"){ o.workload=(extra&&extra.workload)||"first run"; o.decision=(extra&&extra.decision)||"sys1"; o.confidence=(extra&&extra.confidence)||0.9; o.outcome=(extra&&extra.outcome)||"held"; DB.calib.push(o); }
+  else if(kind==="instance"){ o.host=(extra&&extra.host)||"vps · provisioning"; o.live=false; o.settled=0; o.rel=0; o.version="0.7.0"; DB.instances.push(o); }
+  markBorn(id);
+  return o;
+}
+function afterStep(next,label){
+  renderNav(); renderLens(); renderTissue(); checkWhole();
+  if(label) toast(label+" unlocked","unlock","var(--cyan)");
+}
+function runProve(el){
+  var stream=document.createElement("div"); stream.className="fo-stream";
+  el.innerHTML=""; el.appendChild(stream);
+  var text="Q: what are you?  →  recall: the substrate answers first — one fact per file, every claim naming how it is known.  →  route: sys1 judges standard_code, picks blend1, confidence 0.91.  →  A: a coding agent whose work you can verify — the model speaks last, on what the harness computed.  →  graded: held.";
+  var i=0;
+  var iv=setInterval(function(){
+    i+=3; stream.innerHTML=esc(text.slice(0,i))+'<span class="fo-cursor"></span>';
+    if(i>=text.length){
+      clearInterval(iv);
+      stream.innerHTML=esc(text)+' <span class="fo-ok" style="color:var(--green)">✓ held</span>';
+      addNode("thread","th-first","first answer");
+      addNode("calib","c-first","first answer",{workload:"first run",decision:"sys1 → blend1",confidence:.91,outcome:"held"});
+      DB.steps.prove="done";
+      toast("The first answer holds · a calibration row landed in your workspace","scale","var(--gold)");
+      ping(880);
+      checkWhole(); renderNav(); renderLens(); renderTissue();
+    }
+  },14/state.speed);
+}
+function provisionReef(el){
+  DB.steps.reef="provisioning"; renderLens(); renderTissue();
+  toast("Provisioning reef-1 · the self-contained binary, credentials out-of-band","server","var(--blue)");
+  addNode("instance","i-reef","reef-1"); byId("instance","i-reef").live=false; byId("instance","i-reef").host="vps · provisioning";
+  setTimeout(function(){
+    addNode("fact","f-mind","the shared mind",{basis:"stated",body:"The corpus is the portable, git-synced unit — instances inherit the mind, never the identity."});
+    toast("Cloning the shared mind · inheriting the facts, minting its own identity","git-branch","var(--teal)");
+    renderLens(); renderTissue();
+  },1300/state.speed);
+  setTimeout(function(){
+    DB.steps.reef="registered"; var r=byId("instance","i-reef"); if(r){ r.host="vps · fra1"; }
+    DB.messages.push({id:"m-reef",chan:"relay",who:"reef-1",principal:"inst:reef",text:"Joined · registered with the flagship. Un-calibrated — autonomy comes after my first settle.",out:"delivered",dir:"in"});
+    toast("Registered · un-calibrated — trusted only after it settles","shield","var(--amber)");
+    renderNav(); renderLens(); renderTissue(); checkWhole();
+  },2600/state.speed);
+}
+function runFirstSettle(el){
+  var stream=document.createElement("div"); stream.className="fo-stream";
+  el.innerHTML=""; el.appendChild(stream);
+  var text="reef-1's first run: recalls the inherited mind, answers, settles.  →  the settle is graded: held.  →  reliability meter starts at 1/1.  →  trusted — earned, not assumed.";
+  var i=0;
+  var iv=setInterval(function(){
+    i+=3; stream.innerHTML=esc(text.slice(0,i))+'<span class="fo-cursor"></span>';
+    if(i>=text.length){
+      clearInterval(iv);
+      stream.innerHTML=esc(text)+' <span class="fo-ok" style="color:var(--green)">✓</span>';
+      addNode("calib","c-reef","reef-1 · first settle",{workload:"first run",decision:"reef-1 · inherited mind",confidence:.87,outcome:"held"});
+      var r=byId("instance","i-reef"); if(r){ r.live=true; r.settled=1; r.rel=1; }
+      DB.steps.reef="done";
+      DB.activity=null;
+      toast("reef-1 trusted — earned by its settle, never by arrival","shield-check","var(--green)");
+      ping(920);
+      checkWhole(); renderNav(); renderLens(); renderTissue();
+    }
+  },14/state.speed);
+}
+function checkWhole(){
+  if(!DB.wholeCelebrated&&coreDone()&&DB.steps.folder!=="locked"){
+    DB.wholeCelebrated=true;
+    var p=progress();
+    toast("The tissue is whole — "+p.nodes+" nodes, every one connected. The gesture is yours now.","waypoints","var(--green)");
+    announce("workspace whole");
+  }
+}
+
+/* ---------- other lenses: honest empties that onboard ---------- */
+function emptyLens(body,fillStep){
+  var map={
+    account:{t:"Memory fills from the first connection",p:"The corpus — one fact per file, every claim naming how it is known — starts with your lane account.",step:"Connect an account",icon:"brain"},
+    prove:{t:"Threads arrive with the first answer",p:"The conversation every piece of work lives in starts with the proof question.",step:"Prove it with a real answer",icon:"messages-square"},
+    provethread:{t:"Threads arrive with the first answer",p:"The conversation every piece of work lives in starts with the proof question.",step:"Prove it with a real answer",icon:"messages-square"},
+    provework:{t:"The desk arrives with the first brief",p:"Deliverables the gate grades. Finish the proof, then open your first brief.",step:"Prove it with a real answer",icon:"package"},
+    provcal:{t:"Grades arrive with the first answer",p:"Every decision graded against its outcome — the row lands during setup.",step:"Prove it with a real answer",icon:"scale"},
+    reef:{t:"The fleet grows from here",p:"Instances join un-calibrated and earn trust by settling. Provision the first one.",step:"Provision an instance",icon:"server"},
+    inboxreef:{t:"The omnichannel stream starts with the fleet",p:"Telegram and webhook are yours to pair; relay traffic arrives with an instance.",step:"Provision an instance",icon:"inbox"}
+  };
+  var m=map[fillStep];
+  body.innerHTML='<div class="fo-empty"><h3>'+esc(m.t)+'</h3><p>'+esc(m.p)+'</p><button class="fo-btn" id="fo-go-step"><i data-lucide="arrow-left" style="width:13px;height:13px"></i> '+esc(m.step)+'</button></div>';
+  body.querySelector("#fo-go-step").onclick=function(){ setLens("setup"); };
+  icons();
+}
+function renderDesk(tools,body){
+  if(!DB.deliverables.length){ emptyLens(body,"provework"); return; }
+  tools.innerHTML='<button class="fw-btn fo-btn fo-btn-primary" id="fo-new"><i data-lucide="plus" style="width:13px;height:13px"></i> New brief</button>';
+  tools.querySelector("#fo-new").onclick=function(){ newBrief(); };
+  body.innerHTML=""; var grid=document.createElement("div"); grid.className="fo-dgrid";
+  DB.deliverables.forEach(function(d){
+    var c=document.createElement("div"); c.className="fo-dcard";
+    var stages=STAGES.map(function(s,i){ return '<span class="fo-stage'+(i<d.stage?" done":(i===d.stage?" now":""))+'"></span>'; }).join("");
+    c.innerHTML='<h3>'+esc(d.name)+'</h3><p>'+esc(d.claim)+'</p><div class="fo-stages">'+stages+'</div>'+
+      '<div class="fo-btn" style="margin-top:12px;display:inline-flex" data-adv><i data-lucide="fast-forward" style="width:12px;height:12px"></i> Advance</div>';
+    c.querySelector("[data-adv]").onclick=function(){ advance(d); };
+    grid.appendChild(c);
+  });
+  body.appendChild(grid);
+}
+var STAGES=["brief","sources","coverage","draft","digest"];
+function newBrief(){
+  var id="d-first"; if(byId("deliverable",id))return;
+  DB.deliverables.push({id:id,kind:"deliverable",name:"Say hello, grounded",claim:"Introduce Fleet in one grounded paragraph — the corpus speaks first.",stage:0,gate:null,coverage:8,thread:"th-first"});
+  renderNav(); renderLens(); renderTissue();
+  toast("First brief opened — advance it and the gate grades it","file-plus","var(--teal)");
+}
+function advance(d){
+  if(d.stage<4){ d.stage++; d.coverage=Math.min(96,d.coverage+20); renderLens(); renderTissue();
+    if(d.stage===4){ setTimeout(function(){ d.gate="pass"; toast("End gate passed · the desk keeps its first graded deliverable","shield-check","var(--green)"); ping(880); renderLens(); renderTissue(); },800/state.speed); } }
+}
+function renderThreads(tools,body){
+  if(!DB.threads.length){ emptyLens(body,"provethread"); return; }
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fo-thread";
+  var th=byId("thread",state.focus.kind==="thread"?state.focus.id:DB.threads[0].id);
+  var msgs=th?th.msgs||[]:[]; if(th&&!th.msgs){ th.msgs=[{who:"You",color:"var(--teal)",text:"What are you?",time:"setup"},{who:"Fleet",color:"var(--magenta)",text:"A coding agent whose work you can verify — recall answered first, the route was judged (0.91, held), and I composed last.",time:"setup",tool:"recall · substrate"}]; }
+  (th?th.msgs:[]).forEach(function(m){
+    var el=document.createElement("div"); el.className="fo-msg";
+    el.innerHTML='<div class="fo-av" style="background:'+(m.color||"var(--teal)")+'">'+esc(m.who.charAt(0))+'</div>'+
+      '<div style="flex:1"><div class="fo-msg-h"><span class="fo-msg-name">'+esc(m.who)+'</span><span class="fo-msg-time">'+esc(m.time)+'</span></div><div class="fo-msg-text">'+esc(m.text)+'</div>'+
+      (m.tool?'<div class="fo-toolcall"><i data-lucide="terminal" style="width:12px;height:12px"></i>'+esc(m.tool)+' <span class="fo-ok">✓</span></div>':"")+'</div>';
+    wrap.appendChild(el);
+  });
+  body.appendChild(wrap);
+}
+function renderMemory(tools,body){
+  if(!DB.facts.length){ emptyLens(body,"account"); return; }
+  tools.innerHTML='<span class="fo-btn" style="pointer-events:none">'+DB.facts.length+' facts</span>';
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fo-facts";
+  var basisColor={stated:"var(--cyan)",inferred:"var(--amber)",validated:"var(--green)",episodic:"var(--gold)"};
+  DB.facts.forEach(function(f){
+    var el=document.createElement("div"); el.className="fo-fact"; el.style.borderLeftColor=basisColor[f.basis]||"var(--teal)";
+    el.innerHTML='<div class="fo-fact-h"><span class="fo-fact-name">'+esc(f.name)+'</span><span class="fo-basis" style="background:var(--panel2);color:'+(basisColor[f.basis]||"var(--teal)")+'">'+esc(f.basis)+'</span></div><div class="fo-fact-body">'+esc(f.body)+'</div>';
+    el.onclick=function(){ focusOn("fact",f.id,false); };
+    wrap.appendChild(el);
+  });
+  body.appendChild(wrap);
+}
+function renderCalibration(tools,body){
+  if(!DB.calib.length){ emptyLens(body,"provcal"); return; }
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fo-cal";
+  DB.calib.forEach(function(c){
+    var row=document.createElement("div"); row.className="fo-crow";
+    var oc=c.outcome==="held"?"var(--green)":"var(--red)";
+    var ob=c.outcome==="held"?"var(--green-d)":"var(--red-d)";
+    row.innerHTML='<span class="fo-cwork">'+esc(c.workload)+'</span><span class="fo-cdec">'+esc(c.decision)+' · '+c.confidence.toFixed(2)+'</span>'+
+      '<span></span><span class="fo-cout" style="background:'+ob+';color:'+oc+'">'+c.outcome+'</span>';
+    wrap.appendChild(row);
+  });
+  body.appendChild(wrap);
+}
+function renderInbox(tools,body){
+  var msgs=DB.messages;
+  if(!msgs.length){ emptyLens(body,"inboxreef"); return; }
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fo-inbox";
+  var chanColor={telegram:"var(--cyan)",relay:"var(--blue)",webhook:"var(--magenta)"};
+  msgs.forEach(function(m){
+    var row=document.createElement("div"); row.className="fo-inrow";
+    var oc=m.out==="delivered"?"var(--green)":"var(--amber)";
+    row.innerHTML='<span class="fo-chan" style="background:var(--panel2);color:'+(chanColor[m.chan]||"var(--cyan)")+'">'+esc(m.chan)+'</span>'+
+      '<div style="flex:1"><div class="fo-inwho">'+esc(m.who)+' <span class="fo-principal">'+esc(m.principal)+'</span></div><div class="fo-intext">'+esc(m.text)+'</div></div>'+
+      '<span class="fo-chan" style="background:var(--panel2);color:'+oc+'">'+esc(m.out)+'</span>';
+    wrap.appendChild(row);
+  });
+  body.appendChild(wrap);
+}
+function renderFleet(tools,body){
+  var insts=DB.instances.filter(function(i){return !i.home;});
+  if(!insts.length){ emptyLens(body,"reef"); return; }
+  body.innerHTML=""; var grid=document.createElement("div"); grid.className="fo-fgrid";
+  insts.forEach(function(i){
+    var c=document.createElement("div"); c.className="fo-inst"+(DB.steps.reef==="provisioning"?" provisioning":"");
+    var relColor=i.rel>0.8?"var(--green)":i.settled?"var(--amber)":"var(--faint)";
+    c.innerHTML=(i.live?'<span class="fo-heart"></span>':"")+
+      '<div class="fo-inst-h"><div class="fo-inst-ic"><i data-lucide="server" style="width:19px;height:19px"></i></div>'+
+      '<div><div class="fo-inst-name">'+esc(i.name)+'</div><div class="fo-inst-host">'+esc(i.host)+'</div></div>'+
+      '<span class="fo-live '+(i.live?"on":"off")+'">'+(i.live?"live":(DB.steps.reef==="provisioning"?"provisioning":"un-calibrated"))+'</span></div>'+
+      '<div class="fo-inst-row"><span>Reliability · '+i.settled+' settled</span><b style="color:'+relColor+'">'+(i.settled?Math.round(i.rel*100)+"%":"un-calibrated")+'</b></div>'+
+      '<div class="fo-gauge"><i style="width:'+(i.rel*100)+'%;background:'+relColor+'"></i></div>';
+    grid.appendChild(c);
+  });
+  body.appendChild(grid);
+}
+
+/* ---------- TISSUE ---------- */
+function renderTissue(){
+  var svg=$("#fo-graph"); if(!svg)return;
+  var center=state.focus; var cobj=obj(center);
+  if(!cobj){ center={kind:"instance",id:"i-home"}; cobj=obj(center); state.focus=center; }
+  var links=linkedObjects(center);
+  var nodes=[{ref:center,center:true}]; links.forEach(function(l){nodes.push({ref:l});});
+  var R=state.spread, cx=150, cy=150;
+  var pos={}; pos[center.kind+":"+center.id]={x:cx,y:cy};
+  var n=links.length;
+  links.forEach(function(l,i){ var a=(i/Math.max(1,n))*Math.PI*2 - Math.PI/2; pos[l.kind+":"+l.id]={x:cx+Math.cos(a)*R,y:cy+Math.sin(a)*R}; });
+  var html="";
+  links.forEach(function(l){ var p=pos[l.kind+":"+l.id]; var id=l.kind+":"+l.id; var born=DB.born[id]&&(Date.now()-DB.born[id]<900);
+    var d="M"+cx+","+cy+" L"+p.x.toFixed(1)+","+p.y.toFixed(1);
+    if(born){ var len=Math.round(Math.hypot(p.x-cx,p.y-cy));
+      html+='<path class="fo-edge grow" d="'+d+'" stroke-dasharray="'+len+'" stroke-dashoffset="'+len+'"><animate attributeName="stroke-dashoffset" from="'+len+'" to="0" dur="0.5s" fill="freeze"/></path>';
+    } else {
+      html+='<path class="fo-edge" d="'+d+'"/>';
+    }
+  });
+  nodes.forEach(function(nd){
+    var p=pos[nd.ref.kind+":"+nd.ref.id]; var k=KIND[nd.ref.kind]; var o=obj(nd.ref);
+    var label=o?(o.title||o.name||o.id):nd.ref.id; label=label.length>16?label.slice(0,15)+"…":label;
+    var r=nd.center?20:13;
+    var live=nd.ref.kind==="instance"&&o&&o.live;
+    var dashed=nd.ref.kind==="instance"&&o&&o.host&&o.host.indexOf("provisioning")>=0;
+    var above=p.y<cy-10; var ly=above?-(r+10):(r+15);
+    var born=nd.ref.id!=="i-home"&&DB.born[nd.ref.id]&&(Date.now()-DB.born[nd.ref.id]<900);
+    html+='<g class="fo-node'+(nd.center?" center":"")+(dashed?" dashed":"")+'" data-kind="'+nd.ref.kind+'" data-id="'+nd.ref.id+'" transform="translate('+p.x.toFixed(1)+','+p.y.toFixed(1)+')">'+
+      (live?'<circle r="'+(r+5)+'" fill="none" stroke="var(--green)" stroke-width="1" opacity=".5"><animate attributeName="r" values="'+(r+3)+';'+(r+9)+'" dur="2.4s" repeatCount="indefinite"/><animate attributeName="opacity" values=".5;0" dur="2.4s" repeatCount="indefinite"/></circle>':"")+
+      '<circle class="ring" r="'+(born?0:r)+'" fill="'+k.bg+'" stroke="'+k.c+'" stroke-width="'+(nd.center?2:1.4)+'">'+(born?'<animate attributeName="r" from="0" to="'+r+'" dur="0.45s" fill="freeze"/>':"")+'</circle>'+
+      '<circle r="'+(nd.center?6:4)+'" fill="'+k.c+'"/>'+
+      (state.labels&&!nd.center?'<text y="'+ly+'">'+esc(label)+'</text>':"")+
+      '</g>';
+  });
+  svg.innerHTML=html;
+  svg.querySelectorAll(".fo-node").forEach(function(g){ g.onclick=function(){ focusOn(g.getAttribute("data-kind"),g.getAttribute("data-id"),true); }; });
+  $("#fo-tissue-sub").textContent=nodeCount()+" nodes"+(coreDone()?" · whole":" · growing");
+  var leg=$("#fo-legend"); leg.innerHTML="";
+  var used={}; nodes.forEach(function(nd){ used[nd.ref.kind]=1; });
+  Object.keys(KIND).forEach(function(k){ if(used[k]) leg.innerHTML+='<span class="fo-leg"><i style="background:'+KIND[k].c+'"></i>'+KIND[k].label+'</span>'; });
+  renderFocus();
+}
+function renderFocus(){
+  var f=$("#fo-focus"); var o=obj(state.focus); if(!o){f.innerHTML="";return;}
+  var k=KIND[state.focus.kind]; var links=linkedObjects(state.focus);
+  var meta="";
+  if(state.focus.kind==="instance"){ meta='<span>'+esc(o.host)+'</span><span>'+(o.home?"identity · minted once":(o.settled?"reliability "+Math.round(o.rel*100)+"%":"un-calibrated"))+'</span>'; }
+  else if(state.focus.kind==="fact"){ meta='<span>Basis · '+o.basis+'</span>'; }
+  else if(state.focus.kind==="calib"){ meta='<span>'+esc(cdec(o))+' · '+o.confidence.toFixed(2)+'</span><span>outcome · '+o.outcome+'</span>'; }
+  else if(state.focus.kind==="workspace"){ meta='<span>The grant that bounds every filesystem tool</span>'; }
+  else if(state.focus.kind==="thread"){ meta='<span>The first thing Fleet was asked — graded like everything after</span>'; }
+  var actions=links.length?'':'<button class="fo-btn" id="fo-f-setup">Continue setup</button>';
+  var linkedHtml="";
+  links.forEach(function(l){ var lo=obj(l); var lk=KIND[l.kind]; linkedHtml+='<button data-kind="'+l.kind+'" data-id="'+l.id+'"><span class="fo-ldot" style="background:'+lk.c+'"></span>'+esc(lo?(lo.title||lo.name):l.id)+'</button>'; });
+  f.innerHTML='<div class="fo-focus-kind" style="color:'+k.c+'"><i data-lucide="'+k.icon+'" style="width:12px;height:12px"></i>'+k.label+'</div>'+
+    '<div class="fo-focus-title">'+esc(o.title||o.name||o.id)+'</div>'+
+    '<div class="fo-focus-meta">'+meta+'</div>'+
+    '<div class="fo-focus-actions">'+actions+'</div>'+
+    (links.length?'<div class="fo-linked"><div class="fo-linked-h">Connected tissue</div>'+linkedHtml+'</div>':"");
+  var su=f.querySelector("#fo-f-setup"); if(su)su.onclick=function(){ setLens("setup"); };
+  f.querySelectorAll(".fo-linked button").forEach(function(b){ b.onclick=function(){focusOn(b.getAttribute("data-kind"),b.getAttribute("data-id"),true);}; });
+  icons();
+}
+function cdec(c){ return c.decision; }
+
+/* ---------- DRAWER / PALETTE ---------- */
+function openDrawer(kind,id){
+  var o=obj({kind:kind,id:id}); if(!o)return;
+  var dr=$("#fo-drawer"); var k=KIND[kind];
+  dr.innerHTML='<div class="fo-drawer-h"><span style="color:'+k.c+'"><i data-lucide="'+k.icon+'" style="width:20px;height:20px"></i></span><h2>'+esc(o.title||o.name||o.id)+'</h2><button class="fo-iconbtn" id="fo-d-close" aria-label="Close"><i data-lucide="x" style="width:17px;height:17px"></i></button></div>'+
+    '<div class="fo-drawer-body">'+((o.body||o.claim)?'<div style="font-size:13px;color:var(--muted);line-height:1.6">'+esc(o.body||o.claim)+'</div>':"")+
+    '<button class="fo-btn" id="fo-d-see"><i data-lucide="waypoints" style="width:13px;height:13px"></i> See it in the tissue</button></div>';
+  dr.classList.add("show"); $("#fo-scrim").classList.add("show");
+  dr.querySelector("#fo-d-close").onclick=closeDrawer;
+  dr.querySelector("#fo-d-see").onclick=function(){ closeDrawer(); focusOn(kind,id,true); };
+  icons();
+}
+function closeDrawer(){ $("#fo-drawer").classList.remove("show"); $("#fo-scrim").classList.remove("show"); }
+function allObjects(){
+  var out=[];
+  ["fact","thread","calib","deliverable","instance"].forEach(function(k){
+    var arr={fact:DB.facts,thread:DB.threads,calib:DB.calib,deliverable:DB.deliverables,instance:DB.instances}[k];
+    arr.forEach(function(o){ out.push({kind:k,id:o.id,label:o.name||o.title||o.id}); });
+  });
+  return out;
+}
+function openPalette(){ $("#fo-palette").classList.add("show"); $("#fo-scrim").classList.add("show"); var inp=$("#fo-palette-input"); inp.value=""; renderPalette(""); setTimeout(function(){inp.focus();},50); }
+function closePalette(){ $("#fo-palette").classList.remove("show"); if(!$("#fo-drawer").classList.contains("show"))$("#fo-scrim").classList.remove("show"); }
+function renderPalette(q){
+  var list=$("#fo-palette-list"); list.innerHTML="";
+  var cmds=[{label:"Continue setup",icon:"sprout",fn:function(){setLens("setup");}},{label:state.armadaHint||"Grow the fleet",icon:"server",fn:function(){setLens("setup");}}];
+  var items=[];
+  cmds.forEach(function(c){ if(!q||c.label.toLowerCase().indexOf(q.toLowerCase())>=0) items.push({cmd:c}); });
+  allObjects().forEach(function(o){ if(!q||o.label.toLowerCase().indexOf(q.toLowerCase())>=0) items.push({obj:o}); });
+  items.slice(0,10).forEach(function(it){
+    var el=document.createElement("div"); el.className="fo-pitem";
+    if(it.cmd){ el.innerHTML='<i data-lucide="'+it.cmd.icon+'" style="width:15px;height:15px;color:var(--teal)"></i>'+esc(it.cmd.label)+'<span class="fo-pkind">command</span>'; el.onclick=function(){closePalette(); it.cmd.fn();}; }
+    else { var k=KIND[it.obj.kind]; el.innerHTML='<span class="fo-pdot" style="background:'+k.c+';width:8px;height:8px;border-radius:3px"></span>'+esc(it.obj.label)+'<span class="fo-pkind">'+k.label+'</span>'; el.onclick=function(){closePalette(); focusOn(it.obj.kind,it.obj.id,true);}; }
+    list.appendChild(el);
+  });
+  if(!items.length) list.innerHTML='<div class="fo-empty" style="margin:10px;padding:16px">No matches — the palette fills as the workspace grows</div>';
+  icons();
+}
+
+/* ---------- CONSOLE / CHROME ---------- */
+function bindConsole(){
+  $("#fo-c-density").onchange=function(){ root.setAttribute("data-density",this.value); };
+  var sp=$("#fo-c-speed"); sp.oninput=function(){ state.speed=parseFloat(this.value); $("#fo-c-speed-v").textContent=this.value+"×"; };
+  var spr=$("#fo-c-spread"); spr.oninput=function(){ state.spread=parseInt(this.value,10); $("#fo-c-spread-v").textContent=this.value; renderTissue(); };
+  function sw(id,fn){ var b=$(id); b.onclick=function(){ var on=b.getAttribute("aria-pressed")!=="true"; b.setAttribute("aria-pressed",on?"true":"false"); fn(on); }; }
+  sw("#fo-c-motion",function(on){ state.motion=on; var c=root.querySelector(".fo-amb"); if(c)c.style.display=on?"block":"none"; });
+  sw("#fo-c-tissue",function(on){ root.setAttribute("data-tissue",on?"on":"off"); });
+  sw("#fo-c-labels",function(on){ state.labels=on; renderTissue(); });
+  $("#fo-c-replay").onclick=function(){ DB=seed(); threadReset(); state.focus={kind:"instance",id:"i-home"}; setLens("setup"); renderTissue(); toast("Fresh home — one node. Setup grows it again.","sprout","var(--teal)"); };
+  $("#fo-c-jump").onclick=function(){
+    if(!byId("fact","f-acct")){ addNode("fact","f-acct","lane account · deepseek",{basis:"stated",body:"The routing account Fleet thinks with."}); DB.steps.account="done"; }
+    if(!byId("thread","th-first")){ addNode("thread","th-first","first answer"); addNode("calib","c-first","first answer",{workload:"first run",decision:"sys1 → blend1",confidence:.91,outcome:"held"}); DB.steps.prove="done"; }
+    if(DB.steps.folder!=="done"&&DB.steps.folder!=="skipped"){ DB.steps.folder="done"; DB.steps.folderName="~/Projects/harbor"; addNode("workspace","w-folder","workspace · harbor"); }
+    if(!byId("instance","i-reef")){ DB.steps.reef="done"; addNode("instance","i-reef","reef-1"); addNode("fact","f-mind","the shared mind",{basis:"stated",body:"The corpus is the portable, git-synced unit."}); addNode("calib","c-reef","reef-1 · first settle",{workload:"first run",decision:"reef-1",confidence:.87,outcome:"held"}); var r=byId("instance","i-reef"); r.live=true; r.settled=1; r.rel=1; r.host="vps · fra1"; DB.messages.push({id:"m-reef",chan:"relay",who:"reef-1",principal:"inst:reef",text:"Joined · trusted after my first settle.",out:"delivered",dir:"in"}); }
+    DB.wholeCelebrated=false; checkWhole(); renderNav(); renderLens(); renderTissue();
+    toast("Setup completed — every node connected","check-circle-2","var(--green)");
+  };
+}
+function threadReset(){}
+function bindChrome(){
+  $("#fo-theme").onclick=function(){ var day=root.getAttribute("data-theme")==="day"; root.setAttribute("data-theme",day?"night":"day"); this.innerHTML='<i data-lucide="'+(day?"moon":"sun")+'" style="width:17px;height:17px"></i>'; icons(); drawAmb(true); };
+  $("#fo-sound").onclick=function(){ state.sound=!state.sound; this.setAttribute("aria-pressed",state.sound?"true":"false"); this.innerHTML='<i data-lucide="'+(state.sound?"volume-2":"volume-x")+'" style="width:17px;height:17px"></i>'; icons(); if(state.sound)ping(660); };
+  $("#fo-scrim").onclick=function(){ closeDrawer(); closePalette(); };
+  $("#fo-palette-input").addEventListener("input",function(){ renderPalette(this.value); });
+  $("#fo-search").addEventListener("input",function(){ renderPalette(this.value); if(!$("#fo-palette").classList.contains("show")&&this.value)openPalette(); });
+  document.addEventListener("keydown",function(e){
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){ e.preventDefault(); $("#fo-palette").classList.contains("show")?closePalette():openPalette(); }
+    if(e.key==="Escape"){ closePalette(); closeDrawer(); }
+  });
+}
+
+/* ---------- AMBIENT ---------- */
+var amb={parts:[],raf:null};
+function drawAmb(reset){
+  var c=root.querySelector(".fo-amb"); if(!c)return;
+  var ctx=c.getContext("2d"); var dpr=Math.min(2,window.devicePixelRatio||1);
+  c.width=c.offsetWidth*dpr; c.height=c.offsetHeight*dpr;
+  if(reset||!amb.parts.length){ amb.parts=[]; for(var i=0;i<46;i++){ amb.parts.push({x:Math.random(),y:Math.random(),r:Math.random()*1.8+0.4,s:Math.random()*0.00012+0.00003,h:Math.random()}); } }
+  if(amb.raf)cancelAnimationFrame(amb.raf);
+  var day=root.getAttribute("data-theme")==="day";
+  function frame(){
+    ctx.clearRect(0,0,c.width,c.height);
+    for(var i=0;i<amb.parts.length;i++){ var p=amb.parts[i];
+      p.y-=p.s; if(p.y<-0.02){p.y=1.02; p.x=Math.random();}
+      var x=p.x*c.width, y=p.y*c.height, r=p.r*dpr;
+      var col=day?"rgba(12,156,139,":"rgba(45,214,191,";
+      if(p.h>0.82)col=day?"rgba(47,111,214,":"rgba(91,157,255,";
+      ctx.beginPath(); ctx.arc(x,y,r,0,6.283); ctx.fillStyle=col+(0.18+p.h*0.22)+")"; ctx.fill();
+    }
+    if(state.motion)amb.raf=requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+function init(){
+  renderNav(); renderLens(); renderTissue(); bindConsole(); bindChrome(); icons(); drawAmb(true);
+  if(window.ResizeObserver){ var ro=new ResizeObserver(function(){ drawAmb(false); }); ro.observe(root); }
+}
+init();
+})();
+</script>

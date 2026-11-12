@@ -236,9 +236,51 @@ is [`../design/fleet-workspace-mockup.html`](../design/fleet-workspace-mockup.ht
 
 ---
 
+## Onboarding + setup — the graph growing (2026-11-12)
+
+Reference implementation:
+[`../design/fleet-onboarding-mockup.html`](../design/fleet-onboarding-mockup.html).
+Same shell, same tokens; the Setup lens on a fresh home.
+
+- **U34 — Onboarding is the graph growing, not a wizard.** A fresh home opens
+  with the tissue holding exactly ONE node — *this install* (the minted
+  identity, pulsing). Every setup step **adds a node and an edge**: the lane
+  account (fact), the first answer (thread + a calibration grade), the
+  workspace folder (the grant). Completion is N connected nodes, and the user
+  has learned the pivot gesture by building their own workspace. Setup stays
+  in the rail afterward — it is where you return to grow the fleet or re-run a
+  check, never a modal that vanishes. *Constrains:* the onboard flow
+  (`fleet onboard`, the gui first run), every surface's fresh-home state.
+- **U35 — Empty states are onboarding.** An empty lens names the step that
+  fills it and offers the action ("Memory fills from the first connection →
+  Connect an account") — never a dead *nothing here*. The nav shows honest
+  zero counts. *Constrains:* every lens's empty state.
+- **U36 — Skipped is named, never hidden.** Optional steps (the folder) can be
+  skipped, and the step keeps their consequence in view: *"filesystem tools
+  stay ungranted until a folder is set"* — with a one-click path back. The
+  graph simply does not grow that node; nothing pretends. *Constrains:*
+  onboarding, the folder grant surface (KI-492's truth).
+- **U37 — Setup tells the mechanism's truth.** The real-answer proof is
+  **graded like every decision after it** — a calibration row lands in the
+  workspace during setup (D4 from minute one). An instance joins
+  **un-calibrated** and is trusted only after its first settle (D49/D57). The
+  credentials line says what the product does: *stored in your home only; the
+  vault never renders a value*. *Constrains:* onboarding copy, the trust
+  story everywhere.
+- **U38 — Armada setup is the same gesture.** Provision → the instance node
+  appears **dashed** ("provisioning") → the shared-mind edge draws (inheriting
+  the mind, not the identity) → registered · un-calibrated → first settle →
+  the pulse lights and the reliability meter is born. Fleetsetup and armada
+  setup are one continuous surface, gated by steps, never two wizards.
+  *Constrains:* `fleet armada deploy` UX, the provisioning surfaces (L9).
+
+---
+
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the
 armada interactive mockup ([`../design/armada-workspace-mockup.html`](../design/armada-workspace-mockup.html));
-U29–U33 from the fleet-core mockup the same day. Both informed by the three
-credited inspirations — muxin (instance cards, fleet-at-a-glance), omni (the
-omnichannel inbox with resolved identity), orbit (the board and saved views) —
-borrowed as patterns, never as code, per the README's Foundations section.
+U29–U33 from the fleet-core mockup the same day; U34–U38 from the onboarding
+mockup ([`../design/fleet-onboarding-mockup.html`](../design/fleet-onboarding-mockup.html)).
+All three informed by the three credited inspirations — muxin (instance cards,
+fleet-at-a-glance), omni (the omnichannel inbox with resolved identity), orbit
+(the board and saved views) — borrowed as patterns, never as code, per the
+README's Foundations section.
