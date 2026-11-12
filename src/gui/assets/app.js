@@ -1095,6 +1095,7 @@
     chatSmaller: document.getElementById('chat-smaller'),
     chatBigger: document.getElementById('chat-bigger'),
     send: document.getElementById('send'),
+    dispatch: document.getElementById('dispatch'),
     sendLabel: document.getElementById('send-label'),
     queueChip: document.getElementById('queue-chip'),
     queueCount: document.getElementById('queue-count'),
@@ -10483,6 +10484,43 @@
         return;
       }
       send();
+    });
+  }
+
+  // The dispatch hero flow (U20, S2): a thread opens for the task and the
+  // run streams there — the lens pivots to it through the one focus (S1).
+  // The task is minted and linked to its thread; the graph grows the
+  // task→deliverable edge when the work lands on the desk.
+  if (el.dispatch) {
+    el.dispatch.addEventListener('click', function (event) {
+      event.preventDefault();
+      var typed = el.task.value.trim();
+      if (!typed) {
+        notice('nothing to dispatch',
+          'type the task, then dispatch it — a thread opens for it and the run streams there');
+        return;
+      }
+      if (face.running || face.seat) {
+        notice('a run is in flight', 'let it settle, then dispatch the next task');
+        return;
+      }
+      el.dispatch.disabled = true;
+      post('/api/dispatch', { title: typed, role: '', binding: null })
+        .then(function (reply) {
+          el.dispatch.disabled = false;
+          if (reply.status === 200 && reply.body && reply.body.session) {
+            el.task.value = '';
+            pivotTo('thread', reply.body.session, reply.body.title);
+            notice('dispatched', 'the task is working in its own thread');
+            return;
+          }
+          notice('the dispatch was refused',
+            (reply.body && reply.body.error) || 'the dispatch refused it');
+        })
+        .catch(function () {
+          el.dispatch.disabled = false;
+          notice('the dispatch did not cross', 'the server did not answer');
+        });
     });
   }
 

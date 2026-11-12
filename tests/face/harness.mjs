@@ -375,6 +375,22 @@ function boot(options) {
     if (pathOnly === '/api/sessions') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.sessions || emptySessions()) });
     }
+    // The dispatch hero flow (U20, S2): a task is minted, a thread opens
+    // for it, the run streams there. The stub returns the task + session
+    // the face pivots to.
+    if (pathOnly === '/api/dispatch' && method === 'POST') {
+      const parsed = JSON.parse((init && init.body) || '{}');
+      if (!parsed.title || !String(parsed.title).trim()) {
+        return Promise.resolve({ status: 400, json: () => Promise.resolve({ error: 'the dispatch names a task' }) });
+      }
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({
+          type: 'dispatch', task: 'task-dispatch-1', session: 'sess-dispatch-1',
+          title: parsed.title,
+        }),
+      });
+    }
     // The owner's word on a judged row (U31): the disposition verb, the
     // same append-only store the CLI writes — the POST echoes the row's
     // new word, and a refused word names itself.
@@ -12631,6 +12647,27 @@ async function theFocusLawPivotsTheWholeWorkspace() {
     'desk board names the deliverable');
 }
 
+// S2 (U20): the dispatch hero flow — dispatching a task opens its own
+// thread and the lens pivots there through the one focus; the run streams
+// in the workspace, not a modal.
+async function theDispatchHeroFlowPivotsToTheThread() {
+  const page = boot({ documents: { state: (asked) => emptyState(asked) }, hash: '#/chat' });
+  page.open();
+  await flush(80);
+  page.IDS.task.value = 'write the release notes';
+  page.IDS.dispatch.click();
+  await flush(80);
+  const posts = page.calls.filter((c) => c.url === '/api/dispatch' && c.method === 'POST');
+  check('S2 dispatch posts the task',
+    posts.length === 1 && JSON.parse(posts[0].body).title === 'write the release notes',
+    JSON.stringify(posts.map((c) => c.body)));
+  check('S2 the lens pivots to the task\u2019s thread',
+    page.window.location.hash === '#/sessions/sess-dispatch-1',
+    'hash=' + page.window.location.hash);
+  check('S2 the composer clears after dispatch',
+    page.IDS.task.value === '', 'task=' + page.IDS.task.value);
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -12793,6 +12830,7 @@ const cases = [
   ['ONBOARD the judgment step names the preferred ones', theJudgmentStepNamesThePreferredOnes],
   ['ONBOARD the install node starts the graph', theInstallNodeStartsTheGraph],
   ['S1 the focus law pivots the whole workspace', theFocusLawPivotsTheWholeWorkspace],
+  ['S2 the dispatch hero flow pivots to the thread', theDispatchHeroFlowPivotsToTheThread],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

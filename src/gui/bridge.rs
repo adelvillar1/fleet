@@ -832,6 +832,25 @@ impl Bridge {
             ),
             crate::workspace::EdgeKind::HandsTo,
         );
+        // The dispatched task settles when its deliverable lands (D43, S2):
+        // the task linked to this thread is graded against the desk's end
+        // gate, and the task→deliverable edge grows in the same beat.
+        // Best-effort — the hand stands even if a settle refuses.
+        let graph = crate::workspace::read(&self.home);
+        let principal = crate::identity::principal_for(&self.home);
+        for edge in &graph.edges {
+            if edge.kind == crate::workspace::EdgeKind::WorksIn
+                && edge.to.id == id
+                && edge.from.kind == crate::workspace::Kind::Task
+            {
+                let _ = crate::workspace::settle_work(
+                    &self.home,
+                    &edge.from.id,
+                    &desk.slug,
+                    &principal,
+                );
+            }
+        }
         Ok(desk.slug)
     }
 
@@ -879,6 +898,46 @@ impl Bridge {
         // The run carries the assignee principal so the guard reads it (D9).
         self.run_as_principal(&session, task_text, Some(assignee.as_str().to_string()))?;
         Ok(session)
+    }
+
+    /// The dispatch hero flow (U20, S2): the owner dispatches a task, a
+    /// thread opens for it, the run streams there, and the graph grows the
+    /// edges as the work settles. Composes over create_task + assign_task —
+    /// the same verbs the armada dispatch rides, under the owner principal
+    /// (this is the owner's own fleet, no flagship frame). A named bot works
+    /// under its role overlay; with no bot named the owner's own thread
+    /// carries the task. The task→thread edge grows now; the task→deliverable
+    /// edge grows when the deliverable lands on the desk (settle_work, D43).
+    pub fn dispatch_task(
+        &self,
+        title: &str,
+        role: &str,
+        binding: Option<String>,
+    ) -> Result<Value, String> {
+        let principal = crate::identity::principal_for(&self.home);
+        let task = crate::workspace::create_task(&self.home, title, principal.clone(), binding)?;
+        let session = if role.trim().is_empty() {
+            let created =
+                crate::session::Session::create_with_persona(&self.home, &self.model, None)
+                    .map_err(|error| format!("could not open the thread: {error}"))?;
+            let session = created.id().to_string();
+            let _ = crate::workspace::link(
+                &self.home,
+                crate::workspace::WorkObject::new(task.id.clone(), crate::workspace::Kind::Task),
+                crate::workspace::WorkObject::new(session.clone(), crate::workspace::Kind::Thread),
+                crate::workspace::EdgeKind::WorksIn,
+            );
+            self.run_as_principal(&session, title, Some(principal.as_str().to_string()))?;
+            session
+        } else {
+            self.assign_task(&task.id, role, title, None)?
+        };
+        Ok(json!({
+            "type": "dispatch",
+            "task": task.id,
+            "session": session,
+            "title": title,
+        }))
     }
 
     /// Break a phase out of a room (the huddles plan's C9): a child room

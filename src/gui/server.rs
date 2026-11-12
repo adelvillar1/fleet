@@ -1762,6 +1762,26 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
             }
         }
+        // The dispatch hero flow (U20, S2): the owner's own fleet dispatch —
+        // a task is minted, a thread opens for it, the run streams there.
+        ("POST", "/api/dispatch") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            let title = parsed["title"].as_str().unwrap_or("").trim().to_string();
+            if title.is_empty() {
+                return write_reply(&mut stream, bad_request("the dispatch names a task")).await;
+            }
+            let role = parsed["role"].as_str().unwrap_or("").to_string();
+            let binding = parsed["binding"].as_str().map(|b| b.to_string());
+            match bridge.dispatch_task(&title, &role, binding) {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
+            }
+        }
         ("GET", "/api/desk") => {
             let mut projects: Vec<serde_json::Value> = Vec::new();
             let mut unreadable: Vec<serde_json::Value> = Vec::new();
