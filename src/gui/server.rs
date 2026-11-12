@@ -96,6 +96,12 @@ const BOT_ICON_192: &[u8] = include_bytes!("assets/bot-icon-192.png");
 const BOT_ICON_512: &[u8] = include_bytes!("assets/bot-icon-512.png");
 const ICON_192: &[u8] = include_bytes!("assets/icon-192.png");
 const ICON_512: &[u8] = include_bytes!("assets/icon-512.png");
+// The three type voices (U6, see assets/vendor/VENDOR.json): latin
+// variable woff2, served from the binary — the face fetches nothing
+// (hard rule 12).
+const FONT_SPACE_GROTESK: &[u8] = include_bytes!("assets/vendor/fonts/SpaceGrotesk.woff2");
+const FONT_INTER: &[u8] = include_bytes!("assets/vendor/fonts/Inter.woff2");
+const FONT_JETBRAINS_MONO: &[u8] = include_bytes!("assets/vendor/fonts/JetBrainsMono.woff2");
 
 /// The build stamp `build.rs` computed over every served asset. The page
 /// asks for the two script assets at this address, the worker's cache
@@ -356,6 +362,17 @@ async fn serve_connection(
             )
             .await
         }
+        // The vendored type (U6): binary woff2, the blob writer's own
+        // path — same cache discipline as the icons.
+        ("GET", "/vendor/fonts/SpaceGrotesk.woff2") => {
+            write_blob(&mut stream, "font/woff2", ICON_CACHE, FONT_SPACE_GROTESK).await
+        }
+        ("GET", "/vendor/fonts/Inter.woff2") => {
+            write_blob(&mut stream, "font/woff2", ICON_CACHE, FONT_INTER).await
+        }
+        ("GET", "/vendor/fonts/JetBrainsMono.woff2") => {
+            write_blob(&mut stream, "font/woff2", ICON_CACHE, FONT_JETBRAINS_MONO).await
+        }
         ("GET", "/api/preview") => {
             let asked = decode_query(&request.query, "path");
             match bridge.preview(&asked).await {
@@ -395,6 +412,10 @@ async fn serve_connection(
         }
         ("GET", "/api/memory") => write_reply(&mut stream, api(200, bridge.memory().await)).await,
         ("GET", "/api/skills") => write_reply(&mut stream, api(200, bridge.skills().await)).await,
+        // The tissue's read (the U-reskin, U11): the work-object graph
+        // the shell's third column renders — tasks, threads,
+        // deliverables, lessons, bots, the edges between them.
+        ("GET", "/api/tissue") => write_reply(&mut stream, api(200, bridge.tissue().await)).await,
         // The workspace-history section's two reads: the tree itself,
         // and the Files pane's one page of a branch. Both read the
         // substrate through the same composed environment the arm

@@ -1,5 +1,5 @@
 {
-  "name": "the face's vendored document renderers",
+  "name": "the face's vendored document renderers and type",
   "policy": "Pinned, offline-capable, lazy-loaded per format. Never a CDN at render time. Each entry: version, upstream, the exact download URL, the SHA-256 of the vendored file, the SPDX license, and the reason. Re-verify provenance with shasum -a 256.",
   "entries": [
     {
@@ -22,7 +22,7 @@
       "sha256": "57456c8e0c81e46be31174b499ef77f2b9f5ee46d04412ba627320a36755d4c2",
       "license": "Apache-2.0",
       "vendored": "2026-10-29",
-      "reason": "PDF rendering inside the fence (D3): the sandbox disables the browser's native viewer, so the fence chooses PDF.js \u2014 API mode, scripting disabled, the document as data."
+      "reason": "PDF rendering inside the fence (D3): the sandbox disables the browser's native viewer, so the fence chooses PDF.js — API mode, scripting disabled, the document as data."
     },
     {
       "file": "pdf.worker.min.mjs",
@@ -33,7 +33,7 @@
       "sha256": "9536359f1b8367850d485731ca1d5e45c159a7b7a0912325e539937aa21ceb18",
       "license": "Apache-2.0",
       "vendored": "2026-10-29",
-      "reason": "PDF.js's parse worker \u2014 the pair with pdf.min.mjs, one version pin."
+      "reason": "PDF.js's parse worker — the pair with pdf.min.mjs, one version pin."
     },
     {
       "file": "docx-preview.min.js",
@@ -44,7 +44,7 @@
       "sha256": "c4a133c65a112799e35b143c572dfff9e923a3bf39b5fd3b07a06aa0f8f530c2",
       "license": "Apache-2.0",
       "vendored": "2026-10-29",
-      "reason": "DOCX rendering (D5) \u2014 runs inside the sandboxed frame, its output never touches the app's origin."
+      "reason": "DOCX rendering (D5) — runs inside the sandboxed frame, its output never touches the app's origin."
     },
     {
       "file": "jszip.min.js",
@@ -56,6 +56,39 @@
       "license": "MIT",
       "vendored": "2026-10-29",
       "reason": "docx-preview's dependency, the zip reader the DOCX render needs inside the frame."
+    },
+    {
+      "file": "fonts/SpaceGrotesk.woff2",
+      "name": "Space Grotesk",
+      "version": "v22",
+      "upstream": "https://fonts.google.com/specimen/Space+Grotesk (source github.com/floriankarsten/space-grotesk)",
+      "download": "https://fonts.gstatic.com/s/spacegrotesk/v22/V8mDoQDjQSkFtoMM3T6r8E7mPbF4C_k3HqU.woff2",
+      "sha256": "a0d054c4af557de20afd6ca59f47ab353bcaec49c63ff04b6c9d39d0f8910557",
+      "license": "OFL-1.1",
+      "vendored": "2026-11-12",
+      "reason": "The U6 display voice (U-ledger): brand, headings, object titles. Latin variable subset; the stack after it is the degradation path, never a second voice. Served from the binary — the face fetches nothing (hard rule 12)."
+    },
+    {
+      "file": "fonts/Inter.woff2",
+      "name": "Inter",
+      "version": "v20",
+      "upstream": "https://rsms.me/inter/ (github.com/rsms/inter)",
+      "download": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2",
+      "sha256": "c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4",
+      "license": "OFL-1.1",
+      "vendored": "2026-11-12",
+      "reason": "The U6 body voice: prose, controls, labels. Latin variable subset; served from the binary (hard rule 12)."
+    },
+    {
+      "file": "fonts/JetBrainsMono.woff2",
+      "name": "JetBrains Mono",
+      "version": "v24",
+      "upstream": "https://www.jetbrains.com/lp/mono/ (github.com/JetBrains/JetBrainsMono)",
+      "download": "https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD7OwGtT0rU.woff2",
+      "sha256": "1e06740a02a443fb7f3eeda8fcaa685a0f6c620e3f01e6666e847295469ce3ad",
+      "license": "OFL-1.1",
+      "vendored": "2026-11-12",
+      "reason": "The U6 data voice: tags, timestamps, gauges, micro-labels. Latin variable subset; served from the binary (hard rule 12)."
     }
   ]
 }

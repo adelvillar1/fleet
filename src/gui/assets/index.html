@@ -12,20 +12,23 @@
 <link rel="stylesheet" href="/app.css">
 <script>
   // The theme is set before the first paint, from the same storage the
-  // toggle writes, so an owner who chose a dark theme never sees a paper
-  // flash. Paper is the default: a console read in daylight, beside the
-  // work. It hangs off the document element because that exists in the
-  // head, where a body attribute cannot be set yet.
+  // toggle writes, so an owner who chose a light theme never sees a
+  // night flash. Night is the default since the U-reskin (U4/U5): the
+  // harbor ground is the house; day watch and paper are the choices. It
+  // hangs off the document element because that exists in the head,
+  // where a body attribute cannot be set yet.
   try {
     document.documentElement.dataset.theme =
-      window.localStorage.getItem('fleet-theme-2') || 'paper';
+      window.localStorage.getItem('fleet-theme-2') || 'night';
   } catch (error) {
-    document.documentElement.dataset.theme = 'paper';
+    document.documentElement.dataset.theme = 'night';
   }
-  // The browser chrome follows the theme too: a paper page under a
-  // graphite toolbar reads as a different app.
+  // The browser chrome follows the theme too: a night page under a paper
+  // toolbar reads as a different app.
   try {
     var FLEET_THEME_COLORS = {
+      night: '#08131a',
+      day: '#eef0ea',
       paper: '#f6f4ef',
       console: '#0e0f12',
       graphite: '#0a0c10',
@@ -35,7 +38,7 @@
     if (fleetThemeMeta) {
       fleetThemeMeta.setAttribute(
         'content',
-        FLEET_THEME_COLORS[document.documentElement.dataset.theme] || FLEET_THEME_COLORS.paper
+        FLEET_THEME_COLORS[document.documentElement.dataset.theme] || FLEET_THEME_COLORS.night
       );
     }
   } catch (error) {
@@ -79,7 +82,12 @@
   })();
 </script>
 </head>
-<body data-aside="closed" data-dock="closed">
+<body data-aside="closed" data-dock="closed" data-tissue="on">
+<!-- The ambient layer (U8): drifting light behind the shell, the grain
+     over it — the connective tissue's weather. The Motion switch freezes
+     both; prefers-reduced-motion hides them outright. -->
+<canvas class="amb" id="amb" aria-hidden="true"></canvas>
+<div class="grain" aria-hidden="true"></div>
 <div class="face">
 
   <!-- The surfaces rail: the plan's left column, full height. One
@@ -124,8 +132,40 @@
         </span>
       </button>
     </div>
+    <!-- The Mission card (U10): this install — the project the shell
+         serves, its version, and the run count. Painted by app.js from
+         /api/version and /api/state; the honest dash until both answer. -->
+    <div class="mission" id="mission" title="this install">
+      <span class="mission-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" focusable="false">
+          <path d="M12 2.5 20.5 12 12 21.5 3.5 12z"></path>
+        </svg>
+      </span>
+      <span class="mission-text">
+        <span class="mission-name" id="mission-name">fleet</span>
+        <span class="mission-meta" id="mission-meta">&mdash;</span>
+      </span>
+    </div>
+    <!-- Saved views (U10): one press captures where you are — the lens
+         and its query — one press restores it. Built by app.js. -->
+    <div class="views-wrap" id="views-wrap" hidden>
+      <p class="rail-label">saved views</p>
+      <div class="views" id="views"></div>
+      <button class="view-save" id="view-save" type="button"
+              aria-label="save the current view" title="save the current view">
+        + save this view
+      </button>
+    </div>
     <div class="surfaces-tree" id="rail-tree"></div>
     <div class="surfaces-foot">
+      <!-- The tissue explainer (U10): the rail teaches the graph the shell
+           carries — what the third column is and what a pivot does. -->
+      <div class="tissue-note" id="tissue-note" hidden>
+        <b>the tissue</b> is the work-object graph — tasks, threads,
+        deliverables, bots, lessons. Click any node to pivot the whole
+        workspace; it is the same graph every surface is a lens over.
+      </div>
       <span class="surfaces-where" id="rail-where">this machine</span>
       <button class="surfaces-palette" id="rail-jump" type="button"
               aria-label="jump to any surface" title="jump to any surface">
@@ -191,11 +231,23 @@
           </svg>
         </button>
         <button class="theme-toggle" id="theme-toggle" type="button"
-                aria-label="choose a theme" title="choose a theme" data-theme="paper">
+                aria-label="choose a theme" title="choose a theme" data-theme="night">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
                stroke-linecap="round" aria-hidden="true">
             <circle cx="12" cy="12" r="7"></circle>
             <path d="M12 5a7 7 0 0 0 0 14z" fill="currentColor" stroke="none"></path>
+          </svg>
+        </button>
+        <!-- The Motion switch (U8): one toggle freezes the ambient layer
+             and every animation. Remembered like the theme. -->
+        <button class="motion-toggle" id="motion-toggle" type="button"
+                aria-label="toggle motion" aria-pressed="true"
+                title="motion on — the ambient layer, pulses and flows">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" aria-hidden="true">
+            <path d="M3 12c2.5-4 4.5-4 7 0s4.5 4 7 0"></path>
+            <path d="M3 7c2.5-4 4.5-4 7 0s4.5 4 7 0" opacity="0.5"></path>
+            <path d="M3 17c2.5-4 4.5-4 7 0s4.5 4 7 0" opacity="0.5"></path>
           </svg>
         </button>
         <button class="pane-open" id="pane-open" type="button"
@@ -1194,6 +1246,22 @@
       </form>
       <div class="pane-page" id="pane-page"></div>
     </div>
+  </aside>
+
+  <!-- The tissue (U0/U11): the connective tissue rendered — the focused
+       object's neighborhood as a radial graph, the typed legend, and the
+       focus card. Permanent at >=1081px (U9); dropped below. Built by
+       app.js from /api/tissue; the pivot is the shell's one focus law. -->
+  <aside class="tissue" id="tissue" aria-label="the tissue — the work-object graph">
+    <div class="tissue-head">
+      <span class="tissue-title">tissue</span>
+      <span class="tissue-where" id="tissue-where">the graph</span>
+    </div>
+    <div class="tissue-graph" id="tissue-graph" role="img"
+         aria-label="the focused object's neighborhood in the work graph"></div>
+    <div class="tissue-legend" id="tissue-legend"></div>
+    <div class="tissue-focus" id="tissue-focus"></div>
+    <div class="tissue-empty" id="tissue-empty" hidden></div>
   </aside>
 
 </div>

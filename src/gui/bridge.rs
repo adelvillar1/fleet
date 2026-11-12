@@ -1752,6 +1752,157 @@ impl Bridge {
         )
     }
 
+    /// The tissue's document (the U-reskin, U11): the work-object graph
+    /// as the face's third column renders it. One read over the existing
+    /// stores — the graph log's tasks and edges, the object view's
+    /// deliverables, lessons and practices, the session archive's recent
+    /// threads, and the roles' bots — no new capability, no derived
+    /// edges that were never linked. Bounded so a grown corpus cannot
+    /// hand the browser an unbounded SVG; the bound is named in the
+    /// document, never silent (U2).
+    pub async fn tissue(&self) -> Value {
+        let home = self.home.clone();
+        let driving = self
+            .state
+            .lock()
+            .map(|state| state.driving.clone())
+            .ok()
+            .flatten();
+        tokio::task::spawn_blocking(move || {
+            const MAX_NODES: usize = 60;
+            let graph = crate::workspace::read(&home);
+            let mut nodes: Vec<Value> = Vec::new();
+            let mut edges: Vec<Value> = Vec::new();
+            let mut omitted = 0usize;
+            let push = |nodes: &mut Vec<Value>,
+                        omitted: &mut usize,
+                        id: String,
+                        kind: &str,
+                        label: String,
+                        status: Option<&str>,
+                        live: bool,
+                        meta: Option<String>| {
+                if nodes.len() >= MAX_NODES {
+                    *omitted += 1;
+                    return;
+                }
+                nodes.push(json!({
+                    "id": id, "kind": kind, "label": label,
+                    "status": status, "live": live, "meta": meta,
+                }));
+            };
+            for (id, task) in &graph.tasks {
+                push(
+                    &mut nodes,
+                    &mut omitted,
+                    id.clone(),
+                    "task",
+                    task.title.clone(),
+                    Some(task.status.as_str()),
+                    task.status == crate::workspace::Status::Working,
+                    None,
+                );
+            }
+            for row in crate::workspace::view(&home, None) {
+                let kind = match row.object.kind {
+                    crate::workspace::Kind::Deliverable => "deliverable",
+                    crate::workspace::Kind::Lesson => {
+                        if row.practice {
+                            "practice"
+                        } else {
+                            "lesson"
+                        }
+                    }
+                    _ => continue,
+                };
+                // The label ladder: a deliverable names itself, a lesson
+                // titles itself — either way the store's own word, never
+                // a bare id when the store has a name.
+                let label = row
+                    .entry
+                    .get("name")
+                    .or_else(|| row.entry.get("title"))
+                    .and_then(|name| name.as_str())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(row.object.id.as_str())
+                    .to_string();
+                let needs = row.entry.get("needs").and_then(|needs| needs.as_bool());
+                push(
+                    &mut nodes,
+                    &mut omitted,
+                    row.object.id.clone(),
+                    kind,
+                    label,
+                    None,
+                    false,
+                    needs
+                        .map(|needs| {
+                            if needs {
+                                "named refusals stand".to_string()
+                            } else {
+                                String::new()
+                            }
+                        })
+                        .filter(|meta| !meta.is_empty()),
+                );
+            }
+            // The recent sessions are the threads: the archive's own
+            // order, the newest twelve, bounded by the same cap. A run
+            // in flight is the one live node the pulse ring marks.
+            if let Ok(recent) = crate::session::list(&home) {
+                for summary in recent.into_iter().rev().take(12) {
+                    let label = summary
+                        .last_plan
+                        .clone()
+                        .or(summary.first_text.clone())
+                        .unwrap_or_else(|| summary.id.clone());
+                    push(
+                        &mut nodes,
+                        &mut omitted,
+                        summary.id.clone(),
+                        "thread",
+                        label,
+                        None,
+                        Some(summary.id.clone()) == driving,
+                        None,
+                    );
+                }
+            }
+            // The roles are the bots (the delegation surface's own list).
+            for role in crate::roles::load_all(&home) {
+                push(
+                    &mut nodes,
+                    &mut omitted,
+                    format!("bot:{}", role.name),
+                    "bot",
+                    role.name.clone(),
+                    None,
+                    false,
+                    None,
+                );
+            }
+            for edge in &graph.edges {
+                if edges.len() >= MAX_NODES * 2 {
+                    break;
+                }
+                edges.push(json!({
+                    "from": edge.from.id, "to": edge.to.id,
+                    "kind": edge.kind.as_str(),
+                    "hot": false,
+                }));
+            }
+            json!({
+                "type": "tissue",
+                "nodes": nodes,
+                "edges": edges,
+                "bounded": MAX_NODES,
+                "omitted": omitted,
+            })
+        })
+        .await
+        .unwrap_or_else(|_| json!({"type": "tissue", "refused": ["the tissue read did not land"]}))
+    }
+
     /// The armada panel's document (armada L9, C3): the flagship roster
     /// with each instance's earned liveness and measured reliability,
     /// and the flagship role named. One read off the async worker — the

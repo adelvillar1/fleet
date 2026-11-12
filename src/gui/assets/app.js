@@ -898,6 +898,20 @@
     panePreviewPanel: document.getElementById('pane-preview'),
     themeToggle: document.getElementById('theme-toggle'),
     themes: document.getElementById('themes'),
+    motionToggle: document.getElementById('motion-toggle'),
+    mission: document.getElementById('mission'),
+    missionName: document.getElementById('mission-name'),
+    missionMeta: document.getElementById('mission-meta'),
+    viewsWrap: document.getElementById('views-wrap'),
+    views: document.getElementById('views'),
+    viewSave: document.getElementById('view-save'),
+    tissueNote: document.getElementById('tissue-note'),
+    tissue: document.getElementById('tissue'),
+    tissueWhere: document.getElementById('tissue-where'),
+    tissueGraph: document.getElementById('tissue-graph'),
+    tissueLegend: document.getElementById('tissue-legend'),
+    tissueFocus: document.getElementById('tissue-focus'),
+    tissueEmpty: document.getElementById('tissue-empty'),
     actions: document.getElementById('actions'),
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
@@ -26317,6 +26331,11 @@
     };
     if (arrive[address]) arrive[address]();
     syncPaneContext();
+    // The shell follows the owner (U10): every arrival repaints the
+    // Mission card from whatever reads have landed and refreshes the
+    // tissue from its cache — the graph is never a private surface's.
+    paintMission();
+    readTissue();
     // The home is a place, not the absence of a conversation: arriving
     // here detaches from the one being read — the pointer clears, the
     // welcome shows — and touches nothing server-side. The conversation
@@ -27803,6 +27822,9 @@
       span.textContent = held ? String(held) : '';
       span.title = held ? held + (held === 1 ? ' waiting here' : ' waiting here') : '';
     });
+    // The Mission card reads the same counts document — one repaint, so
+    // the card's run count lands when the archive's read does.
+    paintMission();
   }
 
   function markRail() {
@@ -27962,36 +27984,48 @@
   // of its surfaces; the contrast theme is the accessibility one and
   // trades the quiet look for the maximum separation.
   var THEMES = [
-    ['paper', 'paper', 'warm light \u00b7 the default, a console read in daylight'],
+    ['night', 'night', 'harbor night \u00b7 the default since the re-skin, the deep ink-teal ground'],
+    ['day', 'day watch', 'warm paper \u00b7 the harbor\u2019s daylight inverse'],
+    ['paper', 'paper', 'warm light \u00b7 the pre-reskin default, kept for the daylight reading'],
     ['console', 'console', 'warm dark \u00b7 for a long evening beside the work'],
     ['graphite', 'graphite', 'cool dark \u00b7 a neutral ground without the warm cast'],
     ['contrast', 'contrast', 'high contrast \u00b7 pure ground, near-black ink, the accessibility theme']
   ];
 
   // The theme. One attribute on the document element is the whole
-  // switch — the alias tier re-points under it and every component token
-  // follows — so there is one thing to set and nothing else to keep in
-  // step. Paper is the default; the choice is remembered.
+  // switch — the alias and signal tiers re-point under it and every
+  // component token follows — so there is one thing to set and nothing
+  // else to keep in step. Night is the default since the U-reskin
+  // (U4/U5); the choice is remembered.
   function themeNow() {
     var now = document.documentElement.dataset.theme;
-    return THEMES.some(function (theme) { return theme[0] === now; }) ? now : 'paper';
+    if (THEMES.some(function (theme) { return theme[0] === now; })) return now;
+    // The attribute is unset when the pre-paint script could not run —
+    // the stored choice is the next truth, and night is the house.
+    try {
+      var stored = window.localStorage.getItem('fleet-theme-2');
+      if (THEMES.some(function (theme) { return theme[0] === stored; })) return stored;
+    } catch (error) { }
+    return 'night';
   }
 
   function setTheme(mode) {
     document.documentElement.dataset.theme = mode;
     el.themeToggle.dataset.theme = mode;
     // The installed app's browser chrome follows the theme; the manifest
-    // can only carry one colour (paper), so this keeps the top bar from
-    // staying paper under graphite.
+    // can only carry one colour, so this keeps the top bar from staying
+    // night under day.
     var chrome = document.querySelector('meta[name="theme-color"]');
     if (chrome) {
       var colors = {
+        night: '#08131a',
+        day: '#eef0ea',
         paper: '#f6f4ef',
         console: '#0e0f12',
         graphite: '#0a0c10',
         contrast: '#ffffff'
       };
-      chrome.setAttribute('content', colors[mode] || colors.paper);
+      chrome.setAttribute('content', colors[mode] || colors.night);
     }
     var named = THEMES.filter(function (theme) { return theme[0] === mode; })[0];
     el.themeToggle.setAttribute('aria-label', 'choose a theme \u2014 now ' + (named ? named[1] : mode));
@@ -28008,6 +28042,424 @@
   // the same shape the commands use, so one interaction pattern serves
   // both.
   el.themeToggle.addEventListener('click', function () { openThemes(); });
+
+  // ---------------------------------------------------------- the shell
+  // The U-reskin's shell concerns (Cut 1, U8–U11): the Motion switch and
+  // the ambient layer it freezes, the rail's Mission card and Saved
+  // views, and the tissue column — the connective tissue rendered.
+
+  // --- the Motion switch (U8) -----------------------------------------
+  // One toggle freezes every animation the sheet carries; the ambient
+  // layer stops drawing under it. prefers-reduced-motion is honored
+  // automatically: the effective state is the switch AND the media
+  // query, and the button shows the effective state — the accessibility
+  // default wins over a remembered preference, never the reverse.
+  function reducedMotion() {
+    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+    catch (error) { return false; }
+  }
+
+  function motionSetting() {
+    try { return window.localStorage.getItem('fleet-motion') || 'on'; }
+    catch (error) { return 'on'; }
+  }
+
+  function motionOn() { return motionSetting() === 'on' && !reducedMotion(); }
+
+  function paintMotion() {
+    var on = motionOn();
+    document.body.dataset.motion = on ? 'on' : 'off';
+    if (el.motionToggle) {
+      el.motionToggle.setAttribute('aria-pressed', String(on));
+      el.motionToggle.title = on
+        ? 'motion on \u2014 the ambient layer, pulses and flows'
+        : 'motion off \u2014 everything still';
+      el.motionToggle.setAttribute('aria-label', on ? 'turn motion off' : 'turn motion on');
+    }
+    if (on) startAmbient(); else stopAmbient();
+  }
+
+  el.motionToggle.addEventListener('click', function () {
+    try {
+      window.localStorage.setItem('fleet-motion', motionSetting() === 'on' ? 'off' : 'on');
+    } catch (error) { }
+    paintMotion();
+  });
+
+  // --- the ambient layer (U8) -----------------------------------------
+  // One canvas behind the shell: two drifting lights in the signal hues
+  // and nothing else. Cheap by design — a few gradients per frame on a
+  // 30fps interval, never a per-frame allocation race; the page hides,
+  // the Motion switch, and prefers-reduced-motion all stop it.
+  var ambientTimer = null;
+  var ambientResize = null;
+
+  function startAmbient() {
+    var canvas = document.getElementById('amb');
+    if (!canvas || typeof canvas.getContext !== 'function') return;
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    stopAmbient();
+    var width = 0, height = 0;
+    function measure() {
+      var dpr = window.devicePixelRatio || 1;
+      width = window.innerWidth || 1280;
+      height = window.innerHeight || 800;
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    measure();
+    ambientResize = function () { measure(); };
+    window.addEventListener('resize', ambientResize);
+    var t0 = Date.now();
+    var draw = function () {
+      // A hidden page draws nothing — the interval keeps its slot but
+      // the work is skipped, so an occluded face costs no GPU time.
+      if (typeof document.hidden === 'boolean' && document.hidden) return;
+      var t = (Date.now() - t0) / 1000;
+      ctx.clearRect(0, 0, width, height);
+      // The teal light rides the top-right, the amber the bottom-left —
+      // the same two stations the mockup's ground gradient carries.
+      var x1 = width * (0.82 + 0.04 * Math.sin(t / 9));
+      var y1 = height * (-0.10 + 0.05 * Math.cos(t / 11));
+      var x2 = width * (0.08 + 0.05 * Math.cos(t / 13));
+      var y2 = height * (1.08 + 0.05 * Math.sin(t / 8));
+      var g1 = ctx.createRadialGradient(x1, y1, 0, x1, y1, Math.max(width, height) * 0.55);
+      g1.addColorStop(0, 'rgba(45, 214, 191, 0.10)');
+      g1.addColorStop(1, 'rgba(45, 214, 191, 0)');
+      ctx.fillStyle = g1;
+      ctx.fillRect(0, 0, width, height);
+      var g2 = ctx.createRadialGradient(x2, y2, 0, x2, y2, Math.max(width, height) * 0.5);
+      g2.addColorStop(0, 'rgba(255, 178, 36, 0.07)');
+      g2.addColorStop(1, 'rgba(255, 178, 36, 0)');
+      ctx.fillStyle = g2;
+      ctx.fillRect(0, 0, width, height);
+    };
+    ambientTimer = window.setInterval(draw, 33);
+  }
+
+  function stopAmbient() {
+    if (ambientTimer != null) {
+      window.clearInterval(ambientTimer);
+      ambientTimer = null;
+    }
+    if (ambientResize) {
+      window.removeEventListener('resize', ambientResize);
+      ambientResize = null;
+    }
+    var canvas = document.getElementById('amb');
+    if (canvas && typeof canvas.getContext === 'function') {
+      var ctx = canvas.getContext('2d');
+      if (ctx && canvas.width) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+
+  paintMotion();
+
+  // --- the Mission card (U10) -----------------------------------------
+  // This install: the workspace's name, the version, the run count. The
+  // honest dash until both reads land; never a guess.
+  function paintMission() {
+    if (!el.missionName || !el.missionMeta) return;
+    var workspace = face.state && face.state.workspace
+      ? String(face.state.workspace).split('/').filter(Boolean).pop() : '';
+    el.missionName.textContent = workspace || 'fleet';
+    var version = face.version ? 'v' + face.version : '\u2014';
+    var counts = face.sessions && face.sessions.counts;
+    var runs = counts && typeof counts.total === 'number' ? counts.total : null;
+    el.missionMeta.textContent = version + (runs != null ? ' \u00b7 ' + runs + ' runs' : '');
+  }
+
+  function readVersion() {
+    if (face.versionAt && Date.now() - face.versionAt < 60000) {
+      paintMission();
+      return;
+    }
+    fetch('/api/version', { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.status === 200 ? reply.json() : null; })
+      .then(function (doc) {
+        if (doc && (doc.version || doc.fleet)) face.version = doc.version || doc.fleet;
+        face.versionAt = Date.now();
+        paintMission();
+      })
+      .catch(function () { face.versionAt = Date.now(); paintMission(); });
+  }
+
+  // --- Saved views (U10) ----------------------------------------------
+  // One press captures where you are; one press restores it; the drop
+  // removes it. The view is the lens — the honest unit the shell has
+  // until the lenses carry their own filters.
+  function savedViews() {
+    try {
+      var saved = JSON.parse(window.localStorage.getItem('fleet-views-1') || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch (error) { return []; }
+  }
+
+  function paintViews() {
+    if (!el.viewsWrap || !el.views) return;
+    var held = savedViews();
+    el.viewsWrap.hidden = !held.length;
+    el.views.textContent = '';
+    held.forEach(function (view, index) {
+      var row = node('button', 'view-row');
+      row.type = 'button';
+      row.appendChild(node('span', 'view-dot'));
+      row.appendChild(node('span', 'view-name', view.name));
+      row.title = 'restore ' + view.name;
+      row.addEventListener('click', function () {
+        window.location.hash = '#/' + view.lens;
+      });
+      var drop = node('button', 'view-drop', '\u00d7');
+      drop.type = 'button';
+      drop.setAttribute('aria-label', 'forget ' + view.name);
+      drop.addEventListener('click', function (event) {
+        event.stopPropagation();
+        var rest = savedViews();
+        rest.splice(index, 1);
+        try { window.localStorage.setItem('fleet-views-1', JSON.stringify(rest)); }
+        catch (error) { }
+        paintViews();
+      });
+      row.appendChild(drop);
+      el.views.appendChild(row);
+    });
+  }
+
+  if (el.viewSave) {
+    el.viewSave.addEventListener('click', function () {
+      var which = (window.location.hash || '').replace(/^#\/?/, '').split('/')[0] || 'chat';
+      var named = WHERE[which] ? WHERE[which][1] : which;
+      var held = savedViews();
+      if (held.some(function (view) { return view.lens === which; })) {
+        notice('already saved', named + ' is in the saved views');
+        return;
+      }
+      held.push({ lens: which, name: named, at: new Date().toISOString() });
+      try { window.localStorage.setItem('fleet-views-1', JSON.stringify(held)); }
+      catch (error) { }
+      paintViews();
+    });
+  }
+
+  // --- the tissue (U0/U11) --------------------------------------------
+  // The focused object's neighborhood as a radial graph, the typed
+  // legend beneath it, and the focus card. Hue encodes the family (U4,
+  // U40): task amber, thread cyan, deliverable green, bot magenta,
+  // lesson gold, practice and fact teal, instance blue. A click pivots —
+  // the shell's one focus law (U3): the tissue refocuses, and the kind's
+  // own lens opens.
+  var TISSUE_KINDS = {
+    task: { hue: '--amber', lens: 'desk', name: 'tasks' },
+    thread: { hue: '--cyan', lens: 'chat', name: 'threads' },
+    deliverable: { hue: '--green', lens: 'desk', name: 'deliverables' },
+    bot: { hue: '--magenta', lens: 'bots', name: 'bots' },
+    lesson: { hue: '--gold', lens: 'learning', name: 'lessons' },
+    practice: { hue: '--teal', lens: 'learning', name: 'practices' },
+    fact: { hue: '--teal', lens: 'memory', name: 'facts' },
+    instance: { hue: '--blue', lens: 'armada', name: 'instances' }
+  };
+
+  function readTissue(force) {
+    var now = Date.now();
+    if (!force && face.tissue && now - face.tissueAt < 4000) {
+      paintTissue();
+      return Promise.resolve();
+    }
+    face.tissueAt = now;
+    return fetch('/api/tissue', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.tissue = doc;
+        paintTissue();
+      })
+      .catch(function () {
+        // KI-380: re-armed, never swallowed.
+        connectionDown('the tissue read');
+        window.setTimeout(function () { readTissue(true); }, 5000);
+      });
+  }
+
+  function tissueNodes() {
+    return face.tissue && Array.isArray(face.tissue.nodes) ? face.tissue.nodes : [];
+  }
+
+  function tissueNode(id) {
+    return tissueNodes().filter(function (one) { return one.id === id; })[0] || null;
+  }
+
+  function paintTissue() {
+    if (!el.tissueGraph) return;
+    var nodes = tissueNodes();
+    var edges = face.tissue && Array.isArray(face.tissue.edges) ? face.tissue.edges : [];
+    el.tissueGraph.textContent = '';
+    if (el.tissueEmpty) {
+      el.tissueEmpty.hidden = nodes.length > 0;
+      if (!nodes.length) {
+        el.tissueEmpty.textContent = 'the graph grows with the work \u2014 a task, '
+          + 'a thread, a deliverable lands here as the runs make them';
+      }
+    }
+    if (!nodes.length) {
+      if (el.tissueFocus) el.tissueFocus.textContent = '';
+      if (el.tissueLegend) el.tissueLegend.textContent = '';
+      return;
+    }
+    // The focus (U3): one object. A remembered one first, else the first
+    // node the read offers — never a silent blank pane.
+    var focus = tissueNode(face.tissueFocus) || nodes[0];
+    face.tissueFocus = focus.id;
+    var W = 288, H = 224, CX = W / 2, CY = H / 2;
+    // One positions map for the whole paint: the focus sits at the
+    // center, every other node the read holds on the ring, evenly spread
+    // from the top. Edges and nodes read the same map, so a line always
+    // lands on the node it names.
+    var ring = nodes.filter(function (one) { return one.id !== focus.id; });
+    var at = {};
+    ring.forEach(function (one, index) {
+      var angle = (index / ring.length) * Math.PI * 2 - Math.PI / 2;
+      at[one.id] = [CX + 78 * Math.cos(angle), CY + 66 * Math.sin(angle)];
+    });
+    at[focus.id] = [CX, CY];
+    var made = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, 'aria-hidden': 'true' });
+    // Edges first, under the nodes. An edge the read names but a node it
+    // dropped is skipped — never a line to nowhere.
+    edges.forEach(function (edge) {
+      var fromXY = at[edge.from];
+      var toXY = at[edge.to];
+      if (!fromXY || !toXY) return;
+      var line = svg('line', {
+        x1: fromXY[0], y1: fromXY[1], x2: toXY[0], y2: toXY[1],
+        class: 'tissue-edge' + (edge.hot ? ' hot' : ''),
+        stroke: 'var(--line2)'
+      });
+      made.appendChild(line);
+    });
+    // The ring: labels above for the top half, below for the bottom (U11).
+    // The display label truncates — a thread's title is a sentence, and
+    // sixteen sentences on one ring read as a tangle; the full label
+    // rides the title attribute and the focus card says the whole word.
+    // A dense ring truncates harder, so the neighbors' words stay apart.
+    var labelCap = ring.length > 10 ? 11 : 18;
+    function tissueDisplay(label) {
+      var said = String(label || '');
+      return said.length > labelCap
+        ? said.slice(0, labelCap - 1).trimEnd() + '\u2026' : said;
+    }
+    ring.forEach(function (one) {
+      var xy = at[one.id];
+      var group = svg('g', {
+        class: 'tissue-node' + (one.live ? ' live' : ''),
+        tabindex: '0', role: 'button'
+      });
+      group.appendChild(svg('circle', {
+        cx: xy[0], cy: xy[1], r: 7, class: 'tissue-node-ring',
+        fill: 'var(' + kindHue(one.kind) + '-d)', stroke: 'var(' + kindHue(one.kind) + ')',
+        'stroke-width': '1.2'
+      }));
+      var above = xy[1] < CY;
+      group.appendChild(svg('text', {
+        x: xy[0], y: above ? xy[1] - 11 : xy[1] + 15,
+        'text-anchor': 'middle', class: 'tissue-node-label'
+      }, tissueDisplay(one.label || one.id)));
+      group.appendChild(svg('title', {}, one.label || one.id));
+      group.addEventListener('click', function () { focusTissue(one.id); });
+      made.appendChild(group);
+    });
+    // The center: the focus itself, bigger, unlabeled — the focus card
+    // names it (U11).
+    var center = svg('g', { class: 'tissue-node' + (focus.live ? ' live' : '') });
+    center.appendChild(svg('circle', {
+      cx: CX, cy: CY, r: 13, class: 'tissue-node-ring',
+      fill: 'var(' + kindHue(focus.kind) + '-d)', stroke: 'var(' + kindHue(focus.kind) + ')',
+      'stroke-width': '1.5'
+    }));
+    center.appendChild(svg('title', {}, focus.label || focus.id));
+    center.addEventListener('click', function () {
+      var kind = TISSUE_KINDS[focus.kind];
+      if (kind && kind.lens) window.location.hash = '#/' + kind.lens;
+    });
+    made.appendChild(center);
+    el.tissueGraph.appendChild(made);
+    paintTissueLegend(nodes);
+    paintTissueFocus(focus);
+  }
+
+  function kindHue(kind) {
+    var known = TISSUE_KINDS[kind];
+    return known ? known.hue : '--teal';
+  }
+
+  function paintTissueLegend(nodes) {
+    if (!el.tissueLegend) return;
+    var held = {};
+    nodes.forEach(function (one) { held[one.kind] = (held[one.kind] || 0) + 1; });
+    el.tissueLegend.textContent = '';
+    Object.keys(held).forEach(function (kind) {
+      var chip = node('span', 'tissue-kind');
+      var dot = node('span', 'tissue-kind-dot');
+      dot.style.background = 'var(' + kindHue(kind) + ')';
+      chip.appendChild(dot);
+      var named = TISSUE_KINDS[kind] ? TISSUE_KINDS[kind].name : kind;
+      chip.appendChild(node('span', null, named + ' ' + held[kind]));
+      el.tissueLegend.appendChild(chip);
+    });
+  }
+
+  function paintTissueFocus(focus) {
+    if (!el.tissueFocus) return;
+    el.tissueFocus.textContent = '';
+    var kind = TISSUE_KINDS[focus.kind];
+    var chip = node('span', 'tissue-focus-kind');
+    var dot = node('span', 'tissue-kind-dot');
+    dot.style.background = 'var(' + kindHue(focus.kind) + ')';
+    chip.appendChild(dot);
+    chip.appendChild(node('span', null, focus.kind));
+    el.tissueFocus.appendChild(chip);
+    el.tissueFocus.appendChild(node('div', 'tissue-focus-title', focus.label || focus.id));
+    var meta = node('div', 'tissue-focus-meta');
+    if (focus.status) meta.appendChild(node('span', null, 'status \u00b7 ' + focus.status));
+    if (focus.meta) meta.appendChild(node('span', null, focus.meta));
+    if (meta.childNodes.length) el.tissueFocus.appendChild(meta);
+    if (kind && kind.lens) {
+      var actions = node('div', 'tissue-focus-actions');
+      var open = node('button', null, 'open ' + kind.name);
+      open.type = 'button';
+      open.addEventListener('click', function () {
+        window.location.hash = '#/' + kind.lens;
+      });
+      actions.appendChild(open);
+      el.tissueFocus.appendChild(actions);
+    }
+  }
+
+  function focusTissue(id) {
+    face.tissueFocus = id;
+    paintTissue();
+  }
+
+  // The tissue note in the rail teaches the graph (U10) — visible only
+  // where the tissue itself can render, the same breakpoint the sheet
+  // honors.
+  function paintTissueNote() {
+    if (!el.tissueNote) return;
+    var wide = true;
+    try { wide = window.matchMedia('(min-width: 1081px)').matches; }
+    catch (error) { }
+    el.tissueNote.hidden = !wide;
+  }
+  paintTissueNote();
+  if (typeof window.matchMedia === 'function') {
+    try {
+      window.matchMedia('(min-width: 1081px)').addEventListener('change', paintTissueNote);
+    } catch (error) { /* an old listener API is a browser concern, not a face one */ }
+  }
 
   function openThemes() {
     el.themes.textContent = '';
@@ -28232,7 +28684,12 @@
 
   buildRail();
   setRail(railCollapsed() ? 'icons' : 'full');
-  el.railToggle.addEventListener('click', function () {
+  // The shell's own boot paints (U10): the Mission card's version and
+  // run count, the saved views, and the tissue's first read — the graph
+  // is on every wide surface from the first arrival, not after one.
+  readVersion();
+  paintViews();
+  readTissue(true);  el.railToggle.addEventListener('click', function () {
     setRail(railCollapsed() ? 'full' : 'icons');
     if (face.panel === 'sessions') paintSessions();
   });

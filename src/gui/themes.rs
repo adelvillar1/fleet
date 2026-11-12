@@ -24,8 +24,10 @@ const STYLES: &str = include_str!("assets/app.css");
 pub const MIN_TEXT: f64 = 4.5;
 
 /// The themes the stylesheet declares, in the order the picker shows
-/// them. The first is the default.
-const THEMES: &[&str] = &["paper", "console", "graphite", "contrast"];
+/// them. The first is the default — night, since the U-reskin (U4/U5);
+/// the `:root` block itself carries its values, and every other theme
+/// re-points the tiers under its own attribute.
+const THEMES: &[&str] = &["night", "day", "paper", "console", "graphite", "contrast"];
 
 /// One theme's declared colours, read off its block.
 #[derive(Debug, Default)]
@@ -89,8 +91,10 @@ fn resolve(name: &str, values: &HashMap<String, String>, depth: usize) -> Option
 }
 
 /// Read every theme's block out of the stylesheet: the declarations that
-/// belong to it, resolved through the `:root` block above them.
-fn themes() -> Vec<(String, Theme)> {
+/// belong to it, resolved through the `:root` block above them. The
+/// values stay raw — a `var()` chain resolves on demand, and the
+/// gradient's `rgb()` stops are scanned where the law needs them.
+fn theme_values() -> Vec<(String, HashMap<String, String>)> {
     // The `:root` block is the base every theme overrides, so it is read
     // first and each theme starts from it.
     let mut base: HashMap<String, String> = HashMap::new();
@@ -124,16 +128,26 @@ fn themes() -> Vec<(String, Theme)> {
         }
     }
 
-    // The `:root` base is the paper theme — the pre-JavaScript default,
-    // which is why it carries the values rather than pointing at a block
-    // that has not loaded yet. It is prepended as a theme of its own so
-    // the guard checks it like any other.
-    let mut all = vec![("paper".to_string(), HashMap::new())];
+    // The `:root` base is the picker's first theme — the pre-JavaScript
+    // default, which is why it carries the values rather than pointing
+    // at a block that has not loaded yet. It is prepended as a theme of
+    // its own so the guard checks it like any other.
+    let default_name = THEMES[0].to_string();
+    let mut all = vec![(default_name, HashMap::new())];
     all.extend(blocks);
     all.into_iter()
         .map(|(name, own)| {
             let mut values = base.clone();
             values.extend(own);
+            (name, values)
+        })
+        .collect()
+}
+
+fn themes() -> Vec<(String, Theme)> {
+    theme_values()
+        .into_iter()
+        .map(|(name, values)| {
             let pick = |token: &str| resolve(token, &values, 0);
             let text = [
                 "--dsw-alias-ink",
@@ -156,6 +170,34 @@ fn themes() -> Vec<(String, Theme)> {
             (name, theme)
         })
         .collect()
+}
+
+/// One theme's gradient stops and the label colour that rides them — the
+/// pair the send-button law holds (KI-476). The bright harbor gradients
+/// carry the near-black ink label; the deep blue ones keep white.
+#[cfg(test)]
+struct Gradient {
+    stops: Vec<(u8, u8, u8)>,
+    label: (u8, u8, u8),
+}
+
+#[cfg(test)]
+fn gradient_pair(values: &HashMap<String, String>) -> Option<Gradient> {
+    let raw = values.get("--dsw-alias-gradient")?;
+    let mut stops = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = raw[cursor..].find("rgb(") {
+        let start = cursor + offset;
+        let Some(close) = raw[start..].find(')') else {
+            break;
+        };
+        if let Some(colour) = rgb(&raw[start..start + close + 1]) {
+            stops.push(colour);
+        }
+        cursor = start + close + 1;
+    }
+    let label = resolve("--dsw-alias-on-accent", values, 0)?;
+    Some(Gradient { stops, label })
 }
 
 /// One theme's measured contrast: the worst text ratio it offers, and
@@ -314,8 +356,9 @@ mod tests {
     #[test]
     fn the_parser_reads_a_themes_own_overrides() {
         let found = themes();
-        // `paper` is the `:root` base itself — the default ground — so
-        // its ink is the base's near-black.
+        // `paper` declares its own block — the pre-reskin default, kept
+        // whole when the harbor mapping took the `:root` base — so its
+        // ink is the block's near-black.
         let paper = found
             .iter()
             .find(|(name, _)| name == "paper")
@@ -357,53 +400,41 @@ mod tests {
         assert_eq!(ink, (0, 0, 0));
     }
 
-    /// The ratios the four themes actually measure, printed so a change
+    /// The ratios the themes actually measure, printed so a change
     /// that moves one is visible rather than silent.
-    /// KI-476's pin: the Send button's white label sits on
-    /// `--dsw-alias-gradient`, so **every stop of every theme's
-    /// gradient** must clear AA against white — the token-level fix
-    /// shipped without a measurement once, and that is how the failure
-    /// survived. The parser reads the stylesheet itself, so a future
-    /// token change is caught here rather than by a mockup.
+    /// KI-476's pin, generalized by the U-reskin: the Send button's
+    /// label sits on `--dsw-alias-gradient`, and the label colour is
+    /// each theme's own `--dsw-alias-on-accent` — white on the deep
+    /// blue gradients, the near-black ink the bright harbor ones carry.
+    /// **Every stop of every theme's gradient must clear AA for the
+    /// label its theme declares** — the token-level fix shipped without
+    /// a measurement once, and that is how the failure survived. The
+    /// parser reads the stylesheet itself, so a future token change is
+    /// caught here rather than by a mockup.
     #[test]
-    fn the_send_gradients_clear_aa_against_their_white_label() {
-        let css = include_str!("assets/app.css");
+    fn the_gradients_clear_aa_for_the_label_each_theme_declares() {
+        let found = theme_values();
         let mut gradients = 0;
-        for line in css.lines() {
-            let Some(rest) = line.trim().strip_prefix("--dsw-alias-gradient:") else {
-                continue;
+        for (name, values) in found {
+            let Some(gradient) = gradient_pair(&values) else {
+                panic!("`{name}` declares no gradient or no on-accent label");
             };
-            // linear-gradient(135deg, rgb(..), rgb(..)) — scan the
-            // whole declaration for rgb(…) spans; splitting on commas
-            // would cut the triples apart.
-            let mut stops: Vec<(u8, u8, u8)> = Vec::new();
-            let mut cursor = 0;
-            while let Some(offset) = rest[cursor..].find("rgb(") {
-                let start = cursor + offset;
-                let Some(close) = rest[start..].find(')') else {
-                    break;
-                };
-                let literal = &rest[start..start + close + 1];
-                if let Some(colour) = rgb(literal) {
-                    stops.push(colour);
-                }
-                cursor = start + close + 1;
-            }
             assert!(
-                stops.len() >= 2,
-                "a gradient with fewer than two readable stops: {line}"
+                gradient.stops.len() >= 2,
+                "`{name}`: a gradient with fewer than two readable stops"
             );
-            for stop in stops {
-                let ratio = contrast((255, 255, 255), stop);
+            for stop in &gradient.stops {
+                let ratio = contrast(gradient.label, *stop);
                 assert!(
                     ratio >= MIN_TEXT,
-                    "white on {stop:?} is {ratio:.2} against a {MIN_TEXT} floor ({line})"
+                    "`{name}`: {:?} on {stop:?} is {ratio:.2} against a {MIN_TEXT} floor",
+                    gradient.label
                 );
             }
             gradients += 1;
         }
         assert!(
-            gradients >= 4,
+            gradients >= 6,
             "every declared theme's gradient is measured: {gradients}"
         );
     }

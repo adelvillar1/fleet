@@ -832,6 +832,22 @@ function boot(options) {
         }),
       });
     }
+    // The Mission card's read (U10): one document with the compiled-in
+    // version, or the empty object the honest dash paints from.
+    if (pathOnly === '/api/version') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.version || {}),
+      });
+    }
+    // The tissue's read (U11): the work-object graph, or the empty graph
+    // whose note names what fills it — never invented nodes.
+    if (pathOnly === '/api/tissue') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.tissue || emptyTissue()),
+      });
+    }
     if (pathOnly === '/api/web/frame') {
       const asked = new URL('http://x' + url).searchParams.get('url') || '';
       return Promise.resolve({
@@ -1217,6 +1233,10 @@ const emptySessions = () => ({
   counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
   sessions: [],
 });
+
+// The tissue's empty read (U11): a graph with nothing in it yet. The
+// column paints the honest note, never a node.
+const emptyTissue = () => ({ type: 'tissue', nodes: [], edges: [], bounded: 60, omitted: 0 });
 
 // The learning pane's empty read: no lesson yet, an empty graph, no
 // outcomes, no history. The fixture the rail and the sections paint.
@@ -12073,6 +12093,201 @@ async function aReopenedFaceIsIdleAndNotWedged() {
     JSON.stringify(runs.map((c) => c.url)));
 }
 
+// ------------------------------------------------------------ U-reskin Cut 1
+
+// U4/U5: Harbor Night is the default theme. A fresh face with no stored
+// choice walks in night; the picker lists night first and remembers a
+// switch; Day Watch re-points the same attribute.
+async function theShellWalksInNightAndRemembersTheSwitch() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush();
+  check('RESKIN a fresh face walks in night',
+    page.documentElement.dataset.theme === 'night',
+    'theme=' + page.documentElement.dataset.theme);
+  const toggle = page.IDS['theme-toggle'];
+  check('RESKIN the toggle names night as now', String(toggle.title).includes('night'),
+    'title=' + toggle.title);
+  // The picker is the toggle's own opening act: the press builds the
+  // rows, then the choice is one click — never a blind cycle.
+  toggle.click();
+  await flush();
+  const rows = page.IDS.themes.querySelectorAll('.theme-row');
+  check('RESKIN the picker lists night first',
+    rows.length >= 2 && rows[0].dataset.theme === 'night',
+    'rows=' + rows.length + ' first=' + (rows[0] && rows[0].dataset.theme));
+  // A switch to Day Watch is one attribute and a remembered choice.
+  rows[1].click();
+  await flush();
+  check('RESKIN a picker press lands Day Watch',
+    page.documentElement.dataset.theme === 'day',
+    'theme=' + page.documentElement.dataset.theme);
+  check('RESKIN the theme choice is remembered',
+    page.window.localStorage.getItem('fleet-theme-2') === 'day',
+    'stored=' + page.window.localStorage.getItem('fleet-theme-2'));
+  const reopen = boot({ storage: { 'fleet-theme-2': 'day' }, documents: {} });
+  reopen.open();
+  await flush();
+  check('RESKIN a reopened face honors the stored choice',
+    reopen.documentElement.dataset.theme === 'day',
+    'theme=' + reopen.documentElement.dataset.theme);
+}
+
+// U8: the Motion switch freezes the shell — the body attribute flips,
+// the pressed state reads, and the setting is remembered.
+async function theMotionSwitchFreezesTheShell() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush();
+  const toggle = page.IDS['motion-toggle'];
+  check('RESKIN motion starts on with the pressed state',
+    page.body.dataset.motion === 'on' &&
+      toggle.getAttribute('aria-pressed') === 'true',
+    'body=' + page.body.dataset.motion +
+      ' pressed=' + toggle.getAttribute('aria-pressed'));
+  toggle.click();
+  await flush();
+  check('RESKIN a press freezes motion',
+    page.body.dataset.motion === 'off' &&
+      toggle.getAttribute('aria-pressed') === 'false',
+    'body=' + page.body.dataset.motion +
+      ' pressed=' + toggle.getAttribute('aria-pressed'));
+  check('RESKIN the motion choice is remembered',
+    page.window.localStorage.getItem('fleet-motion') === 'off',
+    'stored=' + page.window.localStorage.getItem('fleet-motion'));
+  toggle.click();
+  await flush();
+  check('RESKIN a second press un-freezes it',
+    page.body.dataset.motion === 'on',
+    'body=' + page.body.dataset.motion);
+}
+
+// U10: the Mission card paints this install — the version and the run
+// count once the reads land, the honest dash until they do.
+async function theMissionCardPaintsTheInstall() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush();
+  const meta = page.IDS['mission-meta'];
+  check('RESKIN the Mission card opens on the honest dash',
+    page.IDS['mission-name'].textContent === 'fleet' && meta.textContent.includes('\u2014'),
+    'name=' + page.IDS['mission-name'].textContent + ' meta=' + meta.textContent);
+  const fed = boot({
+    documents: {
+      version: { name: 'fleet', version: '0.7.1' },
+      sessions: { type: 'sessions', counts: { needs: 0, working: 0, total: 5 } },
+      state: { workspace: '/Users/owner/Projects/fleet' },
+    },
+  });
+  fed.open();
+  await flush();
+  check('RESKIN the reads land the version and the run count',
+    fed.IDS['mission-meta'].textContent.includes('0.7.1') &&
+      fed.IDS['mission-meta'].textContent.includes('5 runs'),
+    'meta=' + fed.IDS['mission-meta'].textContent);
+  check('RESKIN the card names the workspace, not a path',
+    fed.IDS['mission-name'].textContent === 'fleet',
+    'name=' + fed.IDS['mission-name'].textContent);
+}
+
+// U10: Saved views capture and restore a lens, and the wrap stays hidden
+// while the list is empty — an empty affordance is decoration.
+async function savedViewsCaptureAndRestoreALens() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush();
+  check('RESKIN the saved-views wrap starts hidden with nothing saved',
+    page.IDS['views-wrap'].hidden === true, 'hidden=' + page.IDS['views-wrap'].hidden);
+  page.window.location.hash = '#/desk';
+  await flush();
+  page.IDS['view-save'].click();
+  await flush();
+  check('RESKIN a save shows the wrap and one row',
+    page.IDS['views-wrap'].hidden === false &&
+      page.IDS.views.querySelectorAll('.view-row').length === 1,
+    'rows=' + page.IDS.views.querySelectorAll('.view-row').length);
+  page.window.location.hash = '#/chat';
+  await flush();
+  page.IDS.views.querySelectorAll('.view-row')[0].click();
+  await flush();
+  check('RESKIN a row click restores the lens',
+    page.window.location.hash === '#/desk',
+    'hash=' + page.window.location.hash);
+  check('RESKIN the save refuses a duplicate',
+    page.IDS.views.querySelectorAll('.view-row').length === 1,
+    'rows=' + page.IDS.views.querySelectorAll('.view-row').length);
+  page.IDS.views.querySelector('.view-drop').click();
+  await flush();
+  check('RESKIN the drop forgets the view and hides the wrap',
+    page.IDS['views-wrap'].hidden === true,
+    'hidden=' + page.IDS['views-wrap'].hidden);
+}
+
+// U11: the tissue paints the graph the read returns — the focus at the
+// center, the ring around it, the typed legend, the focus card — and a
+// ring click pivots the focus (U3).
+const tissueDocument = () => ({
+  type: 'tissue',
+  nodes: [
+    { id: 't1', kind: 'task', label: 'write the release notes', status: 'working', live: true },
+    { id: 's1', kind: 'thread', label: 'the release thread' },
+    { id: 'd1', kind: 'deliverable', label: 'the notes' },
+    { id: 'b1', kind: 'bot', label: 'archivist' },
+  ],
+  edges: [
+    { from: 't1', to: 's1', kind: 'works_in' },
+    { from: 't1', to: 'd1', kind: 'produces' },
+    { from: 't1', to: 'b1', kind: 'assigned_bot' },
+  ],
+});
+async function theTissuePaintsTheGraphAndPivots() {
+  const page = boot({ documents: { tissue: tissueDocument() } });
+  page.open();
+  await flush();
+  const svgEl = page.IDS['tissue-graph'].querySelector('svg');
+  check('RESKIN the tissue draws one graph', !!svgEl, svgEl ? 'svg present' : 'no svg');
+  const nodes = svgEl.querySelectorAll('.tissue-node');
+  check('RESKIN the graph carries the focus and the ring',
+    nodes.length === 4, 'nodes=' + nodes.length);
+  const live = svgEl.querySelectorAll('.tissue-node.live');
+  check('RESKIN the working node carries the pulse', live.length === 1,
+    'live=' + live.length);
+  const legend = page.IDS['tissue-legend'].querySelectorAll('.tissue-kind');
+  check('RESKIN the legend names the kinds present', legend.length === 4,
+    'kinds=' + legend.length);
+  const focusCard = page.IDS['tissue-focus'];
+  check('RESKIN the focus card names the first node',
+    focusCard.querySelector('.tissue-focus-title').textContent === 'write the release notes',
+    'title=' + focusCard.querySelector('.tissue-focus-title').textContent);
+  check('RESKIN the focus card offers the kind\u2019s lens',
+    focusCard.textContent.includes('open tasks'),
+    'actions=' + focusCard.textContent);
+  // The pivot (U3): a ring click refocuses the whole column.
+  const ringNode = nodes.filter((one) => one.className !== 'tissue-node live' &&
+    one.querySelector('circle').getAttribute('r') === '7')[0];
+  ringNode.click();
+  await flush();
+  check('RESKIN a ring click pivots the focus',
+    page.IDS['tissue-focus'].querySelector('.tissue-focus-title').textContent !==
+      'write the release notes',
+    'title=' + page.IDS['tissue-focus'].querySelector('.tissue-focus-title').textContent);
+}
+
+// U2/U35: an empty tissue names what fills it — never a node that was
+// never read.
+async function anEmptyTissueNamesWhatFillsIt() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush();
+  check('RESKIN the empty tissue draws no graph',
+    !page.IDS['tissue-graph'].querySelector('svg'), 'svg drawn');
+  check('RESKIN the empty note names what fills the graph',
+    page.IDS['tissue-empty'].hidden === false &&
+      page.IDS['tissue-empty'].textContent.includes('graph grows with the work'),
+    'hidden=' + page.IDS['tissue-empty'].hidden +
+      ' said=' + page.IDS['tissue-empty'].textContent);
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -12218,6 +12433,12 @@ const cases = [
   ['MS a capacity refusal paints a polite queued card', aCapacityRefusalPaintsAPoliteQueuedCard],
   ['MS two concurrent sessions render their own transcripts', twoConcurrentSessionsRenderTheirOwnTranscripts],
   ['MS a reopened face is idle and not wedged', aReopenedFaceIsIdleAndNotWedged],
+  ['RESKIN the shell walks in night and remembers the switch', theShellWalksInNightAndRemembersTheSwitch],
+  ['RESKIN the Motion switch freezes the shell', theMotionSwitchFreezesTheShell],
+  ['RESKIN the Mission card paints the install', theMissionCardPaintsTheInstall],
+  ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],
+  ['RESKIN the tissue paints the graph and pivots', theTissuePaintsTheGraphAndPivots],
+  ['RESKIN an empty tissue names what fills it', anEmptyTissueNamesWhatFillsIt],
 ];
 
 for (const [name, run] of cases) {

@@ -16,9 +16,19 @@ copyright line requires.
   https://github.com/VolodymyrBaydalka/docxjs
 - **JSZip** 3.10.1 — `jszip.min.js` — MIT license; copyright Stuart
   Knightley and contributors. Upstream: https://github.com/Stuk/jszip
+- **Space Grotesk** v22 — `fonts/SpaceGrotesk.woff2` — SIL Open Font
+  License 1.1; copyright the Space Grotesk Project Authors. Upstream:
+  https://github.com/floriankarsten/space-grotesk
+- **Inter** v20 — `fonts/Inter.woff2` — SIL Open Font License 1.1;
+  copyright The Inter Project Authors. Upstream: https://rsms.me/inter/
+- **JetBrains Mono** v24 — `fonts/JetBrainsMono.woff2` — SIL Open Font
+  License 1.1; copyright the JetBrains Mono Project Authors. Upstream:
+  https://github.com/JetBrains/JetBrainsMono
 
 The Apache License, Version 2.0 text:
 http://www.apache.org/licenses/LICENSE-2.0
 The Mozilla Public License, Version 2.0 text:
 http://mozilla.org/MPL/2.0/
 The MIT license text is carried in the JSZip file's own header.
+The SIL Open Font License 1.1 text:
+https://openfontlicense.org/open-font-license-official-text/

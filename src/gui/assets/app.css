@@ -1,19 +1,43 @@
 /* Fleet's browser face.
 
-   The design is an editorial operations console: a warm paper ground by
-   default, a display serif for the few places a page must announce
-   itself, a precise interface sans for everything readable, and mono for
-   everything measured. The colour chain has three tiers and nothing
-   skips one: the reference palette names where a colour came from, the
-   alias tier names what it means, and the component tokens name where it
-   lands. A theme re-points the alias tier; no component rule moves.
-
-   Light is the default because a console is read in daylight, beside a
-   document, for hours. The dark themes are options, not the house.
+   The design is the U-ledger's workspace (docs/plans/UI-DECISIONS.md): one
+   shell, one graph, every surface a lens over it. Harbor Night is the
+   default ground since the U-reskin (U4/U5) — deep ink-teal, the nine
+   signal hues carrying fixed meanings, nothing decorative. Day Watch
+   ([data-theme="day"]) is the warm-paper inverse; paper (the pre-reskin
+   default) survives as a theme of its own, and the colour chain still has
+   its three tiers: the reference palette names where a colour came from,
+   the alias tier names what it means, and the signal tier is the U4 token
+   set migrated components read. A theme re-points both tiers; no component
+   rule moves.
 
    Page structure: rail (the map), topbar (where you are and what the run
-   costs), stage (the work). Boards share one page-head / stat-strip /
-   card system so ten surfaces read as one product rather than ten forms. */
+   costs), stage (the work), tissue (the graph, U11). Boards share one
+   page-head / stat-strip / card system so ten surfaces read as one product
+   rather than ten forms. */
+
+/* The three type voices (U6), vendored so the face fetches nothing:
+   Space Grotesk for display, Inter for body, JetBrains Mono for data.
+   Variable woff2, OFL — see vendor/VENDOR.json. The stacks after each
+   name are the degradation path, not a second voice. */
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("vendor/fonts/SpaceGrotesk.woff2") format("woff2");
+  font-weight: 300 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("vendor/fonts/Inter.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("vendor/fonts/JetBrainsMono.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
 
 /* ---------------------------------------------------------------- themes */
 
@@ -83,33 +107,70 @@
   --dsw-static-mix-slate: rgb(112, 124, 140);
 
   /* --- the alias tier: what the colours mean ------------------------ */
-  --dsw-alias-page: rgb(246, 244, 239);
-  --dsw-alias-surface: rgb(252, 251, 248);
-  --dsw-alias-surface-raised: rgb(239, 236, 230);
-  --dsw-alias-surface-overlay: rgb(255, 255, 255);
-  --dsw-alias-hairline: rgb(24 26 29 / 10%);
-  --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
-  --dsw-alias-ink: rgb(24, 26, 29);
-  --dsw-alias-ink-secondary: rgb(82, 88, 96);
-  --dsw-alias-ink-tertiary: rgb(94, 102, 112);
-  --dsw-alias-accent: rgb(47, 95, 208);
-  --dsw-alias-accent-deep: rgb(37, 78, 176);
-  --dsw-alias-accent-lift: rgb(37, 78, 176);
+  /* Night is the default since the U-reskin (U4/U5): the alias tier re-points
+     to the Harbor Night mapping and the warm-paper values live on
+     [data-theme="paper"] below. The reference tier above keeps naming where
+     every colour came from; the harbor references are the mockup's own
+     (docs/design/fleet-workspace-mockup.html), the contract U27 holds
+     one-to-one in the signal tier under this block. */
+  --dsw-alias-page: rgb(8, 19, 26);
+  --dsw-alias-surface: rgb(15, 37, 48);
+  --dsw-alias-surface-raised: rgb(18, 48, 60);
+  --dsw-alias-surface-overlay: rgb(22, 57, 74);
+  --dsw-alias-hairline: rgb(86 180 200 / 16%);
+  --dsw-alias-hairline-strong: rgb(86 180 200 / 30%);
+  --dsw-alias-ink: rgb(233, 244, 245);
+  --dsw-alias-ink-secondary: rgb(147, 174, 182);
+  --dsw-alias-ink-tertiary: rgb(143, 176, 187);
+  --dsw-alias-accent: rgb(58, 212, 242);
+  --dsw-alias-accent-deep: rgb(45, 214, 191);
+  --dsw-alias-accent-lift: rgb(58, 212, 242);
   --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
-  --dsw-alias-ok: rgb(22, 110, 46);
-  --dsw-alias-down: rgb(176, 36, 32);
-  --dsw-alias-warn: rgb(122, 82, 8);
-  --dsw-alias-gradient: linear-gradient(135deg, rgb(63, 108, 218), rgb(37, 78, 176));
-  --lane-0: rgb(13, 118, 110);
-  --lane-1: rgb(109, 58, 216);
-  --lane-2: rgb(176, 84, 10);
-  --lane-3: rgb(190, 24, 93);
-  --lane-4: rgb(12, 116, 150);
-  --lane-5: rgb(84, 124, 12);
+  --dsw-alias-ok: rgb(55, 226, 164);
+  --dsw-alias-down: rgb(255, 120, 113);
+  --dsw-alias-warn: rgb(255, 178, 36);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(45, 214, 191), rgb(55, 226, 164));
+  --dsw-alias-on-accent: rgb(4, 18, 26);
+  --lane-0: rgb(45, 214, 191);
+  --lane-1: rgb(167, 139, 250);
+  --lane-2: rgb(255, 178, 36);
+  --lane-3: rgb(255, 96, 96);
+  --lane-4: rgb(91, 157, 255);
+  --lane-5: rgb(163, 230, 53);
 
-  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
-  --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
-  --shadow-3: 0 32px 80px -32px rgb(24 26 29 / 38%), 0 8px 24px -12px rgb(24 26 29 / 18%);
+  /* --- the signal tier: U4/U5, one-to-one with the mockup ----------- */
+  /* The nine hues are the whole set — no tenth (U4). Every accent pairs
+     with an icon or label so meaning never rides colour alone. `--ink`/
+     `--panel`/`--text`/`--line` and friends are the U5 token names the
+     ledger fixes; the alias tier above re-points the existing components,
+     the signal tier is what migrated components read. */
+  --ink: rgb(8, 19, 26);
+  --ink2: rgb(12, 30, 39);
+  --panel: rgb(15, 37, 48);
+  --panel2: rgb(18, 48, 60);
+  --raise: rgb(22, 57, 74);
+  --line: rgb(86 180 200 / 16%);
+  --line2: rgb(86 180 200 / 30%);
+  --text: rgb(233, 244, 245);
+  --muted: rgb(147, 174, 182);
+  --faint: rgb(95, 125, 134);
+  --green: rgb(55, 226, 164); --cyan: rgb(58, 212, 242); --magenta: rgb(247, 87, 194);
+  --amber: rgb(255, 178, 36); --gold: rgb(255, 216, 107); --red: rgb(255, 96, 96);
+  --teal: rgb(45, 214, 191); --blue: rgb(91, 157, 255);
+  --green-d: rgb(55 226 164 / 14%); --cyan-d: rgb(58 212 242 / 14%);
+  --magenta-d: rgb(247 87 194 / 14%); --amber-d: rgb(255 178 36 / 14%);
+  --gold-d: rgb(255 216 107 / 14%); --red-d: rgb(255 96 96 / 14%);
+  --teal-d: rgb(45 214 191 / 14%); --blue-d: rgb(91 157 255 / 14%);
+  --disp: "Space Grotesk", "Avenir Next", "SF Pro Display", system-ui, sans-serif;
+  --body: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --r-lg: 16px; --r-md: 11px; --r-sm: 7px;
+  --deep-shadow: 0 18px 50px -18px rgb(0 0 0 / 70%);
+  --gap: 14px; --pad: 16px;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 30%), 0 1px 1px rgb(0 0 0 / 20%);
+  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 65%), 0 2px 6px rgb(0 0 0 / 25%);
+  --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 80%), 0 8px 24px -12px rgb(0 0 0 / 45%);
   --shadow-lift: var(--shadow-2);
 
   /* --- component tokens -------------------------------------------- */
@@ -133,7 +194,9 @@
   --composer-radius: 16px;
   --seat-bg: color-mix(in srgb, var(--dsw-alias-accent) 7%, var(--dsw-alias-surface));
 
-  --font-display: "New York", ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  /* U6: the display voice is the grotesk since the re-skin — the same
+     token every heading read before, now the U6 voice. */
+  --font-display: "Space Grotesk", "Avenir Next", "SF Pro Display", system-ui, sans-serif;
   --font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas,
@@ -168,6 +231,108 @@
   --medium: 180ms;
 }
 
+/* Day Watch (U5): the warm-paper inverse of Harbor Night. The surfaces
+   re-point light, the signal hues drop to the mockup's day set, and the
+   accent family deepens far enough for its text tokens to clear the
+   guard's floor on a light ground (the values the themes.rs guard
+   measures). The status colours stay the measured paper set — the law
+   they carry (U15) does not change between grounds. */
+:root[data-theme="day"] {
+  --ink: rgb(238, 240, 234);
+  --ink2: rgb(231, 234, 226);
+  --panel: rgb(251, 250, 245);
+  --panel2: rgb(243, 242, 234);
+  --raise: rgb(255, 255, 255);
+  --line: rgb(20 60 70 / 14%);
+  --line2: rgb(20 60 70 / 26%);
+  --text: rgb(19, 36, 43);
+  --muted: rgb(77, 102, 112);
+  --faint: rgb(131, 151, 160);
+  --green: rgb(15, 168, 118); --cyan: rgb(10, 147, 184); --magenta: rgb(207, 47, 156);
+  --amber: rgb(201, 126, 0); --gold: rgb(185, 137, 0); --red: rgb(220, 56, 56);
+  --teal: rgb(12, 156, 139); --blue: rgb(47, 111, 214);
+  --green-d: rgb(15 168 118 / 12%); --cyan-d: rgb(10 147 184 / 12%);
+  --magenta-d: rgb(207 47 156 / 12%); --amber-d: rgb(201 126 0 / 13%);
+  --gold-d: rgb(185 137 0 / 14%); --red-d: rgb(220 56 56 / 12%);
+  --teal-d: rgb(12 156 139 / 12%); --blue-d: rgb(47 111 214 / 12%);
+  --deep-shadow: 0 18px 44px -22px rgb(20 50 60 / 40%);
+
+  /* The alias tier re-points light — the paper surfaces, so the
+     existing components read the warm-paper ground under Day Watch
+     exactly as they did under paper. */
+  --dsw-alias-page: rgb(246, 244, 239);
+  --dsw-alias-surface: rgb(252, 251, 248);
+  --dsw-alias-surface-raised: rgb(239, 236, 230);
+  --dsw-alias-surface-overlay: rgb(255, 255, 255);
+  --dsw-alias-hairline: rgb(24 26 29 / 10%);
+  --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
+  --dsw-alias-ink: rgb(24, 26, 29);
+  --dsw-alias-ink-secondary: rgb(82, 88, 96);
+  --dsw-alias-ink-tertiary: rgb(94, 102, 112);
+  --dsw-alias-accent: rgb(10, 147, 184);
+  --dsw-alias-accent-deep: rgb(12, 156, 139);
+  --dsw-alias-accent-lift: rgb(6, 100, 132);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(12, 156, 139), rgb(15, 168, 118));
+  --dsw-alias-on-accent: rgb(4, 18, 26);
+  --dsw-alias-ok: rgb(22, 110, 46);
+  --dsw-alias-down: rgb(176, 36, 32);
+  --dsw-alias-warn: rgb(122, 82, 8);
+  --lane-0: rgb(15, 168, 118);
+  --lane-1: rgb(207, 47, 156);
+  --lane-2: rgb(201, 126, 0);
+  --lane-3: rgb(220, 56, 56);
+  --lane-4: rgb(47, 111, 214);
+  --lane-5: rgb(12, 156, 139);
+  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
+  --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
+  --shadow-3: 0 32px 80px -32px rgb(24 26 29 / 38%), 0 8px 24px -12px rgb(24 26 29 / 18%);
+}
+
+/* Paper: the pre-reskin default, kept whole so the owner's saved choice
+   and the daylight reading survive the re-skin. The alias tier carries
+   the exact values `:root` held before the harbor mapping moved in. */
+:root[data-theme="paper"] {
+  --dsw-alias-page: rgb(246, 244, 239);
+  --dsw-alias-surface: rgb(252, 251, 248);
+  --dsw-alias-surface-raised: rgb(239, 236, 230);
+  --dsw-alias-surface-overlay: rgb(255, 255, 255);
+  --dsw-alias-hairline: rgb(24 26 29 / 10%);
+  --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
+  --dsw-alias-ink: rgb(24, 26, 29);
+  --dsw-alias-ink-secondary: rgb(82, 88, 96);
+  --dsw-alias-ink-tertiary: rgb(94, 102, 112);
+  --dsw-alias-accent: rgb(47, 95, 208);
+  --dsw-alias-accent-deep: rgb(37, 78, 176);
+  --dsw-alias-accent-lift: rgb(37, 78, 176);
+  --dsw-alias-ok: rgb(22, 110, 46);
+  --dsw-alias-down: rgb(176, 36, 32);
+  --dsw-alias-warn: rgb(122, 82, 8);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(63, 108, 218), rgb(37, 78, 176));
+  --dsw-alias-on-accent: rgb(255, 255, 255);
+  --lane-0: rgb(13, 118, 110);
+  --lane-1: rgb(109, 58, 216);
+  --lane-2: rgb(176, 84, 10);
+  --lane-3: rgb(190, 24, 93);
+  --lane-4: rgb(12, 116, 150);
+  --lane-5: rgb(84, 124, 12);
+  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
+  --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
+  --shadow-3: 0 32px 80px -32px rgb(24 26 29 / 38%), 0 8px 24px -12px rgb(24 26 29 / 18%);
+  --ink: rgb(238, 240, 234);
+  --panel: rgb(251, 250, 245);
+  --panel2: rgb(243, 242, 234);
+  --raise: rgb(255, 255, 255);
+  --line: rgb(20 60 70 / 14%);
+  --line2: rgb(20 60 70 / 26%);
+  --text: rgb(19, 36, 43);
+  --muted: rgb(77, 102, 112);
+  --faint: rgb(131, 151, 160);
+  --green: rgb(15, 168, 118); --cyan: rgb(10, 147, 184); --magenta: rgb(207, 47, 156);
+  --amber: rgb(201, 126, 0); --gold: rgb(185, 137, 0); --red: rgb(220, 56, 56);
+  --teal: rgb(12, 156, 139); --blue: rgb(47, 111, 214);
+}
+
 /* The warm dark console. A collector for long evening runs; not the
    default, and it keeps the same structure and type scale as paper. */
 :root[data-theme="console"] {
@@ -188,6 +353,7 @@
   --dsw-alias-down: rgb(240, 106, 99);
   --dsw-alias-warn: rgb(220, 166, 66);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(76, 113, 201), rgb(52, 88, 182));
+  --dsw-alias-on-accent: rgb(255, 255, 255);
   --lane-0: rgb(45, 212, 191);
   --lane-1: rgb(167, 139, 250);
   --lane-2: rgb(251, 191, 36);
@@ -220,6 +386,7 @@
   --dsw-alias-down: rgb(240, 106, 99);
   --dsw-alias-warn: rgb(220, 166, 66);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(73, 115, 199), rgb(48, 87, 181));
+  --dsw-alias-on-accent: rgb(255, 255, 255);
   --lane-0: rgb(94, 210, 190);
   --lane-1: rgb(158, 134, 240);
   --lane-2: rgb(235, 180, 60);
@@ -252,6 +419,21 @@
   --dsw-alias-down: rgb(176, 20, 20);
   --dsw-alias-warn: rgb(124, 82, 6);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(20, 60, 150), rgb(16, 48, 122));
+  --dsw-alias-on-accent: rgb(255, 255, 255);
+  /* The signal tier on a pure-white ground: the mockup's day set, the
+     same nine hues the light themes carry (U4 — no theme invents a hue). */
+  --ink: rgb(255, 255, 255);
+  --panel: rgb(255, 255, 255);
+  --panel2: rgb(238, 238, 238);
+  --raise: rgb(255, 255, 255);
+  --line: rgb(0 0 0 / 22%);
+  --line2: rgb(0 0 0 / 45%);
+  --text: rgb(0, 0, 0);
+  --muted: rgb(38, 38, 38);
+  --faint: rgb(70, 70, 70);
+  --green: rgb(15, 168, 118); --cyan: rgb(10, 147, 184); --magenta: rgb(207, 47, 156);
+  --amber: rgb(201, 126, 0); --gold: rgb(185, 137, 0); --red: rgb(220, 56, 56);
+  --teal: rgb(12, 156, 139); --blue: rgb(47, 111, 214);
   --lane-0: rgb(0, 150, 136);
   --lane-1: rgb(122, 48, 226);
   --lane-2: rgb(190, 88, 0);
@@ -1127,6 +1309,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 
 .theme-toggle,
+.motion-toggle,
 .pane-open,
 .palette-open,
 .pair-open,
@@ -1150,6 +1333,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 
 .theme-toggle:hover,
+.motion-toggle:hover,
 .pane-open:hover,
 .palette-open:hover,
 .pair-open:hover,
@@ -1159,6 +1343,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 
 .theme-toggle:active,
+.motion-toggle:active,
 .pane-open:active,
 .palette-open:active,
 .pair-open:active,
@@ -1166,7 +1351,11 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 .aside-toggle[aria-pressed="false"] { color: var(--dsw-alias-ink-tertiary); }
 
-.theme-toggle svg, .pane-open svg, .pair-open svg, .aside-toggle svg { width: 16px; height: 16px; }
+.theme-toggle svg, .motion-toggle svg, .pane-open svg, .pair-open svg, .aside-toggle svg { width: 16px; height: 16px; }
+
+/* The Motion switch's pressed state: off is a pressed quiet button, the
+   same convention the aside toggle reads. */
+.motion-toggle[aria-pressed="false"] { color: var(--dsw-alias-ink-tertiary); }
 
 .palette-open {
   padding: 0 9px;
@@ -3213,7 +3402,10 @@ body[data-object-card="open"] .dock-object {
 .foot-btn.send {
   padding: 0 14px;
   background: var(--dsw-alias-gradient);
-  color: #fff;
+  /* The gradient's label is the theme's own `on-accent` value — white on
+     the blue gradients, the near-black ink the bright harbor gradient
+     carries (KI-476's law, now a token the guard measures per theme). */
+  color: var(--dsw-alias-on-accent);
   font-size: 12px;
 }
 .foot-btn.send:hover { background: var(--dsw-alias-gradient); filter: brightness(1.06); }
@@ -9891,8 +10083,8 @@ body[data-work="collapsed"] .room-back { display: grid; }
 }
 .dk-btn:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }
 .dk-btn:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
-.dk-btn.primary { background: var(--dsw-alias-accent); border-color: var(--dsw-alias-accent-deep); color: #fff; }
-.dk-btn.primary:hover { background: var(--dsw-alias-accent-deep); color: #fff; }
+.dk-btn.primary { background: var(--dsw-alias-accent); border-color: var(--dsw-alias-accent-deep); color: var(--dsw-alias-on-accent); }
+.dk-btn.primary:hover { background: var(--dsw-alias-accent-deep); color: var(--dsw-alias-on-accent); }
 .dk-btn[disabled] { opacity: 0.5; cursor: default; }
 .dk-btn[disabled]:hover { border-color: var(--dsw-alias-hairline-strong); color: var(--dsw-alias-ink); }
 :root[data-theme="console"] .dk-btn.primary,
@@ -10496,3 +10688,372 @@ body[data-work="collapsed"] .room-back { display: grid; }
 #pane-context { display: flex; flex-direction: column; gap: 8px; }
 #pane-context .dk-sec, #pane-context .dk-emptywrap, #pane-context .dk-zones { margin: 0; }
 #pane-context .pw-sections { margin: 0 0 4px; }
+
+/* ==================================================================
+   The U-reskin shell (2026-11-12, Cut 1 — U4–U11)
+
+   The tokens above are the contract (U5, one-to-one with
+   docs/design/fleet-workspace-mockup.html); this section is the shell
+   that consumes them: the ambient layer and its Motion switch (U8),
+   the rail's Mission card, Saved views and tissue explainer (U10), the
+   lens-head's sub line (U9), and the tissue column (U0/U11). */
+
+/* --- U8: the ambient layer ---------------------------------------- */
+
+.amb {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.face {
+  /* The shell rides above the ambient layer, which reads through every
+     translucent surface the rail and topbar already mix. */
+  position: relative;
+  z-index: 1;
+}
+
+/* The Motion switch (U8): one toggle freezes every animation and
+   transition in the sheet — the ambient loop stops drawing under it,
+   and prefers-reduced-motion lands the same state automatically. */
+body[data-motion="off"] *,
+body[data-motion="off"] *::before,
+body[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+body[data-motion="off"] .amb { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .amb { display: none; }
+}
+
+/* --- U10: the rail's Mission card, Saved views, tissue explainer -- */
+
+.mission {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 4px 0 12px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.mission-mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: conic-gradient(from 210deg, var(--teal), var(--green), var(--cyan), var(--teal));
+}
+
+.mission-mark svg { width: 15px; height: 15px; }
+
+.mission-text { display: grid; gap: 1px; min-width: 0; }
+
+.mission-name {
+  font-family: var(--disp);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-label {
+  padding: 0 8px;
+  margin: 0 0 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.views { display: grid; gap: 2px; margin: 0 0 14px; }
+
+.view-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.view-row:hover { color: var(--text); background: var(--panel); }
+
+.view-row .view-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+}
+
+.view-row .view-drop {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.view-row .view-drop:hover { color: var(--red); background: var(--red-d); }
+
+.view-save {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--teal);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.view-save:hover { color: var(--text); background: var(--panel); }
+
+.tissue-note {
+  margin: 14px 0 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.tissue-note b { color: var(--text); font-family: var(--disp); font-weight: 600; }
+
+/* --- U0/U11: the tissue column ------------------------------------ */
+
+.tissue {
+  display: none;
+  grid-column: 3;
+  grid-row: 3;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 40%, transparent);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.tissue-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 14px 16px 8px;
+}
+
+.tissue-title {
+  font-family: var(--disp);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.tissue-where {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.tissue-graph {
+  position: relative;
+  height: 240px;
+  flex: 0 0 auto;
+}
+
+.tissue-graph svg { display: block; width: 100%; height: 100%; }
+
+.tissue-node { cursor: pointer; }
+.tissue-node:focus { outline: none; }
+.tissue-node:focus .tissue-node-ring { stroke: var(--cyan); stroke-width: 2; }
+
+.tissue-node.live .tissue-node-ring { animation: tissue-pulse 2.4s infinite; }
+
+@keyframes tissue-pulse {
+  0% { stroke-opacity: 1; }
+  50% { stroke-opacity: 0.35; }
+  100% { stroke-opacity: 1; }
+}
+
+.tissue-edge { stroke-width: 1.2; fill: none; }
+.tissue-edge.hot { stroke-dasharray: 4 3; animation: tissue-flow 1.2s linear infinite; }
+
+@keyframes tissue-flow { to { stroke-dashoffset: -7; } }
+
+body[data-motion="off"] .tissue-edge.hot { animation: none; }
+
+.tissue-node-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  fill: var(--muted);
+  paint-order: stroke;
+  stroke: var(--ink);
+  stroke-width: 3px;
+}
+
+.tissue-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 16px 10px;
+}
+
+.tissue-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--muted);
+}
+
+.tissue-kind .tissue-kind-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+.tissue-focus {
+  margin: 0 12px 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  display: grid;
+  gap: 6px;
+}
+
+.tissue-focus .tissue-focus-kind {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 20px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--line2);
+  color: var(--text);
+}
+
+.tissue-focus .tissue-focus-kind .tissue-kind-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+.tissue-focus-title {
+  font-family: var(--disp);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.tissue-focus-meta {
+  display: grid;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.tissue-focus-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.tissue-focus-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+
+.tissue-focus-actions button:hover { border-color: var(--line2); background: var(--raise); }
+
+.tissue-empty {
+  padding: 10px 16px 14px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* U9's breakpoint: >=1081px carries the tissue; <=1080 drops it. When
+   the pane is open on a wide shell it becomes the fourth column and the
+   tissue keeps its place — the tissue is permanent, the pane is not. */
+@media (min-width: 1081px) {
+  body[data-tissue="on"] .face {
+    grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--tissue-width);
+  }
+  body[data-tissue="on"] .tissue { display: flex; }
+  body[data-tissue="on"][data-pane="open"] .face {
+    grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--tissue-width) var(--pane-width);
+  }
+  body[data-tissue="on"][data-pane="open"] .pane { grid-column: 4; }
+}
+
+:root { --tissue-width: 320px; }
+
+/* --- U9: the lens-head's sub line --------------------------------- */
+
+/* The lens-head's sub line is `.page-note`, carried by the shared
+   pageHead() builder — one pattern, every section (U9). */
