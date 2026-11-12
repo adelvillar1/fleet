@@ -19,6 +19,11 @@ the product is built:
 - [`ARMADA-CONTRACTS.md`](ARMADA-CONTRACTS.md) — the **interfaces**, what each
   module OFFERS / EXPECTS / is CONSUMED BY, so the seams compose without
   guesswork.
+- [`UI-DECISIONS.md`](UI-DECISIONS.md) — the **design system** (U0–U28): the
+  signal-palette law, the shell/tissue layout contract, and the interaction
+  law that keeps every surface one workspace. The reference implementation is
+  [`../design/armada-workspace-mockup.html`](../design/armada-workspace-mockup.html)
+  — a live, interactive mockup; open it before building any surface.
 
 Read the decomposition to see *what to build and in what order*; the choices
 before drafting; the contracts before building a module.

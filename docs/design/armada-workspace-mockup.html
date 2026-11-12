@@ -1,0 +1,1102 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+#fa-root{
+  box-sizing:border-box;
+  --ink:#08131a; --ink2:#0c1e27; --panel:#0f2530; --panel2:#12303c; --raise:#16394a;
+  --line:rgba(86,180,200,.16); --line2:rgba(86,180,200,.30);
+  --text:#e9f4f5; --muted:#93aeb6; --faint:#5f7d86;
+  --green:#37e2a4; --cyan:#3ad4f2; --magenta:#f757c2; --amber:#ffb224; --gold:#ffd86b; --red:#ff6060; --teal:#2dd6bf; --blue:#5b9dff;
+  --green-d:rgba(55,226,164,.14); --cyan-d:rgba(58,212,242,.14); --magenta-d:rgba(247,87,194,.14);
+  --amber-d:rgba(255,178,36,.14); --gold-d:rgba(255,216,107,.14); --red-d:rgba(255,96,96,.14); --teal-d:rgba(45,214,191,.14); --blue-d:rgba(91,157,255,.14);
+  --disp:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  --r-lg:16px; --r-md:11px; --r-sm:7px;
+  --shadow:0 18px 50px -18px rgba(0,0,0,.7);
+  --gap:14px; --pad:16px; --row:54px;
+  position:relative; width:100%; min-height:860px; color:var(--text);
+  font-family:var(--body); font-size:14px; line-height:1.5;
+  background:
+    radial-gradient(1200px 600px at 82% -10%, rgba(58,212,242,.10), transparent 60%),
+    radial-gradient(900px 520px at 8% 108%, rgba(247,87,194,.09), transparent 60%),
+    linear-gradient(160deg,var(--ink),var(--ink2) 60%,#0a1a22);
+  border-radius:var(--r-lg); overflow:hidden; isolation:isolate;
+  border:1px solid var(--line);
+}
+#fa-root[data-theme="day"]{
+  --ink:#eef0ea; --ink2:#e7eae2; --panel:#fbfaf5; --panel2:#f3f2ea; --raise:#ffffff;
+  --line:rgba(20,60,70,.14); --line2:rgba(20,60,70,.26);
+  --text:#13242b; --muted:#4d6670; --faint:#8397a0;
+  --green:#0fa876; --cyan:#0a93b8; --magenta:#cf2f9c; --amber:#c97e00; --gold:#b98900; --red:#dc3838; --teal:#0c9c8b; --blue:#2f6fd6;
+  --green-d:rgba(15,168,118,.12); --cyan-d:rgba(10,147,184,.12); --magenta-d:rgba(207,47,156,.12);
+  --amber-d:rgba(201,126,0,.13); --gold-d:rgba(185,137,0,.14); --red-d:rgba(220,56,56,.12); --teal-d:rgba(12,156,139,.12); --blue-d:rgba(47,111,214,.12);
+  --shadow:0 18px 44px -22px rgba(20,50,60,.4);
+  background:
+    radial-gradient(1100px 560px at 84% -12%, rgba(10,147,184,.10), transparent 60%),
+    radial-gradient(900px 520px at 6% 110%, rgba(207,47,156,.07), transparent 60%),
+    linear-gradient(160deg,var(--ink),var(--ink2));
+}
+#fa-root *{box-sizing:border-box; margin:0; padding:0}
+#fa-root ::selection{background:rgba(58,212,242,.3)}
+#fa-root ::-webkit-scrollbar{width:10px; height:10px}
+#fa-root ::-webkit-scrollbar-track{background:transparent}
+#fa-root ::-webkit-scrollbar-thumb{background:var(--line2); border-radius:20px; border:3px solid transparent; background-clip:content-box}
+#fa-root ::-webkit-scrollbar-thumb:hover{background:var(--cyan); background-clip:content-box}
+#fa-root button{font-family:inherit; color:inherit; background:none; border:none; cursor:pointer}
+#fa-root input,#fa-root select,#fa-root textarea{font-family:inherit; color:inherit}
+#fa-root .fa-mono{font-family:var(--mono)}
+#fa-root .fa-disp{font-family:var(--disp)}
+#fa-root canvas.fa-amb{position:absolute; inset:0; z-index:0; pointer-events:none; opacity:.55}
+#fa-root .fa-grain{position:absolute; inset:0; z-index:0; pointer-events:none; opacity:.05; mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+#fa-root .fa-app{position:relative; z-index:1; display:grid; grid-template-rows:auto 1fr auto; height:860px}
+#fa-root[data-density="compact"]{--gap:9px; --pad:11px; --row:44px; font-size:13px}
+
+/* ===== top chrome ===== */
+#fa-root .fa-top{display:flex; align-items:center; gap:14px; padding:12px 18px; border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(255,255,255,.02),transparent)}
+#fa-root .fa-brand{display:flex; align-items:center; gap:11px; min-width:210px}
+#fa-root .fa-mark{width:34px; height:34px; border-radius:10px; display:grid; place-items:center; color:#04121a;
+  background:conic-gradient(from 210deg,var(--cyan),var(--teal),var(--green),var(--cyan)); box-shadow:0 0 22px -4px var(--cyan)}
+#fa-root .fa-brand h1{font-family:var(--disp); font-size:18px; font-weight:700; letter-spacing:.2px; line-height:1}
+#fa-root .fa-brand .fa-sub{font-family:var(--mono); font-size:10.5px; color:var(--muted); letter-spacing:.14em; text-transform:uppercase; margin-top:3px}
+#fa-root .fa-search{flex:1; max-width:520px; min-width:0; display:flex; align-items:center; gap:9px; padding:8px 13px; border-radius:10px;
+  background:var(--panel); border:1px solid var(--line); color:var(--muted); cursor:text; transition:.18s}
+#fa-root .fa-search:hover{border-color:var(--line2)}
+#fa-root .fa-search input{flex:1; background:none; border:none; outline:none; color:var(--text); font-size:13px}
+#fa-root .fa-kbd{font-family:var(--mono); font-size:10.5px; padding:2px 6px; border-radius:5px; border:1px solid var(--line2); color:var(--muted)}
+#fa-root .fa-fleetstat{display:flex; align-items:center; gap:8px; margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--muted)}
+#fa-root .fa-dot{width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 0 0 var(--green); animation:fa-pulse 2.4s infinite}
+@keyframes fa-pulse{0%{box-shadow:0 0 0 0 rgba(55,226,164,.5)}70%{box-shadow:0 0 0 7px rgba(55,226,164,0)}100%{box-shadow:0 0 0 0 rgba(55,226,164,0)}}
+#fa-root .fa-iconbtn{width:34px; height:34px; border-radius:9px; display:grid; place-items:center; color:var(--muted); border:1px solid transparent; transition:.16s}
+#fa-root .fa-iconbtn:hover{color:var(--text); background:var(--panel); border-color:var(--line)}
+#fa-root .fa-iconbtn[aria-pressed="true"]{color:var(--cyan); background:var(--cyan-d); border-color:var(--line2)}
+
+/* ===== body grid ===== */
+#fa-root .fa-body{display:grid; grid-template-columns:236px 1fr 320px; min-height:0}
+#fa-root[data-tissue="off"] .fa-body{grid-template-columns:236px 1fr}
+#fa-root[data-tissue="off"] .fa-tissue{display:none}
+
+/* ===== left rail ===== */
+#fa-root .fa-rail{border-right:1px solid var(--line); padding:14px 12px; overflow-y:auto; display:flex; flex-direction:column; gap:16px; background:rgba(0,0,0,.06)}
+#fa-root .fa-rail-h{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); padding:0 8px; margin-bottom:7px; display:flex; justify-content:space-between; align-items:center}
+#fa-root .fa-proj{display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:10px; background:var(--panel); border:1px solid var(--line); margin-bottom:4px}
+#fa-root .fa-proj .fa-pname{font-family:var(--disp); font-weight:600; font-size:13.5px}
+#fa-root .fa-proj .fa-pmeta{font-family:var(--mono); font-size:10px; color:var(--muted)}
+#fa-root .fa-nav{display:flex; flex-direction:column; gap:2px}
+#fa-root .fa-nav button{display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:9px; color:var(--muted); font-size:13px; font-weight:500; text-align:left; transition:.14s; width:100%}
+#fa-root .fa-nav button:hover{color:var(--text); background:var(--panel)}
+#fa-root .fa-nav button.active{color:var(--text); background:var(--panel2); box-shadow:inset 2px 0 0 var(--cyan)}
+#fa-root .fa-nav button .fa-count{margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--faint); background:var(--panel); padding:1px 7px; border-radius:20px}
+#fa-root .fa-nav button.active .fa-count{color:var(--cyan)}
+#fa-root .fa-views button{display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border-radius:8px; color:var(--muted); font-size:12px; text-align:left}
+#fa-root .fa-views button:hover{color:var(--text); background:var(--panel)}
+#fa-root .fa-views .fa-vdot{width:6px; height:6px; border-radius:50%; background:var(--gold)}
+#fa-root .fa-saveview{margin-top:4px; font-size:11.5px; color:var(--cyan); display:flex; align-items:center; gap:6px; padding:5px 10px}
+#fa-root .fa-rail-foot{margin-top:auto; padding:10px; border-radius:10px; background:var(--panel); border:1px solid var(--line); font-size:11.5px; color:var(--muted)}
+#fa-root .fa-rail-foot b{color:var(--text); font-family:var(--disp)}
+
+/* ===== center ===== */
+#fa-root .fa-center{min-width:0; display:flex; flex-direction:column; overflow:hidden}
+#fa-root .fa-lens-head{display:flex; align-items:center; gap:12px; padding:14px 20px 10px; flex-wrap:wrap}
+#fa-root .fa-lens-title{font-family:var(--disp); font-size:20px; font-weight:700; letter-spacing:.2px}
+#fa-root .fa-lens-sub{font-size:12px; color:var(--muted); margin-top:1px}
+#fa-root .fa-tools{display:flex; align-items:center; gap:8px; margin-left:auto; flex-wrap:wrap}
+#fa-root .fa-chip{font-family:var(--mono); font-size:11px; padding:5px 11px; border-radius:20px; border:1px solid var(--line); color:var(--muted); transition:.14s; display:inline-flex; align-items:center; gap:6px}
+#fa-root .fa-chip:hover{border-color:var(--line2); color:var(--text)}
+#fa-root .fa-chip.on{color:var(--text); background:var(--panel2); border-color:var(--line2)}
+#fa-root .fa-chip .fa-cdot{width:7px; height:7px; border-radius:50%}
+#fa-root .fa-select{font-family:var(--mono); font-size:11px; padding:5px 9px; border-radius:8px; background:var(--panel); border:1px solid var(--line); color:var(--muted); outline:none; min-width:0; max-width:100%}
+#fa-root .fa-btn{display:inline-flex; align-items:center; gap:7px; padding:7px 14px; border-radius:9px; font-size:12.5px; font-weight:600; border:1px solid var(--line); color:var(--text); background:var(--panel); transition:.16s}
+#fa-root .fa-btn:hover{border-color:var(--line2); background:var(--panel2)}
+#fa-root .fa-btn-primary{background:linear-gradient(135deg,var(--cyan),var(--teal)); color:#04121a; border:none; box-shadow:0 6px 20px -8px var(--cyan)}
+#fa-root .fa-btn-primary:hover{filter:brightness(1.08)}
+#fa-root .fa-btn-danger{color:var(--red); border-color:var(--red-d)}
+#fa-root .fa-btn-danger:hover{background:var(--red-d)}
+#fa-root .fa-lens-body{flex:1; overflow-y:auto; padding:6px 20px 20px; min-height:0}
+
+/* board */
+#fa-root .fa-cols{display:grid; grid-template-columns:repeat(3,1fr); gap:var(--gap); align-items:stretch}
+#fa-root .fa-col{background:rgba(0,0,0,.05); border:1px solid var(--line); border-radius:var(--r-md); padding:10px; min-height:120px; min-width:0}
+#fa-root .fa-activity-strip{margin-top:var(--gap); border:1px solid var(--line); border-radius:var(--r-md); background:rgba(0,0,0,.05); padding:12px 15px}
+#fa-root .fa-activity-strip .fa-as-h{font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); margin-bottom:9px; display:flex; align-items:center; gap:7px}
+#fa-root .fa-as-row{display:flex; align-items:center; gap:9px; font-size:12px; color:var(--muted); padding:4px 0}
+#fa-root .fa-as-row i{width:7px; height:7px; border-radius:50%; flex:none}
+#fa-root .fa-as-row .fa-as-time{margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--faint)}
+#fa-root .fa-col-h{display:flex; align-items:center; gap:8px; padding:2px 4px 10px; font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted)}
+#fa-root .fa-col-h .fa-cdot{width:8px; height:8px; border-radius:50%}
+#fa-root .fa-col-h .fa-cn{margin-left:auto; color:var(--faint)}
+#fa-root .fa-col.dragover{border-color:var(--cyan); background:var(--cyan-d)}
+#fa-root .fa-task{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:11px 12px; margin-bottom:9px; cursor:grab; transition:.16s; position:relative}
+#fa-root .fa-task:hover{border-color:var(--line2); transform:translateY(-1px); box-shadow:var(--shadow)}
+#fa-root .fa-task.sel{border-color:var(--cyan); box-shadow:0 0 0 1px var(--cyan)}
+#fa-root .fa-task.dragging{opacity:.4}
+#fa-root .fa-task-top{display:flex; align-items:flex-start; gap:8px}
+#fa-root .fa-check{width:16px; height:16px; border-radius:5px; border:1.5px solid var(--line2); flex:none; margin-top:2px; display:grid; place-items:center; color:transparent; transition:.14s}
+#fa-root .fa-check.on{background:var(--cyan); border-color:var(--cyan); color:#04121a}
+#fa-root .fa-task-title{font-weight:600; font-size:13px; line-height:1.35; flex:1}
+#fa-root .fa-task-meta{display:flex; align-items:center; gap:7px; margin-top:9px; flex-wrap:wrap}
+#fa-root .fa-tag{font-family:var(--mono); font-size:10px; padding:2px 7px; border-radius:6px; display:inline-flex; align-items:center; gap:5px}
+#fa-root .fa-tag .fa-tdot{width:6px; height:6px; border-radius:50%}
+#fa-root .fa-prio{font-family:var(--mono); font-size:10px; color:var(--faint)}
+#fa-root .fa-task-links{display:flex; gap:5px; margin-top:9px}
+#fa-root .fa-linkdot{width:22px; height:22px; border-radius:6px; display:grid; place-items:center; border:1px solid var(--line); color:var(--muted); transition:.14s}
+#fa-root .fa-linkdot:hover{color:var(--text); border-color:var(--line2); transform:translateY(-1px)}
+#fa-root .fa-running{position:absolute; inset:0; border-radius:10px; pointer-events:none; border:1px solid var(--cyan); overflow:hidden}
+#fa-root .fa-running::after{content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent,var(--cyan-d),transparent); animation:fa-sweep 1.4s linear infinite}
+@keyframes fa-sweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+#fa-root .fa-empty{padding:40px; text-align:center; color:var(--faint); font-size:13px}
+
+/* bulk bar */
+#fa-root .fa-bulk{display:flex; align-items:center; gap:12px; padding:9px 14px; margin:0 0 12px; border-radius:10px; background:var(--panel2); border:1px solid var(--line2); font-size:12.5px}
+#fa-root .fa-bulk b{font-family:var(--mono)}
+
+/* threads */
+#fa-root .fa-thread{display:flex; flex-direction:column; gap:14px; max-width:760px}
+#fa-root .fa-msg{display:flex; gap:11px}
+#fa-root .fa-av{width:32px; height:32px; border-radius:9px; flex:none; display:grid; place-items:center; font-family:var(--disp); font-weight:700; font-size:13px; color:#04121a}
+#fa-root .fa-msg-body{flex:1; min-width:0}
+#fa-root .fa-msg-h{display:flex; align-items:center; gap:8px; margin-bottom:3px}
+#fa-root .fa-msg-name{font-weight:600; font-size:12.5px}
+#fa-root .fa-msg-time{font-family:var(--mono); font-size:10px; color:var(--faint)}
+#fa-root .fa-msg-text{font-size:13px; color:var(--text); line-height:1.55}
+#fa-root .fa-msg-text .fa-cursor{display:inline-block; width:7px; height:14px; background:var(--cyan); vertical-align:-2px; animation:fa-blink 1s steps(2) infinite}
+@keyframes fa-blink{50%{opacity:0}}
+#fa-root .fa-toolcall{font-family:var(--mono); font-size:11px; margin-top:7px; padding:7px 10px; border-radius:8px; background:var(--ink); border:1px solid var(--line); color:var(--muted); display:flex; align-items:center; gap:8px}
+#fa-root .fa-toolcall .fa-ok{color:var(--green)}
+#fa-root .fa-composer{margin-top:6px; border:1px solid var(--line2); border-radius:12px; background:var(--panel); padding:11px 13px}
+#fa-root .fa-composer textarea{width:100%; background:none; border:none; outline:none; resize:none; color:var(--text); font-size:13px; min-height:42px}
+#fa-root .fa-composer-bar{display:flex; align-items:center; gap:8px; margin-top:8px}
+#fa-root .fa-mention{font-family:var(--mono); font-size:11px; color:var(--magenta); padding:3px 9px; border-radius:7px; background:var(--magenta-d)}
+
+/* deliverables */
+#fa-root .fa-dgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:var(--gap)}
+#fa-root .fa-dcard{background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); padding:15px; transition:.16s; cursor:pointer}
+#fa-root .fa-dcard:hover{border-color:var(--line2); transform:translateY(-2px); box-shadow:var(--shadow)}
+#fa-root .fa-dcard h3{font-family:var(--disp); font-size:15px; font-weight:600; margin-bottom:6px}
+#fa-root .fa-dcard p{font-size:12px; color:var(--muted); line-height:1.5}
+#fa-root .fa-gate{display:flex; align-items:center; gap:7px; margin-top:12px; font-family:var(--mono); font-size:11px}
+#fa-root .fa-meter{height:5px; border-radius:20px; background:var(--line); overflow:hidden; margin-top:10px}
+#fa-root .fa-meter i{display:block; height:100%; border-radius:20px; background:linear-gradient(90deg,var(--teal),var(--green))}
+
+/* fleet */
+#fa-root .fa-fgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:var(--gap)}
+#fa-root .fa-inst{background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); padding:16px; position:relative; overflow:hidden; transition:.16s}
+#fa-root .fa-inst:hover{border-color:var(--line2); box-shadow:var(--shadow)}
+#fa-root .fa-inst-h{display:flex; align-items:center; gap:10px; margin-bottom:12px}
+#fa-root .fa-inst-ic{width:38px; height:38px; border-radius:10px; display:grid; place-items:center; background:var(--blue-d); color:var(--blue)}
+#fa-root .fa-inst-name{font-family:var(--disp); font-weight:600; font-size:15px}
+#fa-root .fa-inst-host{font-family:var(--mono); font-size:10.5px; color:var(--muted)}
+#fa-root .fa-live{margin-left:auto; font-family:var(--mono); font-size:10px; padding:3px 9px; border-radius:20px; display:flex; align-items:center; gap:6px}
+#fa-root .fa-live.on{color:var(--green); background:var(--green-d)}
+#fa-root .fa-live.off{color:var(--faint); background:var(--panel2)}
+#fa-root .fa-inst-row{display:flex; justify-content:space-between; align-items:center; font-size:12px; margin-top:9px; color:var(--muted)}
+#fa-root .fa-inst-row b{color:var(--text); font-family:var(--mono); font-weight:500}
+#fa-root .fa-gauge{height:6px; border-radius:20px; background:var(--line); overflow:hidden; margin-top:5px}
+#fa-root .fa-gauge i{display:block; height:100%; border-radius:20px}
+#fa-root .fa-inst-actions{display:flex; gap:8px; margin-top:14px}
+#fa-root .fa-heart{position:absolute; top:14px; right:14px; width:9px; height:9px; border-radius:50%; background:var(--green); animation:fa-pulse 2.4s infinite}
+
+/* inbox */
+#fa-root .fa-inbox{display:flex; flex-direction:column; gap:9px; max-width:820px}
+#fa-root .fa-inrow{display:flex; gap:12px; align-items:flex-start; padding:13px 15px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); transition:.14s}
+#fa-root .fa-inrow:hover{border-color:var(--line2)}
+#fa-root .fa-chan{font-family:var(--mono); font-size:10px; padding:3px 8px; border-radius:6px; flex:none; margin-top:2px}
+#fa-root .fa-inbody{flex:1; min-width:0}
+#fa-root .fa-inwho{font-weight:600; font-size:12.5px; display:flex; align-items:center; gap:8px}
+#fa-root .fa-principal{font-family:var(--mono); font-size:10px; color:var(--cyan); background:var(--cyan-d); padding:1px 7px; border-radius:5px}
+#fa-root .fa-intext{font-size:12.5px; color:var(--muted); margin-top:3px}
+#fa-root .fa-outbox{font-family:var(--mono); font-size:10px; flex:none; padding:3px 8px; border-radius:6px}
+
+/* memory */
+#fa-root .fa-facts{display:flex; flex-direction:column; gap:8px; max-width:820px}
+#fa-root .fa-fact{padding:12px 15px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); border-left:3px solid var(--teal)}
+#fa-root .fa-fact-h{display:flex; align-items:center; gap:8px; margin-bottom:4px}
+#fa-root .fa-fact-name{font-family:var(--mono); font-size:12px; font-weight:600}
+#fa-root .fa-basis{font-family:var(--mono); font-size:9.5px; padding:2px 7px; border-radius:5px; margin-left:auto}
+#fa-root .fa-fact-body{font-size:12.5px; color:var(--muted); line-height:1.5}
+
+/* ===== tissue pane ===== */
+#fa-root .fa-tissue{border-left:1px solid var(--line); background:rgba(0,0,0,.08); display:flex; flex-direction:column; min-height:0}
+#fa-root .fa-tissue-h{padding:13px 16px 8px; display:flex; align-items:center; gap:8px}
+#fa-root .fa-tissue-h .fa-th-title{font-family:var(--disp); font-weight:600; font-size:14px}
+#fa-root .fa-tissue-h .fa-th-sub{font-family:var(--mono); font-size:10px; color:var(--faint); margin-left:auto}
+#fa-root .fa-graphwrap{position:relative; height:300px; margin:0 8px; border-radius:var(--r-md); background:radial-gradient(circle at 50% 45%,var(--panel),transparent 75%); border:1px solid var(--line)}
+#fa-root .fa-graphwrap svg{width:100%; height:100%; display:block}
+#fa-root .fa-edge{stroke:var(--line2); stroke-width:1.4; fill:none}
+#fa-root .fa-edge.hot{stroke:var(--cyan); stroke-width:2; stroke-dasharray:5 5; animation:fa-flow 1s linear infinite}
+@keyframes fa-flow{to{stroke-dashoffset:-10}}
+#fa-root .fa-node{cursor:pointer}
+#fa-root .fa-node circle{transition:.18s}
+#fa-root .fa-node:hover circle{filter:brightness(1.25)}
+#fa-root .fa-node text{font-family:var(--mono); font-size:9px; fill:var(--muted); text-anchor:middle; pointer-events:none}
+#fa-root .fa-node.center text{fill:var(--text); font-weight:600}
+#fa-root .fa-legend{display:flex; flex-wrap:wrap; gap:7px; padding:10px 16px}
+#fa-root .fa-leg{font-family:var(--mono); font-size:9.5px; color:var(--muted); display:flex; align-items:center; gap:5px}
+#fa-root .fa-leg i{width:8px; height:8px; border-radius:3px; display:inline-block}
+#fa-root .fa-focus{margin:4px 12px 12px; padding:13px; border-radius:var(--r-md); background:var(--panel); border:1px solid var(--line); overflow-y:auto}
+#fa-root .fa-focus-kind{font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; margin-bottom:5px; display:flex; align-items:center; gap:6px}
+#fa-root .fa-focus-title{font-family:var(--disp); font-weight:600; font-size:15px; line-height:1.3; margin-bottom:8px}
+#fa-root .fa-focus-meta{font-size:11.5px; color:var(--muted); display:flex; flex-direction:column; gap:4px; margin-bottom:11px}
+#fa-root .fa-focus-actions{display:flex; gap:7px; flex-wrap:wrap}
+#fa-root .fa-linked{margin-top:11px; border-top:1px solid var(--line); padding-top:9px}
+#fa-root .fa-linked-h{font-family:var(--mono); font-size:9.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.12em; margin-bottom:6px}
+#fa-root .fa-linked button{display:flex; align-items:center; gap:7px; width:100%; padding:5px 7px; border-radius:7px; font-size:11.5px; color:var(--muted); text-align:left}
+#fa-root .fa-linked button:hover{background:var(--panel2); color:var(--text)}
+#fa-root .fa-linked .fa-ldot{width:7px; height:7px; border-radius:50%; flex:none}
+
+/* ===== console ===== */
+#fa-root .fa-console{border-top:1px solid var(--line); background:linear-gradient(0deg,rgba(0,0,0,.12),transparent); padding:10px 18px; display:flex; align-items:center; gap:18px; flex-wrap:wrap}
+#fa-root .fa-console-h{font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:7px}
+#fa-root .fa-ctl{display:flex; align-items:center; gap:8px}
+#fa-root .fa-ctl label{font-family:var(--mono); font-size:10.5px; color:var(--muted); white-space:nowrap}
+#fa-root .fa-ctl input[type=range]{width:84px; accent-color:var(--cyan); height:4px}
+#fa-root .fa-ctl select{font-family:var(--mono); font-size:10.5px; padding:4px 7px; border-radius:7px; background:var(--panel); border:1px solid var(--line); color:var(--text); outline:none}
+#fa-root .fa-switch{position:relative; width:34px; height:19px; border-radius:20px; background:var(--line); transition:.18s; flex:none}
+#fa-root .fa-switch::after{content:""; position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%; background:var(--muted); transition:.18s}
+#fa-root .fa-switch[aria-pressed="true"]{background:var(--cyan)}
+#fa-root .fa-switch[aria-pressed="true"]::after{left:17px; background:#04121a}
+#fa-root .fa-console .fa-spacer{margin-left:auto}
+#fa-root .fa-val{font-family:var(--mono); font-size:10px; color:var(--cyan); min-width:26px; text-align:right}
+
+/* ===== overlays ===== */
+#fa-root .fa-scrim{position:absolute; inset:0; z-index:40; background:rgba(4,10,14,.55); backdrop-filter:blur(3px); opacity:0; pointer-events:none; transition:.2s}
+#fa-root .fa-scrim.show{opacity:1; pointer-events:auto}
+#fa-root .fa-drawer{position:absolute; top:0; right:0; bottom:0; width:380px; max-width:92%; z-index:50; background:var(--panel); border-left:1px solid var(--line2); box-shadow:var(--shadow); transform:translateX(102%); visibility:hidden; transition:transform .26s cubic-bezier(.4,0,.2,1), visibility .26s; display:flex; flex-direction:column; overflow-y:auto}
+#fa-root .fa-drawer.show{transform:translateX(0); visibility:visible}
+#fa-root .fa-drawer-h{padding:18px 20px 12px; border-bottom:1px solid var(--line); display:flex; align-items:flex-start; gap:10px}
+#fa-root .fa-drawer-h h2{font-family:var(--disp); font-size:17px; font-weight:700; flex:1; line-height:1.3}
+#fa-root .fa-drawer-body{padding:18px 20px; display:flex; flex-direction:column; gap:16px}
+#fa-root .fa-field label{display:block; font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); margin-bottom:6px}
+#fa-root .fa-field input,#fa-root .fa-field select,#fa-root .fa-field textarea{width:100%; padding:9px 12px; border-radius:9px; background:var(--ink); border:1px solid var(--line); color:var(--text); font-size:13px; outline:none; transition:.14s}
+#fa-root .fa-field input:focus,#fa-root .fa-field select:focus,#fa-root .fa-field textarea:focus{border-color:var(--cyan)}
+#fa-root .fa-field textarea{resize:vertical; min-height:70px}
+#fa-root .fa-activity{display:flex; flex-direction:column; gap:8px}
+#fa-root .fa-act{display:flex; gap:9px; font-size:11.5px; color:var(--muted)}
+#fa-root .fa-act i{width:7px; height:7px; border-radius:50%; margin-top:5px; flex:none}
+#fa-root .fa-drawer-foot{margin-top:auto; padding:16px 20px; border-top:1px solid var(--line); display:flex; gap:9px}
+
+/* command palette */
+#fa-root .fa-palette{position:absolute; top:70px; left:50%; transform:translateX(-50%) translateY(-8px); width:560px; max-width:92%; z-index:60; background:var(--panel); border:1px solid var(--line2); border-radius:14px; box-shadow:var(--shadow); opacity:0; pointer-events:none; transition:.18s; overflow:hidden}
+#fa-root .fa-palette.show{opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0)}
+#fa-root .fa-palette-in{display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--line)}
+#fa-root .fa-palette-in input{flex:1; background:none; border:none; outline:none; color:var(--text); font-size:14px}
+#fa-root .fa-palette-list{max-height:340px; overflow-y:auto; padding:6px}
+#fa-root .fa-pitem{display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; cursor:pointer; font-size:13px}
+#fa-root .fa-pitem:hover,.fa-pitem.active{background:var(--panel2)}
+#fa-root .fa-pitem .fa-pkind{font-family:var(--mono); font-size:9.5px; color:var(--faint); margin-left:auto; text-transform:uppercase}
+#fa-root .fa-pitem .fa-pdot{width:8px; height:8px; border-radius:3px; flex:none}
+
+/* toast */
+#fa-root .fa-toasts{position:absolute; bottom:70px; left:50%; transform:translateX(-50%); z-index:70; display:flex; flex-direction:column; gap:8px; align-items:center}
+#fa-root .fa-toast{display:flex; align-items:center; gap:11px; padding:11px 16px; border-radius:11px; background:var(--raise); border:1px solid var(--line2); box-shadow:var(--shadow); font-size:12.5px; animation:fa-rise .28s cubic-bezier(.2,.8,.2,1)}
+@keyframes fa-rise{from{opacity:0; transform:translateY(12px)}to{opacity:1; transform:translateY(0)}}
+#fa-root .fa-toast .fa-ticon{width:24px; height:24px; border-radius:7px; display:grid; place-items:center; flex:none}
+#fa-root .fa-toast button{font-weight:600; color:var(--cyan); font-size:12px; margin-left:6px}
+
+/* new task inline */
+#fa-root .fa-newtask{background:var(--panel); border:1px dashed var(--line2); border-radius:10px; padding:12px; margin-bottom:9px}
+#fa-root .fa-newtask input{width:100%; background:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px 11px; color:var(--text); font-size:13px; outline:none; margin-bottom:9px}
+#fa-root .fa-newtask-row{display:flex; gap:8px; align-items:center}
+#fa-root .fa-newtask-row select{flex:1; font-family:var(--mono); font-size:11px; padding:6px 8px; border-radius:7px; background:var(--ink); border:1px solid var(--line); color:var(--text); outline:none}
+
+#fa-root .fa-sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0)}
+@media (max-width:1080px){
+  #fa-root .fa-body{grid-template-columns:200px 1fr}
+  #fa-root .fa-tissue{display:none}
+  #fa-root .fa-cols{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  #fa-root .fa-app{height:auto; min-height:100vh}
+  #fa-root .fa-body{grid-template-columns:1fr}
+  #fa-root .fa-rail{flex-direction:row; flex-wrap:wrap; border-right:none; border-bottom:1px solid var(--line)}
+  #fa-root .fa-rail>div{min-width:0; flex:1 1 160px}
+  #fa-root .fa-rail-foot{display:none}
+  #fa-root .fa-brand{min-width:0}
+  #fa-root .fa-search{min-width:0}
+  #fa-root .fa-search input{min-width:0}
+  #fa-root .fa-fleetstat{display:none}
+  #fa-root .fa-lens-body{overflow:visible; padding:6px 12px 16px}
+  #fa-root .fa-lens-head{padding:12px 12px 8px}
+  #fa-root .fa-tools{margin-left:0; width:100%}
+  #fa-root .fa-proj{min-width:0}
+  #fa-root .fa-thread,#fa-root .fa-inbox,#fa-root .fa-facts{max-width:none}
+  #fa-root .fa-dgrid,#fa-root .fa-fgrid{grid-template-columns:1fr}
+  #fa-root .fa-palette{width:calc(100% - 20px); left:10px; transform:translateY(-8px)}
+  #fa-root .fa-palette.show{transform:translateY(0)}
+}
+@media (prefers-reduced-motion:reduce){
+  #fa-root *{animation:none !important; transition:none !important}
+}
+</style>
+
+<div id="fa-root" data-theme="night" data-density="comfortable" data-tissue="on">
+  <canvas class="fa-amb" aria-hidden="true"></canvas>
+  <div class="fa-grain" aria-hidden="true"></div>
+  <div class="fa-app">
+    <!-- top chrome -->
+    <header class="fa-top">
+      <div class="fa-brand">
+        <div class="fa-mark"><i data-lucide="sailboat" style="width:19px;height:19px"></i></div>
+        <div>
+          <h1>Fleet</h1>
+          <div class="fa-sub">armada · one mind</div>
+        </div>
+      </div>
+      <div class="fa-search" id="fa-searchbar">
+        <i data-lucide="search" style="width:15px;height:15px"></i>
+        <input id="fa-search" type="text" placeholder="Search the workspace — tasks, threads, facts, instances…" aria-label="Search workspace">
+        <span class="fa-kbd">⌘K</span>
+      </div>
+      <div class="fa-fleetstat"><span class="fa-dot"></span><span id="fa-fleetcount">3 instances · 2 live</span></div>
+      <button class="fa-iconbtn" id="fa-sound" aria-pressed="false" aria-label="Toggle sound" data-tooltip="Sound"><i data-lucide="volume-x" style="width:17px;height:17px"></i></button>
+      <button class="fa-iconbtn" id="fa-theme" aria-label="Toggle theme" data-tooltip="Night / Day watch"><i data-lucide="moon" style="width:17px;height:17px"></i></button>
+    </header>
+
+    <!-- body -->
+    <div class="fa-body">
+      <!-- rail -->
+      <nav class="fa-rail" aria-label="Workspace">
+        <div>
+          <div class="fa-rail-h">Mission</div>
+          <div class="fa-proj">
+            <i data-lucide="anchor" style="width:17px;height:17px;color:var(--cyan)"></i>
+            <div><div class="fa-pname">Harbor Launch</div><div class="fa-pmeta">0.7.0 · 8 tasks</div></div>
+          </div>
+        </div>
+        <div>
+          <div class="fa-rail-h">Views</div>
+          <div class="fa-nav" id="fa-nav"></div>
+        </div>
+        <div>
+          <div class="fa-rail-h">Saved <button class="fa-saveview" id="fa-saveview" style="margin:0;padding:0"><i data-lucide="plus" style="width:12px;height:12px"></i></button></div>
+          <div class="fa-views" id="fa-views"></div>
+        </div>
+        <div class="fa-rail-foot">
+          <b>The tissue</b> connects every object. Click any node to pivot the whole workspace to it — one graph, not a drawer of silos.
+        </div>
+      </nav>
+
+      <!-- center -->
+      <main class="fa-center">
+        <div class="fa-lens-head">
+          <div>
+            <div class="fa-lens-title" id="fa-lens-title">Board</div>
+            <div class="fa-lens-sub" id="fa-lens-sub">Tasks across the mission, graded by outcome</div>
+          </div>
+          <div class="fa-tools" id="fa-tools"></div>
+        </div>
+        <div class="fa-lens-body" id="fa-lens-body" aria-live="polite"></div>
+      </main>
+
+      <!-- tissue -->
+      <aside class="fa-tissue" aria-label="Connective tissue">
+        <div class="fa-tissue-h">
+          <i data-lucide="waypoints" style="width:16px;height:16px;color:var(--cyan)"></i>
+          <span class="fa-th-title">The tissue</span>
+          <span class="fa-th-sub" id="fa-tissue-sub">live graph</span>
+        </div>
+        <div class="fa-graphwrap"><svg id="fa-graph" viewBox="0 0 300 300" role="img" aria-label="Work-object graph"></svg></div>
+        <div class="fa-legend" id="fa-legend"></div>
+        <div class="fa-focus" id="fa-focus"></div>
+      </aside>
+    </div>
+
+    <!-- console -->
+    <footer class="fa-console" aria-label="View console">
+      <span class="fa-console-h"><i data-lucide="sliders-horizontal" style="width:13px;height:13px"></i> Console</span>
+      <div class="fa-ctl"><label for="fa-c-density">Density</label>
+        <select id="fa-c-density"><option value="comfortable">Comfort</option><option value="compact">Compact</option></select></div>
+      <div class="fa-ctl"><label for="fa-c-accent">Signal</label>
+        <select id="fa-c-accent"><option value="cyan">Cyan</option><option value="green">Green</option><option value="magenta">Magenta</option><option value="amber">Amber</option></select></div>
+      <div class="fa-ctl"><label for="fa-c-speed">Live feed</label><input type="range" id="fa-c-speed" min="0.5" max="3" step="0.5" value="1"><span class="fa-val" id="fa-c-speed-v">1×</span></div>
+      <div class="fa-ctl"><label for="fa-c-spread">Graph</label><input type="range" id="fa-c-spread" min="60" max="120" step="5" value="92"><span class="fa-val" id="fa-c-spread-v">92</span></div>
+      <div class="fa-ctl"><label>Motion</label><button class="fa-switch" id="fa-c-motion" aria-pressed="true" aria-label="Toggle motion"></button></div>
+      <div class="fa-ctl"><label>Tissue</label><button class="fa-switch" id="fa-c-tissue" aria-pressed="true" aria-label="Toggle tissue pane"></button></div>
+      <div class="fa-ctl"><label>Labels</label><button class="fa-switch" id="fa-c-labels" aria-pressed="true" aria-label="Toggle graph labels"></button></div>
+      <span class="fa-spacer"></span>
+      <button class="fa-btn" id="fa-c-shuffle"><i data-lucide="shuffle" style="width:13px;height:13px"></i> Shuffle</button>
+      <button class="fa-btn" id="fa-c-reset"><i data-lucide="rotate-ccw" style="width:13px;height:13px"></i> Reset</button>
+      <button class="fa-btn" id="fa-c-export"><i data-lucide="download" style="width:13px;height:13px"></i> Export</button>
+    </footer>
+  </div>
+
+  <!-- overlays -->
+  <div class="fa-scrim" id="fa-scrim"></div>
+  <aside class="fa-drawer" id="fa-drawer" aria-label="Object details"></aside>
+  <div class="fa-palette" id="fa-palette" role="dialog" aria-label="Command palette">
+    <div class="fa-palette-in"><i data-lucide="command" style="width:16px;height:16px;color:var(--muted)"></i>
+      <input id="fa-palette-input" type="text" placeholder="Jump to an object or run a command…" aria-label="Command palette"></div>
+    <div class="fa-palette-list" id="fa-palette-list"></div>
+  </div>
+  <div class="fa-toasts" id="fa-toasts" aria-live="polite"></div>
+  <div class="fa-sr" id="fa-live" aria-live="polite"></div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var root=document.getElementById("fa-root");
+if(!root) return;
+var $=function(s){return root.querySelector(s);};
+var icons=function(){ if(window.lucide&&window.lucide.createIcons){ try{window.lucide.createIcons({attrs:{width:16,height:16}});}catch(e){} } };
+
+/* ---------- palette / kinds ---------- */
+var KIND={
+  task:{c:"var(--amber)",bg:"var(--amber-d)",icon:"square-check-big",label:"Task"},
+  thread:{c:"var(--cyan)",bg:"var(--cyan-d)",icon:"messages-square",label:"Thread"},
+  deliverable:{c:"var(--green)",bg:"var(--green-d)",icon:"package",label:"Deliverable"},
+  bot:{c:"var(--magenta)",bg:"var(--magenta-d)",icon:"bot",label:"Bot"},
+  lesson:{c:"var(--gold)",bg:"var(--gold-d)",icon:"lightbulb",label:"Lesson"},
+  instance:{c:"var(--blue)",bg:"var(--blue-d)",icon:"server",label:"Instance"},
+  fact:{c:"var(--teal)",bg:"var(--teal-d)",icon:"brain",label:"Fact"}
+};
+var STATUS={working:{c:"var(--amber)",label:"Working"},blocked:{c:"var(--red)",label:"Blocked"},done:{c:"var(--green)",label:"Done"}};
+
+/* ---------- seed data ---------- */
+function seed(){
+  return {
+    bots:[
+      {id:"b-carto",kind:"bot",name:"cartographer",role:"design",color:"var(--magenta)"},
+      {id:"b-ship",kind:"bot",name:"shipwright",role:"engineer",color:"var(--magenta)"},
+      {id:"b-harbor",kind:"bot",name:"harbormaster",role:"review",color:"var(--magenta)"}
+    ],
+    instances:[
+      {id:"i-flag",kind:"instance",name:"flagship",host:"local · this machine",live:true,cap:82,rel:0.96,settled:48,version:"0.7.0",flag:true},
+      {id:"i-reef",kind:"instance",name:"reef-1",host:"vps · fra1",live:true,cap:44,rel:0.88,settled:25,version:"0.7.0"},
+      {id:"i-atoll",kind:"instance",name:"atoll-2",host:"vps · sfo2",live:false,cap:12,rel:0.0,settled:0,version:"0.7.0"}
+    ],
+    tasks:[
+      {id:"t1",kind:"task",title:"Chart the fleet board",status:"done",prio:"P1",assignee:"b-carto",instance:"i-flag",thread:"th1",deliverable:"d1",lesson:"l1",order:0},
+      {id:"t2",kind:"task",title:"Wire the dispatch composer",status:"working",prio:"P0",assignee:"b-ship",instance:"i-reef",thread:"th2",deliverable:null,lesson:null,order:1},
+      {id:"t3",kind:"task",title:"Grade the reliability beat",status:"working",prio:"P1",assignee:"b-ship",instance:"i-flag",thread:"th3",deliverable:null,lesson:null,order:2},
+      {id:"t4",kind:"task",title:"Verify-before-obey on control frames",status:"blocked",prio:"P0",assignee:"b-harbor",instance:"i-reef",thread:"th4",deliverable:"d2",lesson:null,order:3},
+      {id:"t5",kind:"task",title:"Write the launch note",status:"working",prio:"P2",assignee:"b-carto",instance:"i-flag",thread:"th5",deliverable:null,lesson:null,order:4},
+      {id:"t6",kind:"task",title:"Corpus inheritance on fresh install",status:"done",prio:"P1",assignee:"b-ship",instance:"i-flag",thread:"th6",deliverable:"d3",lesson:"l2",order:5},
+      {id:"t7",kind:"task",title:"Omnichannel inbox identity graph",status:"done",prio:"P2",assignee:"b-carto",instance:"i-reef",thread:"th7",deliverable:"d4",lesson:null,order:6},
+      {id:"t8",kind:"task",title:"Tissue pane: surfaces as views",status:"working",prio:"P1",assignee:"b-carto",instance:"i-flag",thread:"th8",deliverable:null,lesson:null,order:7}
+    ],
+    threads:[
+      {id:"th1",kind:"thread",name:"Chart the fleet board",task:"t1"},
+      {id:"th2",kind:"thread",name:"Wire the dispatch composer",task:"t2"},
+      {id:"th3",kind:"thread",name:"Grade the reliability beat",task:"t3"},
+      {id:"th4",kind:"thread",name:"Verify-before-obey",task:"t4"},
+      {id:"th5",kind:"thread",name:"Write the launch note",task:"t5"},
+      {id:"th6",kind:"thread",name:"Corpus inheritance",task:"t6"},
+      {id:"th7",kind:"thread",name:"Omnichannel inbox",task:"t7"},
+      {id:"th8",kind:"thread",name:"Tissue pane",task:"t8"}
+    ],
+    deliverables:[
+      {id:"d1",kind:"deliverable",name:"Fleet board UI",claim:"A genuinely visual armada board: liveness, capacity, reliability.",gate:"pass",coverage:94,task:"t1"},
+      {id:"d2",kind:"deliverable",name:"Authority transport",claim:"Frames verified before obeying; forged assertions refused.",gate:"refused",coverage:71,task:"t4",refusal:"2 unsourced claims in the threat model"},
+      {id:"d3",kind:"deliverable",name:"Fresh-install bootstrap",claim:"Clone the mind, mint a new identity, register un-calibrated.",gate:"pass",coverage:98,task:"t6"},
+      {id:"d4",kind:"deliverable",name:"Inbox identity graph",claim:"One principal across telegram, webhook, and relay.",gate:"pass",coverage:90,task:"t7"}
+    ],
+    lessons:[
+      {id:"l1",kind:"lesson",name:"Liveness is earned",body:"A heartbeat earns liveness; registration never assumes it. The board reads freshness, not a flag.",task:"t1"},
+      {id:"l2",kind:"lesson",name:"Inherit the mind, not the self",body:"A fresh install clones the corpus but mints its own install-id — identity is not in the corpus.",task:"t6"}
+    ],
+    facts:[
+      {id:"f1",kind:"fact",name:"verify-before-obey",basis:"validated",body:"The instance verifies the flagship signature before obeying any privileged frame."},
+      {id:"f2",kind:"fact",name:"relay-is-dumb",basis:"stated",body:"The relay routes frames without parsing verbs or holding authority."},
+      {id:"f3",kind:"fact",name:"autonomy-earned",basis:"validated",body:"Dispatch autonomy is earned by measured reliability over settled runs, never by arrival."},
+      {id:"f4",kind:"fact",name:"corpus-merge-sums",basis:"inferred",body:"Recall counters sum across installs on merge; supersede rides the basis ladder."},
+      {id:"f5",kind:"fact",name:"one-derivation",basis:"stated",body:"A huddle stays a session; the graph stores references, never a parallel store."}
+    ],
+    messages:[
+      {id:"m1",chan:"telegram",who:"Alejandro",principal:"owner",text:"Can reef-1 take the dispatch composer while flagship charts the board?",out:"delivered",dir:"in"},
+      {id:"m2",chan:"relay",who:"reef-1",principal:"inst:reef",text:"Admitted. Capacity 44% free, reliability 0.88 over 25 settles.",out:"delivered",dir:"in"},
+      {id:"m3",chan:"webhook",who:"GitHub",principal:"svc:ci",text:"gate green on 65acf2c · v0.7.0 tagged",out:"delivered",dir:"in"},
+      {id:"m4",chan:"telegram",who:"Alejandro",principal:"owner",text:"Hold atoll-2 until it passes doctor — it just joined.",out:"queued",dir:"out"}
+    ],
+    activity:[
+      {c:"var(--green)",t:"v0.7.0 published · feed verified"},
+      {c:"var(--cyan)",t:"reef-1 heartbeat · live"},
+      {c:"var(--gold)",t:"lesson born: Liveness is earned"},
+      {c:"var(--red)",t:"atoll-2 un-calibrated · held"}
+    ]
+  };
+}
+
+/* ---------- state ---------- */
+var DB=seed();
+var state={
+  lens:"board", focus:{kind:"task",id:"t2"},
+  filterStatus:"all", filterAssignee:"all", sort:"order", query:"",
+  selected:{}, bulk:false, savedViews:[{name:"P0 working",lens:"board",filterStatus:"working",query:""}],
+  speed:1, spread:92, motion:true, labels:true, sound:false,
+  running:{}, paletteOpen:false, drawer:null
+};
+var LENSES=[
+  {id:"board",icon:"layout-grid",label:"Board",sub:"Tasks across the mission, graded by outcome"},
+  {id:"threads",icon:"messages-square",label:"Threads",sub:"The conversation every task is worked in"},
+  {id:"deliverables",icon:"package",label:"Deliverables",sub:"The desk — work that landed, gated by evidence"},
+  {id:"fleet",icon:"server",label:"Fleet",sub:"Instances, liveness earned, capacity, reliability"},
+  {id:"inbox",icon:"inbox",label:"Inbox",sub:"One omnichannel stream, identity resolved"},
+  {id:"memory",icon:"brain",label:"Memory",sub:"The shared corpus — facts with provenance"}
+];
+
+/* ---------- helpers ---------- */
+function byId(kind,id){
+  var arr={task:DB.tasks,thread:DB.threads,deliverable:DB.deliverables,bot:DB.bots,lesson:DB.lessons,instance:DB.instances,fact:DB.facts}[kind];
+  if(!arr) return null;
+  for(var i=0;i<arr.length;i++) if(arr[i].id===id) return arr[i];
+  return null;
+}
+function obj(ref){ return ref?byId(ref.kind,ref.id):null; }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
+function announce(t){ var l=$("#fa-live"); if(l) l.textContent=t; }
+function linkedObjects(ref){
+  var out=[];
+  if(ref.kind==="task"){
+    var t=obj(ref);
+    if(t){ if(t.thread)out.push({kind:"thread",id:t.thread}); if(t.assignee)out.push({kind:"bot",id:t.assignee});
+      if(t.deliverable)out.push({kind:"deliverable",id:t.deliverable}); if(t.lesson)out.push({kind:"lesson",id:t.lesson});
+      if(t.instance)out.push({kind:"instance",id:t.instance}); }
+  } else {
+    DB.tasks.forEach(function(t){
+      if((ref.kind==="thread"&&t.thread===ref.id)||(ref.kind==="bot"&&t.assignee===ref.id)||(ref.kind==="deliverable"&&t.deliverable===ref.id)||(ref.kind==="lesson"&&t.lesson===ref.id)||(ref.kind==="instance"&&t.instance===ref.id)) out.push({kind:"task",id:t.id});
+    });
+    if(ref.kind==="deliverable"){ var d=obj(ref); if(d&&d.task){var tt=byId("task",d.task); if(tt&&tt.lesson)out.push({kind:"lesson",id:tt.lesson});} }
+  }
+  return out;
+}
+
+/* ---------- toast ---------- */
+function toast(msg,icon,color,action){
+  var wrap=$("#fa-toasts"); var el=document.createElement("div"); el.className="fa-toast";
+  el.innerHTML='<span class="fa-ticon" style="background:'+(color||"var(--cyan-d)")+';color:'+(color?color:"var(--cyan)")+'"><i data-lucide="'+(icon||"check")+'" style="width:14px;height:14px"></i></span><span>'+esc(msg)+'</span>';
+  if(action){ var b=document.createElement("button"); b.textContent=action.label; b.onclick=function(){action.fn(); el.remove();}; el.appendChild(b); }
+  wrap.appendChild(el); icons();
+  setTimeout(function(){ el.style.transition="opacity .3s"; el.style.opacity="0"; setTimeout(function(){el.remove();},320); }, action?6000:3400);
+}
+function ping(freq){
+  if(!state.sound) return;
+  try{ var ac=ping.ac||(ping.ac=new (window.AudioContext||window.webkitAudioContext)());
+    var o=ac.createOscillator(), g=ac.createGain(); o.type="sine"; o.frequency.value=freq||660;
+    g.gain.setValueAtTime(0.0001,ac.currentTime); g.gain.exponentialRampToValueAtTime(0.06,ac.currentTime+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+0.4); o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime+0.42); }catch(e){}
+}
+
+/* ---------- navigation ---------- */
+function setLens(id){ state.lens=id; state.selected={}; renderNav(); renderLens(); }
+function focusOn(kind,id,switchLens){
+  state.focus={kind:kind,id:id};
+  if(switchLens){
+    var map={task:"board",thread:"threads",deliverable:"deliverables",bot:"fleet",lesson:"memory",instance:"fleet",fact:"memory"};
+    if(map[kind]) state.lens=map[kind];
+  }
+  renderNav(); renderLens(); renderTissue();
+  announce("Focused "+kind+" "+id);
+}
+function renderNav(){
+  var nav=$("#fa-nav"); nav.innerHTML="";
+  LENSES.forEach(function(L){
+    var count={board:DB.tasks.length,threads:DB.threads.length,deliverables:DB.deliverables.length,fleet:DB.instances.length,inbox:DB.messages.length,memory:DB.facts.length}[L.id];
+    var b=document.createElement("button"); b.className=(state.lens===L.id?"active":""); b.setAttribute("aria-current",state.lens===L.id?"page":"false");
+    b.innerHTML='<i data-lucide="'+L.icon+'" style="width:16px;height:16px"></i><span>'+L.label+'</span><span class="fa-count">'+count+'</span>';
+    b.onclick=function(){setLens(L.id);}; nav.appendChild(b);
+  });
+  var v=$("#fa-views"); v.innerHTML="";
+  state.savedViews.forEach(function(sv,i){
+    var b=document.createElement("button"); b.innerHTML='<span class="fa-vdot"></span>'+esc(sv.name);
+    b.onclick=function(){ state.lens=sv.lens; state.filterStatus=sv.filterStatus||"all"; state.query=sv.query||""; $("#fa-search").value=state.query; renderNav(); renderLens(); toast("View restored: "+sv.name,"bookmark","var(--gold)"); };
+    v.appendChild(b);
+  });
+  icons();
+}
+
+/* ---------- lens dispatch ---------- */
+function renderLens(){
+  var L=LENSES.filter(function(x){return x.id===state.lens;})[0];
+  $("#fa-lens-title").textContent=L.label; $("#fa-lens-sub").textContent=L.sub;
+  var tools=$("#fa-tools"); tools.innerHTML="";
+  var body=$("#fa-lens-body");
+  if(state.lens==="board") renderBoard(tools,body);
+  else if(state.lens==="threads") renderThreads(tools,body);
+  else if(state.lens==="deliverables") renderDeliverables(tools,body);
+  else if(state.lens==="fleet") renderFleet(tools,body);
+  else if(state.lens==="inbox") renderInbox(tools,body);
+  else if(state.lens==="memory") renderMemory(tools,body);
+  icons();
+}
+function matchQuery(text){ return !state.query || text.toLowerCase().indexOf(state.query.toLowerCase())>=0; }
+
+/* ---------- BOARD ---------- */
+function renderBoard(tools,body){
+  tools.innerHTML=
+    '<button class="fa-chip '+(state.filterStatus==="all"?"on":"")+'" data-fs="all">All</button>'+
+    '<button class="fa-chip '+(state.filterStatus==="working"?"on":"")+'" data-fs="working"><span class="fa-cdot" style="background:var(--amber)"></span>Working</button>'+
+    '<button class="fa-chip '+(state.filterStatus==="blocked"?"on":"")+'" data-fs="blocked"><span class="fa-cdot" style="background:var(--red)"></span>Blocked</button>'+
+    '<button class="fa-chip '+(state.filterStatus==="done"?"on":"")+'" data-fs="done"><span class="fa-cdot" style="background:var(--green)"></span>Done</button>'+
+    '<select class="fa-select" id="fa-sort" aria-label="Sort"><option value="order">Priority order</option><option value="title">Title A–Z</option><option value="status">Status</option></select>'+
+    '<button class="fa-btn fa-btn-primary" id="fa-new"><i data-lucide="plus" style="width:14px;height:14px"></i> New task</button>';
+  tools.querySelectorAll("[data-fs]").forEach(function(c){ c.onclick=function(){state.filterStatus=c.getAttribute("data-fs"); renderLens();}; });
+  var sortSel=tools.querySelector("#fa-sort"); sortSel.value=state.sort; sortSel.onchange=function(){state.sort=sortSel.value; renderLens();};
+  tools.querySelector("#fa-new").onclick=function(){ openNewTask(body); };
+
+  body.innerHTML="";
+  if(state.bulk && Object.keys(state.selected).length){
+    var bar=document.createElement("div"); bar.className="fa-bulk";
+    var n=Object.keys(state.selected).length;
+    bar.innerHTML='<b>'+n+' selected</b>';
+    var disp=document.createElement("button"); disp.className="fa-btn fa-btn-primary"; disp.innerHTML='<i data-lucide="send" style="width:13px;height:13px"></i> Dispatch';
+    disp.onclick=function(){ var ids=Object.keys(state.selected); ids.forEach(function(id){dispatch(id);}); state.selected={}; state.bulk=false; renderLens(); };
+    var del=document.createElement("button"); del.className="fa-btn fa-btn-danger"; del.innerHTML='<i data-lucide="trash-2" style="width:13px;height:13px"></i> Delete';
+    del.onclick=function(){ deleteTasks(Object.keys(state.selected)); };
+    var clr=document.createElement("button"); clr.className="fa-btn"; clr.textContent="Clear"; clr.onclick=function(){state.selected={};state.bulk=false;renderLens();};
+    bar.appendChild(disp); bar.appendChild(del); bar.appendChild(clr); body.appendChild(bar);
+  }
+  var cols=document.createElement("div"); cols.className="fa-cols";
+  ["working","blocked","done"].forEach(function(st){
+    var col=document.createElement("div"); col.className="fa-col"; col.setAttribute("data-status",st);
+    var tasks=DB.tasks.filter(function(t){
+      if(t.status!==st) return false;
+      if(state.filterStatus!=="all"&&t.status!==state.filterStatus) return false;
+      return matchQuery(t.title);
+    });
+    tasks.sort(function(a,b){ if(state.sort==="title")return a.title.localeCompare(b.title); if(state.sort==="status")return a.status.localeCompare(b.status); return a.order-b.order; });
+    col.innerHTML='<div class="fa-col-h"><span class="fa-cdot" style="background:'+STATUS[st].c+'"></span>'+STATUS[st].label+'<span class="fa-cn">'+tasks.length+'</span></div>';
+    col.addEventListener("dragover",function(e){e.preventDefault(); col.classList.add("dragover");});
+    col.addEventListener("dragleave",function(){col.classList.remove("dragover");});
+    col.addEventListener("drop",function(e){ e.preventDefault(); col.classList.remove("dragover");
+      var id=e.dataTransfer.getData("text/plain"); var t=byId("task",id); if(t){ t.status=st; renderLens(); renderTissue(); toast("Moved to "+STATUS[st].label,"arrow-right",STATUS[st].c); } });
+    tasks.forEach(function(t){ col.appendChild(taskCard(t)); });
+    if(!tasks.length){ var em=document.createElement("div"); em.className="fa-empty"; em.style.padding="18px"; em.textContent="—"; col.appendChild(em); }
+    cols.appendChild(col);
+  });
+  body.appendChild(cols);
+  // The graded story, live: every settled run lands here — outcome, not assertion.
+  var strip=document.createElement("div"); strip.className="fa-activity-strip";
+  strip.innerHTML='<div class="fa-as-h"><i data-lucide="activity" style="width:12px;height:12px"></i>Settled · graded against outcome</div>'+
+    DB.activity.slice(0,4).map(function(a,i){return '<div class="fa-as-row"><i style="background:'+a.c+'"></i>'+esc(a.t)+'<span class="fa-as-time">'+(i===0?"just now":i+"m")+'</span></div>';}).join("");
+  body.appendChild(strip);
+}
+function taskCard(t){
+  var el=document.createElement("div"); el.className="fa-task"+(state.selected[t.id]?" sel":""); el.draggable=true; el.setAttribute("data-id",t.id);
+  var bot=byId("bot",t.assignee); var inst=byId("instance",t.instance);
+  var links="";
+  if(t.thread) links+='<button class="fa-linkdot" data-go="thread:'+t.thread+'" data-tooltip="Thread" style="color:var(--cyan)"><i data-lucide="messages-square" style="width:12px;height:12px"></i></button>';
+  if(t.deliverable) links+='<button class="fa-linkdot" data-go="deliverable:'+t.deliverable+'" data-tooltip="Deliverable" style="color:var(--green)"><i data-lucide="package" style="width:12px;height:12px"></i></button>';
+  if(t.lesson) links+='<button class="fa-linkdot" data-go="lesson:'+t.lesson+'" data-tooltip="Lesson" style="color:var(--gold)"><i data-lucide="lightbulb" style="width:12px;height:12px"></i></button>';
+  el.innerHTML=
+    '<div class="fa-task-top"><button class="fa-check '+(state.selected[t.id]?"on":"")+'" aria-label="Select"><i data-lucide="check" style="width:11px;height:11px"></i></button>'+
+    '<div class="fa-task-title">'+esc(t.title)+'</div></div>'+
+    '<div class="fa-task-meta"><span class="fa-tag" style="background:var(--magenta-d);color:var(--magenta)"><span class="fa-tdot" style="background:var(--magenta)"></span>'+esc(bot?bot.name:"—")+'</span>'+
+    '<span class="fa-tag" style="background:var(--blue-d);color:var(--blue)"><i data-lucide="server" style="width:10px;height:10px"></i>'+esc(inst?inst.name:"—")+'</span>'+
+    '<span class="fa-prio">'+t.prio+'</span></div>'+
+    (links?'<div class="fa-task-links">'+links+'</div>':"")+
+    (state.running[t.id]?'<div class="fa-running"></div>':"");
+  el.querySelector(".fa-check").onclick=function(e){ e.stopPropagation(); if(state.selected[t.id])delete state.selected[t.id]; else state.selected[t.id]=true; state.bulk=Object.keys(state.selected).length>0; renderLens(); };
+  el.querySelectorAll("[data-go]").forEach(function(b){ b.onclick=function(e){ e.stopPropagation(); var p=b.getAttribute("data-go").split(":"); focusOn(p[0],p[1],true); }; });
+  el.onclick=function(){ focusOn("task",t.id,false); openDrawer("task",t.id); };
+  el.addEventListener("dragstart",function(e){ e.dataTransfer.setData("text/plain",t.id); el.classList.add("dragging"); });
+  el.addEventListener("dragend",function(){ el.classList.remove("dragging"); });
+  return el;
+}
+function openNewTask(body){
+  if(body.querySelector(".fa-newtask")) return;
+  var box=document.createElement("div"); box.className="fa-newtask";
+  box.innerHTML='<input type="text" id="fa-nt-title" placeholder="What needs doing?" aria-label="New task title">'+
+    '<div class="fa-newtask-row"><select id="fa-nt-bot">'+DB.bots.map(function(b){return '<option value="'+b.id+'">'+b.name+'</option>';}).join("")+'</select>'+
+    '<select id="fa-nt-inst">'+DB.instances.map(function(i){return '<option value="'+i.id+'">'+i.name+'</option>';}).join("")+'</select>'+
+    '<button class="fa-btn fa-btn-primary" id="fa-nt-add">Add</button></div>';
+  var cols=body.querySelector(".fa-cols"); body.insertBefore(box,cols);
+  var inp=box.querySelector("#fa-nt-title"); inp.focus();
+  function add(){
+    var title=inp.value.trim(); if(!title){inp.focus();return;}
+    var id="t"+(Date.now()%100000);
+    var th="th"+id;
+    DB.tasks.push({id:id,kind:"task",title:title,status:"working",prio:"P1",assignee:box.querySelector("#fa-nt-bot").value,instance:box.querySelector("#fa-nt-inst").value,thread:th,deliverable:null,lesson:null,order:DB.tasks.length});
+    DB.threads.push({id:th,kind:"thread",name:title,task:id});
+    box.remove(); renderNav(); renderLens(); focusOn("task",id,false);
+    toast("Task created","plus","var(--cyan)"); ping(720);
+  }
+  box.querySelector("#fa-nt-add").onclick=add;
+  inp.addEventListener("keydown",function(e){ if(e.key==="Enter")add(); if(e.key==="Escape")box.remove(); });
+  icons();
+}
+function deleteTasks(ids){
+  var removed=DB.tasks.filter(function(t){return ids.indexOf(t.id)>=0;});
+  DB.tasks=DB.tasks.filter(function(t){return ids.indexOf(t.id)<0;});
+  state.selected={}; state.bulk=false; renderNav(); renderLens(); renderTissue();
+  toast(removed.length+" task"+(removed.length>1?"s":"")+" deleted","trash-2","var(--red)",{label:"Undo",fn:function(){ removed.forEach(function(t){DB.tasks.push(t);}); renderNav(); renderLens(); renderTissue(); toast("Restored","rotate-ccw","var(--green)"); }});
+}
+
+/* ---------- THREADS ---------- */
+var threadMsgs={};
+function renderThreads(tools,body){
+  var t=state.focus.kind==="task"?obj(state.focus):(DB.tasks[0]||null);
+  if(state.focus.kind==="thread"){ var th=obj(state.focus); t=(th&&byId("task",th.task))||t; }
+  if(!t){ body.innerHTML='<div class="fa-empty">No tasks yet — create one on the Board to start a thread.</div>'; tools.innerHTML=""; return; }
+  tools.innerHTML='<span class="fa-chip on"><i data-lucide="messages-square" style="width:12px;height:12px"></i> '+esc(t?t.title:"")+'</span>'+
+    '<button class="fa-btn fa-btn-primary" id="fa-dispatch"><i data-lucide="send" style="width:13px;height:13px"></i> Dispatch bot</button>';
+  tools.querySelector("#fa-dispatch").onclick=function(){ if(t)dispatch(t.id); };
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fa-thread";
+  var msgs=threadMsgs[t.id]||defaultThread(t);
+  msgs.forEach(function(m){ wrap.appendChild(msgEl(m)); });
+  var comp=document.createElement("div"); comp.className="fa-composer";
+  comp.innerHTML='<textarea placeholder="Message the thread… @mention a bot to invoke it" aria-label="Message"></textarea>'+
+    '<div class="fa-composer-bar"><span class="fa-mention">@shipwright</span><span class="fa-mention">@harbormaster</span>'+
+    '<button class="fa-btn fa-btn-primary" style="margin-left:auto" id="fa-send"><i data-lucide="arrow-up" style="width:13px;height:13px"></i> Send</button></div>';
+  wrap.appendChild(comp); body.appendChild(wrap);
+  comp.querySelector("#fa-send").onclick=function(){
+    var ta=comp.querySelector("textarea"); var v=ta.value.trim(); if(!v)return;
+    msgs.push({who:"You",role:"owner",color:"var(--cyan)",text:v,time:"now"}); ta.value=""; renderLens();
+    var mention=v.match(/@(\w+)/); var bot=mention?DB.bots.filter(function(b){return b.name===mention[1];})[0]:byId("bot",t.assignee);
+    if(bot){ setTimeout(function(){ streamBot(t,bot,msgs); },400/state.speed); }
+  };
+  body.scrollTop=body.scrollHeight;
+}
+function defaultThread(t){
+  var bot=byId("bot",t.assignee);
+  return [
+    {who:"You",role:"owner",color:"var(--cyan)",text:"Pick up “"+t.title+"”. Ground it in the corpus, land a deliverable, and let the gate grade it.",time:"09:12"},
+    {who:bot?bot.name:"bot",role:"bot",color:"var(--magenta)",text:"On it. Reading the substrate, then I'll work the thread and hand a deliverable to the desk.",time:"09:12",tool:"recall · 4 facts"}
+  ];
+}
+function msgEl(m){
+  var el=document.createElement("div"); el.className="fa-msg";
+  var initial=(m.who||"?").charAt(0).toUpperCase();
+  el.innerHTML='<div class="fa-av" style="background:'+(m.color||"var(--cyan)")+'">'+esc(initial)+'</div>'+
+    '<div class="fa-msg-body"><div class="fa-msg-h"><span class="fa-msg-name">'+esc(m.who)+'</span><span class="fa-msg-time">'+esc(m.time||"")+'</span></div>'+
+    '<div class="fa-msg-text">'+esc(m.text)+(m.streaming?'<span class="fa-cursor"></span>':"")+'</div>'+
+    (m.tool?'<div class="fa-toolcall"><i data-lucide="terminal" style="width:12px;height:12px"></i>'+esc(m.tool)+' <span class="fa-ok">✓</span></div>':"")+'</div>';
+  return el;
+}
+function streamBot(t,bot,msgs){
+  bot=bot||DB.bots[0]||{name:"shipwright"};
+  var steps=[
+    {text:"Grounding the answer in the corpus — pulling the relevant facts before I compose.",tool:"recall · verify-before-obey"},
+    {text:"Working the change. The harness computes; I compose last, on what it established.",tool:"edit · src/armada"},
+    {text:"Done. Handing the deliverable to the desk — the end gate grades it, not my say-so."}
+  ];
+  var i=0;
+  function next(){
+    if(i>=steps.length){ settleRun(t); return; }
+    var s=steps[i++]; var m={who:bot.name,role:"bot",color:"var(--magenta)",text:"",time:"now",streaming:true,tool:s.tool};
+    msgs.push(m); renderLens();
+    var full=s.text, k=0;
+    var iv=setInterval(function(){
+      k+=2; m.text=full.slice(0,k); renderLens();
+      if(k>=full.length){ clearInterval(iv); m.streaming=false; renderLens(); setTimeout(next,300/state.speed); }
+    },16/state.speed);
+  }
+  next();
+}
+
+/* ---------- dispatch hero flow ---------- */
+function dispatch(taskId){
+  var t=byId("task",taskId); if(!t||state.running[taskId])return;
+  state.running[taskId]=true; t.status="working";
+  var inst=byId("instance",t.instance); if(inst&&!inst.live){ inst.live=true; }
+  renderLens(); renderTissue(); ping(540);
+  toast("Dispatched to "+(inst?inst.name:"instance")+" · "+(byId("bot",t.assignee)||{}).name,"send","var(--cyan)");
+  focusOn("task",taskId,false); state.lens="threads"; renderNav();
+  var msgs=threadMsgs[taskId]||(threadMsgs[taskId]=defaultThread(t));
+  var bot=byId("bot",t.assignee);
+  setTimeout(function(){ streamBot(t,bot,msgs); },500/state.speed);
+}
+function settleRun(t){
+  delete state.running[t.id];
+  // land a deliverable
+  var did="d"+(Date.now()%100000);
+  var pass=Math.random()>0.18;
+  DB.deliverables.push({id:did,kind:"deliverable",name:t.title,claim:"Landed by "+(byId("bot",t.assignee)||{}).name+" on "+(byId("instance",t.instance)||{}).name+".",gate:pass?"pass":"refused",coverage:pass?92:68,task:t.id,refusal:pass?null:"1 unsourced claim"});
+  t.deliverable=did; t.status=pass?"done":"blocked";
+  var lid=null;
+  if(pass){ lid="l"+(Date.now()%100000); DB.lessons.push({id:lid,kind:"lesson",name:t.title,body:"Earned by a settled run: the deliverable passed the end gate, graded against evidence.",task:t.id}); t.lesson=lid; }
+  var inst=byId("instance",t.instance); if(inst){ inst.settled++; inst.rel=Math.min(0.99,inst.rel+0.01); }
+  DB.activity.unshift({c:pass?"var(--green)":"var(--red)",t:(pass?"Deliverable landed · ":"Blocked · ")+t.title});
+  renderNav(); renderLens(); renderTissue(); ping(pass?880:300);
+  toast(pass?"Deliverable landed · task graded done":"Blocked · "+(t.title),pass?"package-check":"alert-triangle",pass?"var(--green)":"var(--red)");
+  announce("Run settled: "+t.status);
+}
+
+/* ---------- DELIVERABLES ---------- */
+function renderDeliverables(tools,body){
+  tools.innerHTML='<span class="fa-chip on">'+DB.deliverables.length+' on the shelf</span>';
+  body.innerHTML=""; var grid=document.createElement("div"); grid.className="fa-dgrid";
+  DB.deliverables.filter(function(d){return matchQuery(d.name+" "+d.claim);}).forEach(function(d){
+    var c=document.createElement("div"); c.className="fa-dcard";
+    var gc=d.gate==="pass"?"var(--green)":"var(--red)";
+    c.innerHTML='<h3>'+esc(d.name)+'</h3><p>'+esc(d.claim)+'</p>'+
+      '<div class="fa-meter"><i style="width:'+d.coverage+'%"></i></div>'+
+      '<div class="fa-gate" style="color:'+gc+'"><i data-lucide="'+(d.gate==="pass"?"shield-check":"shield-alert")+'" style="width:14px;height:14px"></i>'+
+      (d.gate==="pass"?"end gate passed · "+d.coverage+"% coverage":"refused · "+esc(d.refusal||""))+'</div>';
+    c.onclick=function(){ focusOn("deliverable",d.id,false); openDrawer("deliverable",d.id); };
+    grid.appendChild(c);
+  });
+  body.appendChild(grid);
+}
+
+/* ---------- FLEET ---------- */
+function renderFleet(tools,body){
+  var live=DB.instances.filter(function(i){return i.live;}).length;
+  tools.innerHTML='<span class="fa-chip on"><span class="fa-dot"></span>'+live+' / '+DB.instances.length+' live</span>'+
+    '<button class="fa-btn" id="fa-provision"><i data-lucide="plus" style="width:13px;height:13px"></i> Provision instance</button>';
+  tools.querySelector("#fa-provision").onclick=function(){ provision(); };
+  body.innerHTML=""; var grid=document.createElement("div"); grid.className="fa-fgrid";
+  DB.instances.filter(function(i){return matchQuery(i.name+" "+i.host);}).forEach(function(i){
+    var c=document.createElement("div"); c.className="fa-inst";
+    var relColor=i.rel>0.8?"var(--green)":i.rel>0?"var(--amber)":"var(--faint)";
+    c.innerHTML=(i.live?'<span class="fa-heart"></span>':"")+
+      '<div class="fa-inst-h"><div class="fa-inst-ic"><i data-lucide="'+(i.flag?"flag":"server")+'" style="width:19px;height:19px"></i></div>'+
+      '<div><div class="fa-inst-name">'+esc(i.name)+(i.flag?' <span style="font-size:10px;color:var(--gold)">★</span>':"")+'</div><div class="fa-inst-host">'+esc(i.host)+'</div></div>'+
+      '<span class="fa-live '+(i.live?"on":"off")+'"><span class="fa-cdot" style="width:6px;height:6px;border-radius:50%;background:'+(i.live?"var(--green)":"var(--faint)")+'"></span>'+(i.live?"live":"not live")+'</span></div>'+
+      '<div class="fa-inst-row"><span>Capacity free</span><b>'+i.cap+'%</b></div><div class="fa-gauge"><i style="width:'+i.cap+'%;background:linear-gradient(90deg,var(--blue),var(--cyan))"></i></div>'+
+      '<div class="fa-inst-row"><span>Reliability · '+i.settled+' settled</span><b style="color:'+relColor+'">'+(i.settled?Math.round(i.rel*100)+"%":"un-calibrated")+'</b></div>'+
+      '<div class="fa-gauge"><i style="width:'+(i.rel*100)+'%;background:'+relColor+'"></i></div>'+
+      '<div class="fa-inst-row"><span>Version</span><b>'+esc(i.version)+'</b></div>'+
+      '<div class="fa-inst-actions"><button class="fa-btn" data-dispatch><i data-lucide="send" style="width:12px;height:12px"></i> Dispatch</button>'+
+      '<button class="fa-btn" data-heart><i data-lucide="activity" style="width:12px;height:12px"></i> Heartbeat</button></div>';
+    c.querySelector("[data-dispatch]").onclick=function(){ var t=DB.tasks.filter(function(x){return x.status==="working";})[0]; if(t){t.instance=i.id; dispatch(t.id);} else toast("No working task to dispatch","info","var(--cyan)"); };
+    c.querySelector("[data-heart]").onclick=function(){ i.live=true; renderLens(); renderTissue(); toast(i.name+" heartbeat · live","activity","var(--green)"); ping(600); };
+    c.onclick=function(e){ if(e.target.closest("button"))return; focusOn("instance",i.id,false); openDrawer("instance",i.id); };
+    grid.appendChild(c);
+  });
+  body.appendChild(grid);
+}
+function provision(){
+  var n=DB.instances.length+1; var id="i-new"+n;
+  DB.instances.push({id:id,kind:"instance",name:"isle-"+n,host:"vps · provisioning",live:false,cap:100,rel:0,settled:0,version:"0.7.0"});
+  renderNav(); renderLens(); renderTissue();
+  toast("Provisioning isle-"+n+" · inheriting the corpus, un-calibrated until it settles","server","var(--blue)");
+  setTimeout(function(){ var i=byId("instance",id); if(i){i.host="vps · ams1"; i.live=true; renderLens(); renderTissue(); toast("isle-"+n+" joined · heartbeat earned","check","var(--green)");} },2600/state.speed);
+}
+
+/* ---------- INBOX ---------- */
+function renderInbox(tools,body){
+  tools.innerHTML='<span class="fa-chip on"><i data-lucide="inbox" style="width:12px;height:12px"></i> omnichannel</span>';
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fa-inbox";
+  var chanColor={telegram:"var(--cyan)",relay:"var(--blue)",webhook:"var(--magenta)"};
+  DB.messages.filter(function(m){return matchQuery(m.who+" "+m.text);}).forEach(function(m){
+    var row=document.createElement("div"); row.className="fa-inrow";
+    var oc=m.out==="delivered"?"var(--green)":m.out==="queued"?"var(--amber)":"var(--red)";
+    row.innerHTML='<span class="fa-chan" style="background:var(--panel2);color:'+(chanColor[m.chan]||"var(--cyan)")+'">'+esc(m.chan)+'</span>'+
+      '<div class="fa-inbody"><div class="fa-inwho">'+esc(m.who)+' <span class="fa-principal">'+esc(m.principal)+'</span></div><div class="fa-intext">'+esc(m.text)+'</div></div>'+
+      '<span class="fa-outbox" style="background:var(--panel2);color:'+oc+'">'+(m.dir==="out"?"outbox · ":"")+esc(m.out)+'</span>';
+    wrap.appendChild(row);
+  });
+  body.appendChild(wrap);
+}
+
+/* ---------- MEMORY ---------- */
+function renderMemory(tools,body){
+  tools.innerHTML='<span class="fa-chip on">'+DB.facts.length+' facts · git-synced</span>';
+  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fa-facts";
+  var basisColor={stated:"var(--cyan)",inferred:"var(--amber)",validated:"var(--green)"};
+  DB.facts.filter(function(f){return matchQuery(f.name+" "+f.body);}).forEach(function(f){
+    var el=document.createElement("div"); el.className="fa-fact"; el.style.borderLeftColor=basisColor[f.basis]||"var(--teal)";
+    el.innerHTML='<div class="fa-fact-h"><span class="fa-fact-name">'+esc(f.name)+'</span><span class="fa-basis" style="background:var(--panel2);color:'+(basisColor[f.basis]||"var(--teal)")+'">'+esc(f.basis)+'</span></div><div class="fa-fact-body">'+esc(f.body)+'</div>';
+    el.onclick=function(){ focusOn("fact",f.id,false); openDrawer("fact",f.id); };
+    wrap.appendChild(el);
+  });
+  body.appendChild(wrap);
+}
+
+/* ---------- TISSUE GRAPH ---------- */
+function renderTissue(){
+  var svg=$("#fa-graph"); if(!svg)return;
+  var center=state.focus; var cobj=obj(center);
+  var links=linkedObjects(center);
+  var nodes=[{ref:center,center:true}]; links.forEach(function(l){nodes.push({ref:l});});
+  var R=state.spread, cx=150, cy=150;
+  var pos={}; pos[center.kind+":"+center.id]={x:cx,y:cy};
+  var n=links.length;
+  links.forEach(function(l,i){ var a=(i/Math.max(1,n))*Math.PI*2 - Math.PI/2; pos[l.kind+":"+l.id]={x:cx+Math.cos(a)*R,y:cy+Math.sin(a)*R}; });
+  var html="";
+  // edges
+  links.forEach(function(l){ var p=pos[l.kind+":"+l.id]; var hot=state.running[center.id]||(center.kind!=="task"&&state.running[l.id]);
+    html+='<path class="fa-edge'+(hot?" hot":"")+'" d="M'+cx+','+cy+' L'+p.x.toFixed(1)+','+p.y.toFixed(1)+'"/>'; });
+  // nodes
+  nodes.forEach(function(nd){
+    var p=pos[nd.ref.kind+":"+nd.ref.id]; var k=KIND[nd.ref.kind]; var o=obj(nd.ref);
+    var label=o?(o.title||o.name||o.id):nd.ref.id; label=label.length>16?label.slice(0,15)+"…":label;
+    var r=nd.center?20:13;
+    var live=nd.ref.kind==="instance"&&o&&o.live;
+    var above=p.y<cy-10; var ly=above?-(r+10):(r+15);
+    html+='<g class="fa-node'+(nd.center?" center":"")+'" data-kind="'+nd.ref.kind+'" data-id="'+nd.ref.id+'" transform="translate('+p.x.toFixed(1)+','+p.y.toFixed(1)+')">'+
+      (live?'<circle r="'+(r+5)+'" fill="none" stroke="var(--green)" stroke-width="1" opacity=".5"><animate attributeName="r" values="'+(r+3)+';'+(r+9)+'" dur="2.4s" repeatCount="indefinite"/><animate attributeName="opacity" values=".5;0" dur="2.4s" repeatCount="indefinite"/></circle>':"")+
+      '<circle r="'+r+'" fill="'+k.bg+'" stroke="'+k.c+'" stroke-width="'+(nd.center?2:1.4)+'"/>'+
+      '<circle r="'+(nd.center?6:4)+'" fill="'+k.c+'"/>'+
+      (state.labels&&!nd.center?'<text y="'+ly+'">'+esc(label)+'</text>':"")+
+      '</g>';
+  });
+  svg.innerHTML=html;
+  svg.querySelectorAll(".fa-node").forEach(function(g){ g.onclick=function(){ focusOn(g.getAttribute("data-kind"),g.getAttribute("data-id"),true); }; });
+  $("#fa-tissue-sub").textContent=(cobj?(cobj.title||cobj.name):"")+" · "+links.length+" links";
+  // legend
+  var leg=$("#fa-legend"); leg.innerHTML="";
+  Object.keys(KIND).forEach(function(k){ leg.innerHTML+='<span class="fa-leg"><i style="background:'+KIND[k].c+'"></i>'+KIND[k].label+'</span>'; });
+  renderFocus();
+}
+function renderFocus(){
+  var f=$("#fa-focus"); var o=obj(state.focus); if(!o){f.innerHTML="";return;}
+  var k=KIND[state.focus.kind]; var links=linkedObjects(state.focus);
+  var meta="";
+  if(state.focus.kind==="task"){ var b=byId("bot",o.assignee),i=byId("instance",o.instance);
+    meta='<span>Status · <b style="color:'+STATUS[o.status].c+'">'+STATUS[o.status].label+'</b></span><span>Bot · '+esc(b?b.name:"—")+'</span><span>Instance · '+esc(i?i.name:"—")+'</span>'; }
+  else if(state.focus.kind==="instance"){ meta='<span>'+esc(o.host)+'</span><span>Reliability · '+(o.settled?Math.round(o.rel*100)+"%":"un-calibrated")+'</span><span>'+o.settled+' settled</span>'; }
+  else if(state.focus.kind==="deliverable"){ meta='<span>End gate · '+o.gate+'</span><span>Coverage · '+o.coverage+'%</span>'; }
+  else if(state.focus.kind==="fact"){ meta='<span>Basis · '+o.basis+'</span>'; }
+  else if(state.focus.kind==="lesson"){ meta='<span>Earned by a settled run</span>'; }
+  else if(state.focus.kind==="bot"){ meta='<span>Role · '+esc(o.role)+'</span>'; }
+  else if(state.focus.kind==="thread"){ meta='<span>The conversation this work lives in</span>'; }
+  var actions="";
+  if(state.focus.kind==="task") actions='<button class="fa-btn fa-btn-primary" id="fa-f-dispatch"><i data-lucide="send" style="width:12px;height:12px"></i> Dispatch</button><button class="fa-btn" id="fa-f-thread">Open thread</button>';
+  else if(state.focus.kind==="thread") actions='<button class="fa-btn fa-btn-primary" id="fa-f-thread">Open thread</button>';
+  else actions='<button class="fa-btn" id="fa-f-details">Details</button>';
+  var linkedHtml="";
+  links.forEach(function(l){ var lo=obj(l); var lk=KIND[l.kind]; linkedHtml+='<button data-kind="'+l.kind+'" data-id="'+l.id+'"><span class="fa-ldot" style="background:'+lk.c+'"></span>'+esc(lo?(lo.title||lo.name):l.id)+'</button>'; });
+  f.innerHTML='<div class="fa-focus-kind" style="color:'+k.c+'"><i data-lucide="'+k.icon+'" style="width:12px;height:12px"></i>'+k.label+'</div>'+
+    '<div class="fa-focus-title">'+esc(o.title||o.name||o.id)+'</div>'+
+    '<div class="fa-focus-meta">'+meta+'</div>'+
+    '<div class="fa-focus-actions">'+actions+'</div>'+
+    (links.length?'<div class="fa-linked"><div class="fa-linked-h">Connected tissue</div>'+linkedHtml+'</div>':"");
+  var d=f.querySelector("#fa-f-dispatch"); if(d)d.onclick=function(){dispatch(o.id);};
+  var th=f.querySelector("#fa-f-thread"); if(th)th.onclick=function(){ var tid=state.focus.kind==="task"?o.thread:(state.focus.kind==="thread"?o.id:null); if(tid){focusOn("thread",tid,true);} else openDrawer(state.focus.kind,o.id); };
+  var det=f.querySelector("#fa-f-details"); if(det)det.onclick=function(){openDrawer(state.focus.kind,o.id);};
+  f.querySelectorAll(".fa-linked button").forEach(function(b){ b.onclick=function(){focusOn(b.getAttribute("data-kind"),b.getAttribute("data-id"),true);}; });
+  icons();
+}
+
+/* ---------- DRAWER ---------- */
+function openDrawer(kind,id){
+  state.drawer={kind:kind,id:id}; var o=obj({kind:kind,id:id}); if(!o)return;
+  var dr=$("#fa-drawer"); var k=KIND[kind];
+  var fields="";
+  if(kind==="task"){
+    fields='<div class="fa-field"><label>Title</label><input id="fa-d-title" value="'+esc(o.title)+'"></div>'+
+      '<div class="fa-field"><label>Status</label><select id="fa-d-status">'+Object.keys(STATUS).map(function(s){return '<option value="'+s+'"'+(o.status===s?" selected":"")+'>'+STATUS[s].label+'</option>';}).join("")+'</select></div>'+
+      '<div class="fa-field"><label>Assignee bot</label><select id="fa-d-bot">'+DB.bots.map(function(b){return '<option value="'+b.id+'"'+(o.assignee===b.id?" selected":"")+'>'+b.name+'</option>';}).join("")+'</select></div>'+
+      '<div class="fa-field"><label>Instance</label><select id="fa-d-inst">'+DB.instances.map(function(i){return '<option value="'+i.id+'"'+(o.instance===i.id?" selected":"")+'>'+i.name+'</option>';}).join("")+'</select></div>';
+  } else {
+    fields='<div class="fa-field"><label>'+(kind==="fact"?"Fact":"Name")+'</label><input id="fa-d-title" value="'+esc(o.name||o.title||"")+'"></div>'+
+      (o.body?'<div class="fa-field"><label>Body</label><textarea id="fa-d-body">'+esc(o.body)+'</textarea></div>':"")+
+      (o.claim?'<div class="fa-field"><label>Claim</label><textarea id="fa-d-body">'+esc(o.claim)+'</textarea></div>':"");
+  }
+  var acts=DB.activity.slice(0,5).map(function(a){return '<div class="fa-act"><i style="background:'+a.c+'"></i>'+esc(a.t)+'</div>';}).join("");
+  dr.innerHTML='<div class="fa-drawer-h"><span style="color:'+k.c+'"><i data-lucide="'+k.icon+'" style="width:20px;height:20px"></i></span><h2>'+esc(o.title||o.name||o.id)+'</h2><button class="fa-iconbtn" id="fa-d-close" aria-label="Close"><i data-lucide="x" style="width:17px;height:17px"></i></button></div>'+
+    '<div class="fa-drawer-body">'+fields+'<div class="fa-field"><label>Activity</label><div class="fa-activity">'+acts+'</div></div></div>'+
+    '<div class="fa-drawer-foot"><button class="fa-btn fa-btn-primary" id="fa-d-save"><i data-lucide="check" style="width:13px;height:13px"></i> Save</button>'+
+    (kind==="task"?'<button class="fa-btn fa-btn-danger" id="fa-d-del"><i data-lucide="trash-2" style="width:13px;height:13px"></i> Delete</button>':"")+
+    '<button class="fa-btn" id="fa-d-cancel" style="margin-left:auto">Close</button></div>';
+  dr.classList.add("show"); $("#fa-scrim").classList.add("show");
+  dr.querySelector("#fa-d-close").onclick=closeDrawer; dr.querySelector("#fa-d-cancel").onclick=closeDrawer;
+  dr.querySelector("#fa-d-save").onclick=function(){
+    var ti=dr.querySelector("#fa-d-title"); if(ti)o.title!==undefined?(o.title=ti.value):(o.name=ti.value);
+    if(kind==="task"){ o.status=dr.querySelector("#fa-d-status").value; o.assignee=dr.querySelector("#fa-d-bot").value; o.instance=dr.querySelector("#fa-d-inst").value; }
+    var bo=dr.querySelector("#fa-d-body"); if(bo){ if(o.body!==undefined)o.body=bo.value; if(o.claim!==undefined)o.claim=bo.value; }
+    closeDrawer(); renderNav(); renderLens(); renderTissue(); toast("Saved","check","var(--green)");
+  };
+  var del=dr.querySelector("#fa-d-del"); if(del)del.onclick=function(){ closeDrawer(); deleteTasks([id]); };
+  icons();
+}
+function closeDrawer(){ state.drawer=null; $("#fa-drawer").classList.remove("show"); $("#fa-scrim").classList.remove("show"); }
+
+/* ---------- COMMAND PALETTE ---------- */
+function allObjects(){
+  var out=[];
+  ["task","thread","deliverable","bot","lesson","instance","fact"].forEach(function(k){
+    var arr={task:DB.tasks,thread:DB.threads,deliverable:DB.deliverables,bot:DB.bots,lesson:DB.lessons,instance:DB.instances,fact:DB.facts}[k];
+    arr.forEach(function(o){ out.push({kind:k,id:o.id,label:o.title||o.name||o.id}); });
+  });
+  return out;
+}
+function openPalette(){ state.paletteOpen=true; $("#fa-palette").classList.add("show"); $("#fa-scrim").classList.add("show"); var inp=$("#fa-palette-input"); inp.value=""; renderPalette(""); setTimeout(function(){inp.focus();},50); }
+function closePalette(){ state.paletteOpen=false; $("#fa-palette").classList.remove("show"); if(!state.drawer)$("#fa-scrim").classList.remove("show"); }
+function renderPalette(q){
+  var list=$("#fa-palette-list"); list.innerHTML="";
+  var cmds=[{label:"Go to Board",icon:"layout-grid",fn:function(){setLens("board");}},{label:"Go to Fleet",icon:"server",fn:function(){setLens("fleet");}},{label:"Go to Inbox",icon:"inbox",fn:function(){setLens("inbox");}},{label:"New task",icon:"plus",fn:function(){setLens("board");setTimeout(function(){openNewTask($("#fa-lens-body"));},60);}}];
+  var items=[];
+  cmds.forEach(function(c){ if(!q||c.label.toLowerCase().indexOf(q.toLowerCase())>=0) items.push({cmd:c}); });
+  allObjects().forEach(function(o){ if(!q||o.label.toLowerCase().indexOf(q.toLowerCase())>=0) items.push({obj:o}); });
+  items.slice(0,12).forEach(function(it){
+    var el=document.createElement("div"); el.className="fa-pitem";
+    if(it.cmd){ el.innerHTML='<i data-lucide="'+it.cmd.icon+'" style="width:15px;height:15px;color:var(--cyan)"></i>'+esc(it.cmd.label)+'<span class="fa-pkind">command</span>'; el.onclick=function(){closePalette(); it.cmd.fn();}; }
+    else { var k=KIND[it.obj.kind]; el.innerHTML='<span class="fa-pdot" style="background:'+k.c+'"></span>'+esc(it.obj.label)+'<span class="fa-pkind">'+k.label+'</span>'; el.onclick=function(){closePalette(); focusOn(it.obj.kind,it.obj.id,true);}; }
+    list.appendChild(el);
+  });
+  if(!items.length) list.innerHTML='<div class="fa-empty">No matches</div>';
+  icons();
+}
+
+/* ---------- console controls ---------- */
+function bindConsole(){
+  $("#fa-c-density").onchange=function(){ root.setAttribute("data-density",this.value); };
+  $("#fa-c-accent").onchange=function(){ var v=this.value; root.style.setProperty("--cyan",{cyan:"#3ad4f2",green:"#37e2a4",magenta:"#f757c2",amber:"#ffb224"}[v]); };
+  var sp=$("#fa-c-speed"); sp.oninput=function(){ state.speed=parseFloat(this.value); $("#fa-c-speed-v").textContent=this.value+"×"; };
+  var spr=$("#fa-c-spread"); spr.oninput=function(){ state.spread=parseInt(this.value,10); $("#fa-c-spread-v").textContent=this.value; renderTissue(); };
+  function sw(id,fn){ var b=$(id); b.onclick=function(){ var on=b.getAttribute("aria-pressed")!=="true"; b.setAttribute("aria-pressed",on?"true":"false"); fn(on); }; }
+  sw("#fa-c-motion",function(on){ state.motion=on; root.style.setProperty("--motion",on?"1":"0"); if(!on){var c=root.querySelector(".fa-amb"); if(c)c.style.display="none";} else {var c2=root.querySelector(".fa-amb"); if(c2)c2.style.display="block";} });
+  sw("#fa-c-tissue",function(on){ root.setAttribute("data-tissue",on?"on":"off"); });
+  sw("#fa-c-labels",function(on){ state.labels=on; renderTissue(); });
+  $("#fa-c-shuffle").onclick=function(){ DB.tasks.forEach(function(t){ t.order=Math.random(); }); DB.tasks.sort(function(){return Math.random()-0.5;}); renderLens(); toast("Shuffled the board","shuffle","var(--cyan)"); };
+  $("#fa-c-reset").onclick=function(){ DB=seed(); threadMsgs={}; state.running={}; state.selected={}; state.focus={kind:"task",id:"t2"}; state.query=""; $("#fa-search").value=""; renderNav(); renderLens(); renderTissue(); toast("Workspace reset","rotate-ccw","var(--cyan)"); };
+  $("#fa-c-export").onclick=function(){
+    var data=JSON.stringify({exported:"fleet-armada-workspace",version:"0.7.0",tasks:DB.tasks,deliverables:DB.deliverables,instances:DB.instances},null,2);
+    try{ var blob=new Blob([data],{type:"application/json"}); var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="fleet-workspace.json"; a.click(); toast("Workspace exported","download","var(--green)"); }
+    catch(e){ toast("Export ready (snapshot in console)","download","var(--green)"); console.log(data); }
+  };
+}
+
+/* ---------- top chrome ---------- */
+function bindChrome(){
+  $("#fa-theme").onclick=function(){ var day=root.getAttribute("data-theme")==="day"; root.setAttribute("data-theme",day?"night":"day"); this.innerHTML='<i data-lucide="'+(day?"moon":"sun")+'" style="width:17px;height:17px"></i>'; icons(); drawAmb(true); };
+  $("#fa-sound").onclick=function(){ state.sound=!state.sound; this.setAttribute("aria-pressed",state.sound?"true":"false"); this.innerHTML='<i data-lucide="'+(state.sound?"volume-2":"volume-x")+'" style="width:17px;height:17px"></i>'; icons(); if(state.sound)ping(660); };
+  $("#fa-searchbar").onclick=function(){ $("#fa-search").focus(); };
+  $("#fa-search").addEventListener("input",function(){ state.query=this.value; renderLens(); });
+  $("#fa-saveview").onclick=function(){ var name="View "+(state.savedViews.length+1); state.savedViews.push({name:name,lens:state.lens,filterStatus:state.filterStatus,query:state.query}); renderNav(); toast("View saved: "+name,"bookmark","var(--gold)"); };
+  $("#fa-scrim").onclick=function(){ closeDrawer(); closePalette(); };
+  $("#fa-palette-input").addEventListener("input",function(){ renderPalette(this.value); });
+  document.addEventListener("keydown",function(e){
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){ e.preventDefault(); state.paletteOpen?closePalette():openPalette(); }
+    if(e.key==="Escape"){ closePalette(); closeDrawer(); }
+  });
+}
+
+/* ---------- ambient canvas ---------- */
+var amb={parts:[],raf:null};
+function drawAmb(reset){
+  var c=root.querySelector(".fa-amb"); if(!c)return;
+  var ctx=c.getContext("2d"); var dpr=Math.min(2,window.devicePixelRatio||1);
+  function size(){ c.width=c.offsetWidth*dpr; c.height=c.offsetHeight*dpr; }
+  size();
+  if(reset||!amb.parts.length){ amb.parts=[]; for(var i=0;i<46;i++){ amb.parts.push({x:Math.random(),y:Math.random(),r:Math.random()*1.8+0.4,s:Math.random()*0.00012+0.00003,h:Math.random()}); } }
+  if(amb.raf)cancelAnimationFrame(amb.raf);
+  var day=root.getAttribute("data-theme")==="day";
+  function frame(){
+    ctx.clearRect(0,0,c.width,c.height);
+    for(var i=0;i<amb.parts.length;i++){ var p=amb.parts[i];
+      p.y-=p.s; if(p.y<-0.02){p.y=1.02; p.x=Math.random();}
+      var x=p.x*c.width, y=p.y*c.height, r=p.r*dpr;
+      var col=day?"rgba(10,147,184,":"rgba(58,212,242,";
+      if(p.h>0.8)col=day?"rgba(207,47,156,":"rgba(247,87,194,";
+      ctx.beginPath(); ctx.arc(x,y,r,0,6.283); ctx.fillStyle=col+(0.18+p.h*0.22)+")"; ctx.fill();
+    }
+    if(state.motion)amb.raf=requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+/* ---------- live heartbeat ---------- */
+function startLive(){
+  setInterval(function(){
+    if(!state.motion)return;
+    var live=DB.instances.filter(function(i){return i.live;});
+    if(live.length){ var i=live[Math.floor(Math.random()*live.length)]; i.cap=Math.max(8,Math.min(96,i.cap+(Math.random()*8-4))); }
+    var fc=$("#fa-fleetcount"); if(fc)fc.textContent=DB.instances.length+" instances · "+DB.instances.filter(function(x){return x.live;}).length+" live";
+    if(state.lens==="fleet")renderLens();
+  },3200);
+}
+
+/* ---------- init ---------- */
+function init(){
+  renderNav(); renderLens(); renderTissue(); bindConsole(); bindChrome(); icons(); drawAmb(true); startLive();
+  if(window.ResizeObserver){ var ro=new ResizeObserver(function(){ drawAmb(false); }); ro.observe(root); }
+}
+init();
+})();
+</script>
