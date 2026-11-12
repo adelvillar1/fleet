@@ -12,6 +12,47 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.7.2 — 2026-11-12
+
+The U-reskin's second, third and fourth cuts land together: Intelligence,
+the thread pane, and the desk loop + the epistemology. The plan is
+`docs/plans/2026-11-12-ux-reskin.md` (the phase numbering maps to commits —
+8f24b84 + 7662315 + d0ec587 are Cut 2, 911c1ab Cut 3, 7472ef9 Cut 4 — and
+this release carries the three, each verified and gated as it landed).
+
+- **Intelligence (U40)** — the lens formerly named Memory, four segments on
+  its own section rail: Memories (the corpus and the Dream, untouched),
+  Skills (the library's own rows, the budget press, the pane card, the
+  proposals with **apply through the gate** — the skills surface folded,
+  `#/skills` walks to the segment), Tools (the capability registry: builtins
+  with their gate-class chips, the vendored lanes, the MCP registry's
+  servers with a real enable switch written through the settings writer's
+  own server op), and Workflows (the declared graph's chains, the critical
+  path, the honest undeclared empty). The reads: `/api/tools` and
+  `/api/workflows`, over the existing registries.
+- **The thread pane (U39)** — the receipts of the run beside the
+  transcript: deliverables, facts recalled and written, tasks with their
+  stage, the grades it landed — dotted by kind, fresh rows pulsing once, a
+  click pivoting the workspace. It collapses to the conv-head's tissue
+  chip and the fold persists; the composer is never covered; ≤1080px it
+  stacks below the chat. The composer's pinning (U20) verified as already
+  structural.
+- **The desk renders the loop (U30)** — the deliverable card carries the
+  five-stage track with the current stage lit and the named refusals as
+  red chips ON the card; the shelf rides the desk landing again.
+- **Calibration is the epistemology rendered (U31)** — the judged rows in
+  their own card: workload, the verdict chip, a confidence meter whose
+  width IS the number, and the owner's word riding the same append-only
+  row (gold border when it does) through `/api/calibration/dispose` — the
+  CLI's disposition verb surfaced, the word validated against the store's
+  vocabulary.
+- The face harness carries it all: **1163 checks across 155 cases**; the
+  four-leg gate green at every landing.
+
+Open on the plan: C2's tick awaits the owner's ruling between a per-builtin
+disable (a new capability, outside this plan's reads-only scope) and reading
+U40's switch as the registry's; C5 (onboarding) and C6 (TUI + desktop) follow.
+
 ## v0.7.1 — 2026-11-12
 
 The U-reskin's first cut: the design system lands on the production face.
