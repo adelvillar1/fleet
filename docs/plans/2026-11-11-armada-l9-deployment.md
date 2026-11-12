@@ -161,3 +161,14 @@ proven progression reused, not a parallel app. With L9, lane 1 is complete:
 every contract armada needs works for one owner, and lane 2 (the org) is a
 generalization — more principals, roles as grant templates, per-user factors,
 team/org scopes — not a rewrite. Approve this and the ledger carries D51–D57.
+
+**Delivered 2026-11-12, cut v0.7.0 — the milestone completing the armada plan
+(L1–L9).** All seven criteria (C0–C7) met and tested: the deploy module (corpus
+inheritance, fresh-install registration, the doctor+settles trust grade, the
+VPS command sequence), the TUI armada render test, and the face harness (141
+cases). The four-leg gate green on `65acf2c`. The published feed reads back
+0.7.0 with the cli row's sha256 matching the served raw binary
+(`335f1cd5890e…`); the installed CLI answers `fleet 0.7.0`. fleet-desktop wraps
+the same face over the same server/bridge (C4) — no second frontend. With L9,
+lane 1 is complete: every contract armada needs works for one owner; lane 2
+(the org) is a generalization, not a rewrite.
