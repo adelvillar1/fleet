@@ -12,6 +12,42 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.7.1 — 2026-11-12
+
+The U-reskin's first cut: the design system lands on the production face.
+The plan is `docs/plans/2026-11-12-ux-reskin.md` (Cut 1 of six), implementing
+the approved ledger `docs/plans/UI-DECISIONS.md` (U0–U41) — the owner's words:
+*"we are looking for connective tissue and to eliminate the disjointed
+surfaces."*
+
+- **Harbor Night is the ground (U4/U5)** — the deep ink-teal default with the
+  nine signal hues carrying fixed meanings, one-to-one with the approved
+  mockup; **Day Watch** is the warm-paper inverse; paper survives as a theme
+  of its own. The `themes.rs` contrast guard learns both and now measures
+  each theme's own gradient label (`--dsw-alias-on-accent` — KI-476's law,
+  generalized): night holds 5.40:1 worst, day 4.51:1.
+- **The three type voices vendored (U6)** — Space Grotesk, Inter, JetBrains
+  Mono as latin variable woff2 served from the binary (hard rule 12: the face
+  fetches nothing), the display voice re-pointed to the grotesk; the U7
+  geometry tokens land (`--r-lg/--r-md/--r-sm`, one deep-soft shadow).
+- **The shell carries the tissue (U9/U10/U11)** — the rail reads Mission card
+  (workspace, version, run count) / the surfaces groups / Saved views / the
+  tissue explainer; the grid grows the permanent 320px tissue column at
+  ≥1081px, rendering the work-object graph from the new `/api/tissue` read —
+  tasks, threads, bots, deliverables, lessons, the edges between them, the
+  typed legend, the focus card, a click pivoting the whole workspace.
+- **Motion (U8)** — one ambient canvas behind the shell, the grain layer, a
+  Motion switch in the chrome that freezes everything, and
+  `prefers-reduced-motion` honored automatically.
+- **The face harness carries the shell** — six RESKIN cases (night default,
+  the motion freeze, the Mission card, saved views, the tissue paint and
+  pivot, the honest empty note): 1141 checks across 147 cases, green; the
+  four-leg gate green.
+
+Cuts 2–6 follow: Intelligence (U40), Threads (U20/U39), Desk + Calibration
+(U30/U31), Onboarding + setup (U34–U38/U41), and the TUI + fleet-desktop
+color law.
+
 ## v0.7.0 — 2026-11-12
 
 The armada feature set complete: fleet deploying fleet, and the surfaces.
