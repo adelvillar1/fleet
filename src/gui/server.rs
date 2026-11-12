@@ -416,6 +416,13 @@ async fn serve_connection(
         // the shell's third column renders — tasks, threads,
         // deliverables, lessons, bots, the edges between them.
         ("GET", "/api/tissue") => write_reply(&mut stream, api(200, bridge.tissue().await)).await,
+        // The Intelligence surface's two reads (the U-reskin, U40): the
+        // capability registry — every tool the harness can call, and the
+        // declared graph's workflow chains.
+        ("GET", "/api/tools") => write_reply(&mut stream, api(200, bridge.tools().await)).await,
+        ("GET", "/api/workflows") => {
+            write_reply(&mut stream, api(200, bridge.workflows().await)).await
+        }
         // The workspace-history section's two reads: the tree itself,
         // and the Files pane's one page of a branch. Both read the
         // substrate through the same composed environment the arm

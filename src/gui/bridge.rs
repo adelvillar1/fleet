@@ -1752,6 +1752,38 @@ impl Bridge {
         )
     }
 
+    /// The Intelligence surface's tools read (the U-reskin, U40): every
+    /// tool the harness can call, one read over the existing registries
+    /// — the compiled built-ins with their gate class (the approvals
+    /// model: `bash` is destructive by content, the write family is
+    /// destructive by construction, the rest read), the vendored lanes'
+    /// families with their own health tools, and the MCP registry's
+    /// servers with their enabled state. No new capability; the class a
+    /// CALL takes is still decided at the gate per call — this read
+    /// names the declaration's class, and says so.
+    pub async fn tools(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || tools_read(&home))
+            .await
+            .unwrap_or_else(
+                |_| json!({"type": "tools", "refused": ["the tools read did not land"]}),
+            )
+    }
+
+    /// The Intelligence surface's workflows read (the U-reskin, U40):
+    /// the declared dependency graph's chains — the nodes that name
+    /// workflows, their prerequisites and what each node serves, the
+    /// critical path — one read over the home's declared graph. A home
+    /// with no declared graph reads as the honest empty, not an error.
+    pub async fn workflows(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || workflows_read(&home))
+            .await
+            .unwrap_or_else(
+                |_| json!({"type": "workflows", "refused": ["the workflows read did not land"]}),
+            )
+    }
+
     /// The tissue's document (the U-reskin, U11): the work-object graph
     /// as the face's third column renders it. One read over the existing
     /// stores — the graph log's tasks and edges, the object view's
@@ -9979,6 +10011,106 @@ fn cell_json(cell: &crate::calib::CalibrationCell) -> Value {
 /// servers — on the plugins surface beside the installed bundles.
 /// Each carries where it is managed. The compiled-in core (the router,
 /// the memory, the agent) is not a plugin and does not pretend to be.
+/// The tools read's body (the U-reskin, U40): the capability registry
+/// over the existing registries, a free function so the test reads the
+/// same shape the route serves.
+fn tools_read(home: &std::path::Path) -> Value {
+    let built_ins: Vec<Value> = crate::tools::ALL_TOOLS
+        .iter()
+        .map(|tool| {
+            let class = match tool {
+                crate::tools::Tool::Bash => "shell",
+                crate::tools::Tool::WriteFile
+                | crate::tools::Tool::ApplyPatch
+                | crate::tools::Tool::FileChange => "write",
+                _ => "read",
+            };
+            // The declaration is the description's one public shape:
+            // serialize the spec and read the function half back.
+            let spec = serde_json::to_value(tool.spec()).unwrap_or_default();
+            let name = spec["function"]["name"]
+                .as_str()
+                .unwrap_or_else(|| tool.name())
+                .to_string();
+            let description = spec["function"]["description"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            json!({
+                "name": name,
+                "kind": "builtin",
+                "class": class,
+                "description": description,
+            })
+        })
+        .collect();
+    let lanes: Vec<Value> = crate::lanes::LANES
+        .iter()
+        .map(|lane| {
+            json!({
+                "name": lane.name,
+                "kind": "lane",
+                "role": lane.role,
+                "health_tools": lane.health_tools,
+            })
+        })
+        .collect();
+    let mcp: Vec<Value> = crate::mcp_registry::read_servers(home)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, entry)| {
+            json!({
+                "name": name,
+                "kind": "mcp",
+                "program": entry.program,
+                "enabled": entry.enabled,
+                "env_names": entry.env_names,
+            })
+        })
+        .collect();
+    json!({
+        "type": "tools",
+        "built_ins": built_ins,
+        "lanes": lanes,
+        "mcp": mcp,
+    })
+}
+
+/// The workflows read's body (the U-reskin, U40): the declared graph's
+/// chains, a free function so the test reads the same shape the route
+/// serves. A home with no declared graph reads as the honest empty.
+fn workflows_read(home: &std::path::Path) -> Value {
+    let graph = match crate::graph::Graph::load(&crate::graph::path_in(home)) {
+        Ok(graph) => graph,
+        Err(_) => {
+            return json!({
+                "type": "workflows", "declared": false,
+                "nodes": [], "critical_path": [],
+            })
+        }
+    };
+    let nodes: Vec<Value> = graph
+        .nodes()
+        .iter()
+        .map(|node| {
+            json!({
+                "id": node.id,
+                "workflows": node.capabilities.workflows,
+                "tools": node.capabilities.tools,
+                "prereqs": node.prereqs,
+                "approach": node.approach,
+                "status": node.status.as_str(),
+            })
+        })
+        .collect();
+    json!({
+        "type": "workflows",
+        "declared": true,
+        "nodes": nodes,
+        "critical_path": graph.critical_path(),
+    })
+}
+
 fn built_ins_value(home: &std::path::Path) -> Value {
     let mut built_ins: Vec<Value> = Vec::new();
     // The second-brain tool plugin: the boards' own resolution, so the
@@ -19535,5 +19667,91 @@ mod tests {
         // A document that carries no role says nothing rather than " lane".
         let anonymous = serde_json::json!({ "name": "x", "resolved_home": "/tmp/x" });
         assert_eq!(lane_row_state(&anonymous).1, "");
+    }
+
+    /// The Intelligence surface's tools read (U40): every compiled
+    /// built-in present and classed by the approvals model — bash by
+    /// content, the write family by construction, the rest read — and
+    /// the six vendored lanes named. The MCP section is empty on a home
+    /// with no registry, which is the honest shape, not an error.
+    #[test]
+    fn the_tools_read_classes_every_builtin_and_names_the_lanes() {
+        let home = std::env::temp_dir().join(format!("fleet-tools-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let read = tools_read(&home);
+        assert_eq!(read["type"], "tools");
+        let built_ins = read["built_ins"].as_array().expect("the built-ins");
+        assert_eq!(
+            built_ins.len(),
+            crate::tools::ALL_TOOLS.len(),
+            "every compiled tool is in the read"
+        );
+        let find = |name: &str| {
+            built_ins
+                .iter()
+                .find(|row| row["name"] == name)
+                .unwrap_or_else(|| panic!("{name} is in the read"))
+                .clone()
+        };
+        assert_eq!(find("bash")["class"], "shell");
+        assert_eq!(find("write_file")["class"], "write");
+        assert_eq!(find("read_file")["class"], "read");
+        assert!(
+            find("bash")["description"]
+                .as_str()
+                .map(|d| !d.is_empty())
+                .unwrap_or(false),
+            "the declaration's description rides the row"
+        );
+        let lanes = read["lanes"].as_array().expect("the lanes");
+        assert_eq!(lanes.len(), crate::lanes::LANES.len(), "every lane named");
+        let mcp = read["mcp"].as_array().expect("the mcp list");
+        assert!(
+            mcp.is_empty(),
+            "an empty registry reads as empty, not an error"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The Intelligence surface's workflows read (U40): a home with no
+    /// declared graph reads `declared: false` with empty lists — the
+    /// honest empty the empty-state copy names — and a home with one
+    /// carries its nodes' chains and critical path.
+    #[test]
+    fn the_workflows_read_names_the_declared_chains_or_the_honest_empty() {
+        let home = std::env::temp_dir().join(format!("fleet-flows-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let empty = workflows_read(&home);
+        assert_eq!(empty["type"], "workflows");
+        assert_eq!(empty["declared"], false);
+        assert_eq!(empty["nodes"].as_array().unwrap().len(), 0);
+
+        // A declared graph: two nodes, one carrying a workflow chain.
+        let mut graph = crate::graph::Graph::new();
+        graph
+            .add(
+                crate::graph::Node::new("plan", 3).with_capabilities(crate::graph::Capabilities {
+                    tools: vec!["read_file".into()],
+                    skills: vec![],
+                    workflows: vec!["the-plan-chain".into()],
+                    loops: vec![],
+                }),
+            )
+            .unwrap();
+        graph
+            .add(crate::graph::Node::new("build", 5).with_prereqs(["plan"]))
+            .unwrap();
+        graph.save(&crate::graph::path_in(&home)).unwrap();
+        let read = workflows_read(&home);
+        assert_eq!(read["declared"], true);
+        let nodes = read["nodes"].as_array().expect("the nodes");
+        assert_eq!(nodes.len(), 2, "both nodes read");
+        let plan = nodes.iter().find(|n| n["id"] == "plan").unwrap();
+        assert_eq!(plan["workflows"][0], "the-plan-chain");
+        assert_eq!(plan["tools"][0], "read_file");
+        assert_eq!(read["critical_path"].as_array().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
