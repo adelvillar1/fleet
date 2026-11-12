@@ -84,15 +84,15 @@ choices that span atoms are noted in the layer header.
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
 | L5.1 | the durable outbox | L2.2 | D30 | done |
-| L5.2 | the identity graph (peer→principal) | L1.4, L3.1 | D31, D32 | drafted |
+| L5.2 | the identity graph (peer→principal) | L1.4, L3.1 | D31, D32 | done |
 | L5.3 | the pub/sub bus over the journal | L2.3 | D33 | done |
-| L5.4 | gated dispatch (threads the principal) | L5.2, L3.2 | D34 | drafted |
+| L5.4 | gated dispatch (threads the principal) | L5.2, L3.2 | D34 | done |
 
 ### L7 Workspace — plan `2026-11-11-armada-l7-workspace.md` · contract §8
 *Layer-level choice: D43 (work graded against outcome).*
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L7.1 | the task object (id, status, assignee) | L1.2 | D37, D38 | done |
+| L7.1 | the task object (id, status, assignee) | L1.2 | D37, D38 | drafted |
 | L7.2 | the work-object edges + hand_to_desk fix | L7.1, L2.4 | D39 | drafted |
 | L7.3 | surfaces as views over the graph | L7.2 | D40 | drafted |
 | L7.4 | bot invocation as a workspace action (gated) | L7.2, L3.2 | D41, D42 | drafted |

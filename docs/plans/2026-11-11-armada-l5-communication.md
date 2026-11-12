@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-11-11
-updated: 2026-11-11
+updated: 2026-11-12
 slug: armada-l5-communication
 ---
 
@@ -276,3 +276,13 @@ silent failures (lost reply, evaporated peer, dropped seat, unscoped run)
 become named, durable, and graded. Approve this and the ledger carries D30–D36
 into L7 (workspace), L8 (control plane), and lane 2 (the org), all of which
 consume the same principal-unified edge.
+
+**Delivered 2026-11-12, cut v0.6.36.** All nine criteria (C0–C8) met and
+tested; the four-leg gate green on `39fa329` (2234 lib + 172 integration +
+16 install + 7 face harness, settle clean). The published feed reads back
+0.6.36 with the cli row's sha256 matching the served raw binary
+(`463eff41aacb…`); the installed CLI answers `fleet 0.6.36`. The SSE-test
+failure that blocked the cut was a resource-admission *queue* on a
+disk-constrained host (the run was refused, never spawned), fixed by pinning
+the test's reserve — the `write_concurrent_roster` lever; the probe's
+paused-retry budget was widened for the gate's parallel load (KI-296/KI-405).

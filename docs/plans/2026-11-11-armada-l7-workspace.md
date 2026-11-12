@@ -1,7 +1,7 @@
 ---
-status: draft
+status: active
 created: 2026-11-11
-updated: 2026-11-11
+updated: 2026-11-12
 slug: armada-l7-workspace
 ---
 
