@@ -12359,6 +12359,75 @@ async function theMcpToggleWritesTheRegistry() {
     'rows painted');
 }
 
+// U39: the thread pane is the receipts of the run — every object the
+// conversation generated, dotted by kind, fresh rows pulsing once, a
+// click pivoting the workspace. The composer is never covered: the
+// pane folds to the conv-head's tissue chip and the fold persists.
+const receiptState = (asked) => ({
+  ...emptyState(asked),
+  tasks: [{ step: 'write the release notes', status: 'working' }],
+  knowledge: { recalled: ['lane-budget'], wrote: ['the-new-ruling'] },
+  deliverables: [{ path: '/repo/the-notes.md', size: 12, note: '', from: 'archivist' }],
+  feedback: { 3: 'held' },
+});
+async function theThreadPaneCarriesTheReceipts() {
+  const page = boot({ documents: { state: receiptState }, hash: '#/chat' });
+  page.open();
+  await flush(80);
+  const rows = page.IDS['thread-pane-list'].querySelectorAll('.thread-row');
+  check('THREAD the pane lists every generated object',
+    rows.length === 5, 'rows=' + rows.length);
+  const text = page.IDS['thread-pane-list'].textContent;
+  check('THREAD the kinds are named and dotted',
+    text.includes('deliverable') && text.includes('fact') &&
+      text.includes('task') && text.includes('grade'),
+    'kinds painted');
+  check('THREAD the marks ride the rows',
+    text.includes('written') && text.includes('recalled') &&
+      text.includes('working') && text.includes('held'),
+    'marks painted');
+  const fresh = page.IDS['thread-pane-list'].querySelectorAll('.thread-row.fresh');
+  check('THREAD first paint lands every row as fresh',
+    fresh.length === 5, 'fresh=' + fresh.length);
+  check('THREAD the conv-head chip carries the live count',
+    page.IDS['thread-pane-count'].textContent === '5',
+    'count=' + page.IDS['thread-pane-count'].textContent);
+  // The pivot (U3): a row click walks the whole workspace.
+  const deliverableRow = Array.from(rows).find((one) =>
+    one.querySelector('.thread-kind').textContent === 'deliverable');
+  deliverableRow.click();
+  await flush(40);
+  check('THREAD a deliverable click pivots to the desk',
+    page.window.location.hash === '#/desk', 'hash=' + page.window.location.hash);
+}
+
+async function theThreadPaneCollapsesAndPersists() {
+  const page = boot({ documents: { state: receiptState }, hash: '#/chat' });
+  page.open();
+  await flush(80);
+  check('THREAD the pane opens by default',
+    page.IDS['thread-pane-toggle'].getAttribute('aria-pressed') === 'true',
+    'pressed=' + page.IDS['thread-pane-toggle'].getAttribute('aria-pressed'));
+  page.IDS['thread-pane-toggle'].click();
+  await flush(40);
+  check('THREAD a press folds the pane to the chip',
+    page.IDS['panel-chat'].dataset.threadPane === 'off' &&
+      page.IDS['thread-pane-toggle'].getAttribute('aria-pressed') === 'false',
+    'attr=' + page.IDS['panel-chat'].dataset.threadPane);
+  check('THREAD the fold is remembered',
+    page.window.localStorage.getItem('fleet-thread-pane') === 'off',
+    'stored=' + page.window.localStorage.getItem('fleet-thread-pane'));
+  const reopen = boot({
+    storage: { 'fleet-thread-pane': 'off' },
+    documents: { state: receiptState }, hash: '#/chat',
+  });
+  reopen.open();
+  await flush(80);
+  check('THREAD a reopened face honors the fold',
+    reopen.IDS['panel-chat'].dataset.threadPane === 'off',
+    'attr=' + reopen.IDS['panel-chat'].dataset.threadPane);
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -12514,6 +12583,8 @@ const cases = [
   ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],
   ['INTEL the workflows segment carries the declared chains', theWorkflowsSegmentCarriesTheDeclaredChains],
   ['INTEL the mcp toggle writes the registry', theMcpToggleWritesTheRegistry],
+  ['THREAD the pane carries the receipts', theThreadPaneCarriesTheReceipts],
+  ['THREAD the pane collapses and persists', theThreadPaneCollapsesAndPersists],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

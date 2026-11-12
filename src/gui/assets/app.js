@@ -922,6 +922,11 @@
     tissueLegend: document.getElementById('tissue-legend'),
     tissueFocus: document.getElementById('tissue-focus'),
     tissueEmpty: document.getElementById('tissue-empty'),
+    threadPane: document.getElementById('thread-pane'),
+    threadPaneList: document.getElementById('thread-pane-list'),
+    threadPaneEmpty: document.getElementById('thread-pane-empty'),
+    threadPaneToggle: document.getElementById('thread-pane-toggle'),
+    threadPaneCount: document.getElementById('thread-pane-count'),
     actions: document.getElementById('actions'),
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
@@ -1815,6 +1820,7 @@
         return;
       }
       face.feedback = reply.body.feedback || {};
+      paintThreadPane();
       paintFeedback();
     }).catch(function () {
       notice('the verdict did not land', 'the server did not answer');
@@ -3146,6 +3152,7 @@
           });
         }
         if (face.panel === 'huddles') paintShelf();
+        paintThreadPane();
         break;
       case 'mention':
         // An address between members: its own row, so who was asked and
@@ -9954,6 +9961,7 @@
     // The shelf comes off the state document (the log's own send_file
     // results); the live stream appends the same shape as it lands.
     face.roomFiles = (state.deliverables || []).slice();
+    paintThreadPane();
     face.lastSpeaker = '';
     face.roomSpeaker = '';
     face.assistant = null;
@@ -28772,6 +28780,115 @@
       window.matchMedia('(min-width: 1081px)').addEventListener('change', paintTissueNote);
     } catch (error) { /* an old listener API is a browser concern, not a face one */ }
   }
+
+  // --- the thread pane (U39) ------------------------------------------
+  // The receipts of the run, beside the transcript: what this
+  // conversation generated, live — deliverables, the facts it recalled
+  // and wrote, the tasks with their stage, the grades it landed. A row
+  // is dotted by kind, a freshly-landed one pulses once, and a click
+  // pivots the whole workspace (U3). The pane collapses to the
+  // conv-head's tissue chip; the composer is never covered.
+  function threadPaneOpen() {
+    try { return (window.localStorage.getItem('fleet-thread-pane') || 'on') === 'on'; }
+    catch (error) { return true; }
+  }
+
+  function paintThreadPaneChrome() {
+    if (!el.threadPane || !el.threadPaneToggle) return;
+    var open = threadPaneOpen();
+    el.panelChat.dataset.threadPane = open ? 'on' : 'off';
+    el.threadPaneToggle.setAttribute('aria-pressed', String(open));
+    el.threadPaneToggle.title = open
+      ? 'fold the thread tissue \u2014 what this conversation generated'
+      : 'open the thread tissue \u2014 what this conversation generated';
+  }
+
+  // The rows this pane has already shown: a row the pane has not seen
+  // lands with the fresh mark and pulses once — the receipts arrive
+  // visibly, never a silent list refresh (the mockup's markBorn law).
+  var threadPaneSeen = null;
+
+  function threadPaneRows() {
+    var rows = [];
+    (face.roomFiles || []).forEach(function (file) {
+      var name = String(file.path || '').split('/').filter(Boolean).pop() || file.path;
+      rows.push({
+        kind: 'deliverable', label: name, mark: file.note || '',
+        pivot: '#/desk'
+      });
+    });
+    (face.knowledge && face.knowledge.wrote || []).forEach(function (name) {
+      rows.push({ kind: 'fact', label: name, mark: 'written', pivot: '#/memory' });
+    });
+    (face.knowledge && face.knowledge.recalled || []).forEach(function (name) {
+      rows.push({ kind: 'fact', label: name, mark: 'recalled', pivot: '#/memory' });
+    });
+    (face.tasks || []).forEach(function (task) {
+      rows.push({
+        kind: 'task', label: task.step, mark: task.status || 'pending',
+        pivot: '#/desk'
+      });
+    });
+    var feedback = face.feedback || {};
+    Object.keys(feedback).forEach(function (exchange) {
+      rows.push({
+        kind: 'grade', label: 'exchange ' + exchange, mark: feedback[exchange],
+        pivot: '#/calibration'
+      });
+    });
+    return rows;
+  }
+
+  var THREAD_KIND_HUES = {
+    deliverable: 'var(--green)', fact: 'var(--teal)', task: 'var(--amber)',
+    grade: 'var(--gold)', lesson: 'var(--gold)', instance: 'var(--blue)'
+  };
+
+  function paintThreadPane() {
+    if (!el.threadPaneList) return;
+    var rows = threadPaneRows();
+    if (threadPaneSeen === null) threadPaneSeen = new Set();
+    el.threadPaneList.textContent = '';
+    if (el.threadPaneEmpty) {
+      el.threadPaneEmpty.hidden = rows.length > 0;
+      if (!rows.length) {
+        el.threadPaneEmpty.textContent = 'nothing yet \u2014 the objects this '
+          + 'conversation generates land here as the run makes them';
+      }
+    }
+    if (el.threadPaneCount) {
+      el.threadPaneCount.textContent = rows.length ? String(rows.length) : '';
+    }
+    rows.forEach(function (row) {
+      var key = row.kind + ':' + row.label + ':' + row.mark;
+      var line = node('button', 'thread-row');
+      line.type = 'button';
+      if (!threadPaneSeen.has(key)) {
+        line.classList.add('fresh');
+        threadPaneSeen.add(key);
+      }
+      var dot = node('span', 'thread-dot');
+      dot.style.background = THREAD_KIND_HUES[row.kind] || 'var(--teal)';
+      line.appendChild(dot);
+      line.appendChild(node('span', 'thread-kind', row.kind));
+      line.appendChild(node('span', 'thread-label', row.label));
+      if (row.mark) line.appendChild(node('span', 'thread-mark', row.mark));
+      line.addEventListener('click', function () {
+        window.location.hash = row.pivot;
+      });
+      el.threadPaneList.appendChild(line);
+    });
+  }
+
+  el.threadPaneToggle.addEventListener('click', function () {
+    try {
+      window.localStorage.setItem('fleet-thread-pane',
+        threadPaneOpen() ? 'off' : 'on');
+    } catch (error) { }
+    paintThreadPaneChrome();
+    paintThreadPane();
+  });
+  paintThreadPaneChrome();
 
   function openThemes() {
     el.themes.textContent = '';
