@@ -137,8 +137,22 @@
 #fw-root .fw-bulk{display:flex; align-items:center; gap:12px; padding:9px 14px; margin:0 0 12px; border-radius:10px; background:var(--panel2); border:1px solid var(--line2); font-size:12.5px}
 #fw-root .fw-bulk b{font-family:var(--mono)}
 
-/* threads */
-#fw-root .fw-thread{display:flex; flex-direction:column; gap:14px; max-width:760px}
+/* threads — the composer pins to the bottom of the chat area; the thread
+   pane beside it explores what the thread generated */
+#fw-root .fw-lens-body.fw-chatmode{display:flex; flex-direction:column; overflow:hidden}
+#fw-root .fw-threadwrap{flex:1; min-height:0; display:flex; gap:14px; width:100%}
+#fw-root .fw-chatcol{flex:1; min-width:0; display:flex; flex-direction:column; max-width:760px}
+#fw-root .fw-thread-scroll{flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding-right:6px}
+#fw-root .fw-thread{display:flex; flex-direction:column; gap:14px}
+#fw-root .fw-threadpane{width:280px; flex:none; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); overflow-y:auto; display:flex; flex-direction:column}
+#fw-root .fw-tp-h{padding:12px 14px; border-bottom:1px solid var(--line); font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); display:flex; gap:7px; align-items:center; position:sticky; top:0; background:var(--panel); z-index:1}
+#fw-root .fw-tp-row{display:flex; align-items:center; gap:9px; padding:11px 14px; border-bottom:1px solid var(--line); width:100%; text-align:left; transition:.14s}
+#fw-root .fw-tp-row:hover{background:var(--panel2)}
+#fw-root .fw-tp-dot{width:8px; height:8px; border-radius:50%; flex:none}
+#fw-root .fw-tp-row.fresh .fw-tp-dot{animation:fw-pulse 1.6s infinite}
+#fw-root .fw-tp-label{font-size:12px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#fw-root .fw-tp-meta{margin-left:auto; font-family:var(--mono); font-size:9.5px; color:var(--faint); flex:none}
+#fw-root .fw-tp-empty{padding:14px; font-size:11.5px; color:var(--faint); line-height:1.5}
 #fw-root .fw-msg{display:flex; gap:11px}
 #fw-root .fw-av{width:32px; height:32px; border-radius:9px; flex:none; display:grid; place-items:center; font-family:var(--disp); font-weight:700; font-size:13px; color:#04121a}
 #fw-root .fw-msg-body{flex:1; min-width:0}
@@ -316,6 +330,10 @@
   #fw-root .fw-search input{min-width:0}
   #fw-root .fw-fleetstat{display:none}
   #fw-root .fw-lens-body{overflow:visible; padding:6px 12px 16px}
+  #fw-root .fw-lens-body.fw-chatmode{overflow:hidden}
+  #fw-root .fw-threadwrap{flex-direction:column}
+  #fw-root .fw-chatcol{max-width:none}
+  #fw-root .fw-threadpane{width:100%; max-height:260px; order:3}
   #fw-root .fw-lens-head{padding:12px 12px 8px}
   #fw-root .fw-tools{margin-left:0; width:100%}
   #fw-root .fw-proj{min-width:0}
@@ -502,7 +520,8 @@ function seed(){
       {c:"var(--gold)",t:"lesson born: Inherit the mind, not the self"},
       {c:"var(--red)",t:"Authority transport · 1 unsourced claim named"},
       {c:"var(--amber)",t:"prose route missed · confidence .62"}
-    ]
+    ],
+    born:{}
   };
 }
 
@@ -510,7 +529,7 @@ var DB=seed();
 var state={
   lens:"desk", focus:{kind:"deliverable",id:"d2"},
   filterStage:"all", filterGate:"all", sort:"order", query:"",
-  selected:{}, bulk:false, armada:false,
+  selected:{}, bulk:false, armada:false, threadPane:true,
   savedViews:[{name:"Needs sources",lens:"desk",filterStage:"sources",query:""}],
   speed:1, spread:92, motion:true, labels:true, sound:false, paletteOpen:false
 };
@@ -695,10 +714,10 @@ function settleDesk(d){
   d.gate=pass?"pass":"refused";
   var cid="c"+(Date.now()%100000);
   DB.calib.unshift({id:cid,kind:"calib",workload:pass?"standard_code":"review",decision:pass?"sys1 → blend1":"harbormaster gate",confidence:pass?0.88:0.4,outcome:pass?"held":"missed",agree:null,deliverable:d.id});
-  d.calib=cid;
+  d.calib=cid; markBorn(cid);
   if(pass){ var lid="l"+(Date.now()%100000);
     DB.lessons.push({id:lid,kind:"lesson",name:d.name,body:"Earned by the end gate: the deliverable passed with sourced claims, graded against evidence.",props:[{t:"the gate speaks last",held:true}],practice:{held:1,total:1},deliverable:d.id});
-    d.lesson=lid; }
+    d.lesson=lid; markBorn(lid); }
   DB.activity.unshift({c:pass?"var(--green)":"var(--red)",t:d.name+(pass?" · end gate passed":" · refused, named")});
   focusOn("deliverable",d.id,false);
   toast(pass?"End gate passed · lesson born":"Refused · the named claims are on the card",pass?"shield-check":"shield-alert",pass?"var(--green)":"var(--red)");
@@ -741,28 +760,73 @@ function deleteDeliverables(ids){
 
 /* ---------- THREADS ---------- */
 var threadMsgs={};
+function chatNearBottom(body){
+  var s=body.querySelector(".fw-thread-scroll");
+  if(!s) return true;
+  return s.scrollHeight-s.scrollTop-s.clientHeight<90;
+}
+function markBorn(id){ DB.born[id]=Date.now(); }
+/* The receipts of the run: every object this thread generated, live. */
+function threadObjects(d){
+  var out=[];
+  if(d) out.push({kind:"deliverable",id:d.id,label:d.name,meta:STAGE_LABEL[STAGES[d.stage]]+" · "+d.coverage+"%",gate:d.gate});
+  (d&&d.facts||[]).forEach(function(f){ var o=byId("fact",f); if(o)out.push({kind:"fact",id:f,label:o.name,meta:o.basis}); });
+  if(d&&d.calib){ var c=byId("calib",d.calib); if(c)out.push({kind:"calib",id:c.id,label:c.workload+" · "+c.decision,meta:c.outcome+" "+c.confidence.toFixed(2)}); }
+  if(d&&d.lesson){ var l=byId("lesson",d.lesson); if(l)out.push({kind:"lesson",id:l.id,label:l.name,meta:"held "+l.practice.held+"/"+l.practice.total}); }
+  if(state.armada){ var i=byId("instance","i-flag"); if(i)out.push({kind:"instance",id:i.id,label:i.name,meta:i.live?"live":"un-calibrated"}); }
+  return out;
+}
 function renderThreads(tools,body){
   var d=state.focus.kind==="deliverable"?obj(state.focus):DB.deliverables[0];
   if(state.focus.kind==="thread"){ var th=obj(state.focus); d=(th&&byId("deliverable",th.deliverable))||d; }
-  if(!d){ body.innerHTML='<div class="fw-empty">Open a brief to start a thread.</div>'; tools.innerHTML=""; return; }
+  if(!d){ body.classList.remove("fw-chatmode"); body.innerHTML='<div class="fw-empty">Open a brief to start a thread.</div>'; tools.innerHTML=""; return; }
   tools.innerHTML='<span class="fw-chip on"><i data-lucide="messages-square" style="width:12px;height:12px"></i> '+esc(d.name)+'</span>'+
-    (state.armada?'<button class="fw-btn fw-btn-primary" id="fw-dispatch"><i data-lucide="send" style="width:13px;height:13px"></i> Dispatch</button>':"");
+    (state.armada?'<button class="fw-btn fw-btn-primary" id="fw-dispatch"><i data-lucide="send" style="width:13px;height:13px"></i> Dispatch</button>':"")+
+    '<button class="fw-btn" id="fw-tp-toggle" aria-pressed="'+(state.threadPane?"true":"false")+'" data-tooltip="Objects generated on this thread"><i data-lucide="'+(state.threadPane?"panel-right-close":"panel-right-open")+'" style="width:13px;height:13px"></i> Thread tissue</button>';
   var dp=tools.querySelector("#fw-dispatch"); if(dp)dp.onclick=function(){ dispatchDesk(d.id); };
-  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fw-thread";
-  var msgs=threadMsgs[d.id]||defaultThread(d);
-  msgs.forEach(function(m){ wrap.appendChild(msgEl(m)); });
+  tools.querySelector("#fw-tp-toggle").onclick=function(){ state.threadPane=!state.threadPane; renderLens(); };
+  // Follow the transcript only while the reader is already at its end;
+  // a pinned composer never scrolls away.
+  var near=chatNearBottom(body);
+  body.classList.add("fw-chatmode"); body.innerHTML="";
+  var wrap=document.createElement("div"); wrap.className="fw-threadwrap";
+  var chatcol=document.createElement("div"); chatcol.className="fw-chatcol";
+  var scroll=document.createElement("div"); scroll.className="fw-thread-scroll";
+  var list=document.createElement("div"); list.className="fw-thread";
+  if(!threadMsgs[d.id]) threadMsgs[d.id]=defaultThread(d);
+  var msgs=threadMsgs[d.id];
+  msgs.forEach(function(m){ list.appendChild(msgEl(m)); });
+  scroll.appendChild(list);
   var comp=document.createElement("div"); comp.className="fw-composer";
   comp.innerHTML='<textarea placeholder="Message the thread… @mention a bot to invoke it" aria-label="Message"></textarea>'+
     '<div class="fw-composer-bar"><span class="fw-mention">@shipwright</span><span class="fw-mention">@harbormaster</span>'+
     '<button class="fw-btn fw-btn-primary" style="margin-left:auto" id="fw-send"><i data-lucide="arrow-up" style="width:13px;height:13px"></i> Send</button></div>';
-  wrap.appendChild(comp); body.appendChild(wrap);
+  chatcol.appendChild(scroll); chatcol.appendChild(comp);
+  wrap.appendChild(chatcol);
+  if(state.threadPane){
+    var pane=document.createElement("div"); pane.className="fw-threadpane";
+    pane.innerHTML='<div class="fw-tp-h"><i data-lucide="waypoints" style="width:12px;height:12px"></i>Generated on this thread</div>';
+    var objs=threadObjects(d);
+    if(!objs.length){ pane.innerHTML+='<div class="fw-tp-empty">Nothing yet — advance the loop and the objects land here as they are created.</div>'; }
+    objs.forEach(function(o){
+      var fresh=DB.born[o.id]&&(Date.now()-DB.born[o.id]<1200);
+      var b=document.createElement("button"); b.className="fw-tp-row"+(fresh?" fresh":"");
+      var kc=KIND[o.kind].c;
+      var metaColor=o.kind==="calib"?(o.meta.indexOf("held")>=0?"var(--green)":"var(--red)"):(o.kind==="deliverable"&&o.gate==="refused"?"var(--red)":(o.kind==="deliverable"&&o.gate==="pass"?"var(--green)":"var(--faint)"));
+      b.innerHTML='<span class="fw-tp-dot" style="background:'+kc+'"></span><span class="fw-tp-label">'+esc(o.label)+'</span><span class="fw-tp-meta" style="color:'+metaColor+'">'+esc(o.meta)+'</span>';
+      b.onclick=function(){ focusOn(o.kind,o.id,true); };
+      pane.appendChild(b);
+    });
+    wrap.appendChild(pane);
+  }
+  body.appendChild(wrap);
+  if(near) scroll.scrollTop=scroll.scrollHeight;
   comp.querySelector("#fw-send").onclick=function(){
     var ta=comp.querySelector("textarea"); var v=ta.value.trim(); if(!v)return;
     msgs.push({who:"You",color:"var(--teal)",text:v,time:"now"}); ta.value=""; renderLens();
     var mention=v.match(/@(\w+)/); var bot=mention?DB.bots.filter(function(b){return b.name===mention[1];})[0]:DB.bots[0];
     setTimeout(function(){ streamBot(d,bot||DB.bots[0],msgs); },400/state.speed);
   };
-  body.scrollTop=body.scrollHeight;
 }
 function defaultThread(d){
   return [

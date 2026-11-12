@@ -153,9 +153,22 @@ Rules (the D-ledger's, applied to design):
   shield-alert red with the named refusal). *Constrains:* the desk lens.
 - **U20 — Threads:** avatar-initial messages, tool-call rows in mono with a
   check, composer with @mention chips; a streaming answer carries a blinking
-  cursor and paints incrementally. Dispatch switches the lens to the task's
-  thread and streams there — the run is *in* the workspace, not a modal.
-  *Constrains:* the threads lens, the dispatch flow.
+  cursor and paints incrementally. **The composer is pinned to the bottom of
+  the chat area** — messages scroll in their own well above it, the composer
+  never scrolls away, and the transcript auto-follows only while the reader
+  is already at its end. Dispatch switches the lens to the task's thread and
+  streams there — the run is *in* the workspace, not a modal. *Constrains:*
+  the threads lens, the dispatch flow.
+- **U39 — The thread pane: the receipts of the run.** A collapsible side pane
+  on Threads lists every object the thread generated, live — the deliverable
+  with its stage and gate, recalled facts, the grade row, the born lesson, the
+  instance — each row color-dotted by kind, freshly-landed rows pulsing, a
+  click pivoting the whole workspace (U3). It collapses to a tools toggle
+  ("Thread tissue"); the pinned composer is never covered, and on narrow
+  widths the pane stacks below the chat. *Rationale:* a conversation that
+  generates objects should show them accumulating where you are talking — the
+  connective tissue at the point of work, not only in the graph pane.
+  *Constrains:* the threads lens on every face.
 
 ## Interaction law
 

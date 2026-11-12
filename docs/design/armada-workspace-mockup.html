@@ -152,7 +152,22 @@
 #fa-root .fa-bulk b{font-family:var(--mono)}
 
 /* threads */
-#fa-root .fa-thread{display:flex; flex-direction:column; gap:14px; max-width:760px}
+/* threads — composer pinned to the bottom; the thread pane explores what
+   the thread generated */
+#fa-root .fa-lens-body.fa-chatmode{display:flex; flex-direction:column; overflow:hidden}
+#fa-root .fa-threadwrap{flex:1; min-height:0; display:flex; gap:14px; width:100%}
+#fa-root .fa-chatcol{flex:1; min-width:0; display:flex; flex-direction:column; max-width:760px}
+#fa-root .fa-thread-scroll{flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding-right:6px}
+#fa-root .fa-thread{display:flex; flex-direction:column; gap:14px}
+#fa-root .fa-threadpane{width:280px; flex:none; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); overflow-y:auto; display:flex; flex-direction:column}
+#fa-root .fa-tp-h{padding:12px 14px; border-bottom:1px solid var(--line); font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); display:flex; gap:7px; align-items:center; position:sticky; top:0; background:var(--panel); z-index:1}
+#fa-root .fa-tp-row{display:flex; align-items:center; gap:9px; padding:11px 14px; border-bottom:1px solid var(--line); width:100%; text-align:left; transition:.14s}
+#fa-root .fa-tp-row:hover{background:var(--panel2)}
+#fa-root .fa-tp-dot{width:8px; height:8px; border-radius:50%; flex:none}
+#fa-root .fa-tp-row.fresh .fa-tp-dot{animation:fa-pulse 1.6s infinite}
+#fa-root .fa-tp-label{font-size:12px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#fa-root .fa-tp-meta{margin-left:auto; font-family:var(--mono); font-size:9.5px; color:var(--faint); flex:none}
+#fa-root .fa-tp-empty{padding:14px; font-size:11.5px; color:var(--faint); line-height:1.5}
 #fa-root .fa-msg{display:flex; gap:11px}
 #fa-root .fa-av{width:32px; height:32px; border-radius:9px; flex:none; display:grid; place-items:center; font-family:var(--disp); font-weight:700; font-size:13px; color:#04121a}
 #fa-root .fa-msg-body{flex:1; min-width:0}
@@ -317,6 +332,10 @@
   #fa-root .fa-search input{min-width:0}
   #fa-root .fa-fleetstat{display:none}
   #fa-root .fa-lens-body{overflow:visible; padding:6px 12px 16px}
+  #fa-root .fa-lens-body.fa-chatmode{overflow:hidden}
+  #fa-root .fa-threadwrap{flex-direction:column}
+  #fa-root .fa-chatcol{max-width:none}
+  #fa-root .fa-threadpane{width:100%; max-height:260px; order:3}
   #fa-root .fa-lens-head{padding:12px 12px 8px}
   #fa-root .fa-tools{margin-left:0; width:100%}
   #fa-root .fa-proj{min-width:0}
@@ -514,7 +533,8 @@ function seed(){
       {c:"var(--cyan)",t:"reef-1 heartbeat · live"},
       {c:"var(--gold)",t:"lesson born: Liveness is earned"},
       {c:"var(--red)",t:"atoll-2 un-calibrated · held"}
-    ]
+    ],
+    born:{}
   };
 }
 
@@ -525,7 +545,7 @@ var state={
   filterStatus:"all", filterAssignee:"all", sort:"order", query:"",
   selected:{}, bulk:false, savedViews:[{name:"P0 working",lens:"board",filterStatus:"working",query:""}],
   speed:1, spread:92, motion:true, labels:true, sound:false,
-  running:{}, paletteOpen:false, drawer:null
+  running:{}, paletteOpen:false, drawer:null, threadPane:true
 };
 var LENSES=[
   {id:"board",icon:"layout-grid",label:"Board",sub:"Tasks across the mission, graded by outcome"},
@@ -726,28 +746,71 @@ function deleteTasks(ids){
 
 /* ---------- THREADS ---------- */
 var threadMsgs={};
+function chatNearBottom(body){
+  var s=body.querySelector(".fa-thread-scroll");
+  if(!s) return true;
+  return s.scrollHeight-s.scrollTop-s.clientHeight<90;
+}
+function markBorn(id){ if(!DB.born)DB.born={}; DB.born[id]=Date.now(); }
+/* The receipts of the run: what this thread's task generated, live. */
+function threadObjects(t){
+  var out=[];
+  if(t&&t.deliverable){ var d=byId("deliverable",t.deliverable); if(d)out.push({kind:"deliverable",id:d.id,label:d.name,meta:(d.gate||"in flight")+" · "+d.coverage+"%"}); }
+  else if(t) out.push({kind:"deliverable",id:null,label:"deliverable",meta:"lands on settle"});
+  if(t&&t.instance){ var i=byId("instance",t.instance); if(i)out.push({kind:"instance",id:i.id,label:i.name,meta:i.live?"live":"un-calibrated"}); }
+  if(t&&t.assignee){ var b=byId("bot",t.assignee); if(b)out.push({kind:"bot",id:b.id,label:b.name,meta:b.role}); }
+  if(t&&t.lesson){ var l=byId("lesson",t.lesson); if(l)out.push({kind:"lesson",id:l.id,label:l.name,meta:"born"}); }
+  return out.filter(function(o){return o.id||o.label==="deliverable";});
+}
 function renderThreads(tools,body){
   var t=state.focus.kind==="task"?obj(state.focus):(DB.tasks[0]||null);
   if(state.focus.kind==="thread"){ var th=obj(state.focus); t=(th&&byId("task",th.task))||t; }
-  if(!t){ body.innerHTML='<div class="fa-empty">No tasks yet — create one on the Board to start a thread.</div>'; tools.innerHTML=""; return; }
+  if(!t){ body.classList.remove("fa-chatmode"); body.innerHTML='<div class="fa-empty">No tasks yet — create one on the Board to start a thread.</div>'; tools.innerHTML=""; return; }
   tools.innerHTML='<span class="fa-chip on"><i data-lucide="messages-square" style="width:12px;height:12px"></i> '+esc(t?t.title:"")+'</span>'+
-    '<button class="fa-btn fa-btn-primary" id="fa-dispatch"><i data-lucide="send" style="width:13px;height:13px"></i> Dispatch bot</button>';
+    '<button class="fa-btn fa-btn-primary" id="fa-dispatch"><i data-lucide="send" style="width:13px;height:13px"></i> Dispatch bot</button>'+
+    '<button class="fa-btn" id="fa-tp-toggle" aria-pressed="'+(state.threadPane?"true":"false")+'" data-tooltip="Objects generated on this thread"><i data-lucide="'+(state.threadPane?"panel-right-close":"panel-right-open")+'" style="width:13px;height:13px"></i> Thread tissue</button>';
   tools.querySelector("#fa-dispatch").onclick=function(){ if(t)dispatch(t.id); };
-  body.innerHTML=""; var wrap=document.createElement("div"); wrap.className="fa-thread";
-  var msgs=threadMsgs[t.id]||defaultThread(t);
-  msgs.forEach(function(m){ wrap.appendChild(msgEl(m)); });
+  tools.querySelector("#fa-tp-toggle").onclick=function(){ state.threadPane=!state.threadPane; renderLens(); };
+  var near=chatNearBottom(body);
+  body.classList.add("fa-chatmode"); body.innerHTML="";
+  var wrap=document.createElement("div"); wrap.className="fa-threadwrap";
+  var chatcol=document.createElement("div"); chatcol.className="fa-chatcol";
+  var scroll=document.createElement("div"); scroll.className="fa-thread-scroll";
+  var list=document.createElement("div"); list.className="fa-thread";
+  if(!threadMsgs[t.id]) threadMsgs[t.id]=defaultThread(t);
+  var msgs=threadMsgs[t.id];
+  msgs.forEach(function(m){ list.appendChild(msgEl(m)); });
+  scroll.appendChild(list);
   var comp=document.createElement("div"); comp.className="fa-composer";
   comp.innerHTML='<textarea placeholder="Message the thread… @mention a bot to invoke it" aria-label="Message"></textarea>'+
     '<div class="fa-composer-bar"><span class="fa-mention">@shipwright</span><span class="fa-mention">@harbormaster</span>'+
     '<button class="fa-btn fa-btn-primary" style="margin-left:auto" id="fa-send"><i data-lucide="arrow-up" style="width:13px;height:13px"></i> Send</button></div>';
-  wrap.appendChild(comp); body.appendChild(wrap);
+  chatcol.appendChild(scroll); chatcol.appendChild(comp);
+  wrap.appendChild(chatcol);
+  if(state.threadPane){
+    var pane=document.createElement("div"); pane.className="fa-threadpane";
+    pane.innerHTML='<div class="fa-tp-h"><i data-lucide="waypoints" style="width:12px;height:12px"></i>Generated on this thread</div>';
+    var objs=threadObjects(t);
+    objs.forEach(function(o){
+      var fresh=o.id&&DB.born&&DB.born[o.id]&&(Date.now()-DB.born[o.id]<1200);
+      var b=document.createElement("button"); b.className="fa-tp-row"+(fresh?" fresh":"");
+      var kc=KIND[o.kind].c;
+      var metaColor=o.meta==="born"?"var(--gold)":(o.meta.indexOf("refused")>=0?"var(--red)":(o.meta.indexOf("pass")>=0?"var(--green)":"var(--faint)"));
+      b.innerHTML='<span class="fa-tp-dot" style="background:'+kc+'"></span><span class="fa-tp-label">'+esc(o.label)+'</span><span class="fa-tp-meta" style="color:'+metaColor+'">'+esc(o.meta)+'</span>';
+      if(o.id) b.onclick=function(){ focusOn(o.kind,o.id,true); };
+      pane.appendChild(b);
+    });
+    if(!objs.length) pane.innerHTML+='<div class="fa-tp-empty">Nothing yet — dispatch and the objects land here as they are created.</div>';
+    wrap.appendChild(pane);
+  }
+  body.appendChild(wrap);
+  if(near) scroll.scrollTop=scroll.scrollHeight;
   comp.querySelector("#fa-send").onclick=function(){
     var ta=comp.querySelector("textarea"); var v=ta.value.trim(); if(!v)return;
     msgs.push({who:"You",role:"owner",color:"var(--cyan)",text:v,time:"now"}); ta.value=""; renderLens();
     var mention=v.match(/@(\w+)/); var bot=mention?DB.bots.filter(function(b){return b.name===mention[1];})[0]:byId("bot",t.assignee);
     if(bot){ setTimeout(function(){ streamBot(t,bot,msgs); },400/state.speed); }
   };
-  body.scrollTop=body.scrollHeight;
 }
 function defaultThread(t){
   var bot=byId("bot",t.assignee);
@@ -804,9 +867,9 @@ function settleRun(t){
   var did="d"+(Date.now()%100000);
   var pass=Math.random()>0.18;
   DB.deliverables.push({id:did,kind:"deliverable",name:t.title,claim:"Landed by "+(byId("bot",t.assignee)||{}).name+" on "+(byId("instance",t.instance)||{}).name+".",gate:pass?"pass":"refused",coverage:pass?92:68,task:t.id,refusal:pass?null:"1 unsourced claim"});
-  t.deliverable=did; t.status=pass?"done":"blocked";
+  t.deliverable=did; t.status=pass?"done":"blocked"; markBorn(did);
   var lid=null;
-  if(pass){ lid="l"+(Date.now()%100000); DB.lessons.push({id:lid,kind:"lesson",name:t.title,body:"Earned by a settled run: the deliverable passed the end gate, graded against evidence.",task:t.id}); t.lesson=lid; }
+  if(pass){ lid="l"+(Date.now()%100000); DB.lessons.push({id:lid,kind:"lesson",name:t.title,body:"Earned by a settled run: the deliverable passed the end gate, graded against evidence.",task:t.id}); t.lesson=lid; markBorn(lid); }
   var inst=byId("instance",t.instance); if(inst){ inst.settled++; inst.rel=Math.min(0.99,inst.rel+0.01); }
   DB.activity.unshift({c:pass?"var(--green)":"var(--red)",t:(pass?"Deliverable landed · ":"Blocked · ")+t.title});
   renderNav(); renderLens(); renderTissue(); ping(pass?880:300);
