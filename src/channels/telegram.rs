@@ -194,7 +194,15 @@ impl Telegram {
                         if let Some(parent) = path.parent() {
                             let _ = std::fs::create_dir_all(parent);
                         }
-                        let _ = std::fs::write(&path, current.to_string());
+                        // Atomic: a temp beside the target then a rename, so a
+                        // reader (or a crash mid-write) never sees a half-written
+                        // offset — an empty file would re-poll from zero. The
+                        // direct write left an empty window a loaded suite read
+                        // straight into (KI-405's class).
+                        let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+                        if std::fs::write(&tmp, current.to_string()).is_ok() {
+                            let _ = std::fs::rename(&tmp, &path);
+                        }
                     }
                     for update in &updates {
                         if let Some(inbound) = delivery_of(update) {
@@ -539,8 +547,12 @@ mod tests {
         // moment the offset lands, so the common case pays nothing.
         for _ in 0..1500 {
             if let Ok(text) = std::fs::read_to_string(&path) {
-                saved = Some(text);
-                break;
+                // Wait for the content, not mere existence: the offset lands
+                // atomically, but the assertion is about the value persisted.
+                if text.trim() == "12" {
+                    saved = Some(text);
+                    break;
+                }
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
