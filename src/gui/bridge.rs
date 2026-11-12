@@ -15716,6 +15716,11 @@ mod tests {
         drop(log);
         let control = crate::home::sessions_dir(&home).join(format!("{id}.control"));
         std::fs::write(&control, "{\"stop\":true}\n").expect("the standing control");
+        // A pinned roster so the route is deterministic — the test pins the
+        // control file, not the routing. Without it the route asks sys1,
+        // which stalls under load and the run never reaches the control
+        // read (the gate found exactly that).
+        write_concurrent_roster(&home, 1);
         let (mut bridge, sources) =
             Bridge::detached(home.clone(), "deepseek-flash".to_string(), Some(id.clone()));
         let door = bridge.connect();
@@ -15759,7 +15764,13 @@ mod tests {
                 }
                 _ => {
                     // A closed channel is the thread's end too; the file
-                    // check above still decides.
+                    // check above still decides. Past the deadline, stop
+                    // waiting and let the assertion answer — a timeout that
+                    // spins forever is a hang, not a test (the gate found it
+                    // under load).
+                    if tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 }
             }

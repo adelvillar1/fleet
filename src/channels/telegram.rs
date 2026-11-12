@@ -534,7 +534,10 @@ mod tests {
         // The offset file appears once the poll lands: offset = 11 + 1 = 12.
         let path = offset_path(&home);
         let mut saved = None;
-        for _ in 0..500 {
+        // A generous poll count, not a wall clock: a loaded suite schedules
+        // the long-poll differently (KI-405's class). The loop breaks the
+        // moment the offset lands, so the common case pays nothing.
+        for _ in 0..1500 {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 saved = Some(text);
                 break;
