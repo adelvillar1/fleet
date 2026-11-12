@@ -12,6 +12,37 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.37 — 2026-11-12
+
+The armada workspace: the work-object graph that connects the four stores.
+
+**Part of the armada vision** — layer L7 (workspace), the work-object graph.
+The plan is `docs/plans/2026-11-11-armada-l7-workspace.md`.
+
+- **The work-object graph** — `src/workspace.rs` keys work by object, not by
+  folder: a `WorkObject {id, kind}` over {task, thread, deliverable, bot,
+  lesson}. Only the task is store-owned; the rest are typed references derived
+  live from the session/desk/roles stores (no parallel store). Tasks and edges
+  persist as append-only JSONL folded on read, in a home exempt from journal
+  retention.
+- **The first-class task** — `Task {id, status, assignee}`: a stable
+  cross-session id, a working/blocked/done lifecycle, and an assignee that is
+  L1's principal. The `todo` renderer is untouched; this is the additive unit
+  armada assigns.
+- **The hand, fixed** — `hand_to_desk` binds the room's own workspace (not the
+  server cwd), attaches the room's thread (`desk.session` was `None`), and
+  records the thread→deliverable edge.
+- **Surfaces as views** — `projects()` is a projection of the object-keyed
+  `graph.view`: the same deliverable/lesson rows, now object-keyed at the
+  source, plus tasks grouped by their workspace binding. The face is unchanged.
+- **Bot invocation, gated and graded** — `task.assign` admits through the L3
+  guard under the assignee principal, runs under the role overlay (a huddle
+  stays a session), and carries the deputy principal. The task reads `done`
+  only when the deliverable passes the desk end gate, otherwise `blocked`,
+  named; every mutation settles a `work` journal event.
+- **The surface** — `fleet workspace` prints the tasks, edges, and the
+  object-keyed view.
+
 ## v0.6.36 — 2026-11-11
 
 The armada omnichannel edge: communication that loses nothing.

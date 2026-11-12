@@ -173,6 +173,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Journal) => journal_command(),
         Ok(Command::Grants) => grants_command(),
         Ok(Command::Hygiene) => hygiene_command(),
+        Ok(Command::Workspace) => workspace_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Demand(options)) => demand_command(&options),
         Ok(Command::Roles) => roles_command(),
@@ -4101,6 +4102,45 @@ fn stale_process_sweep() -> usize {
         }
     }
     stopped
+}
+
+/// The work-object graph (armada L7, C9): the tasks and edges the graph
+/// log carries, plus the object-keyed view the face's projects rail reads.
+/// A read, never a write — the graph is mutated by the run loop and the
+/// hand, not by this card.
+fn workspace_command() -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let graph = fleet::workspace::read(&home);
+    println!(
+        "workspace: {} task(s), {} edge(s)",
+        graph.tasks.len(),
+        graph.edges.len()
+    );
+    for task in graph.tasks.values() {
+        println!(
+            "  task {} [{}] {} (assignee: {})",
+            task.id,
+            task.status.as_str(),
+            task.title,
+            task.assignee
+        );
+    }
+    for edge in &graph.edges {
+        println!(
+            "  edge {}:{} --{}--> {}:{}",
+            edge.from.kind.as_str(),
+            edge.from.id,
+            edge.kind.as_str(),
+            edge.to.kind.as_str(),
+            edge.to.id
+        );
+    }
+    let rows = fleet::workspace::view(&home, None);
+    println!("view: {} object(s)", rows.len());
+    ExitCode::SUCCESS
 }
 
 fn hygiene_command() -> ExitCode {

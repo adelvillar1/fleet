@@ -799,12 +799,12 @@ impl Bridge {
             .get(id)
             .ok_or_else(|| format!("the room `{id}` carries no goal to hand"))?;
         let name = format!("huddle {id}");
-        // The binding rides the working directory itself — the workspace
-        // the hand was pressed from — keyed by its final segment the way
-        // every binding keys.
-        let project = std::env::current_dir()
-            .ok()
-            .map(|cwd| cwd.to_string_lossy().to_string())
+        // The binding rides the room's OWN workspace — the cwd the session
+        // was born in — not the server's cwd (armada L7, D39: the survey's
+        // bug was a hand bound to wherever the server happened to run). An
+        // unbound room hands unbound, named by the surface as before.
+        let project = crate::session::summarize(&crate::session::session_path(&self.home, id))
+            .and_then(|summary| summary.workspace.clone())
             .filter(|path| !path.is_empty());
         let desk = crate::desk::create(
             &self.home,
@@ -816,7 +816,69 @@ impl Bridge {
             project,
         )
         .map_err(|error| format!("the hand was refused: {error}"))?;
+        // Attach the room's thread so desk.session names the conversation
+        // it came from (was None — the reverse edge the graph now carries).
+        crate::desk::attach_session(&self.home, &desk.slug, id)
+            .map_err(|error| format!("the hand was refused: {error}"))?;
+        // The thread→deliverable edge in the work graph (D39). Best-effort:
+        // the hand stands even if the edge write fails; the desk's own
+        // session binding is the durable record.
+        let _ = crate::workspace::link(
+            &self.home,
+            crate::workspace::WorkObject::new(id, crate::workspace::Kind::Thread),
+            crate::workspace::WorkObject::new(
+                desk.slug.clone(),
+                crate::workspace::Kind::Deliverable,
+            ),
+            crate::workspace::EdgeKind::HandsTo,
+        );
         Ok(desk.slug)
+    }
+
+    /// Assign a workspace task to a bot (armada L7, D41/D42): admit through
+    /// the L3 guard under the assignee principal, open a session under the
+    /// role overlay (a huddle STAYS a session — KI-300, no parallel store),
+    /// link the task to its thread and bot, and run carrying the assignee
+    /// principal (the deputy, D9). Returns the session the deputy works in.
+    /// The run's outcome settles the task via `workspace::settle_work` when
+    /// its deliverable lands (D43).
+    pub fn assign_task(
+        &self,
+        task_id: &str,
+        role: &str,
+        task_text: &str,
+        principal: Option<String>,
+    ) -> Result<String, String> {
+        let graph = crate::workspace::read(&self.home);
+        let task = graph
+            .tasks
+            .get(task_id)
+            .ok_or_else(|| format!("the task `{task_id}` does not exist"))?;
+        let assignee = principal
+            .as_deref()
+            .map(crate::identity::PrincipalId::new)
+            .unwrap_or_else(|| task.assignee.clone());
+        // The guard admits the assignee before any run (D42); a refusal is
+        // named and audited by the workspace, never a silent dispatch.
+        crate::workspace::admit_assignment(&self.home, task, &assignee)?;
+        // The bot works in a session under the role overlay — a huddle, which
+        // is a session, never a parallel huddle store (KI-300).
+        let session = self.huddle(Some(task_text), &[role.to_string()])?;
+        let _ = crate::workspace::link(
+            &self.home,
+            crate::workspace::WorkObject::new(task_id, crate::workspace::Kind::Task),
+            crate::workspace::WorkObject::new(session.clone(), crate::workspace::Kind::Thread),
+            crate::workspace::EdgeKind::WorksIn,
+        );
+        let _ = crate::workspace::link(
+            &self.home,
+            crate::workspace::WorkObject::new(task_id, crate::workspace::Kind::Task),
+            crate::workspace::WorkObject::new(role, crate::workspace::Kind::Bot),
+            crate::workspace::EdgeKind::AssignedBot,
+        );
+        // The run carries the assignee principal so the guard reads it (D9).
+        self.run_as_principal(&session, task_text, Some(assignee.as_str().to_string()))?;
+        Ok(session)
     }
 
     /// Break a phase out of a room (the huddles plan's C9): a child room
@@ -1621,52 +1683,52 @@ impl Bridge {
                 rows.push((
                     path.to_string(),
                     json!({ "path": path, "name": name,
-                            "deliverables": [], "lessons": [], "practices": [] }),
+                            "deliverables": [], "lessons": [], "practices": [],
+                            "tasks": [] }),
                 ));
                 let index = rows.len() - 1;
                 at.insert(path.to_string(), index);
                 index
             };
-            for row in crate::desk::project_rows(&home) {
-                let Ok(desk) = row else { continue };
-                let entry = json!({
-                    "slug": desk.slug,
-                    "name": desk.name,
-                    "needs": !desk.refusals.is_empty() || !desk.number_refusals.is_empty(),
-                });
-                match desk.project.as_deref() {
-                    Some(path) => {
-                        let index = slot(&mut rows, &mut at, path);
-                        if let Some(list) = rows[index].1["deliverables"].as_array_mut() {
-                            list.push(entry);
-                        }
-                    }
-                    None => unbound_deliverables.push(entry),
-                }
-            }
-            for (kind, key) in [
-                (crate::session::LESSON_KIND, "lessons"),
-                (crate::session::PRACTICE_KIND, "practices"),
-            ] {
-                for summary in crate::session::list_kind(&home, Some(kind)).unwrap_or_default() {
-                    let entry = json!({
-                        "id": summary.id,
-                        "title": summary
-                            .last_plan
-                            .clone()
-                            .or(summary.first_text.clone())
-                            .unwrap_or_default(),
-                        "ended": summary.ended,
-                    });
-                    match summary.workspace.as_deref() {
+            // The object-keyed view (armada L7, D40): the same deliverable/
+            // lesson/practice rows the folder-keyed union read, now sourced
+            // from the work graph's references — derived live from the same
+            // desk/session stores, so the rows are unchanged — plus the task
+            // objects grouped by their workspace binding (the additive unit).
+            for row in crate::workspace::view(&home, None) {
+                use crate::workspace::Kind;
+                let entry = row.entry.clone();
+                match row.object.kind {
+                    Kind::Deliverable => match row.binding.as_deref() {
                         Some(path) => {
                             let index = slot(&mut rows, &mut at, path);
-                            if let Some(list) = rows[index].1[key].as_array_mut() {
+                            if let Some(list) = rows[index].1["deliverables"].as_array_mut() {
                                 list.push(entry);
                             }
                         }
-                        None => unbound_lessons.push(entry),
+                        None => unbound_deliverables.push(entry),
+                    },
+                    Kind::Lesson => {
+                        let key = if row.practice { "practices" } else { "lessons" };
+                        match row.binding.as_deref() {
+                            Some(path) => {
+                                let index = slot(&mut rows, &mut at, path);
+                                if let Some(list) = rows[index].1[key].as_array_mut() {
+                                    list.push(entry);
+                                }
+                            }
+                            None => unbound_lessons.push(entry),
+                        }
                     }
+                    Kind::Task => {
+                        if let Some(path) = row.binding.as_deref() {
+                            let index = slot(&mut rows, &mut at, path);
+                            if let Some(list) = rows[index].1["tasks"].as_array_mut() {
+                                list.push(entry);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             rows.sort_by(|a, b| {
@@ -17923,6 +17985,169 @@ mod tests {
             "{knowledge}"
         );
         assert_eq!(knowledge["wrote"], json!(["gamma"]), "{knowledge}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// C3 (armada L7): the hand binds the room's own workspace and attaches
+    /// its thread — `desk.session` names the room (was `None`), the binding
+    /// is the room's workspace (not the server cwd), and a thread→deliverable
+    /// edge lands in the work graph.
+    #[tokio::test]
+    async fn hand_to_desk_binds_the_rooms_workspace_and_thread() {
+        let (bridge, _sources, _door) = bridge().await;
+        let home = bridge.home.clone();
+        std::fs::create_dir_all(home.join("roles")).unwrap();
+        std::fs::write(
+            home.join("roles/designer.md"),
+            "---\nname: designer\ndescription: makes pages\n---\nv\n",
+        )
+        .unwrap();
+        let room = bridge
+            .huddle(Some("the pricing page"), &["designer".to_string()])
+            .unwrap();
+        let slug = bridge.hand_to_desk(&room).unwrap();
+        let desk = crate::desk::load(&home, &slug).unwrap();
+        // The thread is attached (was None).
+        assert_eq!(desk.session.as_deref(), Some(room.as_str()));
+        // The binding is the room's own workspace, read off its log.
+        let room_workspace = crate::session::summarize(&crate::session::session_path(&home, &room))
+            .and_then(|summary| summary.workspace.clone());
+        assert_eq!(desk.project, room_workspace);
+        // The thread→deliverable edge lands in the graph.
+        let graph = crate::workspace::read(&home);
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|e| e.kind == crate::workspace::EdgeKind::HandsTo
+                    && e.from.id == room
+                    && e.to.id == slug),
+            "the hand records the thread→deliverable edge: {:?}",
+            graph.edges
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// C4 (armada L7): `projects()` sourced from the object-keyed view
+    /// returns the same deliverable rows the folder-keyed union read
+    /// (computed here independently from the desk store), plus a task object
+    /// grouped by its workspace binding — the additive unit.
+    #[tokio::test]
+    async fn projects_view_preserves_the_union_and_groups_tasks() {
+        let (bridge, _sources, _door) = bridge().await;
+        let home = bridge.home.clone();
+        crate::desk::create(
+            &home,
+            "bound",
+            "Bound",
+            "the owner",
+            "a claim",
+            Vec::new(),
+            Some("/proj/alpha".to_string()),
+        )
+        .unwrap();
+        crate::desk::create(
+            &home,
+            "loose",
+            "Loose",
+            "the owner",
+            "a claim",
+            Vec::new(),
+            None,
+        )
+        .unwrap();
+        crate::workspace::create_task(
+            &home,
+            "ship alpha",
+            crate::identity::PrincipalId::owner(),
+            Some("/proj/alpha".to_string()),
+        )
+        .unwrap();
+        let doc = bridge.projects().await;
+        // The folder-keyed deliverable union, computed straight from the store.
+        let mut expected_bound: Vec<Value> = Vec::new();
+        let mut expected_unbound: Vec<Value> = Vec::new();
+        for row in crate::desk::project_rows(&home) {
+            let Ok(desk) = row else { continue };
+            let entry = json!({
+                "slug": desk.slug, "name": desk.name,
+                "needs": !desk.refusals.is_empty() || !desk.number_refusals.is_empty(),
+            });
+            match desk.project.as_deref() {
+                Some("/proj/alpha") => expected_bound.push(entry),
+                _ => expected_unbound.push(entry),
+            }
+        }
+        let alpha = doc["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["path"] == json!("/proj/alpha"))
+            .unwrap();
+        assert_eq!(alpha["deliverables"], json!(expected_bound));
+        assert_eq!(doc["unbound"]["deliverables"], json!(expected_unbound));
+        // The task appears grouped by its binding.
+        assert_eq!(alpha["tasks"].as_array().unwrap().len(), 1);
+        assert_eq!(alpha["tasks"][0]["title"], json!("ship alpha"));
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// C6 (armada L7): a granted assignment opens a session under the role
+    /// overlay (a huddle STAYS a session — KI-300), links the task to its
+    /// thread and bot, and the run carries the assignee (deputy) principal.
+    #[tokio::test]
+    async fn assign_task_runs_under_the_deputy_principal_and_links() {
+        let (bridge, _sources, mut door) = bridge().await;
+        let home = bridge.home.clone();
+        std::fs::create_dir_all(home.join("roles")).unwrap();
+        std::fs::write(
+            home.join("roles/designer.md"),
+            "---\nname: designer\ndescription: makes pages\n---\nv\n",
+        )
+        .unwrap();
+        let task = crate::workspace::create_task(
+            &home,
+            "design the hero",
+            crate::identity::PrincipalId::owner(),
+            None,
+        )
+        .unwrap();
+        let session = bridge
+            .assign_task(&task.id, "designer", "design the hero", None)
+            .unwrap();
+        // The huddle is a session, not a parallel store.
+        assert!(
+            crate::session::summarize(&crate::session::session_path(&home, &session)).is_some()
+        );
+        // The run carries the owner principal (the deputy in lane 1).
+        match door.recv().await {
+            Some(Command::Run(_session, _task, _folder, _images, principal)) => {
+                assert_eq!(principal.as_deref(), Some("owner"));
+            }
+            _ => panic!("expected a Run carrying the deputy principal"),
+        }
+        // The task→thread and task→bot edges land.
+        let graph = crate::workspace::read(&home);
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|e| e.kind == crate::workspace::EdgeKind::WorksIn
+                    && e.from.id == task.id
+                    && e.to.id == session),
+            "the task→thread edge: {:?}",
+            graph.edges
+        );
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|e| e.kind == crate::workspace::EdgeKind::AssignedBot
+                    && e.from.id == task.id
+                    && e.to.id == "designer"),
+            "the task→bot edge: {:?}",
+            graph.edges
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 

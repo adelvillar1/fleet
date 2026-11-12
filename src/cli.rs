@@ -37,6 +37,9 @@ pub enum Command {
     /// retention — the last 20 turns per session under a 5 GiB store
     /// cap — and the report naming what went and what it freed.
     Hygiene,
+    /// The work-object graph (armada L7): the tasks, their edges, and the
+    /// object-keyed view the face's projects rail reads.
+    Workspace,
     /// The settings surface: list every knob, write one, or revert one to its
     /// compiled default.
     ///
@@ -1109,6 +1112,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "desk" => parse_desk(rest),
         "compact" => parse_compact(rest),
         "hygiene" => no_flags(rest, Command::Hygiene),
+        "workspace" => no_flags(rest, Command::Workspace),
         "settings" => parse_settings(rest),
         "lanes" => no_flags(rest, Command::Lanes),
         "mcp" => parse_mcp(rest),

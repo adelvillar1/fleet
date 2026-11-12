@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-11
 updated: 2026-11-12
 slug: armada-l7-workspace
@@ -106,16 +106,16 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0: `src/workspace.rs` exposes `WorkObject {id, kind}`, `Edge {from, to, kind}`, and `Task {id, status, assignee}` with `kind` the closed set {task, thread, deliverable, bot, lesson}; `graph.link` with a dangling endpoint or an unknown kind is refused by name (a test pins both).
-- [ ] C1: a workspace `Task` has a stable id that survives restart, `status ∈ {working, blocked, done}`, and `assignee` equal to the L1 principal (`owner` in lane 1); the `todo` renderer output and the session `Tasks` record are unchanged (a test pins the renderer).
-- [ ] C2: `graph.link` records task↔thread↔deliverable↔bot↔lesson edges and `graph.view(filter)` returns the linked objects, with thread/deliverable/lesson/bot resolving to the existing session/desk/memory/roles stores and no parallel object store written (a test pins the resolution).
-- [ ] C3: `hand_to_desk` sets `desk.session` to the room's id (not `None`) and binds the room's workspace (not the server cwd), and records a thread→deliverable edge (a test pins all three).
-- [ ] C4: for an existing home, `projects()` returns the same deliverable/lesson rows as before (non-breaking) now sourced from the object-keyed `graph.view`, and a task object appears grouped by its workspace binding (a fixture-home test compares old vs new output).
-- [ ] C5: `task.assign(task, principal)` admits through `guard.check` under the assignee principal; an ungranted principal is refused by name and the refusal settles a `guard` journal event (a test pins deny + audit).
-- [ ] C6: `task.assign` under a granted principal reuses `bridge.run_as` under the role overlay with the run carrying the assignee principal (a huddle stays a session — no parallel huddle store), and the work lands as a deliverable linked to the task's thread (a test pins the deputy principal and the link).
-- [ ] C7: a bot run's outcome settles the task status and a `work` journal event (kind `work`, principal + object ids); the task reads `done` only when the linked deliverable passes the desk end gate, otherwise `blocked` with the named refusal (a test pins both paths).
-- [ ] C8: single-owner behavior is unchanged — the four-leg gate passes and the face projects rail, desk, and huddle flows work as before.
-- [ ] C9: the workspace surface renders — `fleet workspace` prints the object graph (tasks + edges) and the face projects rail reads the object-keyed view.
+- [x] C0: `src/workspace.rs` exposes `WorkObject {id, kind}`, `Edge {from, to, kind}`, and `Task {id, status, assignee}` with `kind` the closed set {task, thread, deliverable, bot, lesson}; `graph.link` with a dangling endpoint or an unknown kind is refused by name (a test pins both).
+- [x] C1: a workspace `Task` has a stable id that survives restart, `status ∈ {working, blocked, done}`, and `assignee` equal to the L1 principal (`owner` in lane 1); the `todo` renderer output and the session `Tasks` record are unchanged (a test pins the renderer).
+- [x] C2: `graph.link` records task↔thread↔deliverable↔bot↔lesson edges and `graph.view(filter)` returns the linked objects, with thread/deliverable/lesson/bot resolving to the existing session/desk/memory/roles stores and no parallel object store written (a test pins the resolution).
+- [x] C3: `hand_to_desk` sets `desk.session` to the room's id (not `None`) and binds the room's workspace (not the server cwd), and records a thread→deliverable edge (a test pins all three).
+- [x] C4: for an existing home, `projects()` returns the same deliverable/lesson rows as before (non-breaking) now sourced from the object-keyed `graph.view`, and a task object appears grouped by its workspace binding (a fixture-home test compares old vs new output).
+- [x] C5: `task.assign(task, principal)` admits through `guard.check` under the assignee principal; an ungranted principal is refused by name and the refusal settles a `guard` journal event (a test pins deny + audit).
+- [x] C6: `task.assign` under a granted principal reuses `bridge.run_as` under the role overlay with the run carrying the assignee principal (a huddle stays a session — no parallel huddle store), and the work lands as a deliverable linked to the task's thread (a test pins the deputy principal and the link).
+- [x] C7: a bot run's outcome settles the task status and a `work` journal event (kind `work`, principal + object ids); the task reads `done` only when the linked deliverable passes the desk end gate, otherwise `blocked` with the named refusal (a test pins both paths).
+- [x] C8: single-owner behavior is unchanged — the four-leg gate passes and the face projects rail, desk, and huddle flows work as before.
+- [x] C9: the workspace surface renders — `fleet workspace` prints the object graph (tasks + edges) and the face projects rail reads the object-keyed view.
 
 ## Files to be touched
 

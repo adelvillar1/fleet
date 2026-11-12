@@ -92,10 +92,10 @@ choices that span atoms are noted in the layer header.
 *Layer-level choice: D43 (work graded against outcome).*
 | Atom | Builds | Depends | Choices | Status |
 |---|---|---|---|---|
-| L7.1 | the task object (id, status, assignee) | L1.2 | D37, D38 | drafted |
-| L7.2 | the work-object edges + hand_to_desk fix | L7.1, L2.4 | D39 | drafted |
-| L7.3 | surfaces as views over the graph | L7.2 | D40 | drafted |
-| L7.4 | bot invocation as a workspace action (gated) | L7.2, L3.2 | D41, D42 | drafted |
+| L7.1 | the task object (id, status, assignee) | L1.2 | D37, D38 | done |
+| L7.2 | the work-object edges + hand_to_desk fix | L7.1, L2.4 | D39 | done |
+| L7.3 | surfaces as views over the graph | L7.2 | D40 | done |
+| L7.4 | bot invocation as a workspace action (gated) | L7.2, L3.2 | D41, D42 | done |
 
 ## Wave 4 — the hand
 
