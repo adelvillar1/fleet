@@ -12,6 +12,18 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.7.5 — 2026-11-12
+
+The connections column collapses from its own door.
+
+A refinement on the workspace shell: three doors on one state
+(`body[data-tissue]`) — the console switch, a chevron in the column's own head
+(visible while open), and a slim edge tab holding the stage's right edge while
+the column is away (visible only while away, ≥1081px — below the breakpoint
+the column is dropped and the tab with it). Collapsed is a 30px strip, not a
+vanish: the way back never hides with the pane it controls, the choice
+persists, and every door syncs off the same paint.
+
 ## v0.7.4 — 2026-11-12
 
 The workspace shell (S6) — the pivot renders in place, and one read feeds the lenses.
