@@ -13164,8 +13164,8 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
             "before": tokens_before,
             "after": tokens_after,
         }),
-        UiEvent::Memory { shape, facts } => {
-            json!({"type": "memory", "shape": shape, "facts": facts})
+        UiEvent::Memory { shape, facts, root } => {
+            json!({"type": "memory", "shape": shape, "facts": facts, "root": root})
         }
         UiEvent::SkillsLoaded { loaded, skipped } => {
             json!({"type": "skills", "loaded": loaded, "skipped": skipped})
@@ -14202,13 +14202,26 @@ async fn drive_run(
     let path = session::session_path(&home, &driving);
     // The corpus is loaded per task, off the async worker: the files can
     // change between runs, and a fact an earlier run of this session
-    // remembered is on disk by the time this one assembles.
-    let memory = tokio::task::spawn_blocking(|| {
-        let root = crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
-        std::sync::Arc::new(crate::memory::Memory::load(&root))
-    })
-    .await
-    .ok();
+    // remembered is on disk by the time this one assembles. The root is
+    // the session's own working folder — a face launched from `/` (the
+    // LaunchAgent's cwd) used to freeze the corpus at `/memories`, and
+    // every remember in a folder-granted chat died on a read-only
+    // filesystem (KI-535). No folder granted, the launch cwd answers as
+    // it always has.
+    let memory = {
+        let folder = folder.clone();
+        tokio::task::spawn_blocking(move || {
+            let root = folder
+                .as_deref()
+                .map(crate::memory::resolve_root)
+                .unwrap_or_else(|| {
+                    crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default())
+                });
+            std::sync::Arc::new(crate::memory::Memory::load(&root))
+        })
+        .await
+        .ok()
+    };
     // One agent per task over a freshly opened log: the replay seeds the
     // conversation exactly as a resumed headless run is seeded.
     let mut log = match Session::open(&path) {
@@ -17668,6 +17681,103 @@ mod tests {
                 assert_eq!(session, two, "two's event names two: {event}");
             }
         }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_folder_granted_run_resolves_its_corpus_at_the_folder() {
+        // KI-535: a face launched from `/` (the LaunchAgent's cwd) froze
+        // the corpus root at the process cwd, and every remember in a
+        // folder-granted chat died on `/memories` — a read-only
+        // filesystem. The run's corpus is the session's working folder's
+        // own: the memory event names the root it adopted, and the root
+        // is the folder's.
+        let home = scratch("folder-corpus");
+        let port = mock_chat();
+        // The scratch repo carries its own corpus, held by one fact — a
+        // walk from the repo finds it; a walk from anywhere else does not.
+        let repo = home.join("repo");
+        std::fs::create_dir_all(repo.join("memories")).unwrap();
+        std::fs::write(
+            repo.join("memories").join("the-fact.md"),
+            "---\nname: the-fact\ndescription: \"the folder's own fact\"\ntype: project\ndate: 2026-11-13\nbasis: confirmed-by\ntier: durable\nshape: [fact]\nphrases: [the-fact]\nmissing: []\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe folder's own fact.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home.join("config.json"),
+            format!(
+                r#"{{"providers":[{{"id":"stand-in","base_url":"http://127.0.0.1:{port}/v1","key_env":"STAND_IN_KEY","models":["auto"],"key_required":false}}]}}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            home.join("routing.json"),
+            r#"{"workloads":[{"workload":"quick","candidates":["stand-in/auto"]},{"workload":"standard_code","candidates":["stand-in/auto"]},{"workload":"hard","candidates":["stand-in/auto"]},{"workload":"prose","candidates":["stand-in/auto"]},{"workload":"deep_context","candidates":["stand-in/auto"]}],"gates":{"default_workload":"standard_code"}}"#,
+        )
+        .unwrap();
+        let session = Session::create(&home, "m").expect("a log");
+        let id = session.id().to_string();
+        let (mut bridge, sources) =
+            Bridge::detached(home.clone(), "m".to_string(), Some(id.clone()));
+        let door = bridge.connect();
+        let _thread = spawn_agent(AgentInputs {
+            home: home.clone(),
+            model: "m".to_string(),
+            session_id: Some(id.clone()),
+            ui_tx: sources.ui,
+            approval_tx: sources.seat,
+            command_rx: door,
+            base_url: format!("http://127.0.0.1:{port}"),
+            memories_root: home.clone(),
+            state: Arc::clone(&bridge.state),
+            events: bridge.events.clone(),
+        });
+        bridge
+            .run_with(
+                &id,
+                "the task",
+                approvals::Mode::Ask,
+                Some("stand-in/auto".to_string()),
+                Some(repo.to_str().unwrap()),
+            )
+            .expect("run accepted");
+        let ended = |state: &serde_json::Value| {
+            state["events"]
+                .as_array()
+                .is_some_and(|events| events.iter().any(|e| e["type"] == "finished"))
+        };
+        for _ in 0..18000 {
+            let state = bridge.state(&id);
+            if ended(&state) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let state = bridge.state(&id);
+        let events = state["events"].as_array().expect("the run's log");
+        assert!(
+            events.iter().any(|e| e["type"] == "finished"),
+            "the run finished: {events:?}"
+        );
+        // The adopted root rides the memory event (KI-074's line, now on
+        // the wire): it is the folder's corpus, never the launch cwd's.
+        let memory = events
+            .iter()
+            .find(|e| e["type"] == "memory")
+            .expect("the run assembled memory");
+        assert_eq!(
+            memory["root"].as_str().unwrap(),
+            std::fs::canonicalize(repo.join("memories"))
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "the corpus root is the folder's: {memory}"
+        );
+        assert_eq!(
+            memory["facts"].as_u64().unwrap(),
+            1,
+            "the folder's corpus is the one loaded: {memory}"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 

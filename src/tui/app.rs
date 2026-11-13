@@ -1557,10 +1557,12 @@ impl App {
                     tokens_after,
                 }));
             }
-            UiEvent::Memory { shape, facts } => {
+            UiEvent::Memory { shape, facts, .. } => {
                 // What the run's assembled memory carried: the status bar
                 // shows the shape and the fact count, the live half of the
-                // `memory` record the log carries.
+                // `memory` record the log carries. The adopted corpus root
+                // rides the event too; the status bar keeps the two it
+                // always showed.
                 self.run.stage = Stage::Act;
                 self.run.facts = facts;
                 self.run.shape = shape.clone();
@@ -4246,12 +4248,14 @@ mod tests {
         app.apply_ui_event(UiEvent::Memory {
             shape: "deploy".to_string(),
             facts: 3,
+            root: String::new(),
         });
         assert_eq!(app.status.memory, Some(("deploy".to_string(), 3)));
         // An unclassified assembly says so with an empty shape.
         app.apply_ui_event(UiEvent::Memory {
             shape: String::new(),
             facts: 1,
+            root: String::new(),
         });
         assert_eq!(app.status.memory, Some((String::new(), 1)));
         // Seeding a resumed log clears it: the fact describes the
@@ -4722,6 +4726,7 @@ mod tests {
         app.apply_ui_event(UiEvent::Memory {
             shape: "change".to_string(),
             facts: 24,
+            root: String::new(),
         });
         assert_eq!(app.run.facts, 24);
         assert_eq!(app.run.shape, "change");
