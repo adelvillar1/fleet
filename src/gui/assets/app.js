@@ -7448,7 +7448,7 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
     el.memoryBoard.textContent = '';
     if (!read) {
       el.memoryBoard.appendChild(surfaceHead('Intelligence', 'Intelligence',
-        'Everything the harness knows and can do: the corpus, the skills, the tools, and the chains they compose into.', null));
+        'Everything fleet knows and can do: what it remembers, its skills, its tools, and the chains they compose into.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The corpus read has not landed yet. It reads the memories tree and the day\u2019s ' +
@@ -7481,7 +7481,7 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
         }
       ]);
     el.memoryBoard.appendChild(surfaceHead('Intelligence', 'Intelligence',
-      'Everything the harness knows and can do: the corpus, the skills, the tools, and the chains they compose into.', instrument));
+      'Everything fleet knows and can do: what it remembers, its skills, its tools, and the chains they compose into.', instrument));
     el.memoryBoard.appendChild(surfaceStrip([
       [facts.length, 'facts'],
       [live.length, 'live'],
@@ -15308,8 +15308,8 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
     var read = face.calibration;
     el.calibrationBoard.textContent = '';
     if (!read) {
-      el.calibrationBoard.appendChild(pageHead('System', 'Calibration',
-        'The day\u2019s stream, the judged quality of what served, and the gate that decides whether the failover may learn from it.',
+      el.calibrationBoard.appendChild(pageHead('System', 'Reviews',
+        'Every decision, graded against what actually happened \u2014 and your word on each.',
         null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',

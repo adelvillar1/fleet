@@ -262,9 +262,10 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       in-browser: judge / remember / skills / browse / present). **The expert
       switch landed** — a console toggle (`expert`) sets `body[data-expert]`;
       plain words by default, subsystem names revealed when on (verified:
-      on -> expert inline / plain hidden; off -> the reverse). Harness + gate
-      green. Remaining: the vocabulary lint and the wider copy pass over lens
-      subtitles and empty states.
+      on -> expert inline / plain hidden; off -> the reverse). The lens heads
+      follow: Calibration's page title is now **Reviews** (matching the rail)
+      with a plain subtitle, and Intelligence's subtitle no longer leads with
+      `harness`/`corpus`. Harness + gate green. Remaining: the vocabulary lint.
 - [ ] C7 (P7): the dead code and duplicate declarations are gone; the counts
       are recorded; the ledgers and the pointer index are reconciled.
       **Progress 2026-11-13: the dead `#panel-huddles` markup removed** (no
