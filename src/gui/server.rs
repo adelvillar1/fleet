@@ -1481,6 +1481,16 @@ async fn serve_connection(
             Ok(document) => write_reply(&mut stream, api(200, document)).await,
             Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
         },
+        // The substrate's repair, on the owner's press (the self-healing
+        // effort's ask-then-act): the down card asks, this runs install's
+        // own layerfs leg and answers the fresh services document — or
+        // 409 with the plan's named refusal. Loopback only: the remote
+        // listener's allowlist does not gain this route — the machine's
+        // repair verb stays on the machine.
+        ("POST", "/api/repair/layerfs") => match bridge.repair_layerfs().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
         // Name a session: the owner's title for the archive.
         ("POST", "/api/session/title") => {
             let body = match read_body(&mut stream, &request, rest).await {
@@ -4673,6 +4683,34 @@ mod tests {
             .contains("read the gate first"));
         let malformed = post(port, "/api/steer", "", "{}");
         assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+    }
+
+    /// The substrate's repair route (the self-healing effort's
+    /// ask-then-act): a refusal is the leg plan's own sentence on the
+    /// wire — the card's words, never a CLI verb. The pin names nothing
+    /// under the scratch home, so the plan refuses before anything
+    /// provisions (the sealed shape tests/install.rs runs too).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_repair_route_names_the_plans_refusal() {
+        let home = fresh_home();
+        let (bridge, _sources) = Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
+        let (server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .unwrap();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let prior = std::env::var("FLEET_LAYERFS_BUNDLE").ok();
+        std::env::set_var("FLEET_LAYERFS_BUNDLE", home.join("no-bundle"));
+        let refused = post(port, "/api/repair/layerfs", "", "{}");
+        match prior {
+            Some(value) => std::env::set_var("FLEET_LAYERFS_BUNDLE", value),
+            None => std::env::remove_var("FLEET_LAYERFS_BUNDLE"),
+        }
+        assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
+        assert!(refused.contains("is not there"), "{refused}");
+        assert!(refused.contains("FLEET_LAYERFS_BUNDLE"), "{refused}");
+        std::fs::remove_dir_all(&home).ok();
     }
 
     /// The related route answers one document for a selected object and

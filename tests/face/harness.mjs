@@ -1106,6 +1106,18 @@ function boot(options) {
         json: () => Promise.resolve(scripted.body || scripted),
       });
     }
+    // The substrate's repair (the self-healing effort's ask-then-act):
+    // the down card's press, scripted like the apply's.
+    if (pathOnly === '/api/repair/layerfs' && method === 'POST') {
+      const scripted = typeof opts.repairReply === 'function'
+        ? opts.repairReply()
+        : opts.repairReply;
+      if (scripted == null) return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
+      return Promise.resolve({
+        status: scripted.status || 200,
+        json: () => Promise.resolve(scripted.body || scripted),
+      });
+    }
     return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
   };
 
@@ -1820,7 +1832,9 @@ async function theHealthCardNamesWhatIsDownAndTheRepair() {
   const card = page.text('svc-down');
   check('C0 the card names the down service', /layerfs/.test(card) &&
     /port 49473/.test(card), card);
-  check('C0 the card names the repair verb', /fleet install/.test(card), card);
+  check('C0 the card asks for the repair instead of naming a command',
+    /Do you want to repair it\?/.test(card) && !/fleet install/.test(card) &&
+      Boolean(page.IDS['svc-down'].querySelector('.svc-repair')), card);
   check('C0 the up service is absent from the card', !/\bapi\b/.test(card), card);
   // The transition event repaints without a state poll: an all-clear
   // pass hides the card.
@@ -12302,6 +12316,73 @@ async function theMotionSwitchFreezesTheShell() {
     'body=' + page.body.dataset.motion);
 }
 
+// The self-healing effort's shape (the owner's 2026-11-13 ruling): the
+// down substrate card asks "do you want to repair it?" and the press runs
+// the repair — never a narrated command. The reply repaints the card
+// away; the health event repaints every other face.
+async function theDownSubstrateAsksAndThePressRepairs() {
+  const page = boot({
+    documents: {
+      state: (asked) => ({
+        ...emptyState(asked),
+        services: { services: [
+          { name: 'layerfs', up: false,
+            note: 'the worker does not answer on port 60207 — the substrate is down',
+            repair: 'fleet install (re-provisions the worker and re-records the endpoint)' },
+        ] },
+      }),
+    },
+    repairReply: () => ({ status: 200, body: { services: [
+      { name: 'layerfs', up: true, note: '', repair: '' },
+    ] } }),
+  });
+  await flush();
+  page.open();
+  await flush();
+  const card = page.IDS['svc-down'];
+  check('HEALTH the down substrate card asks in the owner\u2019s words',
+    !card.hidden &&
+      card.textContent.includes('Do you want to repair it?') &&
+      !card.textContent.includes('repair: fleet install'),
+    card.textContent);
+  const press = card.querySelector('.svc-repair');
+  check('HEALTH the ask carries its Repair press', Boolean(press),
+    press ? press.textContent : 'no button');
+  if (!press) return;
+  press.click();
+  await flush();
+  check('HEALTH the press posts the repair once',
+    page.calls.filter((c) => c.method === 'POST' && c.url === '/api/repair/layerfs').length === 1,
+    JSON.stringify(page.calls.map((c) => c.url)));
+  check('HEALTH the reply repaints the card away',
+    card.hidden === true,
+    'hidden=' + card.hidden);
+}
+
+// A down service that is not the substrate keeps its text — the ask is
+// the substrate's own, and the other cards' words stay.
+async function anotherDownServiceKeepsItsWords() {
+  const page = boot({
+    documents: {
+      state: (asked) => ({
+        ...emptyState(asked),
+        services: { services: [
+          { name: 'relay', up: false, note: 'the relay is unreachable',
+            repair: 'check the relay deployment' },
+        ] },
+      }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  const card = page.IDS['svc-down'];
+  check('HEALTH another down service keeps its repair text',
+    !card.hidden && card.textContent.includes('repair: check the relay deployment') &&
+      !card.textContent.includes('Do you want to repair it?'),
+    card.textContent);
+}
+
 // U8 (the owner's 2026-11-13 dogfood report): prefers-reduced-motion is
 // the default until the owner's own press lands — a switch whose press
 // could never change state read as broken. Under the OS reduce setting,
@@ -13191,6 +13272,8 @@ const cases = [
   ['RESKIN the shell walks in night and remembers the switch', theShellWalksInNightAndRemembersTheSwitch],
   ['RESKIN the Motion switch freezes the shell', theMotionSwitchFreezesTheShell],
   ['U8 the Motion switch overrides the OS default on press', theMotionSwitchOverridesTheOsDefaultOnPress],
+  ['HEALTH the down substrate asks and the press repairs', theDownSubstrateAsksAndThePressRepairs],
+  ['HEALTH another down service keeps its words', anotherDownServiceKeepsItsWords],
   ['RESKIN the Mission card paints the install', theMissionCardPaintsTheInstall],
   ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],
   ['RESKIN the tissue paints the graph and pivots', theTissuePaintsTheGraphAndPivots],

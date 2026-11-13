@@ -398,6 +398,11 @@ pub struct Bridge {
     /// the process's life — the same hold the flagged launch keeps in its
     /// own locals.
     remote_shutdowns: std::sync::Mutex<Vec<tokio::sync::watch::Sender<bool>>>,
+    /// The substrate repair's in-flight lock: a second press on the
+    /// repair card holds until the running provision lands, so two
+    /// presses never race two workers (the self-healing effort's
+    /// ask-then-act, 2026-11-13).
+    repair_in_flight: tokio::sync::Mutex<()>,
 }
 
 /// The bot face's pairing-card facts, attached at launch.
@@ -478,6 +483,7 @@ impl Bridge {
             bot_face: Mutex::new(None),
             remote_bring_up: tokio::sync::Mutex::new(()),
             remote_shutdowns: std::sync::Mutex::new(Vec::new()),
+            repair_in_flight: tokio::sync::Mutex::new(()),
             workspace_rail: std::sync::Mutex::new(None),
             trace_tail: Arc::new(std::sync::Mutex::new(
                 crate::layerfs_view::TraceTail::default(),
@@ -4035,6 +4041,50 @@ impl Bridge {
     /// error half of the result (dev build, behind-gap, a feed or
     /// artifact that did not answer); an ok half answers "same" or
     /// "ahead", and a desktop apply rides the tauri updater plugin.
+    /// The substrate's repair, on the owner's press (the self-healing
+    /// effort's shape: the card asks, the press acts — never a narrated
+    /// command). The leg is install's own `layerfs_step`, idempotent and
+    /// named at every prerequisite; on success the fresh report lands in
+    /// the shared slot and the transition event repaints every open face
+    /// without waiting for the health loop's next pass. A refusal is the
+    /// plan's own sentence — "start Docker Desktop", a missing bundle —
+    /// never a CLI word.
+    pub async fn repair_layerfs(self: &std::sync::Arc<Self>) -> Result<Value, String> {
+        let _guard = self.repair_in_flight.lock().await;
+        let home = self.home.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let mut sink: Vec<u8> = Vec::new();
+            let step = crate::install::layerfs_step(&home, &mut sink);
+            (step, sink)
+        })
+        .await
+        .map_err(|_| "the repair did not land".to_string())?;
+        match outcome.0 {
+            crate::install::LayerfsStep::Skipped { reason, provision } => {
+                return Err(format!("{reason} — {provision}"));
+            }
+            // The caller never sees the build state — `layerfs_step`
+            // resolves it internally — so this arm is the impossible one,
+            // named anyway.
+            crate::install::LayerfsStep::Build => {
+                return Err("the substrate's bundle build did not land; the card's own \
+                            diagnosis stands"
+                    .to_string());
+            }
+            crate::install::LayerfsStep::Verified
+            | crate::install::LayerfsStep::Provisioned { .. } => {}
+        }
+        // Fresh verdict, shared slot, one transition event: every open
+        // face repaints now, not at the loop's next pass.
+        let fresh = crate::health::probe(&self.home, false);
+        {
+            let mut guard = self.health.lock().expect("health slot");
+            *guard = Some(fresh.clone());
+        }
+        self.note_health_transition(&fresh);
+        Ok(serde_json::to_value(&fresh.services).unwrap_or(Value::Null))
+    }
+
     pub async fn update_apply(&self) -> Result<Value, String> {
         let stamped = stamp_check(&self.home).await;
         let outcome = tokio::task::spawn_blocking(|| {
@@ -15811,6 +15861,29 @@ mod tests {
                 .contains("127.0.0.1:3080"),
             "{console}"
         );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The substrate repair's refusal path (the self-healing effort's
+    /// ask-then-act): a repair whose plan names a missing prerequisite
+    /// errs with that sentence — the card's own words, never a CLI verb.
+    /// The pin names nothing under the scratch home, the same sealed
+    /// shape tests/install.rs runs through the binary.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_substrate_repair_names_its_refusal_where_the_press_stood() {
+        let (bridge, _sources, _door) = bridge().await;
+        let bridge = Arc::new(bridge);
+        let home = bridge.home_path();
+        let prior = std::env::var("FLEET_LAYERFS_BUNDLE").ok();
+        std::env::set_var("FLEET_LAYERFS_BUNDLE", home.join("no-bundle"));
+        let outcome = bridge.repair_layerfs().await;
+        match prior {
+            Some(value) => std::env::set_var("FLEET_LAYERFS_BUNDLE", value),
+            None => std::env::remove_var("FLEET_LAYERFS_BUNDLE"),
+        }
+        let error = outcome.expect_err("the pinned bundle is not there");
+        assert!(error.contains("is not there"), "{error}");
+        assert!(error.contains("FLEET_LAYERFS_BUNDLE"), "{error}");
         std::fs::remove_dir_all(&home).ok();
     }
 

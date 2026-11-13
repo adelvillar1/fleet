@@ -854,6 +854,22 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .svc-down .svc-line + .svc-line { margin-top: 4px; }
 .svc-down strong { color: var(--dsw-alias-ink); }
+
+/* The repair ask's own control: a small bordered verb beside the
+   diagnosis, the working-line stop's shape (U48's button law) — never a
+   narrated command. */
+.svc-repair {
+  margin-left: 8px;
+  padding: 1px 12px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.svc-repair:hover { background: rgba(0, 0, 0, 0.08); }
+.svc-repair[disabled] { opacity: 0.6; cursor: default; }
 .conn-down {
   position: fixed;
   top: 52px;

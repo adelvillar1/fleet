@@ -1358,9 +1358,9 @@ import { node, svg, clip } from './core/dom.js';
   }
 
   // The health card (the failsafe plan's phase A): one line per down
-  // service — the cause, and the repair verb the main session acts
-  // on. An all-clear pass hides the card; a pass that has not
-  // happened yet (services null) leaves it hidden too.
+  // service — the cause; for the substrate, the ask and the act (the
+  // self-healing effort's shape). An all-clear pass hides the card; a
+  // pass that has not happened yet (services null) leaves it hidden too.
   function paintServices() {
     if (!el.svcDown) return;
     var down = face.services && face.services.services
@@ -1379,8 +1379,43 @@ import { node, svg, clip } from './core/dom.js';
       var name = document.createElement('strong');
       name.textContent = s.name;
       line.appendChild(name);
-      line.appendChild(document.createTextNode(
-        ' \u00b7 ' + (s.note || 'down') + ' \u00b7 repair: ' + (s.repair || 'fleet doctor names it')));
+      line.appendChild(document.createTextNode(' \u00b7 ' + (s.note || 'down')));
+      if (s.name === 'layerfs') {
+        // The ask, then the act (the self-healing effort's shape, the
+        // owner's 2026-11-13 ruling): the card asks, the press runs the
+        // repair — never a narrated command.
+        line.appendChild(document.createTextNode(' \u00b7 Do you want to repair it? '));
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'svc-repair';
+        button.textContent = 'Repair';
+        button.addEventListener('click', function () {
+          button.disabled = true;
+          button.textContent = 'repairing\u2026';
+          post('/api/repair/layerfs', {}).then(function (reply) {
+            if (reply.status === 200) {
+              // The reply is the fresh services document, and the
+              // health event repaints every face besides — this
+              // paint is the pressing face's own.
+              face.services = reply.body;
+              paintServices();
+              return;
+            }
+            button.disabled = false;
+            button.textContent = 'Repair';
+            notice('the repair did not land',
+              (reply.body && reply.body.error) || 'the server did not answer');
+          }).catch(function () {
+            button.disabled = false;
+            button.textContent = 'Repair';
+            notice('the repair did not land', 'the server did not answer');
+          });
+        });
+        line.appendChild(button);
+      } else {
+        line.appendChild(document.createTextNode(
+          ' \u00b7 repair: ' + (s.repair || 'fleet doctor names it')));
+      }
       el.svcDown.appendChild(line);
     });
   }
