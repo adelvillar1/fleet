@@ -26723,33 +26723,18 @@ import { parseAddress } from './core/router.js';
   // The keyed panels, by address. One registry, so showing one panel
   // can never forget to hide another — the failure mode the explicit
   // hide-lists were one new surface away from.
-  var PANEL_EL = {
-    board: document.getElementById('panel-board'),
-    inbox: document.getElementById('panel-inbox'),
-    chat: el.panelChat,
-    router: el.panelRouter,
-    delegation: el.panelDelegation,
-    memory: el.panelMemory,
-    skills: el.panelSkills,
-    learning: el.panelLearning,
-
-    calibration: el.panelCalibration,
-    design: el.panelDesign,
-    'second-brain': el.panelSecondBrain,
-    'workspace-history': el.panelWorkspaceHistory,
-    armada: el.panelArmada,
-    bots: el.panelBots,
-    vault: el.panelVault,
-    settings: el.panelSettings,
-    plugins: el.panelPlugins,
-    desk: el.panelDesk,
-    // The about pane: this build's receipt, the release feed's answer.
-    about: el.panelAbout,
-    // An installed bundle mounts here: one panel for every plugin the
-    // owner presses, because the bundle brings its own page and this
-    // face only supplies the frame.
-    bundle: el.panelBundle
-  };
+  // P7: the panel registry is derived, not hand-listed. One source — the
+  // DOM's panel-<address> elements, keyed by the route table — so showing
+  // one lens can never forget to hide another, and a new surface needs no
+  // second registration. The stage shows one lens at a time.
+  function panelEl(key) {
+    // A real browser returns null for an absent id; the test stub refuses
+    // it. Tolerate both so a route without a panel (the work surfaces ride
+    // the conversation) never aborts the dispatch.
+    try { return document.getElementById('panel-' + key); } catch (error) { return null; }
+  }
+  var PANEL_KEYS = ROUTES.map(function (route) { return route[0]; })
+    .concat(['bundle', 'later']);
 
   function showRoute() {
     var addr = parseAddress();
@@ -26766,9 +26751,9 @@ import { parseAddress } from './core/router.js';
       try { window.localStorage.setItem('fleet-panel', 'chat'); } catch (error) { }
       markRail();
       setWork(false);
-      Object.keys(PANEL_EL).forEach(function (key) {
-        if (!PANEL_EL[key]) return;
-        PANEL_EL[key].hidden = key !== 'chat';
+      PANEL_KEYS.forEach(function (key) {
+        var p = panelEl(key);
+        if (p) p.hidden = key !== 'chat';
       });
       el.panelLater.hidden = true;
       readHome(false).then(function () {
@@ -26809,15 +26794,16 @@ import { parseAddress } from './core/router.js';
     try { window.localStorage.setItem('fleet-panel', address); } catch (error) { }
     markRail();
     setWork(withList);
-    Object.keys(PANEL_EL).forEach(function (key) {
-      // A panel the served page lacks binds null (a real browser
+    PANEL_KEYS.forEach(function (key) {
+      // A panel the served page lacks resolves null (a real browser
       // tolerates it; only the harness refuses). One null must not
       // abort the dispatch mid-loop — the failure mode is the whole
       // route going dead: nothing detaches, nothing opens.
-      if (!PANEL_EL[key]) return;
-      PANEL_EL[key].hidden = work ? key !== 'chat' : key !== address;
+      var p = panelEl(key);
+      if (!p) return;
+      p.hidden = work ? key !== 'chat' : key !== address;
     });
-    var panelHere = PANEL_EL[address] || (work ? el.panelChat : null);
+    var panelHere = panelEl(address) || (work ? el.panelChat : null);
     // The composer follows the route: it stays the conversation's own on
     // every surface, and the two work surfaces borrow that same element
     // into their dock. One composer, never a second one beside it.
@@ -26979,12 +26965,12 @@ import { parseAddress } from './core/router.js';
           .then(function (document) {
             face.settings = document;
             face.aboutPending = false;
-            if (PANEL_EL.about && !PANEL_EL.about.hidden) paintAbout();
+            if (panelEl('about') && !panelEl('about').hidden) paintAbout();
           })
           .catch(function () {
             face.aboutPending = false;
             face.aboutFailed = 'the check request did not answer';
-            if (PANEL_EL.about && !PANEL_EL.about.hidden) paintAbout();
+            if (panelEl('about') && !panelEl('about').hidden) paintAbout();
           });
       }
     };
@@ -29755,7 +29741,7 @@ import { parseAddress } from './core/router.js';
   if (!window.location.hash) {
     try {
       var lastPanel = window.localStorage.getItem('fleet-panel');
-      if (lastPanel && PANEL_EL[lastPanel]) window.location.hash = '#/' + lastPanel;
+      if (lastPanel && panelEl(lastPanel)) window.location.hash = '#/' + lastPanel;
     } catch (error) { }
   }
   // The pane returns with the reload (the reload-reattach plan's C5):

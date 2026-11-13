@@ -291,9 +291,12 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       **Progress 2026-11-13: the dead `#panel-huddles` markup removed** (no
       app.js or harness references; huddles render into the chat panel).
       Harness + gate green. **The duplicate bots block is removed** (the hoisted
-      copy remains; the two were byte-identical). Remaining: the legacy skills
-      surface and `PANEL_EL` retirement. The tower console stays — it is live,
-      feeding the inspector's project drawer.
+      copy remains; the two were byte-identical). **`PANEL_EL` is retired**: the
+      panel set is derived from the DOM (`panelEl`) keyed by the route table
+      (`PANEL_KEYS`), so a new surface needs no second registration; routing
+      verified in-browser (board ↔ memory swap correctly). The tower console
+      stays — it is live, feeding the inspector's project drawer. Remaining:
+      the legacy skills surface and the counts / ledger reconciliation.
 - [ ] C8: every phase carries a local four-leg gate on its committed tree, a
       green face harness, and the visual check against its mockup section;
       the version declarations move per release; **the beta bar is untouched
