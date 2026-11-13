@@ -12,6 +12,23 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.0 — 2026-11-13
+
+The workspace rebuild — the face is one workspace, not twenty panels.
+
+The three approved mockups became the shipping shell: seven lenses (threads,
+board, desk, intelligence, learning, reviews, inbox — fleet when armada is on)
+replacing twenty subsystem destinations; one spine read carrying every work
+item with the edges it earned (a run links the facts it wrote and the skills
+it drew); one shared focus that a pivot re-projects into the lens it names;
+the inspector pane as a drawer, never a fourth column; the panel registry
+retired — the panel set derives from the route table; the legacy skills
+surface folded into Intelligence (the old `#/skills` address walks to the
+segment); the 12px type floor and readable text tokens; plain language by
+default with the expert toggle; `core/store.js`, `core/router.js` and
+`core/dom.js` as the face's first native ES modules. The beta bar is
+untouched — 0.x is still beta, the owner's call.
+
 ## v0.7.5 — 2026-11-12
 
 The connections column collapses from its own door.
