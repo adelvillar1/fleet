@@ -10791,19 +10791,6 @@ body[data-motion="off"] .amb { display: none; }
 
 .view-save:hover { color: var(--text); background: var(--panel); }
 
-.tissue-note {
-  margin: 14px 0 0;
-  padding: 10px;
-  border-radius: 10px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.tissue-note b { color: var(--text); font-family: var(--disp); font-weight: 600; }
-
 /* --- U0/U11: the tissue column ------------------------------------ */
 
 .tissue {

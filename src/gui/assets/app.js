@@ -943,7 +943,6 @@ import { node, svg, clip } from './core/dom.js';
     viewsWrap: document.getElementById('views-wrap'),
     views: document.getElementById('views'),
     viewSave: document.getElementById('view-save'),
-    tissueNote: document.getElementById('tissue-note'),
     tissue: document.getElementById('tissue'),
     tissueWhere: document.getElementById('tissue-where'),
     tissueGraph: document.getElementById('tissue-graph'),
@@ -10381,17 +10380,17 @@ import { node, svg, clip } from './core/dom.js';
     consoleToggle('density', 'compact', 'comfortable');
   });
   if (el.ctlConnections) el.ctlConnections.addEventListener('click', function () {
-    consoleToggle('connections', 'on', 'off', paintTissueNote);
+    consoleToggle('connections', 'on', 'off');
   });
   // The column's own doors (U12): the head chevron collapses where the
   // column is, and the edge tab is the way back when it is away — both
   // ride the same state the console switch sets, so the three never
   // disagree.
   if (el.tissueCollapse) el.tissueCollapse.addEventListener('click', function () {
-    consoleToggle('connections', 'on', 'off', paintTissueNote);
+    consoleToggle('connections', 'on', 'off');
   });
   if (el.tissueReveal) el.tissueReveal.addEventListener('click', function () {
-    consoleToggle('connections', 'on', 'off', paintTissueNote);
+    consoleToggle('connections', 'on', 'off');
   });
   if (el.ctlLabels) el.ctlLabels.addEventListener('click', function () {
     consoleToggle('labels', 'on', 'off');
@@ -29093,22 +29092,10 @@ import { node, svg, clip } from './core/dom.js';
     }
   }
 
-  // The tissue note in the rail teaches the graph (U10) — visible only
-  // where the tissue itself can render, the same breakpoint the sheet
-  // honors.
-  function paintTissueNote() {
-    if (!el.tissueNote) return;
-    var wide = true;
-    try { wide = window.matchMedia('(min-width: 1081px)').matches; }
-    catch (error) { }
-    el.tissueNote.hidden = !wide;
-  }
-  paintTissueNote();
-  if (typeof window.matchMedia === 'function') {
-    try {
-      window.matchMedia('(min-width: 1081px)').addEventListener('change', paintTissueNote);
-    } catch (error) { /* an old listener API is a browser concern, not a face one */ }
-  }
+  // The rail's U10 tissue explainer is gone (the owner's 2026-11-13
+  // ruling: it spoke the shell's mechanics, not the owner's work — the
+  // graph teaches itself when a pivot lands).
+
 
   // --- the thread pane (U39, folded into the drawer per U13) ----------
   // The receipts of the run, in the pane's own tab: what this
