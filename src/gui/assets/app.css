@@ -4,8 +4,8 @@
    shell, one graph, every surface a lens over it. Harbor Night is the
    default ground since the U-reskin (U4/U5) — deep ink-teal, the eight
    signal hues carrying fixed meanings, nothing decorative. Day Watch
-   ([data-theme="day"]) is the warm-paper inverse; paper (the pre-reskin
-   default) survives as a theme of its own, and the colour chain still has
+   ([data-theme="day"]) is the warm-light inverse; paper and graphite are
+   retired (the owner's 2026-11-13 ruling), and the colour chain still has
    its three tiers: the reference palette names where a colour came from,
    the alias tier names what it means, and the signal tier is the U4 token
    set migrated components read. A theme re-points both tiers; no component
@@ -290,49 +290,6 @@
   --shadow-3: 0 32px 80px -32px rgb(24 26 29 / 38%), 0 8px 24px -12px rgb(24 26 29 / 18%);
 }
 
-/* Paper: the pre-reskin default, kept whole so the owner's saved choice
-   and the daylight reading survive the re-skin. The alias tier carries
-   the exact values `:root` held before the harbor mapping moved in. */
-:root[data-theme="paper"] {
-  --dsw-alias-page: rgb(246, 244, 239);
-  --dsw-alias-surface: rgb(252, 251, 248);
-  --dsw-alias-surface-raised: rgb(239, 236, 230);
-  --dsw-alias-surface-overlay: rgb(255, 255, 255);
-  --dsw-alias-hairline: rgb(24 26 29 / 10%);
-  --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
-  --dsw-alias-ink: rgb(24, 26, 29);
-  --dsw-alias-ink-secondary: rgb(60, 72, 82);
-  --dsw-alias-ink-tertiary: rgb(63, 75, 85);
-  --dsw-alias-accent: rgb(47, 95, 208);
-  --dsw-alias-accent-deep: rgb(37, 78, 176);
-  --dsw-alias-accent-lift: rgb(37, 78, 176);
-  --dsw-alias-ok: rgb(22, 110, 46);
-  --dsw-alias-down: rgb(176, 36, 32);
-  --dsw-alias-warn: rgb(122, 82, 8);
-  --dsw-alias-gradient: linear-gradient(135deg, rgb(63, 108, 218), rgb(37, 78, 176));
-  --dsw-alias-on-accent: rgb(255, 255, 255);
-  --lane-0: rgb(13, 118, 110);
-  --lane-1: rgb(109, 58, 216);
-  --lane-2: rgb(176, 84, 10);
-  --lane-3: rgb(190, 24, 93);
-  --lane-4: rgb(12, 116, 150);
-  --lane-5: rgb(84, 124, 12);
-  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
-  --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
-  --shadow-3: 0 32px 80px -32px rgb(24 26 29 / 38%), 0 8px 24px -12px rgb(24 26 29 / 18%);
-  --ink: rgb(238, 240, 234);
-  --panel: rgb(251, 250, 245);
-  --panel2: rgb(243, 242, 234);
-  --raise: rgb(255, 255, 255);
-  --line: rgb(20 60 70 / 14%);
-  --line2: rgb(20 60 70 / 26%);
-  --text: rgb(19, 36, 43);
-  --muted: rgb(60, 72, 82);
-  --faint: rgb(63, 75, 85);
-  --green: rgb(15, 168, 118); --cyan: rgb(10, 147, 184); --magenta: rgb(207, 47, 156);
-  --amber: rgb(201, 126, 0); --gold: rgb(185, 137, 0); --red: rgb(220, 56, 56);
-  --teal: rgb(12, 156, 139); --blue: rgb(47, 111, 214);
-}
 
 /* The warm dark console. A collector for long evening runs; not the
    default, and it keeps the same structure and type scale as paper. */
@@ -364,39 +321,6 @@
   --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 65%), 0 2px 6px rgb(0 0 0 / 25%);
   --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 80%), 0 8px 24px -12px rgb(0 0 0 / 45%);
-  --shadow-lift: var(--shadow-2);
-  --topbar-bg: color-mix(in srgb, var(--dsw-alias-page) 82%, transparent);
-}
-
-/* A cool neutral dark, for an owner who finds the console too warm. */
-:root[data-theme="graphite"] {
-  --dsw-alias-page: rgb(10, 12, 16);
-  --dsw-alias-surface: rgb(15, 18, 23);
-  --dsw-alias-surface-raised: rgb(21, 25, 31);
-  --dsw-alias-surface-overlay: rgb(27, 32, 39);
-  --dsw-alias-hairline: rgb(255 255 255 / 8%);
-  --dsw-alias-hairline-strong: rgb(255 255 255 / 15%);
-  --dsw-alias-ink: rgb(232, 238, 244);
-  --dsw-alias-ink-secondary: rgb(160, 170, 184);
-  --dsw-alias-ink-tertiary: rgb(132, 144, 160);
-  --dsw-alias-accent: rgb(94, 148, 255);
-  --dsw-alias-accent-deep: rgb(62, 112, 232);
-  --dsw-alias-accent-lift: rgb(143, 178, 255);
-  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 14%, transparent);
-  --dsw-alias-ok: rgb(74, 190, 110);
-  --dsw-alias-down: rgb(240, 106, 99);
-  --dsw-alias-warn: rgb(220, 166, 66);
-  --dsw-alias-gradient: linear-gradient(135deg, rgb(73, 115, 199), rgb(48, 87, 181));
-  --dsw-alias-on-accent: rgb(255, 255, 255);
-  --lane-0: rgb(94, 210, 190);
-  --lane-1: rgb(158, 134, 240);
-  --lane-2: rgb(235, 180, 60);
-  --lane-3: rgb(240, 120, 135);
-  --lane-4: rgb(90, 180, 235);
-  --lane-5: rgb(150, 210, 70);
-  --shadow-1: 0 1px 2px rgb(0 0 0 / 32%);
-  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 70%), 0 2px 6px rgb(0 0 0 / 28%);
-  --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 85%), 0 8px 24px -12px rgb(0 0 0 / 50%);
   --shadow-lift: var(--shadow-2);
   --topbar-bg: color-mix(in srgb, var(--dsw-alias-page) 82%, transparent);
 }
@@ -947,8 +871,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   text-align: center;
 }
 
-:root[data-theme="console"] .conn-down,
-:root[data-theme="graphite"] .conn-down {
+:root[data-theme="console"] .conn-down {
   background: var(--dsw-static-graph-800);
   color: var(--dsw-static-warn-on-dark);
   border-color: var(--dsw-static-warn-on-dark);
@@ -9842,8 +9765,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
 }
 .dk-rrow:hover { background: var(--dsw-alias-surface-raised); }
 .dk-rrow.here { background: var(--dsw-alias-accent-wash); color: var(--dsw-alias-accent-deep); font-weight: 500; }
-:root[data-theme="console"] .dk-rrow.here,
-:root[data-theme="graphite"] .dk-rrow.here { color: var(--dsw-alias-accent); }
+:root[data-theme="console"] .dk-rrow.here { color: var(--dsw-alias-accent); }
 .dk-rrow:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -2px; }
 .dk-rrow .cnt { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-size: 12px; }
 .dk-rrow .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
@@ -10013,9 +9935,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
    dark themes, so a done bead's mark is dark ink there and white only on
    paper. Measured, not guessed — the mockup's instrument caught this. */
 :root[data-theme="console"] .dk-st.done .bead,
-:root[data-theme="graphite"] .dk-st.done .bead,
-:root[data-theme="console"] .dk-st.refused .bead,
-:root[data-theme="graphite"] .dk-st.refused .bead { color: rgb(12, 14, 18); }
+:root[data-theme="console"] .dk-st.refused .bead { color: rgb(12, 14, 18); }
 .dk-st .slabel { font-size: 12px; color: var(--dsw-alias-ink-secondary); text-align: center; white-space: nowrap; }
 .dk-st.done .slabel { color: var(--dsw-alias-ink); }
 .dk-st.refused .slabel { color: var(--dsw-alias-down); font-weight: 600; }
@@ -10044,8 +9964,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
   overflow: hidden;
   margin-bottom: 16px;
 }
-:root[data-theme="console"] .dk-gate,
-:root[data-theme="graphite"] .dk-gate {
+:root[data-theme="console"] .dk-gate {
   background: color-mix(in srgb, var(--dsw-alias-down) 9%, var(--dsw-alias-surface));
 }
 .dk-gate-h { display: flex; align-items: baseline; gap: 10px; padding: 13px 16px 11px; flex-wrap: wrap; }
@@ -10100,8 +10019,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .dk-btn.primary:hover { background: var(--dsw-alias-accent-deep); color: var(--dsw-alias-on-accent); }
 .dk-btn[disabled] { opacity: 0.5; cursor: default; }
 .dk-btn[disabled]:hover { border-color: var(--dsw-alias-hairline-strong); color: var(--dsw-alias-ink); }
-:root[data-theme="console"] .dk-btn.primary,
-:root[data-theme="graphite"] .dk-btn.primary { color: rgb(12, 14, 18); }
+:root[data-theme="console"] .dk-btn.primary { color: rgb(12, 14, 18); }
 
 /* a section of the deliverable */
 .dk-sec {

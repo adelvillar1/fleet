@@ -1185,7 +1185,13 @@ function boot(options) {
     innerWidth: opts.width,
     innerHeight: 900,
     devicePixelRatio: 1,
-    matchMedia: () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }),
+    matchMedia: (query) => ({
+      matches: Boolean(opts.reducedMotion) && String(query).includes('prefers-reduced-motion'),
+      addListener() {},
+      removeListener() {},
+      addEventListener() {},
+      removeEventListener() {},
+    }),
     setTimeout: (fn) => { fn(); return (timerIds += 1); },
     clearTimeout: () => {},
     setInterval: (fn) => { intervals.push(fn); return (timerIds += 1); },
@@ -12296,6 +12302,35 @@ async function theMotionSwitchFreezesTheShell() {
     'body=' + page.body.dataset.motion);
 }
 
+// U8 (the owner's 2026-11-13 dogfood report): prefers-reduced-motion is
+// the default until the owner's own press lands — a switch whose press
+// could never change state read as broken. Under the OS reduce setting,
+// the shell boots still; the first press takes control and motion runs.
+async function theMotionSwitchOverridesTheOsDefaultOnPress() {
+  const page = boot({ documents: {}, reducedMotion: true });
+  page.open();
+  await flush();
+  const toggle = page.IDS['motion-toggle'];
+  check('U8 the OS reduce default boots the shell still',
+    page.body.dataset.motion === 'off' &&
+      toggle.getAttribute('aria-pressed') === 'false',
+    'body=' + page.body.dataset.motion +
+      ' pressed=' + toggle.getAttribute('aria-pressed'));
+  toggle.click();
+  await flush();
+  check('U8 the first press takes control and motion runs',
+    page.body.dataset.motion === 'on' &&
+      toggle.getAttribute('aria-pressed') === 'true' &&
+      page.window.localStorage.getItem('fleet-motion') === 'on',
+    'body=' + page.body.dataset.motion +
+      ' pressed=' + toggle.getAttribute('aria-pressed') +
+      ' stored=' + page.window.localStorage.getItem('fleet-motion'));
+  // The console's own switch reads the same effective state.
+  check('U8 the console switch agrees with the effective state',
+    page.IDS['ctl-motion'].getAttribute('aria-pressed') === 'true',
+    'console=' + page.IDS['ctl-motion'].getAttribute('aria-pressed'));
+}
+
 // U10: the Mission card paints this install — the version and the run
 // count once the reads land, the honest dash until they do.
 async function theMissionCardPaintsTheInstall() {
@@ -13155,6 +13190,7 @@ const cases = [
   ['MS a reopened face is idle and not wedged', aReopenedFaceIsIdleAndNotWedged],
   ['RESKIN the shell walks in night and remembers the switch', theShellWalksInNightAndRemembersTheSwitch],
   ['RESKIN the Motion switch freezes the shell', theMotionSwitchFreezesTheShell],
+  ['U8 the Motion switch overrides the OS default on press', theMotionSwitchOverridesTheOsDefaultOnPress],
   ['RESKIN the Mission card paints the install', theMissionCardPaintsTheInstall],
   ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],
   ['RESKIN the tissue paints the graph and pivots', theTissuePaintsTheGraphAndPivots],

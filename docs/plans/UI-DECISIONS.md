@@ -392,6 +392,15 @@ real work lands in sessions that are not objects.
   the lens *body*, never the shell. *Constrains:* the router, every link,
   deep links from the CLI, the TUI, and notifications.
 
+- **U48 — Four themes, and a control's press always lands.** The theme set
+  is night, day watch, console, contrast — paper and graphite are retired
+  (the owner's 2026-11-13 dogfood ruling); a stored name that no longer
+  exists falls back to night. prefers-reduced-motion is the *default*
+  until the owner's first press; after that the Motion switch's stored
+  choice is the effective state — a control whose press could never
+  change state read as broken. *Constrains:* THEMES, the pre-paint
+  script, the boot-fallback card, `motionOn`, both motion switches.
+
 ---
 
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the

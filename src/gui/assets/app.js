@@ -354,7 +354,7 @@ import { node, svg, clip } from './core/dom.js';
   // instant answer and semantically against these descriptions when the
   // machine's embedding backend is up.
   var COMMANDS = [
-    ['theme', ['paper', 'graphite', 'contrast', 'mode'], 'choose a theme \u2014 console, paper, graphite or contrast',
+    ['theme', ['contrast', 'mode', 'day'], 'choose a theme \u2014 night, day watch, console or contrast',
       function () { openThemes(); }],
     ['pane', ['files', 'code', 'preview', 'explore'], 'open or close the files and deliverables pane',
       function () { if (el.pane.hidden) openPane(); else closePane(); }],
@@ -10361,8 +10361,6 @@ import { node, svg, clip } from './core/dom.js';
       String(document.body.dataset.tissue === 'on'));
     if (el.ctlLabels) el.ctlLabels.setAttribute('aria-pressed',
       String(document.body.dataset.labels === 'on'));
-    if (el.ctlMotion) el.ctlMotion.setAttribute('aria-pressed',
-      String(motionSetting() === 'on'));
     if (el.ctlArmada) el.ctlArmada.setAttribute('aria-pressed',
       String(document.body.dataset.armada === 'on'));
     if (el.ctlExpert) el.ctlExpert.setAttribute('aria-pressed',
@@ -10402,7 +10400,7 @@ import { node, svg, clip } from './core/dom.js';
     consoleToggle('expert', 'on', 'off');
   });
   if (el.ctlMotion) el.ctlMotion.addEventListener('click', function () {
-    try { window.localStorage.setItem('fleet-motion', motionSetting() === 'on' ? 'off' : 'on'); }
+    try { window.localStorage.setItem('fleet-motion', motionOn() ? 'off' : 'on'); }
     catch (error) { }
     paintMotion();
     paintConsole();
@@ -28430,10 +28428,8 @@ import { node, svg, clip } from './core/dom.js';
   // trades the quiet look for the maximum separation.
   var THEMES = [
     ['night', 'night', 'harbor night \u00b7 the default since the re-skin, the deep ink-teal ground'],
-    ['day', 'day watch', 'warm paper \u00b7 the harbor\u2019s daylight inverse'],
-    ['paper', 'paper', 'warm light \u00b7 the pre-reskin default, kept for the daylight reading'],
+    ['day', 'day watch', 'warm light \u00b7 the harbor\u2019s daylight inverse'],
     ['console', 'console', 'warm dark \u00b7 for a long evening beside the work'],
-    ['graphite', 'graphite', 'cool dark \u00b7 a neutral ground without the warm cast'],
     ['contrast', 'contrast', 'high contrast \u00b7 pure ground, near-black ink, the accessibility theme']
   ];
 
@@ -28465,9 +28461,7 @@ import { node, svg, clip } from './core/dom.js';
       var colors = {
         night: '#08131a',
         day: '#eef0ea',
-        paper: '#f6f4ef',
         console: '#0e0f12',
-        graphite: '#0a0c10',
         contrast: '#ffffff'
       };
       chrome.setAttribute('content', colors[mode] || colors.night);
@@ -28495,21 +28489,24 @@ import { node, svg, clip } from './core/dom.js';
 
   // --- the Motion switch (U8) -----------------------------------------
   // One toggle freezes every animation the sheet carries; the ambient
-  // layer stops drawing under it. prefers-reduced-motion is honored
-  // automatically: the effective state is the switch AND the media
-  // query, and the button shows the effective state — the accessibility
-  // default wins over a remembered preference, never the reverse.
+  // layer stops drawing under it. prefers-reduced-motion is the default
+  // until the owner's own press lands: an unset switch honors the media
+  // query (the accessibility default), and once the switch has been
+  // pressed the stored choice is the effective one — a control whose
+  // press could never change state read as broken (the owner's 2026-11-13
+  // dogfood report). The press flips the effective state, whatever it was.
   function reducedMotion() {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch (error) { return false; }
   }
 
-  function motionSetting() {
-    try { return window.localStorage.getItem('fleet-motion') || 'on'; }
-    catch (error) { return 'on'; }
+  function motionOn() {
+    try {
+      var stored = window.localStorage.getItem('fleet-motion');
+      if (stored !== null) return stored === 'on';
+    } catch (error) { }
+    return !reducedMotion();
   }
-
-  function motionOn() { return motionSetting() === 'on' && !reducedMotion(); }
 
   function paintMotion() {
     var on = motionOn();
@@ -28521,12 +28518,13 @@ import { node, svg, clip } from './core/dom.js';
         : 'motion off \u2014 everything still';
       el.motionToggle.setAttribute('aria-label', on ? 'turn motion off' : 'turn motion on');
     }
+    if (el.ctlMotion) el.ctlMotion.setAttribute('aria-pressed', String(on));
     if (on) startAmbient(); else stopAmbient();
   }
 
   el.motionToggle.addEventListener('click', function () {
     try {
-      window.localStorage.setItem('fleet-motion', motionSetting() === 'on' ? 'off' : 'on');
+      window.localStorage.setItem('fleet-motion', motionOn() ? 'off' : 'on');
     } catch (error) { }
     paintMotion();
   });

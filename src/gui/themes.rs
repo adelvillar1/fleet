@@ -27,7 +27,7 @@ pub const MIN_TEXT: f64 = 4.5;
 /// them. The first is the default — night, since the U-reskin (U4/U5);
 /// the `:root` block itself carries its values, and every other theme
 /// re-points the tiers under its own attribute.
-const THEMES: &[&str] = &["night", "day", "paper", "console", "graphite", "contrast"];
+const THEMES: &[&str] = &["night", "day", "console", "contrast"];
 
 /// One theme's declared colours, read off its block.
 #[derive(Debug, Default)]
@@ -357,26 +357,22 @@ mod tests {
     }
 
     /// The parser reads the chain it claims to: the console theme's ink
-    /// is the value its own block declares, not the `:root` base.
+    /// is the value its own block declares, not the `:root` base. And the
+    /// retired themes stay retired — no orphan block parses back into the
+    /// picker (U48).
     #[test]
     fn the_parser_reads_a_themes_own_overrides() {
         let found = themes();
-        // `paper` declares its own block — the pre-reskin default, kept
-        // whole when the harbor mapping took the `:root` base — so its
-        // ink is the block's near-black.
-        let paper = found
-            .iter()
-            .find(|(name, _)| name == "paper")
-            .map(|(_, theme)| theme)
-            .expect("the paper theme");
-        let ink = paper
-            .text
-            .iter()
-            .find(|(token, _)| token == "--dsw-alias-ink")
-            .map(|(_, colour)| *colour)
-            .expect("the paper ink");
-        assert_eq!(ink, (24, 26, 29));
-        // And `console` overrides the base with its own warm-dark ink,
+        // `paper` and `graphite` are retired (U48): their blocks are gone
+        // from the stylesheet, and the parser must not resurrect them
+        // from anything else.
+        for retired in ["paper", "graphite"] {
+            assert!(
+                !found.iter().any(|(name, _)| name == retired),
+                "`{retired}` is retired and must not parse"
+            );
+        }
+        // `console` overrides the base with its own warm-dark ink,
         // which is the whole point of a theme block.
         let console = found
             .iter()
@@ -439,7 +435,7 @@ mod tests {
             gradients += 1;
         }
         assert!(
-            gradients >= 6,
+            gradients >= THEMES.len(),
             "every declared theme's gradient is measured: {gradients}"
         );
     }

@@ -14,24 +14,26 @@
   // The theme is set before the first paint, from the same storage the
   // toggle writes, so an owner who chose a light theme never sees a
   // night flash. Night is the default since the U-reskin (U4/U5): the
-  // harbor ground is the house; day watch and paper are the choices. It
-  // hangs off the document element because that exists in the head,
-  // where a body attribute cannot be set yet.
+  // harbor ground is the house; day watch, console and contrast are the
+  // choices (paper and graphite retired 2026-11-13 — a stored name that
+  // no longer exists falls back to night). It hangs off the document
+  // element because that exists in the head, where a body attribute
+  // cannot be set yet.
   try {
+    var FLEET_THEMES = ['night', 'day', 'console', 'contrast'];
+    var storedTheme = window.localStorage.getItem('fleet-theme-2');
     document.documentElement.dataset.theme =
-      window.localStorage.getItem('fleet-theme-2') || 'night';
+      FLEET_THEMES.indexOf(storedTheme) >= 0 ? storedTheme : 'night';
   } catch (error) {
     document.documentElement.dataset.theme = 'night';
   }
-  // The browser chrome follows the theme too: a night page under a paper
+  // The browser chrome follows the theme too: a night page under a day
   // toolbar reads as a different app.
   try {
     var FLEET_THEME_COLORS = {
       night: '#08131a',
       day: '#eef0ea',
-      paper: '#f6f4ef',
       console: '#0e0f12',
-      graphite: '#0a0c10',
       contrast: '#ffffff'
     };
     var fleetThemeMeta = document.querySelector('meta[name="theme-color"]');
@@ -1364,17 +1366,17 @@
     var GRACE_MS = 15000;
 
     function colors() {
-      var theme = document.documentElement.dataset.theme || 'paper';
+      var theme = document.documentElement.dataset.theme || 'night';
       if (theme === 'console') {
         return { bg: '#0e0f12', ink: '#ebe7e4', muted: '#a6afbc', line: 'rgba(255,255,255,.15)' };
-      }
-      if (theme === 'graphite') {
-        return { bg: '#0a0c10', ink: '#e8eef4', muted: '#a0aab8', line: 'rgba(255,255,255,.15)' };
       }
       if (theme === 'contrast') {
         return { bg: '#ffffff', ink: '#000000', muted: '#262626', line: 'rgba(0,0,0,.22)' };
       }
-      return { bg: '#f6f4ef', ink: '#181a1d', muted: '#525860', line: 'rgba(24,26,29,.12)' };
+      if (theme === 'day') {
+        return { bg: '#f6f4ef', ink: '#181a1d', muted: '#525860', line: 'rgba(24,26,29,.12)' };
+      }
+      return { bg: '#08131a', ink: '#e8eef4', muted: '#a0aab8', line: 'rgba(255,255,255,.15)' };
     }
 
     function mounted() {
