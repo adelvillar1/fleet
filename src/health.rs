@@ -84,6 +84,16 @@ pub fn probe(home: &Path, fast_only: bool) -> HealthReport {
 /// only then reads as not provisioned — named with the machine's own
 /// reason, not guessed.
 fn layerfs_probe(home: &Path) -> ServiceHealth {
+    match recorded_endpoint_port(home) {
+        Ok(port) => layerfs_probe_with(port, worker_container_port()),
+        Err(health) => health,
+    }
+}
+
+/// The endpoint record's port, or the early-down verdict the probe
+/// carries when the record itself is the problem: not provisioned,
+/// unreadable, or naming no port.
+fn recorded_endpoint_port(home: &Path) -> Result<u16, ServiceHealth> {
     let machine = crate::layerfs_tools::read_machine_at(home);
     let endpoint = match machine.as_ref() {
         Ok(m) => m.home.join("worker").join("endpoint.json"),
@@ -93,35 +103,71 @@ fn layerfs_probe(home: &Path) -> ServiceHealth {
                 .join("worker")
                 .join("endpoint.json");
             if !conventional.exists() {
-                return ServiceHealth::down("layerfs", format!("not provisioned — {reason}"));
+                return Err(ServiceHealth::down(
+                    "layerfs",
+                    format!("not provisioned — {reason}"),
+                ));
             }
             conventional
         }
     };
     let Ok(text) = std::fs::read_to_string(&endpoint) else {
-        return ServiceHealth::down(
+        return Err(ServiceHealth::down(
             "layerfs",
             format!("the endpoint file is unreadable: {}", endpoint.display()),
-        );
+        ));
     };
-    let port = serde_json::from_str::<serde_json::Value>(&text)
+    serde_json::from_str::<serde_json::Value>(&text)
         .ok()
         .and_then(|v| v.get("port").and_then(|p| p.as_u64()))
-        .map(|p| p as u16);
-    let Some(port) = port else {
-        return ServiceHealth::down("layerfs", "the endpoint file names no port — install again");
-    };
+        .map(|p| p as u16)
+        .ok_or_else(|| {
+            ServiceHealth::down("layerfs", "the endpoint file names no port — install again")
+        })
+}
+
+fn layerfs_probe_with(port: u16, container: Option<u16>) -> ServiceHealth {
     if crate::net::listening("127.0.0.1", port, CONNECT_TIMEOUT) {
         ServiceHealth::up("layerfs")
     } else {
-        ServiceHealth::down(
-            "layerfs",
-            format!(
+        let note = match container {
+            // The worker runs, the record does not follow it: a machine
+            // restart reassigns Docker's published port, and the endpoint
+            // file cannot rewrite itself. The diagnosis names both ports
+            // — "the substrate is down" would be a lie about a worker
+            // that is up (the owner's 2026-11-13 report: the worker ran,
+            // the card said down, and the honest words are what make the
+            // repair obviously the fix).
+            Some(actual) if actual != port => stale_record_note(port, actual),
+            _ => format!(
                 "the worker does not answer on port {port} — the substrate is down \
                  (KI-493's shape: a Docker store without the pinned worker)"
             ),
-        )
+        };
+        ServiceHealth::down("layerfs", note)
     }
+}
+
+/// The host port the running worker container publishes, when it runs:
+/// `docker port layerfs-worker 7070` answers `127.0.0.1:<host>` while the
+/// container is up and nothing when it is not. Read only on the refused
+/// path of the probe — never when the record answers.
+fn worker_container_port() -> Option<u16> {
+    let output = std::process::Command::new("docker")
+        .args(["port", "layerfs-worker", "7070"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let first = text.lines().next()?.trim().to_string();
+    let port = first.rsplit(':').next()?;
+    port.parse::<u16>().ok()
+}
+
+fn stale_record_note(recorded: u16, actual: u16) -> String {
+    format!(
+        "the worker answers on port {actual}, not the {recorded} the endpoint record names — \
+         the record is stale (the machine restarted and Docker reassigned the port)"
+    )
 }
 
 /// The API half: the walk cannot serve without a key. Resolution is
@@ -519,20 +565,49 @@ mod tests {
     #[test]
     fn a_closed_endpoint_port_reads_down_with_the_repair_named() {
         let home = scratch("closed-port");
-        // Port 1 on loopback is never listening.
+        // Port 1 on loopback is never listening, and no container is
+        // running: the KI-493 shape, named whole.
         write_endpoint(&home, 1);
-        let report = probe(&home, true);
-        let layerfs = report
-            .services
-            .iter()
-            .find(|s| s.name == "layerfs")
-            .expect("the layerfs line");
+        let layerfs = layerfs_probe_with(1, None);
         assert!(!layerfs.up, "a refused connect is down");
-        assert!(layerfs.note.contains("port 1"));
+        assert!(layerfs.note.contains("port 1"), "{}", layerfs.note);
+        assert!(layerfs.note.contains("KI-493"), "{}", layerfs.note);
         assert_eq!(
             layerfs.repair,
             "fleet install (re-provisions the worker and re-records the endpoint)"
         );
+    }
+
+    /// The owner's 2026-11-13 report: the worker was up and running on
+    /// Docker, the card said down — the machine restart reassigned
+    /// Docker's published port and the endpoint record cannot follow.
+    /// The diagnosis names both ports and stays a repair away from true.
+    #[test]
+    fn a_stale_record_names_the_running_worker() {
+        let home = scratch("stale-record");
+        write_endpoint(&home, 1);
+        let layerfs = layerfs_probe_with(1, Some(57888));
+        assert!(!layerfs.up, "the record's port is refused: down");
+        assert!(layerfs.note.contains("port 57888"), "{}", layerfs.note);
+        assert!(
+            layerfs.note.contains("the 1 the endpoint record names"),
+            "{}",
+            layerfs.note
+        );
+        assert!(layerfs.note.contains("stale"), "{}", layerfs.note);
+        assert_eq!(layerfs.repair, repair_for("layerfs"));
+    }
+
+    #[test]
+    fn a_record_matching_a_dead_container_stays_the_ki493_shape() {
+        let home = scratch("agreed-dead");
+        write_endpoint(&home, 1);
+        // The container publishes the same port the record names — the
+        // connect should have worked and did not: the transient shape,
+        // still the KI-493 words.
+        let layerfs = layerfs_probe_with(1, Some(1));
+        assert!(layerfs.note.contains("KI-493"), "{}", layerfs.note);
+        assert!(!layerfs.note.contains("stale"), "{}", layerfs.note);
     }
 
     #[test]

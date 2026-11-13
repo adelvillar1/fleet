@@ -3853,7 +3853,11 @@ impl Bridge {
             *guard = Some(fresh.clone());
         }
         self.note_health_transition(&fresh);
-        Ok(serde_json::to_value(&fresh.services).unwrap_or(Value::Null))
+        // The reply is the same document `/api/state` carries — the
+        // HealthReport, `services` included — so the pressing face's
+        // `face.services = reply.body` lands the shape paintServices
+        // reads, and the card repaints from the reply honestly.
+        Ok(serde_json::to_value(&fresh).unwrap_or(Value::Null))
     }
 
     pub async fn update_apply(&self) -> Result<Value, String> {
