@@ -960,7 +960,6 @@ import { parseAddress } from './core/router.js';
     panelDelegation: document.getElementById('panel-delegation'),
     panelLearning: document.getElementById('panel-learning'),
     panelMemory: document.getElementById('panel-memory'),
-    panelSkills: document.getElementById('panel-skills'),
     workCol: document.getElementById('work-col'),
     workHead: document.getElementById('work-head'),
     workList: document.getElementById('work-list'),
@@ -1062,8 +1061,6 @@ import { parseAddress } from './core/router.js';
     learningDock: document.getElementById('learning-dock'),
     learningBar: document.getElementById('learning-bar'),
     memoryRail: document.getElementById('memory-rail'),
-    skillsBoard: document.getElementById('skills-board'),
-    skillsRail: document.getElementById('skills-rail'),
     sessionsBoard: document.getElementById('work-list'),
     calibrationBoard: document.getElementById('calibration-board'),
     calibrationRail: document.getElementById('calibration-rail'),
@@ -8428,50 +8425,12 @@ import { parseAddress } from './core/router.js';
   // follow in the table's own order; declined, curation and retired
   // close the rail.
 
-  /// The section the hash names, or the remembered one, or `needs-you`.
-  function skillsSectionId() {
-    var raw = (window.location.hash || '').replace(/^#\/?/, '');
-    var parts = raw.split('/');
-    if (parts[0] === 'skills' && parts[1]) return decodeURIComponent(parts[1]);
-    try {
-      var stored = window.localStorage.getItem('fleet-skills-section');
-      if (stored) return stored;
-    } catch (error) { }
-    return 'needs-you';
-  }
 
-  function rememberSkillsSection(id) {
-    try { window.localStorage.setItem('fleet-skills-section', id); } catch (error) { }
-  }
 
-  /// The category sections the read actually holds, in the table's own
-  /// order. `everything-else` appears only when the read carries an
-  /// unmatched name — an empty fallback row would be a lie about the
-  /// library.
-  function skillCategoryIds(read) {
-    var seen = {};
-    (read.skills || []).forEach(function (skill) {
-      seen[skill.category || 'everything-else'] = true;
-    });
-    var order = ['building', 'web', 'design', 'media', 'documents', 'data',
-      'platforms', 'machine', 'everything-else'];
-    return order.filter(function (id) { return seen[id]; });
-  }
 
-  var SKILL_CATEGORY_NAMES = {
-    'building': 'building', 'web': 'web', 'design': 'design', 'media': 'media',
-    'documents': 'documents', 'data': 'data', 'platforms': 'platforms',
-    'machine': 'machine', 'everything-else': 'everything else'
-  };
 
   // The category's own concept: a globe for the web, a pen for design, a
   // cloud for a platform — not the mark of a surface it merely touches.
-  var SKILL_CATEGORY_ICONS = {
-    'needs-you': 'pending', 'building': 'plan', 'web': 'web', 'design': 'pen',
-    'media': 'media', 'documents': 'documents', 'data': 'data',
-    'platforms': 'platforms', 'machine': 'tools', 'everything-else': 'other',
-    'declined': 'declined', 'curation': 'curation', 'retired': 'retired'
-  };
 
   /// The proposals that still need a decision: a draft the gate has
   /// already disposed of (applied, refused, waiting on something else)
@@ -8483,237 +8442,13 @@ import { parseAddress } from './core/router.js';
     });
   }
 
-  /// The declaration: id, icon, name, badge and paint per section.
-  function skillSections(read) {
-    var skills = read.skills || [];
-    var skips = read.skips || [];
-    var proposals = pendingProposals(read);
-    var sections = [{
-      id: 'needs-you', name: 'needs you',
-      badge: proposals.length, badgeTitle: proposals.length + ' waiting',
-      paint: function () { return [skillsDecisions(proposals)]; }
-    }];
-    skillCategoryIds(read).forEach(function (id) {
-      var rows = skills.filter(function (skill) {
-        return (skill.category || 'everything-else') === id;
-      });
-      sections.push({
-        id: id, name: SKILL_CATEGORY_NAMES[id] || id,
-        badge: rows.length, badgeTitle: rows.length + ' skills',
-        paint: function () { return [skillCategoryCard(read, id, rows)]; }
-      });
-    });
-    sections.push(
-      {
-        id: 'declined', name: 'declined',
-        badge: skips.length, badgeTitle: skips.length + ' skipped',
-        paint: function () { return [skillsSkips(skips)]; }
-      },
-      {
-        id: 'curation', name: 'curation',
-        badge: (read.merges || []).length,
-        badgeTitle: (read.merges || []).length + ' candidates',
-        paint: function () { return [skillsCuration(read)]; }
-      },
-      {
-        id: 'retired', name: 'retired',
-        badge: (read.retired || []).length,
-        badgeTitle: (read.retired || []).length + ' retired',
-        paint: function () { return [skillsRetired(read)]; }
-      }
-    );
-    return sections;
-  }
 
-  function paintSkillsRail(read) {
-    if (!el.skillsRail) return;
-    var sections = read ? skillSections(read) : [];
-    sectionRail(el.skillsRail, sections.map(function (section) {
-      return {
-        id: section.id, icon: SKILL_CATEGORY_ICONS[section.id] || 'dot',
-        name: section.name, badge: section.badge, badgeTitle: section.badgeTitle
-      };
-    }), {
-      current: read ? skillsSectionId() : 'needs-you',
-      folded: !!face.skillsRailFolded,
-      store: 'fleet-skills-rail',
-      onPick: function (id) {
-        rememberSkillsSection(id);
-        window.location.hash = '#/skills/' + id;
-        paintSkills();
-        var row = el.skillsRail.querySelector('[data-section="' + id + '"]');
-        if (row && row.focus) row.focus();
-      },
-      onFold: function (folded) {
-        face.skillsRailFolded = folded;
-        try {
-          window.localStorage.setItem('fleet-skills-rail', folded ? 'folded' : 'open');
-        } catch (error) { }
-        paintSkillsRail(face.skills);
-      }
-    });
-  }
 
-  /// One section's cards, and nothing else. The rail picks; this paints.
-  /// A query outranks the rail: the body becomes the results card across
-  /// every section until the query clears.
-  function paintSkillsSection(id) {
-    var read = face.skills;
-    if (!read) return;
-    Array.prototype.slice.call(el.skillsBoard.children).forEach(function (child) {
-      if (child.classList && (child.classList.contains('section-body'))) {
-        el.skillsBoard.removeChild(child);
-      }
-    });
-    var body = node('div', 'section-body');
-    if ((face.skillQuery || '').trim()) {
-      body.dataset.section = 'matches';
-      body.appendChild(skillSearchResults(read));
-      el.skillsBoard.appendChild(body);
-      return;
-    }
-    var sections = skillSections(read);
-    var chosen = sections.filter(function (section) { return section.id === id; })[0]
-      || sections[0];
-    body.dataset.section = chosen.id;
-    chosen.paint().forEach(function (card) { body.appendChild(card); });
-    el.skillsBoard.appendChild(body);
-  }
 
-  function paintSkills() {
-    var read = face.skills;
-    el.skillsBoard.textContent = '';
-    if (!read) {
-      el.skillsBoard.appendChild(surfaceHead('Knowledge', 'Skills',
-        'The library the model can reach, the names the loader declined, the proposals waiting for a decision, and what the owner retired.', null));
-      var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'The library read has not landed yet. It reads the canonical skills directory and the ' +
-        'home\u2019s own proposals, both of which are this machine\u2019s.'));
-      el.skillsBoard.appendChild(waiting);
-      paintSkillsRail(null);
-      return;
-    }
-    var skills = read.skills || [];
-    var skips = read.skips || [];
-    var proposals = pendingProposals(read);
-    var used = skills.filter(function (skill) { return skill.uses > 0; }).length;
-    var instrument = surfaceInstrument('the library', skills.length + ' skills',
-      (read.canonical || 'no library') + ' \u00b7 ' + read.sessions + ' sessions scanned',
-      [
-        {
-          label: 'ask the curator',
-          run: function () {
-            ask('review the skill library and propose the next curation change');
-          }
-        },
-        {
-          label: 'copy the path',
-          run: function () {
-            if (read.canonical && navigator.clipboard) {
-              navigator.clipboard.writeText(read.canonical).catch(function () { });
-            }
-            notice('the library path is copied', read.canonical || 'no library resolved');
-          }
-        }
-      ]);
-    el.skillsBoard.appendChild(surfaceHead('Knowledge', 'Skills',
-      'The library the model can reach, the names the loader declined, the proposals waiting for a decision, and what the owner retired.',
-      instrument));
-    el.skillsBoard.appendChild(surfaceStrip([
-      [skills.length, 'loaded'],
-      [used, 'used'],
-      [read.unused, 'never selected'],
-      [proposals.length, 'proposals', proposals.length ? 'live' : null],
-      [skips.length, 'skipped', skips.length ? 'down' : null],
-      [read.retired.length, 'retired', read.retired.length ? 'down' : null],
-      [read.sessions, 'sessions scanned']
-    ], 'the library at ' + (read.canonical || '\u2014')));
-    // The search reads across every section, so it sits above the
-    // section body — which is the only thing a section pick replaces.
-    el.skillsBoard.appendChild(skillSearch());
-    paintSkillsRail(read);
-    paintSkillsSection(skillsSectionId());
-    if (read.refused && read.refused.length) {
-      el.skillsBoard.appendChild(refusedCard(read.refused));
-    }
-  }
 
-  /// One category's rows, and nothing else: one-line rows under the
-  /// row budget — the first 30, then the count named.
-  function skillCategoryCard(read, id, rows) {
-    var shown = rows
-      .slice()
-      .sort(function (left, right) {
-        return right.uses - left.uses || left.name.localeCompare(right.name);
-      });
-    var card = boardCard(8, SKILL_CATEGORY_NAMES[id] || id,
-      shown.length + (shown.length === 1 ? ' skill' : ' skills'),
-      'one line per skill: the name, the sentence, and its uses. A row opens the ' +
-      'skill — its body and its actions — in the pane.');
-    card.classList.add('lib-card');
-    var items = shown.map(skillItem);
-    if (!items.length) {
-      card.appendChild(node('p', 'board-empty',
-        'No skill in this section yet.'));
-      return card;
-    }
-    card.appendChild(budgetRows(items, 30, 'skills',
-      !!face.skillShowAll, function () {
-        face.skillShowAll = !face.skillShowAll;
-        paintSkills();
-      }));
-    return card;
-  }
 
-  /// A query turns the body into one results card across every section —
-  /// the search reads name and sentence wherever the match lives, and
-  /// the rail stays where it was.
-  function skillSearchResults(read) {
-    var query = (face.skillQuery || '').trim();
-    var shown = (read.skills || [])
-      .filter(function (skill) { return skillMatches(skill, query); })
-      .sort(function (left, right) {
-        return right.uses - left.uses || left.name.localeCompare(right.name);
-      });
-    var card = boardCard(8, 'matches', String(shown.length),
-      'searching every section for \u201c' + query + '\u201d \u2014 the name and the one sentence.');
-    card.classList.add('lib-card');
-    if (!shown.length) {
-      card.appendChild(node('p', 'board-empty',
-        'No skill matches \u201c' + query + '\u201d. The search reads the name and the one ' +
-        'sentence, in every section.'));
-      return card;
-    }
-    card.appendChild(budgetRows(shown.map(skillItem), 30, 'skills', true, function () { }));
-    return card;
-  }
 
-  function skillMatches(skill, query) {
-    var asked = (query || '').trim().toLowerCase();
-    if (!asked) return true;
-    return (skill.name + ' ' + skill.description).toLowerCase().indexOf(asked) !== -1;
-  }
 
-  function skillSearch() {
-    var wrap = node('div', 'panel-search');
-    var box = node('input', 'panel-search-box');
-    box.type = 'search';
-    box.placeholder = 'search the library \u2014 name or sentence';
-    box.value = face.skillQuery || '';
-    box.setAttribute('aria-label', 'search the library');
-    box.addEventListener('input', function () {
-      face.skillQuery = box.value;
-      paintSkills();
-      var again = el.skillsBoard.querySelector('.panel-search-box');
-      if (again) {
-        again.focus();
-        again.setSelectionRange(again.value.length, again.value.length);
-      }
-    });
-    wrap.appendChild(box);
-    return wrap;
-  }
 
   /// One skill as a one-line row: the name, the sentence, and the uses
   /// mark — the count the owner asked to see (the approved `use_skill`
@@ -8756,7 +8491,7 @@ import { parseAddress } from './core/router.js';
           name + (retiring
             ? ' leaves every run\u2019s prompt; the library keeps it'
             : ' is declared again'));
-        readSkills(true).then(paintSkills);
+        readSkills(true).then(paintMemory);
         return;
       }
       button.disabled = false;
@@ -8815,7 +8550,7 @@ import { parseAddress } from './core/router.js';
     post('/api/skill', { name: proposal.name }).then(function (reply) {
       if (reply.status === 200) {
         notice('the proposal landed', reply.body.summary || proposal.name + ' applied');
-        readSkills(true).then(paintSkills);
+        readSkills(true).then(paintMemory);
         return;
       }
       button.disabled = false;
@@ -9028,7 +8763,6 @@ import { parseAddress } from './core/router.js';
       })
       .then(function (doc) {
         face.skills = doc;
-        if (face.panel === 'skills') paintSkills();
         if (face.panel === 'memory') paintMemory();
       })
       .catch(function () {
@@ -26741,6 +26475,15 @@ import { parseAddress } from './core/router.js';
     var parts = addr.parts;
     var which = addr.lens;
     var focusId = addr.id;
+    // U40: the skills surface folded into Intelligence as its Skills
+    // segment. Its old address walks to the segment — there is no panel of
+    // its own to arrive at, so the fold happens here, before the panel
+    // lookup, and the address follows it.
+    if (which === 'skills') {
+      which = 'memory';
+      focusId = focusId || 'skills';
+      try { window.history.replaceState(null, '', '#/memory/' + focusId); } catch (error) { }
+    }
     // The deliverable address (KI-289): an agent closes its work with a
     // link, and the link opens the face with the pane's preview in
     // front — the rendered document for markdown, the file otherwise.
@@ -26835,14 +26578,6 @@ import { parseAddress } from './core/router.js';
         readSkills(true);
         readTools(true);
         readWorkflows(true);
-      },
-      skills: function () {
-        // The skills surface folded into Intelligence (U40); the old
-        // address walks to its segment, and the surface's own reads run
-        // so the segment paints from its data.
-        window.location.hash = '#/memory/skills';
-        paintMemory();
-        readSkills(true).then(paintMemory);
       },
       learning: function () {
         // The right column is the app's pane, the same one the other

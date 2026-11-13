@@ -286,7 +286,7 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       excluded — and refuses the forbidden subsystem terms; it is green. The
       pinned recipient-transparency copy (Perception/Nace) is kept, as
       `documents::tests::the_copy_names_the_recipients` requires.
-- [ ] C7 (P7): the dead code and duplicate declarations are gone; the counts
+- [x] C7 (P7): the dead code and duplicate declarations are gone; the counts
       are recorded; the ledgers and the pointer index are reconciled.
       **Progress 2026-11-13: the dead `#panel-huddles` markup removed** (no
       app.js or harness references; huddles render into the chat panel).
@@ -296,12 +296,17 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       (`PANEL_KEYS`), so a new surface needs no second registration; routing
       verified in-browser (board ↔ memory swap correctly). The tower console
       stays — it is live, feeding the inspector's project drawer. **Counts
-      recorded:** app.js 29,940 lines (was 30,010); `core/store.js` +
-      `core/router.js` modules; 21 panel mains (was 22); 0 sub-12px rules;
+      recorded:** app.js 29,675 lines (was 30,010); `core/store.js` +
+      `core/router.js` modules; 20 panel mains (was 22); 0 sub-12px rules;
       `PANEL_EL` retired. The pointer index carries no stale face-panel refs.
-      Remaining: the legacy skills painter (unreachable — its removal must not
-      damage the Intelligence segment) and the full module split /
-      single-container stage.
+      **The legacy skills cluster is gone** — 13 legacy-private declarations
+      (the section rail, the category cards, the surface painter and its
+      search) plus `#panel-skills` and its three bindings. `pendingProposals`
+      was the one shared helper inside the block and is kept; the two shared
+      callbacks (`retireSkill`, `approveProposal`) now repaint Intelligence.
+      The old `#/skills` address folds to `#/memory/skills` in `showRoute`
+      before the panel lookup — verified in-browser (segment renders, panel
+      gone). Harness 1204/166 and the four-leg gate green.
 - [ ] C8: every phase carries a local four-leg gate on its committed tree, a
       green face harness, and the visual check against its mockup section;
       the version declarations move per release; **the beta bar is untouched
