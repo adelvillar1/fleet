@@ -378,13 +378,6 @@
              and a cap are pauses — so the owner's verb does. -->
         <button class="conv-act" id="conv-archive" type="button" title="archive or restore this conversation"
                 aria-label="archive or restore this conversation">&#128230;</button>
-        <!-- The thread pane's toggle (U39): the receipts of the run —
-             what this conversation generated — collapsed to one chip
-             with the live count. The pane itself sits beside the
-             transcript; the composer is never covered. -->
-        <button class="conv-act thread-pane-toggle" id="thread-pane-toggle" type="button"
-                title="made here — what this conversation made"
-                aria-pressed="true">made here <span id="thread-pane-count"></span></button>
         <button class="conv-act conv-new" id="conv-new" type="button"
                 title="new conversation" aria-label="new conversation">+</button>
         <!-- The conversation's text size: the one reading surface the
@@ -493,7 +486,13 @@
            outside the stream's rows, so a repaint cannot swallow it,
            and never in the composer: the run reports where it works,
            the composer is where the owner acts. -->
-      <div class="working-live" id="working-live" hidden></div>
+      <div class="working-live" id="working-live" hidden>
+        <span id="working-live-text"></span>
+        <!-- The run's stop, where the run's state is read: the composer
+             button queues while a run is in flight, so the stop lives
+             beside the working line it ends. -->
+        <button class="working-stop" id="working-stop" type="button" hidden>stop</button>
+      </div>
 
       <!-- The process, compact: the same live card's state in one line
            when the aside is closed or the screen is narrow. Clicking it
@@ -758,21 +757,10 @@
 
     </section>
 
-    <!-- The thread pane (U39): the receipts of the run. Everything this
-         conversation generated, live — the deliverables with their
-         shelf, the facts it recalled and wrote, the tasks with their
-         stage, the grades it landed — each row color-dotted by kind,
-         freshly-landed rows pulsing once, a click pivoting the whole
-         workspace (U3). Beside the transcript, never over the
-         composer; stacks below the chat on narrow widths. -->
-    <aside class="thread-pane" id="thread-pane" aria-label="made here — what this conversation made">
-      <div class="thread-pane-head">
-        <span class="tissue-title">made here</span>
-        <span class="tissue-where" id="thread-pane-where">what this conversation made</span>
-      </div>
-      <div class="thread-pane-list" id="thread-pane-list"></div>
-      <div class="tissue-empty" id="thread-pane-empty" hidden></div>
-    </aside>
+    <!-- The thread pane (U39) folded into the one drawer (U13): the
+         receipts live in the pane's own tab now, not in a column
+         beside the transcript — the chat is transcript-only, and
+         everything the conversation makes lives in the drawer. -->
 
   </main>
 
@@ -1154,12 +1142,12 @@
     </div>
   </main>
 
-  <!-- The dock: the live process and the selected object, beside the
-       work rather than over it. It is a grid column where the width
-       allows, a pinned overlay when the nav is expanded at 1440, and
-       the fixed drawer's content below 1180. -->
+  <!-- The dock: the live process, the selected object and the run's
+       receipts, in the one right drawer (U13) — a fixed overlay over the
+       stage with a scrim, at every width. The shell stays rail, stage,
+       connections; the drawer adds no column of its own. -->
   <div class="pane-scrim" id="pane-scrim"></div>
-  <aside class="pane" id="pane" hidden aria-label="the pane: the run, files, preview, web">
+  <aside class="pane" id="pane" hidden aria-label="the pane: the run, made here, files, preview, web">
     <div class="pane-grip" id="pane-grip" role="separator" aria-orientation="vertical"
          aria-label="resize the pane" aria-valuemin="300" aria-valuemax="720"
          aria-valuenow="440" tabindex="0" title="drag to resize · double-click resets · arrow keys too"></div>
@@ -1172,6 +1160,8 @@
                 aria-controls="pane-context" aria-selected="false" hidden>the work</button>
         <button class="pane-tab active" id="tab-run" type="button" role="tab"
                 aria-controls="pane-run" aria-selected="true">run</button>
+        <button class="pane-tab" id="tab-receipts" type="button" role="tab"
+                aria-controls="pane-receipts" aria-selected="false">made here</button>
         <button class="pane-tab" id="tab-files" type="button" role="tab"
                 aria-controls="pane-files" aria-selected="false">files</button>
         <button class="pane-tab" id="tab-preview" type="button" role="tab"
@@ -1264,6 +1254,15 @@
       <ul class="rules" id="rules"></ul>
     </section>
 
+    </div>
+    <div class="pane-body" id="pane-receipts" role="tabpanel"
+         aria-labelledby="tab-receipts" hidden>
+      <div class="thread-pane-head">
+        <span class="tissue-title">made here</span>
+        <span class="tissue-where" id="thread-pane-where">what this conversation made</span>
+      </div>
+      <div class="thread-pane-list" id="thread-pane-list"></div>
+      <div class="tissue-empty" id="thread-pane-empty" hidden></div>
     </div>
     <div class="pane-body" id="pane-files" role="tabpanel" aria-labelledby="tab-files" hidden>
       <nav class="pane-tree" id="pane-tree" aria-label="the working directory"></nav>

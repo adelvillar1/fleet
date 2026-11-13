@@ -950,11 +950,10 @@ import { node, svg, clip } from './core/dom.js';
     tissueLegend: document.getElementById('tissue-legend'),
     tissueFocus: document.getElementById('tissue-focus'),
     tissueEmpty: document.getElementById('tissue-empty'),
-    threadPane: document.getElementById('thread-pane'),
     threadPaneList: document.getElementById('thread-pane-list'),
     threadPaneEmpty: document.getElementById('thread-pane-empty'),
-    threadPaneToggle: document.getElementById('thread-pane-toggle'),
-    threadPaneCount: document.getElementById('thread-pane-count'),
+    tabReceipts: document.getElementById('tab-receipts'),
+    paneReceipts: document.getElementById('pane-receipts'),
     actions: document.getElementById('actions'),
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
@@ -1148,6 +1147,8 @@ import { node, svg, clip } from './core/dom.js';
     plan: document.getElementById('plan'),
     hint: document.getElementById('hint'),
     workingLive: document.getElementById('working-live'),
+    workingLiveText: document.getElementById('working-live-text'),
+    workingStop: document.getElementById('working-stop'),
     runPerms: document.getElementById('run-perms'),
     runMode: document.getElementById('run-mode'),
     runProvider: document.getElementById('run-provider'),
@@ -1986,7 +1987,10 @@ import { node, svg, clip } from './core/dom.js';
   function assistantRow() {
     var el0 = node('div', 'assistant streaming');
     return row(el0, null, function (text) {
-      el0.textContent += text;
+      // A text node appended per flush, never `textContent +=`: the
+      // assignment re-serializes the whole reply every frame — an
+      // O(n) write that a long answer turns into visible churn.
+      el0.appendChild(document.createTextNode(text));
     });
   }
 
@@ -3220,15 +3224,17 @@ import { node, svg, clip } from './core/dom.js';
   // The thinking line (the density plan, P1): one live line that
   // grows with the reasoning deltas while the turn runs, replaced by
   // the thought's card when the block closes. Transport-only events,
-  // so a replay never rebuilds the line — the card is the record.
+  // so a replay never rebuilds the line — the card is the record. The
+  // deltas land through the same one-frame scheduler as the tokens:
+  // a per-delta rewrite re-lays-out the stream several times a
+  // second, which read as flicker.
   function thinkingLive(event) {
     if (!face.thinkingEl) {
       face.thinkingEl = node('div', 'thinking-live');
       face.stream.appendChild(face.thinkingEl);
     }
     face.thinkingText = (face.thinkingText || '') + (event.text || '');
-    face.thinkingEl.textContent = face.thinkingText;
-    settle();
+    schedule();
   }
 
   function dropThinking() {
@@ -3240,11 +3246,22 @@ import { node, svg, clip } from './core/dom.js';
   }
 
   // Streamed tokens land one at a time; the DOM is written once a
-  // frame so a fast turn does not lay out per token.
+  // frame so a fast turn does not lay out per token. The thinking
+  // line rides the same frame — both write the stream, and one write
+  // per frame is the whole point.
   function schedule() {
     if (face.flush) return;
-    face.flush = requestAnimationFrame(function () {
+    // A boolean, never the frame token: the token's assignment lands
+    // after the callback under a synchronous rAF, which would leave a
+    // stale truthy flag wedging the scheduler shut after its first
+    // frame.
+    face.flush = true;
+    requestAnimationFrame(function () {
       face.flush = 0;
+      if (face.thinkingEl && face.thinkingText) {
+        face.thinkingEl.appendChild(document.createTextNode(face.thinkingText));
+        face.thinkingText = '';
+      }
       if (!face.assistant) return;
       face.assistant.update(face.buffer);
       face.buffer = '';
@@ -3499,15 +3516,25 @@ import { node, svg, clip } from './core/dom.js';
       row.appendChild(node('span', 'queue-text', text));
       // The row's three verbs as icons, the reply footer's own approach:
       // the words in the tooltip and the accessible name, the glyph in
-      // the row. Send moves the message to the head — the head is what
-      // the next run sends; edit returns the words to the composer and
-      // takes the row out; drop removes it.
-      var first = iconButton(MSG_ICONS.send, 'row-rewind queue-send', 'send first',
+      // the row. On the head, send is "send now" — the run in flight
+      // stops (a tool call running finishes first) and the finished
+      // handler flushes the head the moment it ends; nothing in flight,
+      // the head dispatches now. Below the head, send moves the message
+      // to the head — the head is what the next run sends. Edit returns
+      // the words to the composer and takes the row out; drop removes it.
+      var first = iconButton(MSG_ICONS.send, 'row-rewind queue-send',
+        index === 0 ? 'send now' : 'send first',
         index === 0
-          ? 'already first in line — the next run sends it'
-          : 'move to the head of the queue — the next run sends it');
-      first.disabled = index === 0;
-      first.addEventListener('click', function () { moveQueued(index, 0); });
+          ? 'stops the run in flight \u2014 this message sends the moment it ends'
+          : 'move to the head of the queue \u2014 the next run sends it');
+      first.addEventListener('click', function () {
+        if (index === 0) {
+          if (face.running || face.seat) stopRun();
+          else flushQueue();
+          return;
+        }
+        moveQueued(index, 0);
+      });
       row.appendChild(first);
       var edit = iconButton(MSG_ICONS.pencil, 'row-rewind queue-edit', 'edit',
         'edit this message — its words return to the composer');
@@ -3656,17 +3683,21 @@ import { node, svg, clip } from './core/dom.js';
 
   function paintComposer() {
     var busy = face.running || !!face.seat;
-    // The button is the run's own control: Send when idle, Stop while a
-    // run is in flight or a seat waits — the composer is never a dead
-    // grey square the owner cannot use to end the work.
-    if (el.sendLabel) el.sendLabel.textContent = busy ? 'Stop' : 'Send';
+    // Send is always Send: while a run is in flight or a seat waits,
+    // the button queues the typed words (the same words Enter queues)
+    // — the owner's press was never a stop in their hand, and a button
+    // that meant two things left a queued message with no way to send.
+    // The run's stop lives on the working line, beside the state it
+    // ends, and on the run card.
+    if (el.sendLabel) el.sendLabel.textContent = 'Send';
     if (!busy) paintComposerAddress();
     if (el.send) {
-      el.send.dataset.mode = busy ? 'stop' : 'send';
+      el.send.dataset.mode = busy ? 'queue' : 'send';
       el.send.disabled = false;
-      el.send.setAttribute('aria-label', busy ? 'stop the run' : 'send the task');
+      el.send.setAttribute('aria-label',
+        busy ? 'queue the task; it sends when the run ends' : 'send the task');
       el.send.title = busy
-        ? 'stop the run \u00b7 a tool call already running finishes first, then the run ends'
+        ? 'queue the task \u00b7 it sends the moment the run ends'
         : 'send the task';
     }
     // The hint keeps its idle words in every state — the run's live
@@ -3751,11 +3782,18 @@ import { node, svg, clip } from './core/dom.js';
   function paintWorking() {
     var live = el.workingLive;
     if (live) {
+      // The line's words go into their own span so the stop button —
+      // a persistent element, wired once — survives every tick; the
+      // one-second rewrite of this line once ate a button painted
+      // into the text itself.
+      var words = el.workingLiveText;
+      var stop = el.workingStop;
       if (face.seat) {
         live.hidden = false;
         live.dataset.mode = 'seat';
-        live.textContent = 'the seat is waiting for an answer \u00b7 ' +
+        if (words) words.textContent = 'the seat is waiting for an answer \u00b7 ' +
           elapsed(Date.now() - (face.seatSince || Date.now()));
+        if (stop) stop.hidden = true;
       } else if (face.running) {
         // Seconds since the last event: a live run shows a small
         // number, a long tool call shows the number climb — the
@@ -3768,12 +3806,21 @@ import { node, svg, clip } from './core/dom.js';
         // turn count stays internal (the owner's 2026-11-03 ruling).
         live.hidden = false;
         live.dataset.mode = 'working';
-        live.textContent = 'working' + healthLine() + ' \u00b7 ' + elapsed(since) +
-          ' since the last event';
+        if (words) {
+          words.textContent = 'working' + healthLine() + ' \u00b7 ' + elapsed(since) +
+            ' since the last event';
+        }
+        if (stop) {
+          stop.hidden = false;
+          stop.disabled = !!(face.process && face.process.stopping);
+          stop.textContent = face.process && face.process.stopping
+            ? 'stopping\u2026' : 'stop';
+        }
       } else {
         live.hidden = true;
         live.dataset.mode = '';
-        live.textContent = '';
+        if (words) words.textContent = '';
+        if (stop) stop.hidden = true;
       }
     }
     // One ticker, alive only while something is: a run moves the
@@ -10201,7 +10248,12 @@ import { node, svg, clip } from './core/dom.js';
     el.send.addEventListener('click', function (event) {
       event.preventDefault();
       if (face.running || !!face.seat) {
-        stopRun();
+        // Send queues while something is in flight — the same words
+        // Enter queues, and the queue flushes the moment the run ends.
+        // The stop is the working line's button, beside the state it
+        // ends (the composer button was a hidden stop once, and a
+        // queued message could not be sent right away).
+        send();
         return;
       }
       // An idle press with nothing typed and a message waiting is the
@@ -26181,6 +26233,7 @@ import { node, svg, clip } from './core/dom.js';
   // mode that outlived the message that asked for it would be a mode
   // nobody chose for the next task.
   if (el.processStop) el.processStop.addEventListener('click', stopRun);
+  if (el.workingStop) el.workingStop.addEventListener('click', stopRun);
   if (el.processSteerForm) el.processSteerForm.addEventListener('submit', steerRun);
   if (el.processSteer) {
     el.processSteer.addEventListener('keydown', function (event) {
@@ -27995,16 +28048,21 @@ import { node, svg, clip } from './core/dom.js';
     try { window.localStorage.setItem('fleet-pane-tab', which); } catch (error) { }
     var context = which === 'context';
     var run = which === 'run';
+    var receipts = which === 'receipts';
     var files = which === 'files';
     var preview = which === 'preview';
     var web = which === 'web';
-    if (context && !paneContextAvailable()) context = false;
+    if (context && !paneContextAvailable()) { context = false; run = true; }
     if (el.tabContext) {
       el.tabContext.hidden = !paneContextAvailable();
       el.tabContext.classList.toggle('active', context);
       el.tabContext.setAttribute('aria-selected', context ? 'true' : 'false');
     }
     if (el.paneContext) el.paneContext.hidden = !context;
+    if (el.tabReceipts) {
+      el.tabReceipts.classList.toggle('active', receipts);
+      el.tabReceipts.setAttribute('aria-selected', receipts ? 'true' : 'false');
+    }
     el.tabRun.classList.toggle('active', run);
     el.tabFiles.classList.toggle('active', files);
     el.tabPreview.classList.toggle('active', preview);
@@ -28014,11 +28072,13 @@ import { node, svg, clip } from './core/dom.js';
     el.tabPreview.setAttribute('aria-selected', preview ? 'true' : 'false');
     el.tabWeb.setAttribute('aria-selected', web ? 'true' : 'false');
     el.paneRun.hidden = !run;
+    if (el.paneReceipts) el.paneReceipts.hidden = !receipts;
     el.paneFiles.hidden = !files;
     el.panePreviewPanel.hidden = !preview;
     el.paneWeb.hidden = !web;
     if (context) paintPaneContext();
     else if (run) paintProcess();
+    else if (receipts) paintThreadPane();
     else if (files) paintTree();
     else if (preview) paintPreview();
     else paintWeb();
@@ -29052,27 +29112,14 @@ import { node, svg, clip } from './core/dom.js';
     } catch (error) { /* an old listener API is a browser concern, not a face one */ }
   }
 
-  // --- the thread pane (U39) ------------------------------------------
-  // The receipts of the run, beside the transcript: what this
+  // --- the thread pane (U39, folded into the drawer per U13) ----------
+  // The receipts of the run, in the pane's own tab: what this
   // conversation generated, live — deliverables, the facts it recalled
   // and wrote, the tasks with their stage, the grades it landed. A row
   // is dotted by kind, a freshly-landed one pulses once, and a click
-  // pivots the whole workspace (U3). The pane collapses to the
-  // conv-head's tissue chip; the composer is never covered.
-  function threadPaneOpen() {
-    try { return (window.localStorage.getItem('fleet-thread-pane') || 'on') === 'on'; }
-    catch (error) { return true; }
-  }
-
-  function paintThreadPaneChrome() {
-    if (!el.threadPane || !el.threadPaneToggle) return;
-    var open = threadPaneOpen();
-    el.panelChat.dataset.threadPane = open ? 'on' : 'off';
-    el.threadPaneToggle.setAttribute('aria-pressed', String(open));
-    el.threadPaneToggle.title = open
-      ? 'fold made here \u2014 what this conversation made'
-      : 'open made here \u2014 what this conversation made';
-  }
+  // pivots the whole workspace (U3). There is no column beside the
+  // transcript any more and no collapse chip: the drawer is the one
+  // right surface, and its tab is the receipts' only home.
 
   // The rows this pane has already shown: a row the pane has not seen
   // lands with the fresh mark and pulses once — the receipts arrive
@@ -29127,9 +29174,6 @@ import { node, svg, clip } from './core/dom.js';
           + 'makes lands here as the run works';
       }
     }
-    if (el.threadPaneCount) {
-      el.threadPaneCount.textContent = rows.length ? String(rows.length) : '';
-    }
     rows.forEach(function (row) {
       var key = row.kind + ':' + row.label + ':' + row.mark;
       var line = node('button', 'thread-row');
@@ -29150,16 +29194,6 @@ import { node, svg, clip } from './core/dom.js';
       el.threadPaneList.appendChild(line);
     });
   }
-
-  el.threadPaneToggle.addEventListener('click', function () {
-    try {
-      window.localStorage.setItem('fleet-thread-pane',
-        threadPaneOpen() ? 'off' : 'on');
-    } catch (error) { }
-    paintThreadPaneChrome();
-    paintThreadPane();
-  });
-  paintThreadPaneChrome();
 
   function openThemes() {
     el.themes.textContent = '';
@@ -29378,6 +29412,16 @@ import { node, svg, clip } from './core/dom.js';
   })();
 
   el.paneClose.addEventListener('click', closePane);
+  // Every tab answers its own click — the run, the work and made-here
+  // tabs were born unwired once; a drawer whose tablist lies is worse
+  // than no drawer.
+  if (el.tabContext) {
+    el.tabContext.addEventListener('click', function () { showPaneTab('context'); });
+  }
+  el.tabRun.addEventListener('click', function () { showPaneTab('run'); });
+  if (el.tabReceipts) {
+    el.tabReceipts.addEventListener('click', function () { showPaneTab('receipts'); });
+  }
   el.tabFiles.addEventListener('click', function () { showPaneTab('files'); });
   el.tabPreview.addEventListener('click', function () { showPaneTab('preview'); });
   el.tabWeb.addEventListener('click', function () { showPaneTab('web'); });
@@ -29484,7 +29528,15 @@ import { node, svg, clip } from './core/dom.js';
   })();
 
   window.setInterval(function () {
-    if (face.process && face.process.active) paintProcess();
+    // The one-second tick is the clock, not a repaint: while a run is
+    // active, time alone changes only the elapsed line, so it is
+    // written in place and the card keeps its DOM — a whole-card
+    // rebuild every second read as the drawer flickering. Every other
+    // change the card shows arrives with an event, and events paint.
+    if (face.process && face.process.active) {
+      var clock = el.processBody && el.processBody.querySelector('.process-elapsed');
+      if (clock) clock.textContent = elapsedText(face.process.started, face.process.ended);
+    }
   }, 1000);
 
   // The board's read on the panel's own clock, and only while the panel
