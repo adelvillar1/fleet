@@ -256,7 +256,12 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       at any density). Remaining: a dedicated 7:1 small-text floor in the
       guard and a full component-pair sweep.
 - [ ] C6 (P6): plain register ships by default; the expert switch reveals the
-      subsystem names; the vocabulary lint is green.
+      subsystem names; the vocabulary lint is green. **Progress 2026-11-13:
+      the home empty state reads in plain language** — the method steps and
+      the capability row no longer say `sys1`/`lanes`/`deck` (verified
+      in-browser: judge / remember / skills / browse / present). Harness +
+      gate green. Remaining: the expert switch, the vocabulary lint, and the
+      wider copy pass over lens subtitles and empty states.
 - [ ] C7 (P7): the dead code and duplicate declarations are gone; the counts
       are recorded; the ledgers and the pointer index are reconciled.
       **Progress 2026-11-13: the dead `#panel-huddles` markup removed** (no
