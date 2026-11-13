@@ -4719,6 +4719,7 @@ import { parseAddress } from './core/router.js';
     if (!el.inboxBody) return;
     var doc = face.inbox;
     el.inboxBody.textContent = '';
+    spineCards(el.inboxBody);
     if (!doc || refusals(doc)) {
       if (el.inboxEmpty) el.inboxEmpty.hidden = true;
       return;
@@ -5583,6 +5584,19 @@ import { parseAddress } from './core/router.js';
       el0.appendChild(said);
     }
     return el0;
+  }
+
+  // P4: every lens projects the workspace spine as read-only cards — the
+  // runs, the machines, the capabilities — so no lens reads as a separate
+  // store. Perf-safe: it uses only what the spine already carries.
+  function spineCards(into) {
+    var sp = face.spine;
+    if (!sp || !into) return;
+    var cap = sp.intelligence || {};
+    [['runs', (sp.work || []).length], ['machines', (sp.instances || []).length],
+      ['skills', cap.skills], ['tools', cap.tools]].forEach(function (pair) {
+      into.appendChild(boardCard(3, pair[0], String(pair[1] == null ? 0 : pair[1]), null));
+    });
   }
 
   // The surface announces itself once, above the cards: an eyebrow that
@@ -8304,6 +8318,7 @@ import { parseAddress } from './core/router.js';
   function paintLearning() {
     if (!el.learningBoard) return;
     el.learningBoard.textContent = '';
+    spineCards(el.learningBoard);
     var read = face.learning;
     if (!read) {
       el.learningBoard.appendChild(surfaceHead('Learning', 'learning',
@@ -15351,6 +15366,7 @@ import { parseAddress } from './core/router.js';
   function paintCalibration() {
     var read = face.calibration;
     el.calibrationBoard.textContent = '';
+    spineCards(el.calibrationBoard);
     if (!read) {
       el.calibrationBoard.appendChild(pageHead('System', 'Reviews',
         'Every decision, graded against what actually happened \u2014 and your word on each.',
@@ -17302,6 +17318,7 @@ import { parseAddress } from './core/router.js';
   function paintArmada() {
     var read = face.armada;
     el.armadaBoard.textContent = '';
+    spineCards(el.armadaBoard);
     // Paint-before-read: the loading card says the read has not landed;
     // it never invents a roster the server has not named.
     if (!read) {
@@ -26847,6 +26864,7 @@ import { parseAddress } from './core/router.js';
         if (el.pane.hidden) openPane();
         face.wantContext = true;
         paintLearning();
+        readSpine(false).then(paintLearning);
         readLearning(true).then(paintLearning);
       },
       bots: function () {
@@ -26896,6 +26914,7 @@ import { parseAddress } from './core/router.js';
       inbox: function () {
         paintInbox();
         readInbox(true).then(paintInbox);
+        readSpine(false).then(paintInbox);
       },
       sessions: function () {
         paintWork();
@@ -26914,7 +26933,7 @@ import { parseAddress } from './core/router.js';
           paintConvHead();
         });
       },
-      calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
+      calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); readSpine(false).then(paintCalibration); },
       design: function () {
         // `#/design/<slug>` opens that board: the steer card names the
         // board its page landed on, so the press lands on the work.
@@ -26929,7 +26948,7 @@ import { parseAddress } from './core/router.js';
         readWorkspaceHistory(true).then(paintWorkspaceHistory);
         readWorkspaceCalls(true);
       },
-      armada: function () { paintArmada(); readArmada(true).then(paintArmada); },
+      armada: function () { paintArmada(); readArmada(true).then(paintArmada); readSpine(false).then(paintArmada); },
       vault: function () { paintVault(); readSettings(true).then(paintVault); },
       settings: function () {
         // `#/settings/<section>/<item>` opens the item's card (U3): the
