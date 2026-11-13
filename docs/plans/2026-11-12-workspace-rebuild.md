@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-12
 updated: 2026-11-12
 slug: workspace-rebuild
@@ -196,9 +196,10 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
 
 ## Acceptance criteria
 
-- [ ] C0 (P0): the vocabulary and object-model docs exist; U43–U47 are in
+- [x] C0 (P0): the vocabulary and object-model docs exist; U43–U47 are in
       `UI-DECISIONS.md`; every current UI string is mapped or marked for
-      deletion.
+      deletion. (`docs/design/VOCABULARY.md` incl. the appendix mapping every
+      route and rail group; `docs/design/OBJECT-MODEL.md`; U43–U47 appended.)
 - [ ] C1 (P1): one spine read serves every object with real edges; on this
       home `/api/workspace` shows the scheduled sessions as work items and
       `/api/tissue` returns edges > 0; the edge contract is pinned by test.

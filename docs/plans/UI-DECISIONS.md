@@ -344,6 +344,54 @@ Same shell, same tokens; the Setup lens on a fresh home.
   string in the face, the TUI, the shell, and the mockups; new copy is judged
   by whether a user who never read this ledger understands it.
 
+## The workspace rebuild — the model and the shell (2026-11-12)
+
+Settled by the rebuild plan ([`2026-11-12-workspace-rebuild.md`](2026-11-12-workspace-rebuild.md))
+after the audit ([`../architecture/2026-11-12-ux-audit-and-rebuild.md`](../architecture/2026-11-12-ux-audit-and-rebuild.md))
+found the mockups' workspace never reached production: 21 panels in four rail
+groups, a graph with 22 nodes and zero edges, and work surfaces empty because
+real work lands in sessions that are not objects.
+
+- **U43 — The work item is the unit of record.** One noun, one id space, one
+  status vocabulary (`queued · working · blocked · done`), one transcript (the
+  session), one artifact set. Every lens is a projection of the same
+  collection; adding a work item appears in Threads, Board, and (on producing
+  an artifact) Desk with no second write. The model is
+  [`../design/OBJECT-MODEL.md`](../design/OBJECT-MODEL.md); its edges are
+  derived from existing stores, never copied, and an edge that cannot be
+  derived is named rather than faked. *Constrains:* the spine read, every
+  lens, the graph, the onboarding empty states. **Supersedes** the implicit
+  model where tasks, deliverables, and sessions were three peer things.
+
+- **U44 — Seven lenses; everything else is Advanced.** The rail is Threads,
+  Board, Desk, Intelligence, Learning, Reviews, Inbox (and Fleet when armada
+  is on). Every other destination — routing, helpers, versions, secrets,
+  plugins, telemetry, design, the bot/channel console, about — lives under
+  **Settings → Advanced**, one page each: reachable, named, never in the main
+  rail. *Constrains:* the rail, the palette, the address grammar, every deep
+  link, the TUI's surface list when it is next rebuilt.
+
+- **U45 — Two registers, plain by default.** Every user-facing string
+  resolves through [`../design/VOCABULARY.md`](../design/VOCABULARY.md). The
+  plain register is the product; subsystem names (`sys1`, `corpus`, `gate`,
+  `armada`, `principal`, `calibration`, `lane`, `substrate`) are the **expert**
+  register, revealed by Settings → Advanced → Expert view. A string not in the
+  vocabulary may not ship. *Constrains:* every label, empty state, toast,
+  error, tooltip, and aria-label.
+
+- **U46 — Type floor and pair measurement.** 12px minimum; 13–14px body; one
+  tertiary micro-label may be 11px. Text below 13px must clear **7:1** against
+  its actual background. The contrast guard measures **component pairs** — chip
+  text on its own wash, label on the overlay surface, graph label on the page —
+  not only tokens against surfaces. *Constrains:* the token set, every
+  component, `src/gui/themes.rs`.
+
+- **U47 — One address grammar, no panel registry.** `#/<lens>` and
+  `#/<lens>/<id>`, parsed in one function. No `PANEL_EL`, no hidden-panel
+  swap, no arrival table that rewrites the address on entry. A pivot changes
+  the lens *body*, never the shell. *Constrains:* the router, every link,
+  deep links from the CLI, the TUI, and notifications.
+
 ---
 
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the
