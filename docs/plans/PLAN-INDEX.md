@@ -47,6 +47,19 @@ mockups before touching a surface.
   endpoint inventory, the ten traps, and where to start. **The next agent
   starts there.**
 
+## The workspace rebuild — the face becomes the mockups (drafted 2026-11-12, awaiting activation)
+
+- [`2026-11-12-workspace-rebuild.md`](2026-11-12-workspace-rebuild.md) — the
+  plan that supersedes the reskin's shell assumptions, after the audit in
+  [`../architecture/2026-11-12-ux-audit-and-rebuild.md`](../architecture/2026-11-12-ux-audit-and-rebuild.md):
+  the mockups are one workspace over one graph; production is 21 panels whose
+  graph reports **22 nodes and 0 edges**, and whose work surfaces are empty
+  because real work lands in sessions that are not objects. Seven phases,
+  dependency-ordered (contract → spine → module split → shell → lenses →
+  type/colour → language → delete). The owner's rulings: **the work item is
+  the unit of record**; the 12 destinations with no place in the approved
+  design move to **Settings → Advanced**; the scope is the **full rebuild**.
+
 ## How these plans are drafted (the awareness rule)
 
 Bottom-up, one wave at a time. **Every plan reads the ledger's settled
