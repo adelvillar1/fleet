@@ -238,7 +238,12 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       **the pane is now the U13 drawer** — a fixed right overlay with a
       scrim, retiring the fourth grid column that squeezed the stage
       (KI-528 closed). The shell is rail | stage | connections at every
-      width.
+      width. **P3 one shared focus landed 2026-11-13:** `showRoute` derives the
+      route focus from the single tissue focus when the address carries no
+      explicit id, so a pivot re-projects the same focused object into the new
+      lens instead of leaving two selections behind. Harness + gate green.
+      Remaining: one address grammar (folding the six hash parsers) and the
+      single-stage lens renderer (P4).
 - [ ] C4 (P4): all eight lenses shipped one at a time, each with its negative
       cases and its empty states; no old panel remains reachable; onboarding
       rebuilt on the finished shell. **Progress 2026-11-13: the Board lens now

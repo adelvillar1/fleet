@@ -26837,9 +26837,14 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
     closeDrawer();
     face.panel = address;
     usageRecord('panels', address, 'opens');
+    // P3 / U47: one shared focus. When the address carries no explicit id,
+    // the route focus derives from the single tissue focus (face.focusObject)
+    // rather than resetting to null — a pivot re-projects the same focused
+    // object into the new lens instead of leaving two selections behind.
     face.focus = bundleName
       ? { panel: 'bundle', id: bundleName }
-      : (focusId ? { panel: address, id: focusId } : null);
+      : (focusId ? { panel: address, id: focusId }
+        : (face.focusObject ? { panel: address, id: face.focusObject.id } : null));
     try { window.localStorage.setItem('fleet-panel', address); } catch (error) { }
     markRail();
     setWork(withList);
