@@ -4425,7 +4425,7 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
     if (el.emptyMeta) {
       el.emptyMeta.textContent = face.workspace
         ? 'Local to ' + face.workspace + ' \u00b7 the archive stays here; turns go to the providers that serve them; a document escalated to Perception goes to Nace.'
-        : 'Your archive stays on this machine. Every turn is a card you can open; the providers that serve it are named in the route bar and the lanes. A document escalated to Perception goes to Nace.';
+        : 'Your archive stays on this machine. Every turn is a card you can open; the models that serve it are named in the route bar and in what it can do. A document escalated to Perception goes to Nace.';
     }
     if (el.railWhere) el.railWhere.textContent = workspaceName();
   }

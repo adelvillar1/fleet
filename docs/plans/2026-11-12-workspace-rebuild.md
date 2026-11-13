@@ -260,7 +260,7 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       the legacy --muted/--faint inks. Graph labels are hover-only (readable
       at any density). Remaining: a dedicated 7:1 small-text floor in the
       guard and a full component-pair sweep.
-- [ ] C6 (P6): plain register ships by default; the expert switch reveals the
+- [x] C6 (P6): plain register ships by default; the expert switch reveals the
       subsystem names; the vocabulary lint is green. **Progress 2026-11-13:
       the home empty state reads in plain language** — the method steps and
       the capability row no longer say `sys1`/`lanes`/`deck` (verified
@@ -270,7 +270,12 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       on -> expert inline / plain hidden; off -> the reverse). The lens heads
       follow: Calibration's page title is now **Reviews** (matching the rail)
       with a plain subtitle, and Intelligence's subtitle no longer leads with
-      `harness`/`corpus`. Harness + gate green. Remaining: the vocabulary lint.
+      `harness`/`corpus`. Harness + gate green. **The vocabulary lint landed**
+      (`scripts/copy_lint.py`): it reads the static shell's visible text —
+      comments, scripts, expert-only spans and the console's feature toggles
+      excluded — and refuses the forbidden subsystem terms; it is green. The
+      pinned recipient-transparency copy (Perception/Nace) is kept, as
+      `documents::tests::the_copy_names_the_recipients` requires.
 - [ ] C7 (P7): the dead code and duplicate declarations are gone; the counts
       are recorded; the ledgers and the pointer index are reconciled.
       **Progress 2026-11-13: the dead `#panel-huddles` markup removed** (no
