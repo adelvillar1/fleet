@@ -1689,8 +1689,24 @@ async function aStreamedReplyRendersAtItsBoundary() {
   check('C6 mid-stream it is streaming text', mid.length === 1 && /streaming/.test(mid[0].className), mid.length ? mid[0].className : '');
   check('C6 mid-stream no markup yet', mid.length === 1 && mid[0].querySelector('.md') === null,
     mid.length ? String(mid[0].querySelector('.md')) : '');
+  // Steady streaming (the dogfood pass): each flush appends a text
+  // node — never a whole-reply re-serialization per frame — and the
+  // stick-to-bottom write is instant, because an animated scroll
+  // restarted every frame read as the transcript flickering.
+  check('C6 the streamed text lands as appended text nodes',
+    mid.length === 1 && mid[0].children.length === 1 &&
+      mid[0].children.every((c) => c.name === '#text'),
+    JSON.stringify(mid.length ? mid[0].children.map((c) => c.name) : []));
+  check('C6 the log carries no smooth scroll to restart per frame',
+    !ruleBlock('.log').includes('scroll-behavior'), ruleBlock('.log'));
   page.push({ type: 'token', text: '```rust\nlet lock = FileLock::take(&path);\n```\n' });
   await flush();
+  check('C6 the second flush appends beside the first',
+    page.rows('.assistant')[0].children.length === 2,
+    String(page.rows('.assistant')[0].children.length));
+  check('C6 the stick write keeps the log at its end',
+    page.IDS.log.scrollTop === page.IDS.log.scrollHeight,
+    'top=' + page.IDS.log.scrollTop + ' height=' + page.IDS.log.scrollHeight);
   page.push({ type: 'finished', reason: 'stop' });
   await flush();
   const done = page.rows('.assistant');
@@ -1729,7 +1745,9 @@ async function theWorkingLineReadsTheHealthNotTheTurn() {
   page.push({ type: 'usage', prompt: 34000, completion: 900,
     budget: 96000, folds: 2, share: 87, cache_read: 31000 });
   await flush();
-  const line = page.text('working-live');
+  // The line's words live in their own span (the stop button rides the
+  // same line without being part of them).
+  const line = page.text('working-live-text');
   check('C2 the line names occupancy and never the turn',
     /34k of 96k/.test(line) && !/turn 1/.test(line), line);
   check('C2 the line names the folds', /2 folds/.test(line), line);
@@ -1742,7 +1760,7 @@ async function theWorkingLineReadsTheHealthNotTheTurn() {
   page.push({ type: 'usage', prompt: 46000, completion: 700,
     budget: 96000, folds: 2, share: 76, cache_read: 40000 });
   await flush();
-  const trended = page.text('working-live');
+  const trended = page.text('working-live-text');
   check('C2 a climbing trend reads the turns-to-fold',
     /~\d+ turns to the fold/.test(trended), trended);
   const meter = page.rows('#context-meter')[0];
@@ -4693,14 +4711,33 @@ async function aStopWorksWithoutAProcessCard() {
   page.open();
   await flush();
   const send = page.IDS.send;
-  check('KI-495 a running chat labels the button Stop',
-    send.dataset.mode === 'stop' && send.getAttribute('aria-label') === 'stop the run',
+  // The composer's button queues while a run is in flight — never a
+  // hidden stop the owner's press trips over; the stop lives on the
+  // working line, beside the state it ends.
+  check('KI-495 a running chat keeps the button Send in queue mode',
+    send.dataset.mode === 'queue' &&
+      send.getAttribute('aria-label') === 'queue the task; it sends when the run ends',
     JSON.stringify({ mode: send.dataset.mode, label: send.getAttribute('aria-label') }));
-  const before = page.calls.filter((c) => c.url === '/api/stop').length;
+  check('KI-495 the working line carries the stop',
+    page.IDS['working-stop'].hidden === false && page.IDS['working-stop'].disabled === false,
+    'hidden=' + page.IDS['working-stop'].hidden + ' disabled=' + page.IDS['working-stop'].disabled);
+  // The press queues the typed words; nothing dispatches.
+  page.IDS.task.value = 'the words for later';
   page.fireOn('send', 'click', {});
   await flush();
+  check('KI-495 the press queues while a run is in flight',
+    page.IDS['queue-chip'].hidden === false && page.IDS.task.value === '',
+    'chip=' + page.IDS['queue-chip'].hidden + ' task=' + JSON.stringify(page.IDS.task.value));
+  check('KI-495 the queued press dispatches nothing',
+    page.calls.every((c) => c.url !== '/api/run'),
+    JSON.stringify(page.calls.map((c) => c.url)));
+  // The stop works from the working line without a process card (the
+  // state read alone tells the face a run is in flight).
+  const before = page.calls.filter((c) => c.url === '/api/stop').length;
+  page.fireOn('working-stop', 'click', {});
+  await flush();
   const stops = page.calls.filter((c) => c.url === '/api/stop').length;
-  check('KI-495 the press stops the run the face attached to',
+  check('KI-495 the working-line stop reaches the bridge',
     stops === before + 1, JSON.stringify(page.calls.map((c) => c.url)));
 }
 
@@ -5564,13 +5601,32 @@ async function theQueuedMessagesCarryTheirActions() {
   await flush();
   const rows = () => page.rows('.queue-row');
   check('Q two messages queued', rows().length === 2, String(rows().length));
-  check('Q each row carries the three icon verbs with the head disabled',
+  // The head's send is "send now" — active, it stops the run in flight
+  // and the message sends the moment the run ends. Below the head, send
+  // moves the message to the head. The head is never a dead button.
+  check('Q each row carries the three icon verbs with the head active',
     rows().every((r) => r.querySelectorAll('.queue-send').length === 1 &&
         r.querySelectorAll('.queue-edit').length === 1 &&
         r.querySelectorAll('.queue-drop').length === 1) &&
-      rows()[0].querySelector('.queue-send').disabled === true &&
-      rows()[1].querySelector('.queue-send').disabled === false,
-    String(rows().length));
+      rows()[0].querySelector('.queue-send').disabled === false &&
+      rows()[0].querySelector('.queue-send').getAttribute('aria-label') === 'send now' &&
+      rows()[1].querySelector('.queue-send').disabled === false &&
+      rows()[1].querySelector('.queue-send').getAttribute('aria-label') === 'send first',
+    JSON.stringify(rows().map((r) => ({
+      send: r.querySelector('.queue-send').disabled,
+      name: r.querySelector('.queue-send').getAttribute('aria-label'),
+    }))));
+  // Send now on the head: the run in flight stops (a tool call running
+  // finishes first) and the finished handler flushes the head.
+  const stopsBefore = page.calls.filter((c) => c.url === '/api/stop').length;
+  rows()[0].querySelector('.queue-send').click();
+  await flush();
+  check('Q send now stops the run in flight',
+    page.calls.filter((c) => c.url === '/api/stop').length === stopsBefore + 1,
+    JSON.stringify(page.calls.map((c) => c.url)));
+  check('Q send now keeps the queue waiting for the end',
+    rows().length === 2 && rows()[0].querySelector('.queue-text').textContent === 'the first queued',
+    rows()[0].querySelector('.queue-text').textContent);
   // Send on the second moves it to the head — the head is what the next
   // run sends.
   rows()[1].querySelector('.queue-send').click();
@@ -10445,8 +10501,9 @@ async function theConversationDensityHolds() {
   check('D1 the working line stands at the run',
     !!live && live.hidden === false, live ? 'hidden=' + live.hidden : 'no line');
   check('D1 it names working and a clock',
-    !!live && /working/.test(live.textContent) && /\d+:\d\d/.test(live.textContent),
-    live ? live.textContent : '');
+    !!live && /working/.test(page.text('working-live-text')) &&
+      /\d+:\d\d/.test(page.text('working-live-text')),
+    page.text('working-live-text'));
   check('D1 the composer keeps its idle words',
     page.text('hint') === 'Shift+Enter makes a newline', page.text('hint'));
 
@@ -10535,8 +10592,8 @@ async function theConversationDensityHolds() {
   check('D1 a standing seat shows its wait on the conversation',
     page.IDS['working-live'].hidden === false &&
       page.IDS['working-live'].dataset.mode === 'seat' &&
-      /waiting for an answer/.test(page.IDS['working-live'].textContent),
-    page.IDS['working-live'].textContent);
+      /waiting for an answer/.test(page.text('working-live-text')),
+    page.text('working-live-text'));
   check('D1 the composer still keeps its idle words',
     page.text('hint') === 'Shift+Enter makes a newline', page.text('hint'));
   page.push({ type: 'seat_cleared' });
@@ -12463,10 +12520,11 @@ async function theMcpToggleWritesTheRegistry() {
     'rows painted');
 }
 
-// U39: the thread pane is the receipts of the run — every object the
-// conversation generated, dotted by kind, fresh rows pulsing once, a
-// click pivoting the workspace. The composer is never covered: the
-// pane folds to the conv-head's tissue chip and the fold persists.
+// U39 folded into the drawer per U13: the receipts are the pane's own
+// tab — every object the conversation generated, dotted by kind, fresh
+// rows pulsing once, a click pivoting the workspace. There is no column
+// beside the transcript and no conv-head chip: the drawer is the one
+// right surface.
 const receiptState = (asked) => ({
   ...emptyState(asked),
   tasks: [{ step: 'write the release notes', status: 'working' }],
@@ -12475,11 +12533,29 @@ const receiptState = (asked) => ({
   feedback: { 3: 'held' },
 });
 async function theThreadPaneCarriesTheReceipts() {
-  const page = boot({ documents: { state: receiptState }, hash: '#/chat' });
+  const page = boot({
+    documents: { state: receiptState }, hash: '#/chat',
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'receipts' },
+  });
   page.open();
   await flush(80);
+  check('THREAD the old column and its chip are gone',
+    page.IDS['thread-pane'] === undefined &&
+      page.IDS['thread-pane-toggle'] === undefined &&
+      page.IDS['thread-pane-count'] === undefined,
+    JSON.stringify({
+      column: page.IDS['thread-pane'] === undefined,
+      chip: page.IDS['thread-pane-toggle'] === undefined,
+      count: page.IDS['thread-pane-count'] === undefined,
+    }));
+  check('THREAD the made-here tab answers its selection',
+    page.IDS['tab-receipts'].getAttribute('aria-selected') === 'true' &&
+      page.IDS['pane-receipts'].hidden === false &&
+      page.IDS['pane-run'].hidden === true,
+    'selected=' + page.IDS['tab-receipts'].getAttribute('aria-selected') +
+      ' body=' + page.IDS['pane-receipts'].hidden);
   const rows = page.IDS['thread-pane-list'].querySelectorAll('.thread-row');
-  check('THREAD the pane lists every generated object',
+  check('THREAD the tab lists every generated object',
     rows.length === 5, 'rows=' + rows.length);
   const text = page.IDS['thread-pane-list'].textContent;
   check('THREAD the kinds are named and dotted',
@@ -12493,9 +12569,6 @@ async function theThreadPaneCarriesTheReceipts() {
   const fresh = page.IDS['thread-pane-list'].querySelectorAll('.thread-row.fresh');
   check('THREAD first paint lands every row as fresh',
     fresh.length === 5, 'fresh=' + fresh.length);
-  check('THREAD the conv-head chip carries the live count',
-    page.IDS['thread-pane-count'].textContent === '5',
-    'count=' + page.IDS['thread-pane-count'].textContent);
   // The pivot (U3): a row click walks the whole workspace.
   const deliverableRow = Array.from(rows).find((one) =>
     one.querySelector('.thread-kind').textContent === 'deliverable');
@@ -12506,30 +12579,43 @@ async function theThreadPaneCarriesTheReceipts() {
 }
 
 async function theThreadPaneCollapsesAndPersists() {
-  const page = boot({ documents: { state: receiptState }, hash: '#/chat' });
+  // The drawer is the only right surface (U13): no grid track carries
+  // the pane in any rail or tissue state, and the run/receipts tabs
+  // trade one body for the other.
+  const page = boot({
+    documents: { state: receiptState }, hash: '#/chat',
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'run' },
+  });
   page.open();
   await flush(80);
-  check('THREAD the pane opens by default',
-    page.IDS['thread-pane-toggle'].getAttribute('aria-pressed') === 'true',
-    'pressed=' + page.IDS['thread-pane-toggle'].getAttribute('aria-pressed'));
-  page.IDS['thread-pane-toggle'].click();
+  check('THREAD the drawer opens at the run tab',
+    page.IDS['tab-run'].getAttribute('aria-selected') === 'true' &&
+      page.IDS['pane-run'].hidden === false &&
+      page.IDS['pane-receipts'].hidden === true,
+    'run=' + page.IDS['tab-run'].getAttribute('aria-selected'));
+  page.fireOn('tab-receipts', 'click', {});
   await flush(40);
-  check('THREAD a press folds the pane to the chip',
-    page.IDS['panel-chat'].dataset.threadPane === 'off' &&
-      page.IDS['thread-pane-toggle'].getAttribute('aria-pressed') === 'false',
-    'attr=' + page.IDS['panel-chat'].dataset.threadPane);
-  check('THREAD the fold is remembered',
-    page.window.localStorage.getItem('fleet-thread-pane') === 'off',
-    'stored=' + page.window.localStorage.getItem('fleet-thread-pane'));
-  const reopen = boot({
-    storage: { 'fleet-thread-pane': 'off' },
-    documents: { state: receiptState }, hash: '#/chat',
-  });
-  reopen.open();
-  await flush(80);
-  check('THREAD a reopened face honors the fold',
-    reopen.IDS['panel-chat'].dataset.threadPane === 'off',
-    'attr=' + reopen.IDS['panel-chat'].dataset.threadPane);
+  check('THREAD the made-here tab swaps the body',
+    page.IDS['tab-receipts'].getAttribute('aria-selected') === 'true' &&
+      page.IDS['pane-receipts'].hidden === false &&
+      page.IDS['pane-run'].hidden === true,
+    'receipts=' + page.IDS['tab-receipts'].getAttribute('aria-selected'));
+  page.fireOn('tab-run', 'click', {});
+  await flush(40);
+  check('THREAD the run tab swaps back',
+    page.IDS['tab-run'].getAttribute('aria-selected') === 'true' &&
+      page.IDS['pane-run'].hidden === false &&
+      page.IDS['pane-receipts'].hidden === true,
+    'run=' + page.IDS['tab-run'].getAttribute('aria-selected'));
+  // The phantom tracks are gone: no rule reserves a pane-width column
+  // beside the stage, at any rail or tissue state (U13).
+  check('U13 no grid track carries the pane in the icons rail',
+    ruleBlock('body[data-rail="icons"][data-pane="open"] .face') === '',
+    JSON.stringify(ruleBlock('body[data-rail="icons"][data-pane="open"] .face')));
+  check('U13 no grid track carries the pane with the tissue off',
+    ruleBlock('body[data-tissue="off"][data-pane="open"] .face') === '' &&
+      ruleBlock('body[data-tissue="off"][data-pane="open"] .pane') === '',
+    JSON.stringify(ruleBlock('body[data-tissue="off"][data-pane="open"] .face')));
 }
 
 // U31: the judged rows carry the meter, the gold border when the
