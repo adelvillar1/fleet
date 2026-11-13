@@ -19040,106 +19040,6 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
   // named. The CLI and the TUI read the same files, so the three cannot
   // disagree about who is in or whether anything is listening.
 
-  function readBots(force) {
-    var now = Date.now();
-    if (!force && face.bots && now - face.botsAt < 4000) return Promise.resolve();
-    face.botsAt = now;
-    return fetch('/api/channels', { headers: { accept: 'application/json' } })
-      .then(function (reply) {
-        if (reply.status === 401) throw new Error('token');
-        return reply.json();
-      })
-      .then(function (doc) {
-        face.bots = doc;
-        markBotsCount();
-        if (face.panel === 'bots') paintBots();
-      })
-      .catch(function () { });
-  }
-
-  /// The paired devices, read beside the channel peers. A device token is
-  /// stored as a digest, so this names who is paired and never what would
-  /// let them in.
-  function readAccess(force) {
-    var now = Date.now();
-    if (!force && face.access && now - face.accessAt < 4000) return Promise.resolve();
-    face.accessAt = now;
-    return fetch('/api/access', { headers: { accept: 'application/json' } })
-      .then(function (reply) {
-        if (reply.status === 401) throw new Error('token');
-        return reply.json();
-      })
-      .then(function (doc) {
-        face.access = doc;
-        if (face.panel === 'bots') paintBots();
-      })
-      .catch(function () { });
-  }
-
-  /// The paired phones and browsers. The store holds token digests, so a
-  /// row names the device and never the token; revoking forgets it.
-  function devicesCard() {
-    var read = face.access;
-    var devices = (read && read.devices) || [];
-    var card = boardCard(12, 'paired devices', devices.length
-      ? devices.length + (devices.length === 1 ? ' device' : ' devices')
-      : null,
-      'A device token is stored as a digest; this names who is paired and never what would ' +
-      'let them in. Revoking forgets the token.');
-    if (!read) {
-      card.appendChild(node('p', 'board-empty',
-        'The access read has not landed yet. It reads the home\u2019s device store.'));
-      return card;
-    }
-    if (!devices.length) {
-      card.appendChild(node('p', 'board-empty',
-        'No device is paired. Mint a code from the pair button to let a phone in.'));
-      return card;
-    }
-    devices.forEach(function (device) {
-      var row = node('div', 'bots-row');
-      var head = node('div', 'bots-row-main');
-      head.appendChild(node('span', 'bots-row-name', device.name || device.id));
-      head.appendChild(node('span', 'bots-row-meta', 'paired ' + (device.paired || '\u2014')));
-      if (device.seen) head.appendChild(node('span', 'bots-row-meta', 'last seen ' + device.seen));
-      row.appendChild(head);
-      var acts = node('div', 'bots-acts');
-      acts.appendChild(botsButton('revoke-device', 'revoke', function () {
-        if (!window.confirm('Revoke the device `' + (device.name || device.id) + '`?')) return;
-        post('/api/access/revoke', { kind: 'device', id: device.id }).then(function () {
-          readAccess(true);
-        });
-      }));
-      row.appendChild(acts);
-      card.appendChild(row);
-    });
-    return card;
-  }
-
-  /// The rail's count: the peers waiting at the door plus the peer seats
-  /// waiting on an answer. Both are things an owner has to act on, and
-  /// nothing else on this surface is.
-  function markBotsCount() {
-    var read = face.bots;
-    if (!read) return;
-    var pending = 0;
-    (read.channels || []).forEach(function (channel) {
-      pending += (channel.pending || []).length;
-    });
-    var waiting = Number(read.waiting_seats || 0);
-    var total = pending + waiting;
-    var spot = el.railTree.querySelector('[data-count="bots"]');
-    if (!spot) return;
-    if (total > 0) {
-      spot.textContent = String(total);
-      spot.hidden = false;
-      spot.title = pending + ' waiting at the door, ' + waiting + ' waiting on an answer';
-    } else {
-      spot.textContent = '';
-      spot.hidden = true;
-      spot.removeAttribute('title');
-    }
-  }
 
   // One write, then the read again: the surface paints what the server
   // confirmed, and a refusal says what the writer said rather than a
@@ -26816,11 +26716,24 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
     bundle: el.panelBundle
   };
 
-  function showRoute() {
+  // P3 / U47: one address grammar. Every surface reads the same
+  // `#/<lens>/<id>` shape through this single parser: the lens is the first
+  // segment, the focused object the rest (decoded, inner slashes kept).
+  function parseAddress() {
     var raw = (window.location.hash || '').replace(/^#\/?/, '');
     var parts = raw.split('/');
-    var which = parts[0] || '';
-    var focusId = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : '';
+    return {
+      lens: parts[0] || '',
+      id: parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : '',
+      parts: parts
+    };
+  }
+
+  function showRoute() {
+    var addr = parseAddress();
+    var parts = addr.parts;
+    var which = addr.lens;
+    var focusId = addr.id;
     // The deliverable address (KI-289): an agent closes its work with a
     // link, and the link opens the face with the pane's preview in
     // front — the rendered document for markdown, the file otherwise.

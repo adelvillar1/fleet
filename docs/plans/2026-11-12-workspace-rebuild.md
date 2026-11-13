@@ -242,8 +242,10 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       route focus from the single tissue focus when the address carries no
       explicit id, so a pivot re-projects the same focused object into the new
       lens instead of leaving two selections behind. Harness + gate green.
-      Remaining: one address grammar (folding the six hash parsers) and the
-      single-stage lens renderer (P4).
+      The main address grammar is centralized in `parseAddress()` — one parser
+      for `#/<lens>/<id>`; the section sub-parsers still read their own
+      segments. Remaining: fold those sub-parsers and the single-stage lens
+      renderer (P4).
 - [ ] C4 (P4): all eight lenses shipped one at a time, each with its negative
       cases and its empty states; no old panel remains reachable; onboarding
       rebuilt on the finished shell. **Progress 2026-11-13: the Board lens now
@@ -282,8 +284,10 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       are recorded; the ledgers and the pointer index are reconciled.
       **Progress 2026-11-13: the dead `#panel-huddles` markup removed** (no
       app.js or harness references; huddles render into the chat panel).
-      Harness + gate green. Remaining: the dead tower console, the duplicate
-      bots block, the legacy skills surface, and `PANEL_EL` retirement.
+      Harness + gate green. **The duplicate bots block is removed** (the hoisted
+      copy remains; the two were byte-identical). Remaining: the legacy skills
+      surface and `PANEL_EL` retirement. The tower console stays — it is live,
+      feeding the inspector's project drawer.
 - [ ] C8: every phase carries a local four-leg gate on its committed tree, a
       green face harness, and the visual check against its mockup section;
       the version declarations move per release; **the beta bar is untouched
