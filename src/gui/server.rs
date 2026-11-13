@@ -72,6 +72,7 @@ pub(crate) const INDEX: &str = include_str!("assets/index.html");
 pub(crate) const STYLES: &str = include_str!("assets/app.css");
 pub(crate) const SCRIPT: &str = include_str!("assets/app.js");
 pub(crate) const STORE: &str = include_str!("assets/core/store.js");
+pub(crate) const ROUTER: &str = include_str!("assets/core/router.js");
 /// The vendored document renderers (see assets/vendor/VENDOR.json for
 /// the provenance: versions, upstream URLs, SHA-256s, licenses). Served
 /// from the face's own origin, never a CDN at render time.
@@ -326,6 +327,14 @@ async fn serve_connection(
                 versioned_asset("text/javascript; charset=utf-8", STORE)
             } else {
                 asset("text/javascript; charset=utf-8", STORE)
+            };
+            write_reply(&mut stream, reply).await
+        }
+        ("GET", "/core/router.js") => {
+            let reply = if query_value(&request.query, "v") == Some(ASSET_HASH) {
+                versioned_asset("text/javascript; charset=utf-8", ROUTER)
+            } else {
+                asset("text/javascript; charset=utf-8", ROUTER)
             };
             write_reply(&mut stream, reply).await
         }

@@ -13,6 +13,7 @@
 // server checks that a request's Host and Origin name it. The address
 // alone opens the face, and a reload is the same address again.
 import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
+import { parseAddress } from './core/router.js';
 (function () {
   'use strict';
 
@@ -26724,19 +26725,6 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
     // face only supplies the frame.
     bundle: el.panelBundle
   };
-
-  // P3 / U47: one address grammar. Every surface reads the same
-  // `#/<lens>/<id>` shape through this single parser: the lens is the first
-  // segment, the focused object the rest (decoded, inner slashes kept).
-  function parseAddress() {
-    var raw = (window.location.hash || '').replace(/^#\/?/, '');
-    var parts = raw.split('/');
-    return {
-      lens: parts[0] || '',
-      id: parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : '',
-      parts: parts
-    };
-  }
 
   function showRoute() {
     var addr = parseAddress();
