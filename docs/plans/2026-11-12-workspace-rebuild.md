@@ -234,7 +234,13 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       cases and its empty states; no old panel remains reachable; onboarding
       rebuilt on the finished shell.
 - [ ] C5 (P5): the type floor holds; component pairs are measured at 7:1 for
-      small text; graph labels are readable at any density.
+      small text; graph labels are readable at any density. **Progress
+      2026-11-12: the 12px floor landed** (464 sub-12px literals removed) and
+      the lightest text tokens were raised so small text clears ~7:1 (light
+      faint 7.43:1, night faint 7.07:1); the contrast guard now also measures
+      the legacy --muted/--faint inks. Graph labels are hover-only (readable
+      at any density). Remaining: a dedicated 7:1 small-text floor in the
+      guard and a full component-pair sweep.
 - [ ] C6 (P6): plain register ships by default; the expert switch reveals the
       subsystem names; the vocabulary lint is green.
 - [ ] C7 (P7): the dead code and duplicate declarations are gone; the counts

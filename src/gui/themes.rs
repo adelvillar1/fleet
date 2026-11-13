@@ -157,6 +157,11 @@ fn themes() -> Vec<(String, Theme)> {
                 "--dsw-alias-ok",
                 "--dsw-alias-down",
                 "--dsw-alias-warn",
+                // U46: the legacy body/label inks most components actually
+                // read. Measuring them keeps the readable-pairing law from
+                // regressing on the tokens the alias tier doesn't cover.
+                "--muted",
+                "--faint",
             ]
             .iter()
             .filter_map(|token| pick(token).map(|colour| (token.to_string(), colour)))
