@@ -314,6 +314,21 @@
   // The folded surfaces' home, for the breadcrumb: their address still
   // resolves, but the rail no longer names them, and a crumb that said
   // "work / conversation" would be a lie about where they live.
+  // The folded destinations, named in plain words (U45): Settings →
+  // Advanced is the index of everything that is not a lens. Each row is a
+  // door to the surface it names; nothing here is new behaviour.
+  var ADVANCED = [
+    ['router', 'Routing', 'which model answers, and why'],
+    ['delegation', 'Helpers', 'the helpers a task can be given to'],
+    ['bots', 'Assistants', 'the named helpers and their channels'],
+    ['workspace-history', 'Versions', 'every version of the work'],
+    ['vault', 'Secrets', 'the keys this home holds'],
+    ['plugins', 'Plugins', 'surfaces installed on top of fleet'],
+    ['design', 'Design', 'the canvas'],
+    ['second-brain', 'Health', 'the machine\u2019s own checks'],
+    ['about', 'About', 'the build and the update']
+  ];
+
   var FOLDED = {
     sessions: ['workspace', 'threads'],
     huddles: ['workspace', 'threads'],
@@ -887,6 +902,7 @@
     pairBody: document.getElementById('pair-body'),
     pairClose: document.getElementById('pair-close'),
     pane: document.getElementById('pane'),
+    paneScrim: document.getElementById('pane-scrim'),
     paneOpen: document.getElementById('pane-open'),
     tabContext: document.getElementById('tab-context'),
     paneContext: document.getElementById('pane-context'),
@@ -21571,6 +21587,27 @@
               }), { limit: 12, label: 'knobs', key: 'env-knobs' })
           ];
         }
+      },
+      {
+        id: 'advanced', icon: 'dot', name: 'advanced',
+        paint: function () {
+          var card = boardCard(12, 'the rest of the app',
+            'Every surface that is not a lens, one page each.');
+          var list = node('div', 'cfg-list');
+          ADVANCED.forEach(function (entry) {
+            var row = node('button', 'cfg-item');
+            row.type = 'button';
+            row.dataset.address = entry[0];
+            row.appendChild(node('span', 'cfg-item-name', entry[1]));
+            row.appendChild(node('span', 'cfg-item-value', entry[2]));
+            row.addEventListener('click', function () {
+              window.location.hash = '#/' + entry[0];
+            });
+            list.appendChild(row);
+          });
+          card.appendChild(list);
+          return [card];
+        }
       }
     ];
   }
@@ -28480,8 +28517,9 @@
   }
 
   // The pane's open and closed state, and which of its two views is in
-  // front. The pane is layout, not an overlay: it takes its own column
-  // beside the stage so a preview and the run are readable together.
+  // front. U13: the pane is a right drawer over the stage, never a fourth
+  // column — the shell stays rail | stage | connections at every width,
+  // and a press on the scrim closes it.
   function openPane() {
     el.pane.hidden = false;
     document.body.dataset.pane = 'open';
@@ -28495,6 +28533,7 @@
     document.body.dataset.pane = 'closed';
     try { window.localStorage.setItem('fleet-pane', 'closed'); } catch (error) { }
   }
+  if (el.paneScrim) el.paneScrim.addEventListener('click', closePane);
 
   function showPaneTab(which) {
     face.paneTab = which;

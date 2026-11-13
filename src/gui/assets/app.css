@@ -537,10 +537,8 @@ button, input, textarea, select { font: inherit; }
 .stage { grid-column: 2; grid-row: 3; }
 .console-bar { grid-column: 2 / -1; grid-row: 4; }
 
-body[data-pane="open"] .face {
-  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--pane-width);
-}
-.pane { grid-column: 3; grid-row: 3; }
+/* U13: the pane is a right drawer over the stage, never a fourth grid
+   column. The shell stays rail | stage | connections at every width. */
 
 /* ------------------------------------------------------------ the rail */
 
@@ -6511,14 +6509,32 @@ pre.drawer-code {
 /* -------------------------------------------------------------- the pane */
 
 .pane {
-  position: relative;
+  position: fixed;
+  top: var(--topbar-height);
+  bottom: var(--console-height);
+  right: 0;
+  width: min(var(--pane-width), 100vw);
+  z-index: 30;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   border-left: var(--card-hairline);
   background: var(--dsw-alias-surface);
+  box-shadow: var(--shadow-3);
 }
+/* The drawer's scrim: the workspace dims behind it and a press on the
+   scrim closes it, the way the object drawer does (U13). */
+.pane-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+  background: rgb(0 0 0 / 28%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+body[data-pane="open"] .pane-scrim { opacity: 1; pointer-events: auto; }
 /* The owner's hand on the pane's width: the grip is the pane's left
    edge, a separator the pointer drags and the keyboard steps. The
    visible line thickens on hover; during a drag the frame stands down
@@ -6642,15 +6658,7 @@ body[data-pane-dragging="true"] .pane iframe { pointer-events: none; }
 .pane-web-back:hover, .pane-web-out:hover { color: var(--dsw-alias-accent); }
 .pane-web-back:disabled { opacity: 0.4; cursor: default; }
 
-body[data-pane="open"] .face {
-  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--pane-width);
-}
-
-body[data-rail="icons"][data-pane="open"] .face {
-  grid-template-columns: var(--rail-width-icons) minmax(0, 1fr) var(--pane-width);
-}
-
-.face > .pane { grid-column: 3; grid-row: 3; }
+/* The pane overlays; it takes no column (U13). */
 
 .pane-head {
   display: flex;
@@ -7345,16 +7353,7 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   .donut { flex-direction: column; align-items: flex-start; gap: 14px; }
   .donut svg { align-self: center; }
 
-  body[data-pane="open"] .face,
-  body[data-rail="icons"][data-pane="open"] .face { grid-template-columns: minmax(0, 1fr); }
-
-  .pane {
-    position: fixed;
-    inset: 0 0 0 auto;
-    z-index: 30;
-    width: min(var(--pane-width), 100vw);
-    box-shadow: var(--shadow-3);
-  }
+  /* The pane is already a fixed overlay at every width (U13). */
 
   .drawer { width: min(var(--drawer-width), 100vw); }
 }
@@ -11090,10 +11089,7 @@ body[data-labels="off"] .tissue-hover-title { display: none; }
     grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--tissue-width);
   }
   body[data-tissue="on"] .tissue { display: flex; }
-  body[data-tissue="on"][data-pane="open"] .face {
-    grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--tissue-width) var(--pane-width);
-  }
-  body[data-tissue="on"][data-pane="open"] .pane { grid-column: 4; }
+  /* The pane is an overlay (U13); the tissue keeps its column. */
 }
 
 :root { --tissue-width: 320px; }
