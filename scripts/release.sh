@@ -245,6 +245,11 @@ if [ "$MODE" = "tag" ]; then
   git tag -a "$TAG" -m "release $TAG" || die "cannot tag $TAG"
   git push origin "$TAG" ||
     die "tag created locally but the push failed — push by hand, then continue with the assets mode"
+  # The release remote too, before gh release create: gh reads the tag
+  # from the GitHub remote and refuses a create whose tag is still
+  # propagating (two cuts raced this — 0.8.1, 0.8.2).
+  git push github "$TAG" ||
+    die "the tag did not reach github (adelvillar1/fleet) — push by hand, then continue with the assets mode"
   echo "tagged and pushed $TAG at $(git rev-parse --short HEAD)"
 
   if [ -n "$NOTES_FILE" ]; then
