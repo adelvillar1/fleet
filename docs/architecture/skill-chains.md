@@ -10,8 +10,10 @@ is the spine; the others hang off it.
 warmup → plan → build → recap
 ```
 
-warmup loads the context (the router, the latest recap, the active
-plans); plan drafts the contract (the acceptance criteria, the gate);
+warmup situates the session (one bounded pass: git state, the newest
+recap's summary, plan status lines, the ledger's open count — a compact
+report ending with the ask; it never executes what it finds open); plan
+drafts the contract (the acceptance criteria, the gate);
 build lands it (the gate green, the commits); recap closes the loop
 (the criteria walked, the docs proposed). The cycle repeats; each
 turn's context is the last recap.

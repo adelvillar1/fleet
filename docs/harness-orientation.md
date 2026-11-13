@@ -50,10 +50,14 @@ Work runs one loop, every time:
 
 **warmup → plan → build → recap → commit**
 
-1. **Orient.** Before touching code, read what governs the work: the
-   active plan if one matches the task (`docs/plans/*.md` with
-   `status: active`), the feature or architecture doc for the area, the
-   ledger rows for the module. Read before you write — files and facts.
+1. **Situate.** A warmup or continuity turn is bounded: one pass over the
+   state surfaces (git state, the newest recap's summary, plan status
+   lines, the ledger's open count), a compact report, and the ask —
+   "What do you want to work on?" It never executes what it finds open:
+   an active plan is context, not authorization, and work starts when the
+   owner asks for it in the conversation. Before non-trivial work, read
+   what governs the task: the feature or architecture doc for the area
+   and the plan that carries it. Read before you write — files and facts.
 2. **Plan before non-trivial work.** Anything ≥15 minutes or touching
    more than two files gets a contract first:
    `docs/plans/YYYY-MM-DD-<slug>.md` with frontmatter (`status`,
