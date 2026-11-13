@@ -230,11 +230,6 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       scrim, retiring the fourth grid column that squeezed the stage
       (KI-528 closed). The shell is rail | stage | connections at every
       width.
-      **The Settings → Advanced index landed** (nine plain-named doors) and
-      **the pane is now the U13 drawer** — a fixed right overlay with a
-      scrim, retiring the fourth grid column that squeezed the stage
-      (KI-528 closed). The shell is rail | stage | connections at every
-      width.
 - [ ] C4 (P4): all eight lenses shipped one at a time, each with its negative
       cases and its empty states; no old panel remains reachable; onboarding
       rebuilt on the finished shell.

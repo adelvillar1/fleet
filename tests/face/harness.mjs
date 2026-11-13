@@ -8857,10 +8857,12 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   // U6 (settings-ux): the money section is gone — seven sections, and no
   // cap row anywhere on the face. The three caps stay writable from
   // `fleet settings`; the surface does not render them.
-  check('SET the rail declares the eight sections',
-    railRows.length === 8 &&
+  // U44 adds the ninth: the advanced index of the folded destinations.
+  check('SET the rail declares the nine sections',
+    railRows.length === 9 &&
       railRows[0].textContent.includes('models') &&
       railRows[7].textContent.includes('environment') &&
+      railRows[8].textContent.includes('advanced') &&
       !railRows.some((row) => row.textContent.includes('money')),
     railRows.map((row) => row.textContent).join(' | '));
   const capText = page.rows('.cfg-item').filter((row) =>
