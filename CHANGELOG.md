@@ -12,6 +12,32 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.1 — 2026-11-13
+
+The dogfood pass — the owner ran fleet on fleet, and every defect the run
+surfaced is fixed at the mechanism.
+
+The drawer is the one right surface: the chat's receipts column folded in
+as the pane's made-here tab, the phantom grid tracks retired, the stream
+steady (instant stick-to-bottom, text nodes appended per frame, the run
+card's tick in place), and a queued message sends on demand — send-now
+stops the run in flight, the composer button queues while busy, Stop
+lives on the working line. The warmup is situate-and-align: lean skills,
+a compiled-prompt carve-out that ends with the ask, effort scaling and an
+anti-second-guessing rule — a bounded probe now lands in 11 turns where
+the audit ran 60. The warmup never executes what it finds open: an active
+plan is context, not authorization. Pairing is in-app — the pair press
+brings the remote face up itself, relay origins persist as settings, and
+no terminal command appears anywhere in the flow. The substrate repair is
+an in-app action: the down layerfs card asks "do you want to repair it?"
+and the press runs install's own leg, repainting every face on the health
+event. Four themes remain (paper and graphite retired, U48) and the
+Motion switch's press always lands — the OS reduce setting is the default
+until the owner takes it. The landing is the question (U49): one line
+over the composer plus the onboard door, eleven explainer surfaces
+retired, /api/home with them. The skills store is git-tracked with its
+drift reconciled, and its pre-commit hook's warn-and-pass is real.
+
 ## v0.8.0 — 2026-11-13
 
 The workspace rebuild — the face is one workspace, not twenty panels.
