@@ -229,7 +229,7 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       carried over** (`#panel-huddles`, the duplicate bots block and the legacy
       skills cluster are gone). Remaining: the shell/lens modules and the
       single-container stage.
-- [ ] C3 (P3): one focus, one address grammar, seven/eight lenses, twelve
+- [x] C3 (P3): one focus, one address grammar, seven/eight lenses, twelve
       orphans under Settings → Advanced; pivot re-projects without swapping
       the stage; pinned by harness cases. **Progress 2026-11-12: the rail
       is U44's** — SURFACES (threads, board, desk, intelligence, learning,
@@ -247,7 +247,14 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       width. **P3 one shared focus landed 2026-11-13:** `showRoute` derives the
       route focus from the single tissue focus when the address carries no
       explicit id, so a pivot re-projects the same focused object into the new
-      lens instead of leaving two selections behind. Harness + gate green.
+      lens instead of leaving two selections behind. **One address grammar landed
+      2026-11-13:** `parseAddress()` is the face's single parser for
+      `#/<lens>/<id>` — `showRoute` reads it, and the five section sub-parsers
+      (memory / learning / workspace-history / bots / settings) now read its
+      parts instead of re-splitting the hash. The stage is structurally
+      single: every lens panel occupies the same grid cell and `showRoute`
+      only toggles which is visible, so a pivot re-projects in place. Harness
+      1204/166 and the four-leg gate green. Harness + gate green.
       The main address grammar is centralized in `parseAddress()` — one parser
       for `#/<lens>/<id>`; the section sub-parsers still read their own
       segments. Remaining: fold those sub-parsers and the single-stage lens

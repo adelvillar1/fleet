@@ -7053,8 +7053,7 @@ import { node, svg, clip } from './core/dom.js';
 
   /// The section the hash names, or the remembered one, or `needs-you`.
   function memorySectionId() {
-    var raw = (window.location.hash || '').replace(/^#\/?/, '');
-    var parts = raw.split('/');
+    var parts = parseAddress().parts;
     if (parts[0] === 'memory' && parts[1]) return decodeURIComponent(parts[1]);
     try {
       var stored = window.localStorage.getItem('fleet-memory-section');
@@ -8065,8 +8064,7 @@ import { node, svg, clip } from './core/dom.js';
   // practice (the entry and the outcomes), the history (the sessions).
 
   function learningSectionId() {
-    var raw = (window.location.hash || '').replace(/^#\/?/, '');
-    var parts = raw.split('/');
+    var parts = parseAddress().parts;
     if (parts[0] === 'learning' && parts[1]) return decodeURIComponent(parts[1]);
     try {
       var stored = window.localStorage.getItem('fleet-learning-section');
@@ -16681,8 +16679,7 @@ import { node, svg, clip } from './core/dom.js';
   /// first (its newest-active). The address carries the folder path,
   /// encoded — the path is the project's identity.
   function workspaceSectionId(read) {
-    var raw = (window.location.hash || '').replace(/^#\/?/, '');
-    var parts = raw.split('/');
+    var parts = parseAddress().parts;
     if (parts[0] === 'workspace-history' && parts[1]) {
       return decodeURIComponent(parts[1]);
     }
@@ -18536,8 +18533,7 @@ import { node, svg, clip } from './core/dom.js';
   // section keeps the plumbing.
 
   function botsSectionId() {
-    var raw = (window.location.hash || '').replace(/^#\/?/, '');
-    var parts = raw.split('/');
+    var parts = parseAddress().parts;
     if (parts[0] === 'bots' && parts[1]) return decodeURIComponent(parts[1]);
     try {
       var stored = window.localStorage.getItem('fleet-bots-section');
@@ -20460,8 +20456,7 @@ import { node, svg, clip } from './core/dom.js';
 
   /// The section the hash names, or the remembered one, or `models`.
   function settingsSectionId() {
-    var raw = (window.location.hash || '').replace(/^#\/?/, '');
-    var parts = raw.split('/');
+    var parts = parseAddress().parts;
     if (parts[0] === 'settings' && parts[1]) return decodeURIComponent(parts[1]);
     try {
       var stored = window.localStorage.getItem('fleet-settings-section');
