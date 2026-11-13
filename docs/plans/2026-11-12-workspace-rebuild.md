@@ -250,8 +250,10 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       projects the spine's work items** — on a live home with no declared
       tasks it shows the actual runs as read-only cards (verified done:12),
       while declared tasks stay movable; a run is not a movable task, so no
-      drag/bulk on it (a control that lies is on the never-list). Harness +
-      gate green. Remaining lenses follow.
+      drag/bulk on it (a control that lies is on the never-list). The **Desk
+      lens** follows: with no deliverables it projects the spine's runs as
+      read-only cards (verified 12, none draggable). Harness + gate green.
+      Remaining lenses follow.
 - [ ] C5 (P5): the type floor holds; component pairs are measured at 7:1 for
       small text; graph labels are readable at any density. **Progress
       2026-11-12: the 12px floor landed** (464 sub-12px literals removed) and

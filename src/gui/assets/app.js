@@ -12395,9 +12395,16 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
       // their stage tracks and refusal chips — the loop visible where
       // the work is, the moment the read lands.
       readDesk(false).then(function () {
-        if (!face.deskOpenDesk && (face.desk || []).length) {
-          paintDeskShelf(shell.center);
-        }
+        if (face.deskOpenDesk) return;
+        if ((face.desk || []).length) { paintDeskShelf(shell.center); return; }
+        // P4: the desk is a lens over the workspace. With no deliverables
+        // yet, project the spine's work items as read-only cards so the
+        // desk reflects real work instead of a blank canvas.
+        readSpine(false).then(function (doc) {
+          if (!face.deskOpenDesk && doc && Array.isArray(doc.work) && doc.work.length) {
+            paintDeskWork(shell.center, doc.work);
+          }
+        });
       });
     }
     if (face.wantContext && paneContextAvailable() && !el.pane.hidden) {
@@ -12427,6 +12434,25 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
           + 'made below \u2014 the brief is the thread\u2019s first message.'
         : 'Say what you want made below and the brief opens with it as the claim.',
     });
+  }
+
+  // P4: the desk with no deliverables yet — the spine's work items as
+  // read-only cards (a run is not a movable deliverable, so no drag/bulk).
+  function paintDeskWork(into, work) {
+    into.appendChild(dkHead('Knowledge', 'The desk',
+      'No deliverables yet \u2014 these are the runs that happened. Open one to see what it made.', []));
+    var zones = node('div', 'dk-zones');
+    var col = node('div', 'board-col');
+    var well = node('div', 'board-col-well');
+    work.forEach(function (w) {
+      well.appendChild(boardCardTask({
+        id: w.id, title: w.title, status: w.status,
+        assignee: w.owner || null, binding: w.binding || null, readOnly: true
+      }, {}));
+    });
+    col.appendChild(well);
+    zones.appendChild(col);
+    into.appendChild(zones);
   }
 
   function paintDeskShelf(into) {
