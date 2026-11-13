@@ -4498,8 +4498,16 @@ import { parseAddress } from './core/router.js';
 
   function paintRecent() {
     paintHome();
-    var rows = (face.home && face.home.runs && face.home.runs.recent)
-      || (face.sessions ? face.sessions.sessions.filter(railRow).slice(0, 3) : []);
+    // P4: the Threads lens projects the spine's work items — the runs that
+    // happened — falling back to the home/archive reads when the spine has
+    // not landed. A thread card opens its conversation; it is not a movable
+    // task, so no drag or bulk (the never-list).
+    var rows = (face.spine && Array.isArray(face.spine.work) && face.spine.work.length)
+      ? face.spine.work.map(function (w) {
+          return { id: w.id, title: w.title, ended: w.status === 'done', created: w.created || '' };
+        })
+      : ((face.home && face.home.runs && face.home.runs.recent)
+        || (face.sessions ? face.sessions.sessions.filter(railRow).slice(0, 3) : []));
     if (!rows.length) { el.recent.hidden = true; return; }
     el.recent.hidden = false;
     el.recent.textContent = '';
@@ -26997,6 +27005,9 @@ import { parseAddress } from './core/router.js';
         paintRecent();
         paintSince();
       }).catch(function () { });
+      // P4: the Threads lens projects the spine's work items; re-render the
+      // recent list once the spine read lands.
+      readSpine(false).then(paintRecent).catch(function () { });
     }
   }
 
