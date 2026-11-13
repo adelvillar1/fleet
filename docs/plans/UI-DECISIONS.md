@@ -115,7 +115,12 @@ Rules (the D-ledger's, applied to design):
   accent · Live-feed speed · Graph spread · Motion · Tissue · Labels) and the
   data actions (Shuffle · Reset · Export). Every control applies **live**, to
   the real UI. This is the mockup's control contract; production surfaces
-  carry the analogous controls for what they render. *Constrains:* the
+  carry the analogous controls for what they render. The connections column
+  also collapses from **its own head chevron** — three doors on one state
+  (`body[data-tissue]`): the console switch, the column's chevron, and the
+  slim edge tab that holds the stage's right edge while the column is away.
+  Collapsed is a 30px strip, not a vanish: the way back never hides with the
+  pane it controls, and the choice persists. *Constrains:* the
   console bar, any future "view settings".
 - **U13 — Overlays: drawer, palette, toasts.** Detail editing is a right
   drawer (380px, slide + scrim) — the persistent panes never hide behind it.
