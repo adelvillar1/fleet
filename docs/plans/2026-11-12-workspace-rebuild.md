@@ -221,8 +221,14 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       legal); `index.html` loads `type=module`; the server serves
       `/core/store.js`; the harness inlines the store and drops the import
       to reproduce module scope. Verified in-browser (rail builds, board
-      renders) and gate-green. Remaining: extract the shell/lens modules and
-      retire `PANEL_EL` with the P3/P4 rebuild.
+      renders) and gate-green. **`core/router.js` now holds the one address
+      grammar** (`parseAddress`) and **`core/dom.js` the pure element helpers**
+      (`node`, `svg`, `clip`) — each imported by app.js, served at its own
+      route, inlined by the harness. **`PANEL_EL` is retired** (the panel set
+      derives from the DOM, keyed by the route table) and **no dead surface is
+      carried over** (`#panel-huddles`, the duplicate bots block and the legacy
+      skills cluster are gone). Remaining: the shell/lens modules and the
+      single-container stage.
 - [ ] C3 (P3): one focus, one address grammar, seven/eight lenses, twelve
       orphans under Settings → Advanced; pivot re-projects without swapping
       the stage; pinned by harness cases. **Progress 2026-11-12: the rail
