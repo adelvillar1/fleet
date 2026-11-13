@@ -8,7 +8,7 @@ tier: durable
 shape: [ruling]
 phrases: [warmup, warm up, catch up, where did we leave off, session start, situate, get oriented]
 missing: []
-recall-count: 0
+recall-count: 2
 superseded-by:
 valid-until:
 ---
