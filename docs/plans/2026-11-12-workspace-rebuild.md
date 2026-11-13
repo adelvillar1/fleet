@@ -216,7 +216,15 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       case-for-case; `PANEL_EL` is gone; no dead surface carried over.
 - [ ] C3 (P3): one focus, one address grammar, seven/eight lenses, twelve
       orphans under Settings → Advanced; pivot re-projects without swapping
-      the stage; pinned by harness cases.
+      the stage; pinned by harness cases. **Progress 2026-11-12: the rail
+      is U44's** — SURFACES (threads, board, desk, intelligence, learning,
+      reviews, inbox; fleet when armada is on) + SETTINGS (settings and any
+      installed plugin). The twelve folded surfaces keep their address, their
+      breadcrumb (`settings / advanced`), and a palette door under the
+      `advanced` heading; the rail's badges moved to the lenses they belong
+      to. Remaining for the tick: the Settings → Advanced *page* (the folded
+      surfaces have a palette door, not yet a written index), one focus on
+      the new shell, and one address grammar (folding six hash parsers).
 - [ ] C4 (P4): all eight lenses shipped one at a time, each with its negative
       cases and its empty states; no old panel remains reachable; onboarding
       rebuilt on the finished shell.

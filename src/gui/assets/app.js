@@ -278,57 +278,56 @@
   // this is: four groups, one level beneath each, and the palette as
   // the parallel path that makes the grouping a convenience rather than
   // a maze.
+  // U44: the rail is the seven answers, not twenty subsystems. Threads,
+  // Board, Desk, Intelligence, Learning, Reviews, Inbox — plus Fleet when
+  // armada is on, and one door to Settings, which is where every other
+  // destination now lives (Settings -> Advanced). The address of a folded
+  // surface still resolves; the palette still jumps to it; the rail does
+  // not list it.
   var GROUPS = [
-    ['work', 'work', [
-      ['chat', 'conversation'],
+    ['workspace', 'surfaces', [
+      // What is being worked on right now.
+      ['chat', 'threads'],
+      // What is waiting, moving, or stuck.
       ['board', 'board'],
-      // The inbox sits directly below the conversation (the owner's
-      // ruling): one queue of everything waiting on the owner — seats,
-      // onboarding steps, huddle questions, cron failures, doctor
-      // findings. The badge is the queue's live total.
-      ['inbox', 'inbox'],
-      // The canvas sits directly under the conversation: a board is work
-      // the owner opens the way they open a chat, not a listing to
-      // browse after one.
-      ['design', 'design'],
-      ['sessions', 'sessions'],
-      // A huddle is work the owner opens the way they open a chat: a room
-      // with one or more bots, not an inventory to browse after one.
-      ['huddles', 'huddles'],
-      // The desk is knowledge work's place: a brief, not a blank canvas —
-      // sources read, claims carried, a deliverable that cannot end
-      // while a refusal stands.
+      // What landed, and whether it holds.
       ['desk', 'desk'],
-      // Learning is work the owner opens the way they open a chat: the
-      // measure → plan → teach loop's own surface, with the lesson's
-      // graph and the practice beside it — not a category of its own
-      // (the owner's ruling).
-      ['learning', 'learning']
-    ]],
-    ['intelligence', 'intelligence', [
-      ['router', 'router'],
-      ['delegation', 'delegation']
-    ]],
-    ['knowledge', 'knowledge', [
-      // Intelligence (U40): the lens formerly named Memory — the corpus,
-      // the skills, the tools and the workflows are its segments, so the
-      // skills destination folded into it and #/skills redirects.
+      // What it knows and what it can do.
       ['memory', 'intelligence'],
-      ['second-brain', 'second brain'],
-      ['workspace-history', 'workspace history']
+      // What it learned the hard way.
+      ['learning', 'learning'],
+      // Was it right — the decisions graded against their outcomes.
+      ['calibration', 'reviews'],
+      // Who is talking to it.
+      ['inbox', 'inbox'],
+      // The machines in this fleet (armada on only).
+      ['armada', 'fleet']
     ]],
-    ['system', 'system', [
-      ['bots', 'bots'],
-      ['vault', 'vault'],
-      ['settings', 'settings'],
-      ['calibration', 'calibration'],
-      ['plugins', 'plugins'],
-      // The flagship's hand (armada L9): the roster it commands, the
-      // dispatch it admits, and the corpus the instances share.
-      ['armada', 'armada'],
-      ['about', 'about']
+    // Everything else, one page each. A plugin the owner installs joins
+    // this section rather than the lenses: installed surfaces are
+    // advanced, and the rail's first section is the product.
+    ['advanced', 'settings', [
+      ['settings', 'settings']
     ]]
   ];
+
+  // The folded surfaces' home, for the breadcrumb: their address still
+  // resolves, but the rail no longer names them, and a crumb that said
+  // "work / conversation" would be a lie about where they live.
+  var FOLDED = {
+    sessions: ['workspace', 'threads'],
+    huddles: ['workspace', 'threads'],
+    design: ['settings', 'advanced'],
+    router: ['settings', 'advanced'],
+    delegation: ['settings', 'advanced'],
+    'second-brain': ['settings', 'advanced'],
+    'workspace-history': ['settings', 'advanced'],
+    bots: ['settings', 'advanced'],
+    vault: ['settings', 'advanced'],
+    plugins: ['settings', 'advanced'],
+    about: ['settings', 'advanced'],
+    skills: ['workspace', 'intelligence']
+  };
 
   // The composer's commands. Actions the page performs itself, which is
   // what separates them from the palette's surfaces: a slash command
@@ -840,6 +839,9 @@
   var WHERE = {};
   GROUPS.forEach(function (group) {
     group[2].forEach(function (item) { WHERE[item[0]] = [group[0], item[1]]; });
+  });
+  Object.keys(FOLDED).forEach(function (address) {
+    if (!WHERE[address]) WHERE[address] = FOLDED[address];
   });
 
   var el = {
@@ -28580,8 +28582,13 @@
       // The face plugins' entries join their declared group — the
       // state read's enabled plugins, mounted where the manifest says
       // (the plugin host plan's P1). A disabled plugin mounts nothing.
+      var known = GROUPS.map(function (one) { return one[0]; });
       (face.plugins || []).forEach(function (plugin) {
-        if (!plugin.enabled || plugin.group !== id) return;
+        if (!plugin.enabled) return;
+        // A plugin declared into a group the rail retired mounts in the
+        // rail's one group rather than vanishing (U44 folded the groups).
+        var home = known.indexOf(plugin.group) >= 0 ? plugin.group : 'advanced';
+        if (home !== id) return;
         items.push([plugin.name, plugin.label]);
       });
       var section = node('div', 'surfaces-section');
@@ -28606,6 +28613,8 @@
       section.appendChild(head);
       items.forEach(function (item) {
         var address = item[0], name = item[1];
+        // U44: the fleet lens exists only where there is a fleet.
+        if (address === 'armada' && document.body.dataset.armada !== 'on') return;
         var link = node('button', 'surfaces-link');
         link.type = 'button';
         link.dataset.address = address;
@@ -28657,7 +28666,7 @@
     // is invisible from the rail otherwise (the plugins-ux plan's C5).
     var drafts = (face.pluginProposals || []).length;
     Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-count'), function (span) {
-      if (span.dataset.count === 'plugins') {
+      if (span.dataset.count === 'settings') {
         span.hidden = !drafts;
         span.textContent = drafts ? String(drafts) : '';
         span.title = drafts ? drafts + (drafts === 1 ? ' draft awaits review' : ' drafts await review') : '';
@@ -28672,7 +28681,7 @@
           : '';
         return;
       }
-      if (span.dataset.count !== 'sessions') return;
+      if (span.dataset.count !== 'chat') return;
       span.hidden = !waiting;
       span.textContent = waiting ? String(waiting) : '';
       span.title = waiting
@@ -28684,7 +28693,7 @@
     });
     // A folded group still says what it holds: the work group counts the
     // conversations waiting or working, the system group the drafts.
-    var perGroup = { work: waiting, system: drafts };
+    var perGroup = { workspace: waiting, advanced: drafts };
     Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-group-needs'), function (span) {
       var held = perGroup[span.dataset.needs] || 0;
       span.hidden = !held;
@@ -28761,7 +28770,20 @@
   function paletteRows(asked) {
     var query = (asked || '').trim().toLowerCase();
     var groups = [];
+    // U44: the rail lists the lenses; the palette still jumps to
+    // anything. The folded surfaces gather under one "advanced" heading
+    // rather than disappearing — this is the second door the audit found
+    // missing (⌘K reached only what the rail listed).
+    var railed = {};
     GROUPS.forEach(function (group) {
+      group[2].forEach(function (item) { railed[item[0]] = true; });
+    });
+    var folded = ROUTES
+      .filter(function (route) { return !railed[route[0]] && route[0] !== 'skills'; })
+      .map(function (route) { return [route[0], route[1]]; });
+    var all = GROUPS.slice();
+    if (folded.length) all.push(['advanced', 'advanced', folded]);
+    all.forEach(function (group) {
       var hits = group[2].filter(function (item) {
         if (!query) return true;
         var hay = (item[1] + ' ' + item[0] + ' ' + group[1]).toLowerCase();

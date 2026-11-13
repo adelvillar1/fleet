@@ -3554,21 +3554,15 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await pressRail(page);
 
 
-  // The rail carries the destination under knowledge, beside its
-  // siblings — the fourth entry, not a fifth top-level group.
-  const knowledge = page.rows('.surfaces-section')
-    .filter((section) => section.dataset.group === 'knowledge');
-  check('the knowledge group carries workspace history', knowledge.length === 1,
-    String(knowledge.length));
-  if (knowledge.length === 1) {
-    // The section's own links: four entries, workspace history last.
-    const entries = page.rows('.surfaces-link')
-      .filter((link) => link.closest('.surfaces-section') === knowledge[0])
-      .map((link) => link.textContent.trim());
-    check('the entry is named workspace history beside its siblings',
-      entries.length === 3 && entries[0] === 'intelligence' && entries[2] === 'workspace history',
-      entries.join(' | '));
-  }
+  // U44: workspace history folded behind Settings → Advanced. The rail
+  // must not claim it; the address still renders the surface below.
+  const historyLink = page.rows('.surfaces-link')
+    .filter((link) => link.dataset.address === 'workspace-history');
+  check('the folded workspace history stays off the rail', historyLink.length === 0,
+    String(historyLink.length));
+  const groups = page.rows('.surfaces-section');
+  check('the rail carries its lenses and the settings door', groups.length === 2,
+    groups.map((one) => one.dataset.group).join(','));
   // The surface announces itself once, above the cards.
   const title = page.rows('.surface-title').map((n) => n.textContent.trim());
   check('the section names itself workspace history', title.includes('Workspace history'), title.join(' | '));
@@ -4005,17 +3999,13 @@ async function theArmadaSectionDrawsTheRosterItRead() {
   page.open();
   await flush();
 
-  // The rail carries the destination under system, beside its siblings.
-  const system = page.rows('.surfaces-section')
-    .filter((section) => section.dataset.group === 'system');
-  check('the system group carries armada', system.length === 1, String(system.length));
-  if (system.length === 1) {
-    const entries = page.rows('.surfaces-link')
-      .filter((link) => link.closest('.surfaces-section') === system[0])
-      .map((link) => link.dataset.address);
-    check('the entry is named armada beside its siblings',
-      entries.includes('armada'), entries.join(' | '));
-  }
+  // U44: the fleet lens exists only where there is a fleet — the switch
+  // is off in this boot, so the rail does not carry it and the surface
+  // is still reachable by address (the title check below proves it).
+  const fleetLink = page.rows('.surfaces-link')
+    .filter((link) => link.dataset.address === 'armada');
+  check('the fleet lens waits for the armada switch', fleetLink.length === 0,
+    String(fleetLink.length));
   // The surface announces itself once, above the cards.
   const title = page.rows('.surface-title').map((n) => n.textContent.trim());
   check('the section names itself armada', title.includes('Armada'), title.join(' | '));
@@ -5510,7 +5500,7 @@ async function theRailBadgeSaysWhereTheWorkIs() {
   await flush();
   page.open();
   await flush(80);
-  const badge = page.rows('.surfaces-count').filter((s) => s.dataset.count === 'sessions')[0];
+  const badge = page.rows('.surfaces-count').filter((s) => s.dataset.count === 'chat')[0];
   check('N3 the badge shows the owner\u2019s waiting work',
     badge && badge.hidden === false && badge.textContent === '3',
     badge ? badge.hidden + ' / ' + badge.textContent : 'no badge');
@@ -5518,7 +5508,7 @@ async function theRailBadgeSaysWhereTheWorkIs() {
   await flush();
   quiet.open();
   await flush(80);
-  const qbadge = quiet.rows('.surfaces-count').filter((s) => s.dataset.count === 'sessions')[0];
+  const qbadge = quiet.rows('.surfaces-count').filter((s) => s.dataset.count === 'chat')[0];
   check('N3 a quiet archive hides the badge',
     qbadge && qbadge.hidden === true && qbadge.textContent === '',
     qbadge ? qbadge.hidden + ' / ' + JSON.stringify(qbadge.textContent) : 'no badge');
@@ -6489,8 +6479,8 @@ async function theStrategyStepShowsItsPreview() {
       proposals.length === 1 && String(proposals[0].textContent).includes('fresh-draft'),
       'drafts=' + proposals.length);
     const badge = page.IDS['rail-tree'].find((one) =>
-      one.dataset && one.dataset.count === 'plugins')[0];
-    check('PLUGINS the rail entry counts a waiting draft',
+      one.dataset && one.dataset.count === 'settings')[0];
+    check('PLUGINS the Settings door counts a waiting draft',
       !!badge && !badge.hidden && badge.textContent === '1',
       badge ? 'hidden=' + badge.hidden + ' text=' + badge.textContent : 'no badge');
   }
@@ -7712,13 +7702,14 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
 
   // The rail's glyph: the artboard mark, not the `dot` fallback a
   // missing icon silently degrades to.
+  // U44: design folded behind Settings → Advanced. The rail must not
+  // claim it; the address and the palette still open it (the stage check
+  // below proves the route renders).
   const designLink = page.rows('.surfaces-link')
     .find((one) => one.dataset.address === 'design');
-  const glyph = designLink ? designLink.find((one) => one.name === 'rect').length : 0;
-  check('PM-D the rail carries the design icon, not the dot fallback',
-    !!designLink && glyph === 1 &&
-      designLink.find((one) => one.name === 'circle').length >= 1,
-    glyph + ' rect(s) on the design link');
+  check('PM-D the folded design surface stays off the rail',
+    !designLink,
+    designLink ? 'design link still present' : 'no design link');
 
   // S0: the stage, the board picker, and the two frames on the world.
   check('PM-D the design stage renders',
@@ -9605,7 +9596,7 @@ async function theLearningRailCarriesTheFourSections() {
   const learningSection = learningLink ? learningLink.parentNode : null;
   check('LEARN the rail row sits in the work group',
     !!learningSection && learningSection.dataset &&
-      learningSection.dataset.group === 'work',
+      learningSection.dataset.group === 'workspace',
     learningSection ? 'group=' + learningSection.dataset.group : 'no section');
 
   // The lesson pane: the plan's coarse view, the position, the holds.
@@ -10834,9 +10825,15 @@ async function theConnectCardSaysWhatHappened() {
       String(one.className || '').split(/\s+/).includes('surfaces-link'))
       .map((one) => one.dataset.address).sort();
     const shown = Object.keys(hints).sort();
-    check('PALETTE the palette reaches exactly the rail’s surfaces',
-      rail.join(',') === shown.join(','),
-      rail.join(',') + ' vs ' + shown.join(','));
+    // U44: the rail lists the lenses and the palette reaches everything —
+    // the folded surfaces gather under "advanced" instead of vanishing.
+    const missing = rail.filter((address) => !(address in hints));
+    check('PALETTE the palette covers every rail surface',
+      missing.length === 0, 'missing=' + missing.join(','));
+    const folded = ['router', 'vault', 'design', 'huddles', 'plugins', 'second-brain'];
+    const absent = folded.filter((address) => !(address in hints));
+    check('PALETTE the folded surfaces keep their door',
+      absent.length === 0, 'absent=' + absent.join(','));
     const later = shown.filter((one) => hints[one] === 'later');
     check('PALETTE no built surface is labelled later',
       later.length === 0, 'later=' + later.join(','));
@@ -11040,7 +11037,10 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const groups = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-group'));
-    check('ICONS the rail carries four group controls', groups.length === 4,
+    // U44: the rail is one group of lenses, so one fold.
+    // U44: the lenses are one section; Settings (and installed plugins)
+    // are the second.
+    check('ICONS the rail carries two group controls', groups.length === 2,
       'groups=' + groups.length);
     check('ICONS a group starts open',
       groups[0].getAttribute('aria-expanded') === 'true' &&
@@ -11049,7 +11049,7 @@ async function theConnectCardSaysWhatHappened() {
     groups[0].click();
     await flush();
     const section = page.IDS['rail-tree'].find((one) =>
-      one.dataset && one.dataset.group === 'work')[0];
+      one.dataset && one.dataset.group === 'workspace')[0];
     check('ICONS a press folds the group',
       !!section && section.dataset.folded === 'true',
       section ? 'folded=' + section.dataset.folded : 'no section');
@@ -11059,12 +11059,12 @@ async function theConnectCardSaysWhatHappened() {
       head.getAttribute('aria-expanded') === 'false',
       'expanded=' + head.getAttribute('aria-expanded'));
     check('ICONS the fold is remembered',
-      String(page.window.localStorage.getItem('fleet-rail-folded') || '').includes('work'),
+      String(page.window.localStorage.getItem('fleet-rail-folded') || '').includes('workspace'),
       'stored=' + page.window.localStorage.getItem('fleet-rail-folded'));
     head.click();
     await flush();
     const open = page.IDS['rail-tree'].find((one) =>
-      one.dataset && one.dataset.group === 'work')[0];
+      one.dataset && one.dataset.group === 'workspace')[0];
     check('ICONS a second press unfolds it',
       !!open && open.dataset.folded !== 'true',
       open ? 'folded=' + open.dataset.folded : 'no section');
@@ -11078,14 +11078,16 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
-    check('ICONS the main rail lists twenty destinations (the board joins, S4)', links.length === 20,
+    // U44: seven lenses plus the Settings door. Everything else is folded
+    // behind it (Settings -> Advanced) and reached by the palette.
+    check('ICONS the rail lists the eight lenses', links.length === 8,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 20,
+      shapes.every(Boolean) && new Set(shapes).size === 8,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 
