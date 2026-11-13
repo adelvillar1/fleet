@@ -288,11 +288,23 @@ VERSION=$(printf '%s' "$TAG" | sed 's/^v//')
 # the bundler signs the .app.tar.gz at build time (TAURI_SIGNING_PRIVATE_KEY
 # accepts a PATH; the 0.6.0 face build proved it). A missing key would kill
 # the cut mid-build instead of up front.
-KEYFILE=/tmp/fleet-updater-key
+#
+# The key lives in the OWNER'S HOME (own-home credentials): /tmp is swept
+# after three days of disuse, and a key parked there vanished overnight — the
+# next cut then demanded a vault unlock for the first time in 40+ releases.
+# The durable home is ~/.fleet/updater-key (0600); /tmp is still read as a
+# legacy fallback so an existing machine migrates on its next cut.
+KEYFILE="${FLEET_UPDATER_KEY:-$HOME/.fleet/updater-key}"
+if [ ! -f "$KEYFILE" ] && [ -f /tmp/fleet-updater-key ]; then
+  mkdir -p "$(dirname "$KEYFILE")"
+  cp /tmp/fleet-updater-key "$KEYFILE" && chmod 600 "$KEYFILE"
+  echo "release.sh: the updater key migrated from /tmp to $KEYFILE (0600)"
+fi
 if [ ! -f "$KEYFILE" ]; then
   echo "release.sh: the updater private key is not at $KEYFILE" >&2
-  echo "release.sh: extract it from the vault:" >&2
-  echo "  export FLEET_VAULT_PASSPHRASE=... && fleet vault get FLEET_TAURI_UPDATE_KEY > $KEYFILE" >&2
+  echo "release.sh: extract it from the vault — ONCE; it then lives in your home," >&2
+  echo "release.sh: and cuts never need the vault again:" >&2
+  echo "  export FLEET_VAULT_PASSPHRASE=... && fleet vault get FLEET_TAURI_UPDATE_KEY > $KEYFILE && chmod 600 $KEYFILE" >&2
   echo "release.sh: then re-run this mode. Nothing was cut." >&2
   exit 1
 fi
