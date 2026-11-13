@@ -9277,23 +9277,18 @@
   // running sweep while it works. Moving a card is optimistic-then-settled:
   // the card moves at once, the status write lands, the read-back is the
   // graded truth. Bulk is explicit — checks select, a bulk bar appears.
+  // The board projects from the workspace spine (S6 / U0): one read feeds
+  // the lens. The spine's tasks carry the same shape the tasks endpoint
+  // returns, so the board renders identically — but it no longer owns a
+  // separate fetch; the workspace context is the single source.
   function readTasks(force) {
-    var now = Date.now();
-    if (!force && face.tasksRead && now - face.tasksAt < 4000) return Promise.resolve();
-    face.tasksAt = now;
-    return fetch('/api/tasks', { headers: { accept: 'application/json' } })
-      .then(function (reply) {
-        if (reply.status === 401) throw new Error('token');
-        return reply.json();
-      })
-      .then(function (doc) {
-        face.tasksRead = doc;
-        if (face.panel === 'board') paintBoard();
-      })
-      .catch(function () {
-        connectionDown('the tasks read');
-        window.setTimeout(function () { readTasks(true); }, 5000);
-      });
+    return readSpine(force).then(function (doc) {
+      if (doc && Array.isArray(doc.tasks)) {
+        face.tasksRead = { type: 'tasks', tasks: doc.tasks };
+        face.tasksAt = Date.now();
+      }
+      if (face.panel === 'board') paintBoard();
+    });
   }
 
   var BOARD_COLUMNS = [
@@ -29144,6 +29139,34 @@
       });
   }
 
+  // The workspace spine (S6 / U0): ONE read over the existing stores that
+  // the shell's lenses project from. The center is a lens over this
+  // context, not a panel that owns its own store — switching lens
+  // re-projects the same objects, it never leaves the workspace. The
+  // connections column and the lenses share this spine instead of each
+  // fetching a foreign store on every pivot.
+  function readSpine(force) {
+    var now = Date.now();
+    if (!force && face.spine && now - face.spineAt < 4000) {
+      return Promise.resolve(face.spine);
+    }
+    face.spineAt = now;
+    return fetch('/api/workspace', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.spine = doc;
+        return doc;
+      })
+      .catch(function () {
+        connectionDown('the workspace read');
+        window.setTimeout(function () { readSpine(true); }, 5000);
+        return null;
+      });
+  }
+
   function tissueNodes() {
     return face.tissue && Array.isArray(face.tissue.nodes) ? face.tissue.nodes : [];
   }
@@ -29176,15 +29199,23 @@
     paintTissue();
   }
 
-  // The pivot (U3): focus, then the whole workspace follows — the kind's
-  // lens opens and the object opens in it. A thread opens through the
+  // The pivot (U3 / S6): focus, then the whole workspace follows — the
+  // kind's lens opens and the object opens in it. The lens renders IN
+  // PLACE: the address reflects the lens through replaceState, which fires
+  // no hashchange, so the pivot never leaves the workspace through a
+  // panel-swap navigation — it re-projects the same workspace context.
+  // The spine read feeds the lens; a thread opens through the
   // conversation's own opener (it navigates itself).
   function pivotTo(kind, id, label) {
     focusOn(kind, id, label);
     var target = FOCUS_LENSES[kind];
     if (!target || !target.lens) return;
     if (kind === 'thread') { openWork(id); return; }
-    if (face.panel !== target.lens) window.location.hash = '#/' + target.lens;
+    if (face.panel !== target.lens) {
+      try { window.history.replaceState(null, '', '#/' + target.lens); } catch (error) { }
+      readSpine(true);
+      showRoute();
+    }
     if (target.follow) target.follow(id);
   }
 

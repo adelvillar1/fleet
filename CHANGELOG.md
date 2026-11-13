@@ -12,6 +12,26 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.7.4 — 2026-11-12
+
+The workspace shell (S6) — the pivot renders in place, and one read feeds the lenses.
+
+**Part of the armada vision** — the owner's second steer on the reskin: *"but
+this is not workspace centric, the mockups are."* The audit agreed and this one
+was architectural: the pivot still navigated panels, and every panel fetched its
+own store. Focus joined the silos; it did not remove them.
+
+- **The workspace spine** — one read (`GET /api/workspace`) over the existing
+  stores that the shell's lenses project from: tasks, deliverables, threads,
+  instances, and the intelligence segment counts. The center is a lens over
+  this context, not a panel that owns its own store.
+- **The pivot renders in place** — the lens's address change rides
+  `replaceState`, which fires no hashchange: the pivot never leaves the
+  workspace through a panel-swap navigation, it re-projects the same context.
+  The connections column and the focus law carry over unchanged.
+- **The board projects from the spine** — the tasks lens no longer owns a
+  separate fetch; the workspace context is its single source.
+
 ## v0.7.3 — 2026-11-12
 
 The structural overhaul — the workspace becomes one graph, not a drawer of

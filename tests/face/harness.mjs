@@ -391,11 +391,24 @@ function boot(options) {
         }),
       });
     }
-    // The board's reads and moves (U14/U21, S4).
+    // The board's reads and moves (U14/U21, S4). The board now projects
+    // from the workspace spine (S6 / U0): one read feeds the lens, so the
+    // spine branch derives its tasks from the same fixture the tasks
+    // endpoint serves — a board case seeds once and both doors read it.
     if (pathOnly === '/api/tasks' && method === 'GET') {
       return Promise.resolve({
         status: 200,
         json: () => Promise.resolve(documents.tasks || { type: 'tasks', tasks: [] }),
+      });
+    }
+    if (pathOnly === '/api/workspace' && method === 'GET') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.workspace
+          || { type: 'workspace',
+               tasks: (documents.tasks && documents.tasks.tasks) || [],
+               deliverables: [], threads: [], instances: [],
+               intelligence: { tools: 0, workflows: 0 } }),
       });
     }
     if (pathOnly === '/api/tasks/status' && method === 'POST') {
@@ -12791,6 +12804,52 @@ async function theBoardRendersColumnsAndSettlesMoves() {
     JSON.stringify(posts.map((c) => c.body)));
 }
 
+// S6 (U0): the workspace shell — ONE read feeds the lenses and the pivot
+// renders in place. The board projects from the workspace spine (the
+// tasks endpoint is never fetched for it), and a graph-node pivot
+// reflects the lens in the address without leaving the workspace.
+async function theSpineFeedsTheLensesAndThePivotStaysInPlace() {
+  const page = boot({
+    documents: {
+      tissue: { type: 'tissue', nodes: [
+        { id: 'install', kind: 'install', label: 'this install', live: true },
+        { id: 't1', kind: 'task', label: 'the spine task' },
+      ], edges: [], bounded: 60, omitted: 0 },
+      workspace: { type: 'workspace', tasks: [
+        { id: 't1', title: 'the spine task', status: 'working', assignee: 'owner' },
+      ], deliverables: [], threads: [], instances: [],
+        intelligence: { tools: 2, workflows: 1 } },
+    },
+    hash: '#/board',
+  });
+  page.open();
+  await flush(80);
+  check('S6 the board projects from the spine',
+    page.text('board-board').includes('the spine task'),
+    page.text('board-board').slice(0, 80));
+  const taskFetches = page.calls.filter((c) => c.url === '/api/tasks' && c.method === 'GET').length;
+  const spineFetches = page.calls.filter((c) => c.url === '/api/workspace' && c.method === 'GET').length;
+  check('S6 one read feeds the lens',
+    taskFetches === 0 && spineFetches >= 1,
+    'tasks fetches=' + taskFetches + ' spine fetches=' + spineFetches);
+  // The pivot renders in place: the address reflects the lens, and the
+  // workspace spine is re-read to project it — never a foreign panel.
+  const nodes = page.IDS['tissue-graph'].querySelectorAll('.tissue-node');
+  const taskNode = Array.from(nodes).find((n) => {
+    const title = n.querySelector('title');
+    return title && title.textContent === 'the spine task';
+  });
+  check('S6 the graph offers the task node', !!taskNode, 'node present');
+  const spineBefore = page.calls.filter((c) => c.url === '/api/workspace').length;
+  if (taskNode) taskNode.click();
+  await flush(80);
+  check('S6 the pivot reflects the lens in the address',
+    page.window.location.hash === '#/desk', 'hash=' + page.window.location.hash);
+  check('S6 the pivot re-reads the spine to project the lens',
+    page.calls.filter((c) => c.url === '/api/workspace').length >= spineBefore + 1,
+    'spine reads: ' + page.calls.filter((c) => c.url === '/api/workspace').length);
+}
+
 // S4 (U17): the inbox row wears the resolved principal chip when it carries
 // one — never an invented identity.
 async function theInboxRowWearsThePrincipalChip() {
@@ -12977,6 +13036,7 @@ const cases = [
   ['S3 the armada switch grows the graph', theArmadaSwitchGrowsTheGraph],
   ['S4 the board renders columns and settles moves', theBoardRendersColumnsAndSettlesMoves],
   ['S4 the inbox row wears the principal chip', theInboxRowWearsThePrincipalChip],
+  ['S6 the spine feeds the lenses and the pivot stays in place', theSpineFeedsTheLensesAndThePivotStaysInPlace],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

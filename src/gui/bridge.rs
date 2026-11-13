@@ -2097,6 +2097,100 @@ impl Bridge {
         .unwrap_or_else(|_| json!({"type": "tissue", "refused": ["the tissue read did not land"]}))
     }
 
+    /// The workspace spine (the U-reskin, S6 / U0): ONE read over the
+    /// existing stores that the shell's lenses project from — the graph's
+    /// tasks, the deliverables, the recent threads, the fleet's instances,
+    /// and the intelligence segment counts. The center is a lens over this
+    /// context, not a panel that owns its own store: switching lens
+    /// re-projects the same objects, it never leaves the workspace. No new
+    /// capability — every field is a read the face already had, gathered
+    /// once so the lenses share one spine instead of five fetches.
+    pub async fn workspace(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            let graph = crate::workspace::read(&home);
+            let tasks: Vec<Value> = graph
+                .tasks
+                .values()
+                .map(|task| {
+                    json!({
+                        "id": task.id,
+                        "title": task.title,
+                        "status": task.status.as_str(),
+                        "assignee": task.assignee.as_str(),
+                        "binding": task.binding,
+                    })
+                })
+                .collect();
+            let deliverables: Vec<Value> = crate::workspace::view(&home, None)
+                .into_iter()
+                .filter(|row| row.object.kind == crate::workspace::Kind::Deliverable)
+                .map(|row| {
+                    json!({
+                        "id": row.object.id,
+                        "name": row.entry.get("name").and_then(|n| n.as_str()).unwrap_or(row.object.id.as_str()),
+                        "needs": row.entry.get("needs").and_then(|n| n.as_bool()).unwrap_or(false),
+                        "binding": row.binding,
+                    })
+                })
+                .collect();
+            let threads: Vec<Value> = crate::session::list(&home)
+                .map(|recent| {
+                    recent
+                        .into_iter()
+                        .rev()
+                        .take(24)
+                        .map(|summary| {
+                            json!({
+                                "id": summary.id,
+                                "label": summary.last_plan.clone().or(summary.first_text.clone()).unwrap_or_else(|| summary.id.clone()),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|span| span.as_secs())
+                .unwrap_or_default();
+            let roster = crate::armada::roster::load(&home);
+            let instances: Vec<Value> = roster
+                .instances
+                .values()
+                .map(|instance| {
+                    let grade = crate::armada::control::grade(&home, &instance.sid);
+                    json!({
+                        "sid": instance.sid,
+                        "live": instance.live(now),
+                        "calibrated": grade.calibrated,
+                        "reliability": grade.reliability,
+                    })
+                })
+                .collect();
+            // The intelligence segment counts — the same registries the
+            // Intelligence lens reads, gathered here so the spine carries
+            // them and the lens does not re-fetch to know its own shape.
+            let tools = tools_read(&home);
+            let workflows = workflows_read(&home);
+            let count = |value: &Value, key: &str| {
+                value.get(key).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0)
+            };
+            json!({
+                "type": "workspace",
+                "tasks": tasks,
+                "deliverables": deliverables,
+                "threads": threads,
+                "instances": instances,
+                "intelligence": {
+                    "tools": count(&tools, "tools"),
+                    "workflows": count(&workflows, "workflows"),
+                },
+            })
+        })
+        .await
+        .unwrap_or_else(|_| json!({"type": "workspace", "refused": ["the workspace read did not land"]}))
+    }
+
     /// The armada panel's document (armada L9, C3): the flagship roster
     /// with each instance's earned liveness and measured reliability,
     /// and the flagship role named. One read off the async worker — the
