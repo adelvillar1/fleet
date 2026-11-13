@@ -85,7 +85,9 @@ silently, and never beyond your reach:
   grades every routing decision against its outcome; self-improvement
   proposes changes that are *measured before they are kept*, reversible, and
   leave a lesson behind; the learning loop teaches from the substrate; the
-  health loop watches the machine. Every self-change is gated.
+  health loop watches the machine and — when a service it watches is down —
+  the face asks *do you want to repair it?* and the press runs the repair,
+  never a narrated command. Every self-change is gated.
 
 The thread through all of it: grounded in facts, bounded by closed sets and
 gates, governed by proposals and approval, auditable through provenance and
@@ -94,14 +96,21 @@ logs. ([docs/features/](docs/features/))
 ### One productive front end
 
 Fleet is not a chat window you visit — it is meant to be the place your work
-lives. The conversation, the desk with its deliverables and lessons, the
-bots, the learning, the design canvas, the calibration: one productive
-surface, organized around *your work*, not the machinery. Three faces over
-one agent core — the browser console (`fleet gui`), the terminal (`fleet`),
-and the headless CLI — each with the conversation first, plus a native
-desktop shell. They are connected with real tissue: a task links to its
-conversation, its deliverable, the bot that did it, and the lesson it taught —
-one work-object graph, the surfaces views over it, not a drawer of silos.
+lives. The 0.8 shell is one workspace, not twenty panels: seven lenses
+(threads, board, desk, intelligence, learning, reviews, inbox) project one
+work-object spine — a task links to its conversation, its deliverable, the
+bot that did it, and the lesson it taught — one shared focus that a pivot
+re-projects into the lens it names, and the inspector rides beside it as a
+drawer: the run, the receipts of what the conversation made, the files, the
+preview. The landing is one question — *"What do you want to work on?"* —
+over the composer, with the onboard door when the home needs setup; the
+graph, the counts and the archive live on their own surfaces, one pivot
+away. Runs are concurrent: each admitted run drives its own session, a run
+in another conversation changes a row's words, not this composer's. Three
+faces over one agent core — the browser console (`fleet gui`), the terminal
+(`fleet`), and the headless CLI — plus a native desktop shell and a paired
+phone, paired from the app itself: the face mints the code, the phone joins
+through the relay, no terminal command.
 ([docs/architecture/surfaces.md](docs/architecture/surfaces.md),
 [docs/features/workspace.md](docs/features/workspace.md))
 
@@ -188,7 +197,7 @@ out of the gate, so the org inherits its admin layer already working. The full
 direction is
 [docs/architecture/2026-11-11-armada-direction.md](docs/architecture/2026-11-11-armada-direction.md).
 
-Fleet is **beta** (0.7.x). The owner's bar is the reliable execution of a
+Fleet is **beta** (0.8.x). The owner's bar is the reliable execution of a
 whole project, and the shakeout is the work mode until then.
 
 ## A look
@@ -203,7 +212,7 @@ shape; the `SRC` badges point at the `file:line` each claim was read from.*
 
 | | |
 |---|---|
-| ![the conversation](docs/images/surface-chat.jpg) *the conversation: the goal rides the composer, the run's cards open in place* | ![the design canvas](docs/images/surface-design.jpg) *the design canvas: boards by project, pages on a pan/zoom board* |
+| ![the landing](docs/images/surface-landing.png) *the landing: one question over the composer — the onboard door when the home needs setup, the seven lenses in the rail* | ![the desk with the drawer](docs/images/surface-desk-drawer.png) *the desk, the inspector as a drawer over the work: the run, the receipts of what the conversation made, the files, the preview* |
 | ![a huddle](docs/images/surface-huddles.jpg) *a room: you and your bots, a deliverable on the shelf, a capability gap named* | ![the terminal](docs/images/tui-conversation.png) *the terminal face: the same core at a keyboard's density* |
 
 ## Install
