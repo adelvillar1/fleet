@@ -259,6 +259,10 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       subsystem names; the vocabulary lint is green.
 - [ ] C7 (P7): the dead code and duplicate declarations are gone; the counts
       are recorded; the ledgers and the pointer index are reconciled.
+      **Progress 2026-11-13: the dead `#panel-huddles` markup removed** (no
+      app.js or harness references; huddles render into the chat panel).
+      Harness + gate green. Remaining: the dead tower console, the duplicate
+      bots block, the legacy skills surface, and `PANEL_EL` retirement.
 - [ ] C8: every phase carries a local four-leg gate on its committed tree, a
       green face harness, and the visual check against its mockup section;
       the version declarations move per release; **the beta bar is untouched
