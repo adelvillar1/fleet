@@ -151,6 +151,22 @@ pub const SETTINGS: &[Setting] = &[
                   detects your tailnet name, or falls back to this machine's address.",
     },
     Setting {
+        key: "remote.relay",
+        kind: Kind::Text,
+        file: File::Config,
+        summary: "The relay the remote console face dials so a phone on another network pairs. \
+                  A `--relay` launch writes it here, and the app's own pair press reads it — \
+                  empty keeps pairing on the LAN origin.",
+    },
+    Setting {
+        key: "remote.bot_relay",
+        kind: Kind::Text,
+        file: File::Config,
+        summary: "The relay the bot face dials — its own service, its own origin. A \
+                  `--bot-relay` launch writes it here; empty keeps the bot face on its LAN \
+                  address.",
+    },
+    Setting {
         key: "delegation.max_turns",
         kind: Kind::Count,
         file: File::Config,
@@ -819,6 +835,36 @@ fn read_env_file(path: &Path) -> BTreeMap<String, String> {
 
 #[cfg(test)]
 mod tests {
+    /// The pairing-in-app plan's C3: the relay origins persist as config
+    /// leaves the app's pair press reads — a `--relay` launch writes them
+    /// through (`settings::set`), and `read_config_leaf` hands them back
+    /// to the on-demand bring-up.
+    #[test]
+    fn the_relay_origins_persist_as_config_leaves_the_app_reads() {
+        let dir = std::env::temp_dir().join(format!("fleet-relay-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for key in ["remote.relay", "remote.bot_relay"] {
+            assert!(
+                find(key).is_some(),
+                "`{key}` is a declared setting the face's card can name"
+            );
+        }
+        set(&dir, "remote.relay", "https://fleet.opsh.io").unwrap();
+        set(&dir, "remote.bot_relay", "https://fleetbot.opsh.io").unwrap();
+        assert_eq!(
+            read_config_leaf(&dir, "remote.relay").as_deref(),
+            Some("https://fleet.opsh.io"),
+            "the console relay origin lands in config.json"
+        );
+        assert_eq!(
+            read_config_leaf(&dir, "remote.bot_relay").as_deref(),
+            Some("https://fleetbot.opsh.io"),
+            "the bot relay origin lands in config.json"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// The failsafe plan's C7: every settings write stamps the prior
     /// file beside the home, and `recover` restores a file whose
     /// current form is broken from that stamp — the revert that fixes.

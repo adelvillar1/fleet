@@ -389,6 +389,15 @@ pub struct Bridge {
     /// enough to pay it per repaint without one. The home read's own
     /// pattern, carried here.
     workspace_rail: std::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>,
+    /// The on-demand remote bring-up's own lock: a pair press without a
+    /// running remote face starts it once, and two presses racing hold
+    /// here until the first has finished (the owner's 2026-11-13 ruling —
+    /// pairing needs no terminal command; the press is the intent).
+    remote_bring_up: tokio::sync::Mutex<()>,
+    /// The relays' shutdown senders from an on-demand bring-up, held for
+    /// the process's life — the same hold the flagged launch keeps in its
+    /// own locals.
+    remote_shutdowns: std::sync::Mutex<Vec<tokio::sync::watch::Sender<bool>>>,
 }
 
 /// The bot face's pairing-card facts, attached at launch.
@@ -467,6 +476,8 @@ impl Bridge {
             remote: Mutex::new(None),
             relay_secret: Mutex::new(None),
             bot_face: Mutex::new(None),
+            remote_bring_up: tokio::sync::Mutex::new(()),
+            remote_shutdowns: std::sync::Mutex::new(Vec::new()),
             workspace_rail: std::sync::Mutex::new(None),
             trace_tail: Arc::new(std::sync::Mutex::new(
                 crate::layerfs_view::TraceTail::default(),
@@ -2710,13 +2721,85 @@ impl Bridge {
         *lock(&self.remote)
     }
 
+    /// The pair press brings the remote face up when it is not running:
+    /// the owner's press is the intent, and the `--remote` flag was only
+    /// ever the launch-time shortcut (the owner's 2026-11-13 ruling — a
+    /// user who wants to pair never needs a terminal command). The relay
+    /// origins come from the settings; a dial whose join proof does not
+    /// resolve is a named skip, and the card mints with the origin it
+    /// has. Concurrent presses hold on the bring-up lock; the second
+    /// finds the face attached and mints straight through.
+    async fn ensure_remote_face(self: &Arc<Self>) -> Result<(), String> {
+        if self.remote_face().is_some() {
+            return Ok(());
+        }
+        let _guard = self.remote_bring_up.lock().await;
+        if self.remote_face().is_some() {
+            return Ok(());
+        }
+        let home = self.home_path();
+        let relay = crate::settings::read_config_leaf(&home, "remote.relay")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let bot_relay = crate::settings::read_config_leaf(&home, "remote.bot_relay")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let handles = match crate::gui::bring_up_remote_face(
+            self,
+            &home,
+            crate::gui::DEFAULT_PORT,
+            &crate::remote::RemoteOptions {
+                enabled: true,
+                host: None,
+                bot_port: 0,
+                bot_relay: None,
+            },
+            relay.clone(),
+            bot_relay.clone(),
+        )
+        .await
+        {
+            Ok(handles) => handles,
+            // The standard remote port is busy on this machine's address —
+            // another face of this install already holds it. The face
+            // takes a free one and the card names the origin it minted
+            // for; a second bind failure is the named error.
+            Err(_) => {
+                crate::gui::bring_up_remote_face(
+                    self,
+                    &home,
+                    0,
+                    &crate::remote::RemoteOptions {
+                        enabled: true,
+                        host: None,
+                        bot_port: 0,
+                        bot_relay: None,
+                    },
+                    relay,
+                    bot_relay,
+                )
+                .await?
+            }
+        };
+        lock(&self.remote_shutdowns).extend(handles.shutdowns);
+        let console = handles.console;
+        let face = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Err(error) = console.serve().await {
+                eprintln!("fleet remote: the remote face stopped: {error}");
+            }
+            let _ = face;
+        });
+        Ok(())
+    }
+
     /// Mint a pairing window and the card's document: the URL on the
     /// origin that will work from the phone, the code in display form,
     /// and the QR. Loopback only — the remote listener's allowlist has no
     /// such route, and a paired phone does not pair phones. The console's
     /// card, unchanged; the Robots surface asks for the bot's with
     /// [`pair_window_for`](Self::pair_window_for).
-    pub async fn pair_window(&self) -> Result<Value, String> {
+    pub async fn pair_window(self: &Arc<Self>) -> Result<Value, String> {
         self.pair_window_for("console").await
     }
 
@@ -2726,19 +2809,23 @@ impl Bridge {
     /// Robots surface's — `--bot-relay`'s origin with its own fragment,
     /// else the bot face's LAN address and port with the plain-HTTP
     /// note. One window is shared between both cards, which is the
-    /// "newest code wins" rule each card already speaks.
-    pub async fn pair_window_for(&self, face: &str) -> Result<Value, String> {
+    /// "newest code wins" rule each card already speaks. A face with no
+    /// remote face running brings it up first — the press is the intent.
+    pub async fn pair_window_for(self: &Arc<Self>, face: &str) -> Result<Value, String> {
+        Self::ensure_remote_face(self).await?;
         let home = self.home_path();
         if face == "bot" {
             let Some((address, _port)) = self.remote_face() else {
                 return Err(
-                    "the remote face is not running in this process; start `fleet gui --remote`"
+                    "the remote face did not come up for this press; its own error is \
+                            what the card named"
                         .to_string(),
                 );
             };
             let Some(bot) = lock(&self.bot_face).clone() else {
                 return Err(
-                    "the bot face is not running in this process; start `fleet gui --remote`"
+                    "the bot face did not come up for this press; its own error is what \
+                            the card named"
                         .to_string(),
                 );
             };
@@ -2786,7 +2873,8 @@ impl Bridge {
         }
         let Some((address, port)) = self.remote_face() else {
             return Err(
-                "the remote face is not running in this process; start `fleet gui --remote`"
+                "the remote face did not come up for this press; its own error is what \
+                        the card named"
                     .to_string(),
             );
         };
@@ -15633,6 +15721,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_pairing_card_mints_a_window_and_names_its_origin() {
         let (bridge, _sources, _door) = bridge().await;
+        let bridge = Arc::new(bridge);
         let home = bridge.home_path();
         std::fs::write(
             home.join("config.json"),
@@ -15677,6 +15766,7 @@ mod tests {
             "m".to_string(),
             Some("session-bots-card".to_string()),
         );
+        let bridge = Arc::new(bridge);
         bridge.attach_remote(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 3080);
 
         // The LAN shape: no relay dialed, no secret anywhere.
@@ -15724,11 +15814,38 @@ mod tests {
         std::fs::remove_dir_all(&home).ok();
     }
 
+    /// The owner's 2026-11-13 ruling: a pair press is the intent, and the
+    /// face brings the remote face up itself — no terminal command. A
+    /// bridge with no remote face attached mints a real card on the press.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_pairing_card_without_the_remote_face_names_the_flag() {
+    async fn a_pair_press_brings_the_remote_face_up_and_mints() {
         let (bridge, _sources, _door) = bridge().await;
-        let error = bridge.pair_window().await.expect_err("no remote face");
-        assert!(error.contains("--remote"), "{error}");
+        let bridge = Arc::new(bridge);
+        let home = bridge.home_path();
+        // The origin is pinned so the test never probes the network.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{"remote":{"public_url":"https://phone.example/"}}"#,
+        )
+        .unwrap();
+        assert!(bridge.remote_face().is_none(), "no remote face at boot");
+        let document = bridge.pair_window().await.expect("a pairing window");
+        // The bring-up happened: the remote face is attached, the card is
+        // the real one, and nothing names a terminal command.
+        assert!(bridge.remote_face().is_some(), "the face came up");
+        assert!(
+            document["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("https://phone.example/pair?c="),
+            "{document}"
+        );
+        assert_eq!(document["origin_kind"], "public_url");
+        assert!(document["svg"].as_str().unwrap().starts_with("<svg"));
+        // A second press mints the newest window over the same face.
+        let again = bridge.pair_window().await.expect("a second window");
+        assert_ne!(document["url"], again["url"]);
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[tokio::test(flavor = "multi_thread")]

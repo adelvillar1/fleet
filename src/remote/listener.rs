@@ -1385,7 +1385,7 @@ const PAIR_PAGE: &str = r#"<!doctype html>
 <body>
 <form id="pair" method="post" action="/api/pair">
   <h1>Pair this device</h1>
-  <p>Type the pairing code from the terminal running <code>fleet gui --remote</code> (or <code>fleet pair</code>).</p>
+  <p>Type the pairing code shown in fleet's pairing card on your machine — the QR in the app's topbar mints one (or <code>fleet pair</code> in a terminal, if you prefer).</p>
   <label for="code">Pairing code</label>
   <input id="code" name="code" type="text" autocomplete="one-time-code" inputmode="text"
          autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX" required>
