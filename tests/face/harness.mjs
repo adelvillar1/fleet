@@ -13,7 +13,17 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
-const SRC = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.js'), 'utf8');
+const APP = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.js'), 'utf8');
+const STORE = fs.readFileSync(path.join(ROOT, 'src/gui/assets/core/store.js'), 'utf8');
+// P2: production loads native ES modules (app.js imports core/store.js).
+// The stub has no module loader, so it reconstructs the original single
+// strict IIFE by inlining the store and dropping the import — identical
+// shared scope, identical behaviour, case-for-case.
+// app.js keeps its own strict IIFE inside the module (top-level returns
+// stay legal); the stub inlines the store and drops the import, matching
+// production's module scope without a second wrapper.
+const SRC = STORE.replace(/^export /gm, '') + '\n' +
+  APP.replace(/^import \{ face, CHAT_SCALES, CHAT_SCALE_DEFAULT \} from '\.\/core\/store\.js';\n/m, '');
 const HTML = fs.readFileSync(path.join(ROOT, 'src/gui/assets/index.html'), 'utf8');
 const RUST = fs.readFileSync(path.join(ROOT, 'src/gui/bridge.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/gui/server.rs'), 'utf8') +

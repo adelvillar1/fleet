@@ -214,6 +214,15 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       (fmt/clippy/build/test) on the committed tree; face harness 1/1.)
 - [ ] C2 (P2): the face is native ES modules, no build step, harness green
       case-for-case; `PANEL_EL` is gone; no dead surface carried over.
+      **Progress 2026-11-12: the first native ES module landed** —
+      `core/store.js` holds the shared `face` state (+ the chat-scale
+      constants it depends on); `app.js` is a module that imports it (its
+      strict IIFE stays inside the module so top-level returns remain
+      legal); `index.html` loads `type=module`; the server serves
+      `/core/store.js`; the harness inlines the store and drops the import
+      to reproduce module scope. Verified in-browser (rail builds, board
+      renders) and gate-green. Remaining: extract the shell/lens modules and
+      retire `PANEL_EL` with the P3/P4 rebuild.
 - [ ] C3 (P3): one focus, one address grammar, seven/eight lenses, twelve
       orphans under Settings → Advanced; pivot re-projects without swapping
       the stage; pinned by harness cases. **Progress 2026-11-12: the rail
