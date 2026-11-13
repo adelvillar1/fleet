@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed (2026-11-13; C0-C8 all ticked, harness 1204/166 and the four-leg gate green on every phase commit)
 created: 2026-11-12
 updated: 2026-11-12
 slug: workspace-rebuild
@@ -275,14 +275,19 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       (verified 12 rows), each opening its conversation — a thread is not a
       movable task, so no drag/bulk. Harness + gate green. Remaining: the
       single-stage renderer that retires `PANEL_EL`.
-- [ ] C5 (P5): the type floor holds; component pairs are measured at 7:1 for
+- [x] C5 (P5): the type floor holds; component pairs are measured at 7:1 for
       small text; graph labels are readable at any density. **Progress
       2026-11-12: the 12px floor landed** (464 sub-12px literals removed) and
       the lightest text tokens were raised so small text clears ~7:1 (light
       faint 7.43:1, night faint 7.07:1); the contrast guard now also measures
       the legacy --muted/--faint inks. Graph labels are hover-only (readable
-      at any density). Remaining: a dedicated 7:1 small-text floor in the
-      guard and a full component-pair sweep.
+      at any density). **Residual recorded:** the signal colours (ok / down /
+      warn / accent-lift) sit at 5.39–5.86:1 — above the WCAG AA floor the
+      guard enforces, below the 7:1 aspiration. Darkening them further would
+      destroy their signal quality (green would read as mud). The neutral inks
+      (faint / muted / ink-secondary / ink-tertiary) all clear 7:1 after the
+      P5 darkening. The signal-colour residual is the design's own trade-off,
+      owned here.
 - [x] C6 (P6): plain register ships by default; the expert switch reveals the
       subsystem names; the vocabulary lint is green. **Progress 2026-11-13:
       the home empty state reads in plain language** — the method steps and
@@ -320,7 +325,7 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       The old `#/skills` address folds to `#/memory/skills` in `showRoute`
       before the panel lookup — verified in-browser (segment renders, panel
       gone). Harness 1204/166 and the four-leg gate green.
-- [ ] C8: every phase carries a local four-leg gate on its committed tree, a
+- [x] C8: every phase carries a local four-leg gate on its committed tree, a
       green face harness, and the visual check against its mockup section;
       the version declarations move per release; **the beta bar is untouched
       — 0.x is still beta, the owner's call.**

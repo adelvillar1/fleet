@@ -247,8 +247,8 @@
   --line: rgb(20 60 70 / 14%);
   --line2: rgb(20 60 70 / 26%);
   --text: rgb(19, 36, 43);
-  --muted: rgb(70, 82, 92);
-  --faint: rgb(76, 84, 92);
+  --muted: rgb(60, 72, 82);
+  --faint: rgb(63, 75, 85);
   --green: rgb(15, 168, 118); --cyan: rgb(10, 147, 184); --magenta: rgb(207, 47, 156);
   --amber: rgb(201, 126, 0); --gold: rgb(185, 137, 0); --red: rgb(220, 56, 56);
   --teal: rgb(12, 156, 139); --blue: rgb(47, 111, 214);
@@ -268,8 +268,8 @@
   --dsw-alias-hairline: rgb(24 26 29 / 10%);
   --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
   --dsw-alias-ink: rgb(24, 26, 29);
-  --dsw-alias-ink-secondary: rgb(70, 82, 92);
-  --dsw-alias-ink-tertiary: rgb(76, 84, 92);
+  --dsw-alias-ink-secondary: rgb(60, 72, 82);
+  --dsw-alias-ink-tertiary: rgb(63, 75, 85);
   --dsw-alias-accent: rgb(10, 147, 184);
   --dsw-alias-accent-deep: rgb(12, 156, 139);
   --dsw-alias-accent-lift: rgb(6, 100, 132);
@@ -301,8 +301,8 @@
   --dsw-alias-hairline: rgb(24 26 29 / 10%);
   --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
   --dsw-alias-ink: rgb(24, 26, 29);
-  --dsw-alias-ink-secondary: rgb(70, 82, 92);
-  --dsw-alias-ink-tertiary: rgb(76, 84, 92);
+  --dsw-alias-ink-secondary: rgb(60, 72, 82);
+  --dsw-alias-ink-tertiary: rgb(63, 75, 85);
   --dsw-alias-accent: rgb(47, 95, 208);
   --dsw-alias-accent-deep: rgb(37, 78, 176);
   --dsw-alias-accent-lift: rgb(37, 78, 176);
@@ -327,8 +327,8 @@
   --line: rgb(20 60 70 / 14%);
   --line2: rgb(20 60 70 / 26%);
   --text: rgb(19, 36, 43);
-  --muted: rgb(70, 82, 92);
-  --faint: rgb(76, 84, 92);
+  --muted: rgb(60, 72, 82);
+  --faint: rgb(63, 75, 85);
   --green: rgb(15, 168, 118); --cyan: rgb(10, 147, 184); --magenta: rgb(207, 47, 156);
   --amber: rgb(201, 126, 0); --gold: rgb(185, 137, 0); --red: rgb(220, 56, 56);
   --teal: rgb(12, 156, 139); --blue: rgb(47, 111, 214);
