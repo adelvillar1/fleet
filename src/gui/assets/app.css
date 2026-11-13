@@ -11566,6 +11566,21 @@ body[data-armada="off"] .surfaces-link[data-address="armada"] { display: none; }
    cards with their bulk check, tags, link dots and running sweep, the
    explicit bulk bar, and the activity strip beneath. */
 
+/* `.board` is a twelve-column grid its cards span into; every block the
+   board itself appends has to claim the full width, or it lands in one
+   53px cell (the defect the audit's screenshot found: the activity strip
+   wrapped to six one-word lines beside the columns). The stub harness has
+   no layout engine, so this is CSS-only and the visual check is the gate. */
+.board-columns,
+.board-bulk,
+.board-activity,
+.board-empty,
+.board-skeleton,
+.board-head,
+.board-note {
+  grid-column: 1 / -1;
+}
+
 .board-columns {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -32,14 +32,16 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 /// The newest work items the spine carries. The connections column draws a
-/// neighborhood, not the archive; the lens lists page from here.
-pub const MAX_WORK: usize = 24;
+/// neighborhood, not the archive; the lens lists page from here. Twelve is
+/// the bound that keeps one read under half a second on the owner's archive
+/// (a summarize parses a whole log; 24 of them cost ~1.7s per pivot).
+pub const MAX_WORK: usize = 12;
 /// The most nodes the connections column receives.
 pub const MAX_NODES: usize = 60;
 /// How many session logs are summarized (mtime order) before the bound.
-const MAX_SESSIONS_SCANNED: usize = 40;
+const MAX_SESSIONS_SCANNED: usize = 14;
 /// The total bytes the tool-call scan may read, across all sessions.
-const SCAN_BUDGET: u64 = 16 * 1024 * 1024;
+const SCAN_BUDGET: u64 = 8 * 1024 * 1024;
 /// The most skill/fact names one work item contributes to the graph.
 const MAX_NAMES_PER_WORK: usize = 6;
 
@@ -440,23 +442,31 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
             None,
         );
     }
-    for row in crate::workspace::view(home, None) {
-        if row.object.kind != crate::workspace::Kind::Lesson {
+    // Lessons come from the summaries already in hand: `workspace::view`
+    // would re-walk the whole archive (813 logs) to find the same rows, and
+    // that walk is what made this read 1.7s per pivot.
+    for summary in &sessions {
+        let kind = summary.kind.as_deref();
+        if kind != Some(crate::session::LESSON_KIND) && kind != Some(crate::session::PRACTICE_KIND)
+        {
             continue;
         }
-        let label = row
-            .entry
-            .get("name")
-            .or_else(|| row.entry.get("title"))
-            .and_then(|name| name.as_str())
-            .filter(|name| !name.is_empty())
-            .unwrap_or(row.object.id.as_str())
+        let label = summary
+            .first_text
+            .as_deref()
+            .map(|text| text.trim())
+            .filter(|text| !text.is_empty())
+            .unwrap_or(summary.id.as_str())
             .to_string();
         add_node(
             &mut nodes,
             &mut omitted,
-            &row.object.id,
-            if row.practice { "practice" } else { "lesson" },
+            &summary.id,
+            if kind == Some(crate::session::PRACTICE_KIND) {
+                "practice"
+            } else {
+                "lesson"
+            },
             &label,
             None,
             false,
