@@ -1948,6 +1948,7 @@ impl Bridge {
             // to know its own shape.
             let tools = tools_read(&home);
             let workflows = workflows_read(&home);
+            let skills = skills_read(&home);
             let count = |value: &Value, key: &str| {
                 value
                     .get(key)
@@ -1955,10 +1956,22 @@ impl Bridge {
                     .map(|rows| rows.len())
                     .unwrap_or(0)
             };
+            // P4: the capability counts the Intelligence lens projects as
+            // read-only cards. Facts are a cheap directory count (no parse);
+            // skills/tools/workflows reuse the registry reads the lens uses.
+            let facts = std::fs::read_dir(&memories)
+                .map(|rd| {
+                    rd.flatten()
+                        .filter(|e| e.path().extension().map(|x| x == "md").unwrap_or(false))
+                        .count()
+                })
+                .unwrap_or(0);
             if let Some(map) = spine.as_object_mut() {
                 map.insert(
                     "intelligence".to_string(),
                     json!({
+                        "facts": facts,
+                        "skills": count(&skills, "skills"),
                         "tools": count(&tools, "tools"),
                         "workflows": count(&workflows, "workflows"),
                     }),

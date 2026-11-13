@@ -254,8 +254,11 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       while declared tasks stay movable; a run is not a movable task, so no
       drag/bulk on it (a control that lies is on the never-list). The **Desk
       lens** follows: with no deliverables it projects the spine's runs as
-      read-only cards (verified 12, none draggable). Harness + gate green.
-      Remaining lenses follow.
+      read-only cards (verified 12, none draggable). The **Intelligence lens**
+      projects the spine's capability counts (memories / skills / tools /
+      workflows) as read-only cards — the spine now carries all four counts
+      (facts via a cheap directory count), verified 859 / 460 / 0 / 0. Harness
+      + gate green. Remaining lenses follow.
 - [ ] C5 (P5): the type floor holds; component pairs are measured at 7:1 for
       small text; graph labels are readable at any density. **Progress
       2026-11-12: the 12px floor landed** (464 sub-12px literals removed) and

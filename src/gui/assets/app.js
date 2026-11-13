@@ -7482,6 +7482,15 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
       ]);
     el.memoryBoard.appendChild(surfaceHead('Intelligence', 'Intelligence',
       'Everything fleet knows and can do: what it remembers, its skills, its tools, and the chains they compose into.', instrument));
+    // P4: the spine's capability counts as read-only cards — the lens
+    // projects the workspace's own shape instead of a separate fetch.
+    var cap = face.spine && face.spine.intelligence;
+    if (cap) {
+      [['memories', cap.facts], ['skills', cap.skills], ['tools', cap.tools], ['workflows', cap.workflows]]
+        .forEach(function (pair) {
+          el.memoryBoard.appendChild(boardCard(3, pair[0], String(pair[1] == null ? 0 : pair[1]), null));
+        });
+    }
     el.memoryBoard.appendChild(surfaceStrip([
       [facts.length, 'facts'],
       [live.length, 'live'],
@@ -26818,6 +26827,9 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
       memory: function () {
         paintMemory();
         readMemory(true).then(paintMemory);
+        // P4: the capability counts ride the spine — the lens projects the
+        // workspace's own shape as read-only cards once the read lands.
+        readSpine(true).then(paintMemory);
         // The capability segments (U40) ride the same arrival: the
         // corpus paints first, the skills, tools and chains fill in as
         // their reads land — never a spinner that lies.
