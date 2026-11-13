@@ -14,6 +14,7 @@
 // alone opens the face, and a reload is the same address again.
 import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
 import { parseAddress } from './core/router.js';
+import { node, svg, clip } from './core/dom.js';
 (function () {
   'use strict';
 
@@ -1240,12 +1241,6 @@ import { parseAddress } from './core/router.js';
 
   // ------------------------------------------------------------- the rows
 
-  function node(name, className, text) {
-    var made = document.createElement(name);
-    if (className) made.className = className;
-    if (text != null) made.textContent = text;
-    return made;
-  }
 
   // One stroke icon, from the declaration above. A surface's mark is its
   // own shape, not a letter in a box: the rail and the palette should
@@ -5546,12 +5541,6 @@ import { parseAddress } from './core/router.js';
   // `<title>` is the whole of what its box had to clip, so the third
   // argument is not optional in spirit: an element that says nothing
   // shows no tooltip and the clipped words are simply gone.
-  function svg(name, attrs, said) {
-    var made = document.createElementNS('http://www.w3.org/2000/svg', name);
-    Object.keys(attrs || {}).forEach(function (key) { made.setAttribute(key, attrs[key]); });
-    if (said != null) made.textContent = said;
-    return made;
-  }
 
   // A card's inner width, from the board it stands in. Every chart is
   // laid out against this, so a chart fills the card it was drawn for at
@@ -6424,10 +6413,6 @@ import { parseAddress } from './core/router.js';
   // record, `stopped` once it does — the session module's distinction.
   var TREE_TONE = { running: 'live', stopped: 'idle' };
 
-  function clip(text, most) {
-    var said = String(text == null ? '' : text);
-    return said.length > most ? said.slice(0, most - 1) + '\u2026' : said;
-  }
 
   // A tone word to the colour the face already uses for it, so the
   // panel's dots are the same dots the rest of the face draws.

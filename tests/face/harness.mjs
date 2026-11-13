@@ -16,6 +16,7 @@ const ROOT = path.resolve(HERE, '../..');
 const APP = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.js'), 'utf8');
 const STORE = fs.readFileSync(path.join(ROOT, 'src/gui/assets/core/store.js'), 'utf8');
 const ROUTER = fs.readFileSync(path.join(ROOT, 'src/gui/assets/core/router.js'), 'utf8');
+const DOM = fs.readFileSync(path.join(ROOT, 'src/gui/assets/core/dom.js'), 'utf8');
 // P2: production loads native ES modules (app.js imports core/store.js).
 // The stub has no module loader, so it reconstructs the original single
 // strict IIFE by inlining the store and dropping the import — identical
@@ -25,8 +26,10 @@ const ROUTER = fs.readFileSync(path.join(ROOT, 'src/gui/assets/core/router.js'),
 // production's module scope without a second wrapper.
 const SRC = STORE.replace(/^export /gm, '') + '\n' +
   ROUTER.replace(/^export /gm, '') + '\n' +
+  DOM.replace(/^export /gm, '') + '\n' +
   APP.replace(/^import \{ face, CHAT_SCALES, CHAT_SCALE_DEFAULT \} from '\.\/core\/store\.js';\n/m, '')
-     .replace(/^import \{ parseAddress \} from '\.\/core\/router\.js';\n/m, '');
+     .replace(/^import \{ parseAddress \} from '\.\/core\/router\.js';\n/m, '')
+     .replace(/^import \{ node, svg, clip \} from '\.\/core\/dom\.js';\n/m, '');
 const HTML = fs.readFileSync(path.join(ROOT, 'src/gui/assets/index.html'), 'utf8');
 const RUST = fs.readFileSync(path.join(ROOT, 'src/gui/bridge.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/gui/server.rs'), 'utf8') +
