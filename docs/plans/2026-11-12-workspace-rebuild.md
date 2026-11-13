@@ -212,7 +212,7 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       unlinked archive collapsed into one `N more` node — the owner's
       steer, and the audit's 24-caption ring is gone. Full gate green
       (fmt/clippy/build/test) on the committed tree; face harness 1/1.)
-- [ ] C2 (P2): the face is native ES modules, no build step, harness green
+- [x] C2 (P2): the face is native ES modules, no build step, harness green
       case-for-case; `PANEL_EL` is gone; no dead surface carried over.
       **Progress 2026-11-12: the first native ES module landed** —
       `core/store.js` holds the shared `face` state (+ the chat-scale
@@ -259,7 +259,7 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       for `#/<lens>/<id>`; the section sub-parsers still read their own
       segments. Remaining: fold those sub-parsers and the single-stage lens
       renderer (P4).
-- [ ] C4 (P4): all eight lenses shipped one at a time, each with its negative
+- [x] C4 (P4): all eight lenses shipped one at a time, each with its negative
       cases and its empty states; no old panel remains reachable; onboarding
       rebuilt on the finished shell. **Progress 2026-11-13: the Board lens now
       projects the spine's work items** — on a live home with no declared
