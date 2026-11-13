@@ -97,3 +97,6 @@ docs/plans/*.graph.json
 
 # CHANGELOG lock sidecar, same seam
 CHANGELOG.md.lock
+
+# The date-organised event journal the live system writes — runtime data
+/2026/
