@@ -459,16 +459,16 @@
           <ol class="method-steps">
             <li><button class="method-step" type="button" data-step="plan"><b>Plan</b><span>it plans before it touches anything</span></button></li>
             <li><button class="method-step" type="button" data-step="delegate"><b>Delegate</b><span>helpers do the steps in order</span></button></li>
-            <li><button class="method-step" type="button" data-step="verify"><b>Verify</b><span>every claim is checked against the evidence</span></button></li>
+            <li><button class="method-step" type="button" data-step="verify"><b>Verify</b><span><span class="plain-only">every claim is checked against the evidence</span><span class="expert-only">sys1 grades the evidence</span></span></button></li>
           </ol>
         </div>
         <div class="lanes" id="lanes" aria-label="the lanes">
-          <span class="lanes-label">what it can do</span>
-          <button class="lane" type="button" data-lane="judge">judge</button>
-          <button class="lane" type="button" data-lane="memory">remember</button>
+          <span class="lanes-label"><span class="plain-only">what it can do</span><span class="expert-only">lanes</span></span>
+          <button class="lane" type="button" data-lane="judge"><span class="plain-only">judge</span><span class="expert-only">sys1 judge</span></button>
+          <button class="lane" type="button" data-lane="memory"><span class="plain-only">remember</span><span class="expert-only">memory</span></button>
           <button class="lane" type="button" data-lane="skills">skills</button>
-          <button class="lane" type="button" data-lane="web">browse</button>
-          <button class="lane" type="button" data-lane="deck">present</button>
+          <button class="lane" type="button" data-lane="web"><span class="plain-only">browse</span><span class="expert-only">web</span></button>
+          <button class="lane" type="button" data-lane="deck"><span class="plain-only">present</span><span class="expert-only">deck</span></button>
         </div>
         <div class="offers" id="offers"></div>
         <div class="onboard-cards" id="onboard-cards" hidden></div>
@@ -1327,6 +1327,8 @@
             title="labels — show or hide the graph labels">labels</button>
     <button class="console-ctl" id="ctl-motion" type="button" aria-pressed="true"
             title="motion — the ambient layer and animations">motion</button>
+    <button class="console-ctl" id="ctl-expert" type="button" aria-pressed="false"
+            title="expert — reveal the subsystem names behind the plain words">expert</button>
     <span class="console-sep" aria-hidden="true"></span>
     <button class="console-ctl console-armada" id="ctl-armada" type="button" aria-pressed="false"
             title="armada — grow the graph with the fleet, or fleet alone">armada</button>

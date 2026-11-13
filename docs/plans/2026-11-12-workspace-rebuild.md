@@ -259,9 +259,12 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       subsystem names; the vocabulary lint is green. **Progress 2026-11-13:
       the home empty state reads in plain language** — the method steps and
       the capability row no longer say `sys1`/`lanes`/`deck` (verified
-      in-browser: judge / remember / skills / browse / present). Harness +
-      gate green. Remaining: the expert switch, the vocabulary lint, and the
-      wider copy pass over lens subtitles and empty states.
+      in-browser: judge / remember / skills / browse / present). **The expert
+      switch landed** — a console toggle (`expert`) sets `body[data-expert]`;
+      plain words by default, subsystem names revealed when on (verified:
+      on -> expert inline / plain hidden; off -> the reverse). Harness + gate
+      green. Remaining: the vocabulary lint and the wider copy pass over lens
+      subtitles and empty states.
 - [ ] C7 (P7): the dead code and duplicate declarations are gone; the counts
       are recorded; the ledgers and the pointer index are reconciled.
       **Progress 2026-11-13: the dead `#panel-huddles` markup removed** (no

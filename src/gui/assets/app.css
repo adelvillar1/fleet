@@ -10942,6 +10942,11 @@ body[data-motion="off"] .tissue-edge.hot { animation: none; }
    pointer or the keyboard's focus — 12.5px, never the old 9px caption
    band. Names on demand are what let the graph carry 40 nodes without
    shredding into a ring of clipped captions. */
+/* U45: plain by default; the expert switch reveals the subsystem names. */
+.expert-only { display: none; }
+body[data-expert="on"] .expert-only { display: inline; }
+body[data-expert="on"] .plain-only { display: none; }
+
 .tissue-hover {
   position: absolute;
   z-index: 2;

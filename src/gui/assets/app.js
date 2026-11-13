@@ -1131,6 +1131,7 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
     tissueReveal: document.getElementById('tissue-reveal'),
     ctlLabels: document.getElementById('ctl-labels'),
     ctlMotion: document.getElementById('ctl-motion'),
+    ctlExpert: document.getElementById('ctl-expert'),
     ctlArmada: document.getElementById('ctl-armada'),
     sendLabel: document.getElementById('send-label'),
     queueChip: document.getElementById('queue-chip'),
@@ -10546,6 +10547,7 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
     document.body.dataset.tissue = consoleSetting('connections', 'on');
     document.body.dataset.labels = consoleSetting('labels', 'on');
     document.body.dataset.armada = consoleSetting('armada', 'off');
+    document.body.dataset.expert = consoleSetting('expert', 'off');
     if (el.ctlDensity) el.ctlDensity.setAttribute('aria-pressed',
       String(document.body.dataset.density === 'compact'));
     if (el.ctlConnections) el.ctlConnections.setAttribute('aria-pressed',
@@ -10561,12 +10563,14 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
       String(motionSetting() === 'on'));
     if (el.ctlArmada) el.ctlArmada.setAttribute('aria-pressed',
       String(document.body.dataset.armada === 'on'));
+    if (el.ctlExpert) el.ctlExpert.setAttribute('aria-pressed',
+      String(document.body.dataset.expert === 'on'));
   }
   function consoleToggle(key, onValue, offValue, after) {
     // Read the applied state, not the storage fallback: the default for
     // connections/labels is on, so a fallback of off would flip the first
     // press the wrong way.
-    var attr = { density: 'density', connections: 'tissue', labels: 'labels', armada: 'armada' }[key];
+    var attr = { density: 'density', connections: 'tissue', labels: 'labels', armada: 'armada', expert: 'expert' }[key];
     var now = document.body.dataset[attr] || offValue;
     try { window.localStorage.setItem('fleet-' + key, now === onValue ? offValue : onValue); }
     catch (error) { }
@@ -10591,6 +10595,9 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
   });
   if (el.ctlLabels) el.ctlLabels.addEventListener('click', function () {
     consoleToggle('labels', 'on', 'off');
+  });
+  if (el.ctlExpert) el.ctlExpert.addEventListener('click', function () {
+    consoleToggle('expert', 'on', 'off');
   });
   if (el.ctlMotion) el.ctlMotion.addEventListener('click', function () {
     try { window.localStorage.setItem('fleet-motion', motionSetting() === 'on' ? 'off' : 'on'); }
