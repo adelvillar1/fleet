@@ -35,6 +35,7 @@
 pub mod bridge;
 pub mod related;
 pub mod server;
+pub mod spine;
 pub mod themes;
 pub mod usage;
 

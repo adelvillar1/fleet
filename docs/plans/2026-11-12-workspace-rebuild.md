@@ -200,9 +200,18 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       `UI-DECISIONS.md`; every current UI string is mapped or marked for
       deletion. (`docs/design/VOCABULARY.md` incl. the appendix mapping every
       route and rail group; `docs/design/OBJECT-MODEL.md`; U43–U47 appended.)
-- [ ] C1 (P1): one spine read serves every object with real edges; on this
+- [x] C1 (P1): one spine read serves every object with real edges; on this
       home `/api/workspace` shows the scheduled sessions as work items and
       `/api/tissue` returns edges > 0; the edge contract is pinned by test.
+      (`src/gui/spine.rs` — 4 unit tests, including
+      `the_spine_serves_a_session_as_a_work_item` pinning the used_skill
+      edge; live read on this home: **22 nodes/0 edges → 54 nodes/20
+      edges**, the 24 newest sessions as work items titled by job, status
+      derived from the log's own end record. The connections painter now
+      draws the focus's **neighborhood** with hover-only names and the
+      unlinked archive collapsed into one `N more` node — the owner's
+      steer, and the audit's 24-caption ring is gone. Full gate green
+      (fmt/clippy/build/test) on the committed tree; face harness 1/1.)
 - [ ] C2 (P2): the face is native ES modules, no build step, harness green
       case-for-case; `PANEL_EL` is gone; no dead surface carried over.
 - [ ] C3 (P3): one focus, one address grammar, seven/eight lenses, twelve

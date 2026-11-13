@@ -29130,7 +29130,10 @@
     practice: { hue: '--teal', lens: 'learning', name: 'practices' },
     install: { hue: '--blue', lens: null, name: 'installs' },
     fact: { hue: '--teal', lens: 'memory', name: 'facts' },
-    instance: { hue: '--blue', lens: 'armada', name: 'instances' }
+    skill: { hue: '--teal', lens: 'memory', name: 'skills' },
+    work: { hue: '--amber', lens: 'desk', name: 'work' },
+    instance: { hue: '--blue', lens: 'armada', name: 'instances' },
+    more: { hue: '--muted', lens: null, name: 'more' }
   };
 
   function readTissue(force) {
@@ -29259,81 +29262,207 @@
       if (el.tissueLegend) el.tissueLegend.textContent = '';
       return;
     }
-    // The focus (U3): one object. A remembered one first, else the first
-    // node the read offers — never a silent blank pane.
-    var focus = (face.focusObject && tissueNode(face.focusObject.id)) || nodes[0];
+    // The focus (U3): one object. A remembered one first; on the first
+    // paint, the first node that actually has a relation — a focus with
+    // nothing attached teaches nothing, and the column would be one
+    // lonely dot. Falls back to the first node when no edge exists at
+    // all (a fresh home), so the column is never blank.
+    var connected = {};
+    edges.forEach(function (edge) {
+      connected[edge.from] = true;
+      connected[edge.to] = true;
+    });
+    var firstLinked = nodes.filter(function (one) { return connected[one.id]; })[0];
+    var focus = (face.focusObject && tissueNode(face.focusObject.id)) || firstLinked || nodes[0];
     if (!face.focusObject) {
       face.focusObject = { kind: focus.kind, id: focus.id, label: focus.label };
     }
     var W = 288, H = 224, CX = W / 2, CY = H / 2;
-    // One positions map for the whole paint: the focus sits at the
-    // center, every other node the read holds on the ring, evenly spread
-    // from the top. Edges and nodes read the same map, so a line always
-    // lands on the node it names.
-    var ring = nodes.filter(function (one) { return one.id !== focus.id; });
+    // The focus's neighborhood, never the whole archive (U3/U11): the
+    // centered object and what the read says it touches. Nothing else is
+    // drawn — an unlinked focus shows itself and says so, rather than
+    // falling back to every node and shredding the labels.
+    var neighbours = {};
+    edges.forEach(function (edge) {
+      if (edge.from === focus.id) { neighbours[edge.to] = true; }
+      if (edge.to === focus.id) { neighbours[edge.from] = true; }
+    });
+    var ring = nodes.filter(function (one) {
+      return one.id !== focus.id && neighbours[one.id];
+    });
+    // Everything the read holds but the focus does not touch: drawn as
+    // small unlabeled marks on an outer ring. They stay present and
+    // clickable (the graph never hides an object), but the eye reads the
+    // neighborhood first — the whole-archive ring is what shredded the
+    // labels (the audit's 24-thread ring).
+    var others = nodes.filter(function (one) {
+      return one.id !== focus.id && !neighbours[one.id];
+    });
+    // The neighborhood is the default picture; everything else collapses
+    // into ONE quiet node. A ring of unlinked dots implies structure that
+    // is not there — the graph shows what it knows, and offers the rest
+    // on request. Names stay on hover in both views.
+    var showAll = face.tissueAll === true;
+    if (showAll) {
+      ring = ring.concat(others);
+      others = [];
+    }
+    var moreNode = null;
+    // A graph with no edges has no neighborhood to summarize: every node
+    // is drawn, and the cluster would be a lie about missing structure.
+    if (!showAll && others.length && edges.length) {
+      moreNode = { id: '__more', kind: 'more', live: false,
+        label: others.length + ' more' };
+      others = [];
+    } else if (showAll) {
+      moreNode = { id: '__more', kind: 'more', live: false, label: 'show fewer' };
+    }
+    // The header says what the picture shows — a lone dot needs the words
+    // that explain it, or it reads as a broken column.
+    if (el.tissueWhere) {
+      var hiddenCount = showAll ? 0 : Math.max(0, nodes.length - ring.length - 1);
+      el.tissueWhere.textContent = ring.length
+        ? (hiddenCount
+          ? 'what this connects to \u00b7 ' + hiddenCount + ' more below'
+          : 'what this connects to')
+        : 'nothing connects to this yet';
+    }
     var at = {};
     ring.forEach(function (one, index) {
       var angle = (index / ring.length) * Math.PI * 2 - Math.PI / 2;
       at[one.id] = [CX + 78 * Math.cos(angle), CY + 66 * Math.sin(angle)];
     });
+    others.forEach(function (one, index) {
+      var spread = Math.max(1, others.length);
+      var angle = (index / spread) * Math.PI * 2 - Math.PI / 2 + Math.PI / spread;
+      at[one.id] = [CX + 118 * Math.cos(angle), CY + 96 * Math.sin(angle)];
+    });
     at[focus.id] = [CX, CY];
-    var made = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, 'aria-hidden': 'true' });
-    // Edges first, under the nodes. An edge the read names but a node it
-    // dropped is skipped — never a line to nowhere.
+    if (moreNode) at[moreNode.id] = [CX, H - 12];
+    var made = svg('svg', {
+      viewBox: '0 0 ' + W + ' ' + H, 'aria-hidden': 'true', class: 'tissue-net'
+    });
+    // Edges first, under the nodes: the links ARE the picture. An edge the
+    // read names but a node it dropped is skipped — never a line to
+    // nowhere. Each line carries its endpoints so hover can light the
+    // links a node owns.
     edges.forEach(function (edge) {
       var fromXY = at[edge.from];
       var toXY = at[edge.to];
       if (!fromXY || !toXY) return;
-      var line = svg('line', {
+      made.appendChild(svg('line', {
         x1: fromXY[0], y1: fromXY[1], x2: toXY[0], y2: toXY[1],
         class: 'tissue-edge' + (edge.hot ? ' hot' : ''),
+        'data-from': edge.from, 'data-to': edge.to,
         stroke: 'var(--line2)'
-      });
-      made.appendChild(line);
+      }));
     });
-    // The ring: labels above for the top half, below for the bottom (U11).
-    // The display label truncates — a thread's title is a sentence, and
-    // sixteen sentences on one ring read as a tangle; the full label
-    // rides the title attribute and the focus card says the whole word.
-    // A dense ring truncates harder, so the neighbors' words stay apart.
-    var labelCap = ring.length > 10 ? 11 : 18;
-    function tissueDisplay(label) {
-      var said = String(label || '');
-      return said.length > labelCap
-        ? said.slice(0, labelCap - 1).trimEnd() + '\u2026' : said;
+
+    // Names live in ONE hover card, never as a canvas of captions: a
+    // thread's title is a sentence, and twenty-four of them on a ring is
+    // unreadable at any size (the audit's ring). Hover or keyboard-focus
+    // a node and its name appears beside it; select it and the focus card
+    // keeps the name after the card goes.
+    var card = node('div', 'tissue-hover');
+    card.hidden = true;
+    el.tissueGraph.appendChild(card);
+
+    function showHover(one, xy) {
+      while (card.firstChild) card.removeChild(card.firstChild);
+      var eyebrow = node('div', 'tissue-hover-kind');
+      var dot = node('span', 'tissue-kind-dot');
+      dot.style.background = 'var(' + kindHue(one.kind) + ')';
+      eyebrow.appendChild(dot);
+      var named = TISSUE_KINDS[one.kind] ? TISSUE_KINDS[one.kind].name : one.kind;
+      eyebrow.appendChild(node('span', null, named));
+      card.appendChild(eyebrow);
+      card.appendChild(node('div', 'tissue-hover-title', one.label || one.id));
+      card.style.left = (xy[0] / W) * 100 + '%';
+      card.style.top = (xy[1] / H) * 100 + '%';
+      if (xy[1] < 46) card.setAttribute('data-below', '1');
+      else card.removeAttribute('data-below');
+      card.hidden = false;
+      made.classList.add('hovering');
+      var lines = made.querySelectorAll('.tissue-edge');
+      for (var i = 0; i < lines.length; i += 1) {
+        var lit = lines[i].getAttribute('data-from') === one.id
+          || lines[i].getAttribute('data-to') === one.id;
+        if (lit) lines[i].classList.add('lit');
+        else lines[i].classList.remove('lit');
+      }
     }
-    ring.forEach(function (one) {
+
+    function hideHover() {
+      card.hidden = true;
+      made.classList.remove('hovering');
+      var lines = made.querySelectorAll('.tissue-edge');
+      for (var i = 0; i < lines.length; i += 1) lines[i].classList.remove('lit');
+    }
+
+    // One node factory: the ring (readable radius) and the far ring (a
+    // quiet mark) differ only in size. Both keep their title, their
+    // aria-label, their focusability and their click — the graph never
+    // hides an object, it only stops shouting its name.
+    function graphNode(one, radius) {
       var xy = at[one.id];
       var group = svg('g', {
-        class: 'tissue-node' + (one.live ? ' live' : ''),
-        tabindex: '0', role: 'button'
+        class: 'tissue-node' + (one.live ? ' live' : '') + (radius < 5 ? ' far' : ''),
+        tabindex: '0', role: 'button', 'aria-label': one.label || one.id
       });
       group.appendChild(svg('circle', {
-        cx: xy[0], cy: xy[1], r: 7, class: 'tissue-node-ring',
+        cx: xy[0], cy: xy[1], r: radius, class: 'tissue-node-ring',
         fill: 'var(' + kindHue(one.kind) + '-d)', stroke: 'var(' + kindHue(one.kind) + ')',
-        'stroke-width': '1.2'
+        'stroke-width': radius < 5 ? '1' : '1.2'
       }));
-      var above = xy[1] < CY;
-      group.appendChild(svg('text', {
-        x: xy[0], y: above ? xy[1] - 11 : xy[1] + 15,
-        'text-anchor': 'middle', class: 'tissue-node-label'
-      }, tissueDisplay(one.label || one.id)));
       group.appendChild(svg('title', {}, one.label || one.id));
       group.addEventListener('click', function () { pivotTo(one.kind, one.id, one.label); });
+      group.addEventListener('mouseenter', function () { showHover(one, xy); });
+      group.addEventListener('mouseleave', hideHover);
+      group.addEventListener('focus', function () { showHover(one, xy); });
+      group.addEventListener('blur', hideHover);
       made.appendChild(group);
+    }
+
+    others.forEach(function (one) { graphNode(one, 3.4); });
+    ring.forEach(function (one) { graphNode(one, 7); });
+    if (moreNode) {
+      var moreXY = at[moreNode.id];
+      var more = svg('g', {
+        class: 'tissue-node more', tabindex: '0', role: 'button',
+        'aria-label': moreNode.label
+      });
+      more.appendChild(svg('circle', {
+        cx: moreXY[0], cy: moreXY[1], r: 6, class: 'tissue-node-ring',
+        fill: 'var(--line2)', stroke: 'var(--line2)', 'stroke-width': '1'
+      }));
+      more.appendChild(svg('title', {}, moreNode.label));
+      more.addEventListener('click', function () {
+        face.tissueAll = !showAll;
+        paintTissue();
+      });
+      more.addEventListener('mouseenter', function () { showHover(moreNode, moreXY); });
+      more.addEventListener('mouseleave', hideHover);
+      more.addEventListener('focus', function () { showHover(moreNode, moreXY); });
+      more.addEventListener('blur', hideHover);
+      made.appendChild(more);
+    }
+
+    // The center: the focus itself, bigger — the focus card names it.
+    var center = svg('g', {
+      class: 'tissue-node' + (focus.live ? ' live' : ''),
+      tabindex: '0', role: 'button', 'aria-label': focus.label || focus.id
     });
-    // The center: the focus itself, bigger, unlabeled — the focus card
-    // names it (U11).
-    var center = svg('g', { class: 'tissue-node' + (focus.live ? ' live' : '') });
     center.appendChild(svg('circle', {
       cx: CX, cy: CY, r: 13, class: 'tissue-node-ring',
       fill: 'var(' + kindHue(focus.kind) + '-d)', stroke: 'var(' + kindHue(focus.kind) + ')',
       'stroke-width': '1.5'
     }));
     center.appendChild(svg('title', {}, focus.label || focus.id));
-    center.addEventListener('click', function () {
-      pivotTo(focus.kind, focus.id, focus.label);
-    });
+    center.addEventListener('click', function () { pivotTo(focus.kind, focus.id, focus.label); });
+    center.addEventListener('mouseenter', function () { showHover(focus, [CX, CY]); });
+    center.addEventListener('mouseleave', hideHover);
+    center.addEventListener('focus', function () { showHover(focus, [CX, CY]); });
+    center.addEventListener('blur', hideHover);
     made.appendChild(center);
     el.tissueGraph.appendChild(made);
     paintTissueLegend(nodes);

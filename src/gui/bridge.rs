@@ -1910,6 +1910,7 @@ impl Bridge {
     /// document, never silent (U2).
     pub async fn tissue(&self) -> Value {
         let home = self.home.clone();
+        let memories = self.memories.clone();
         let driving = self
             .state
             .lock()
@@ -1917,278 +1918,58 @@ impl Bridge {
             .ok()
             .flatten();
         tokio::task::spawn_blocking(move || {
-            const MAX_NODES: usize = 60;
-            let graph = crate::workspace::read(&home);
-            let mut nodes: Vec<Value> = Vec::new();
-            let mut edges: Vec<Value> = Vec::new();
-            let mut omitted = 0usize;
-            let push = |nodes: &mut Vec<Value>,
-                        omitted: &mut usize,
-                        id: String,
-                        kind: &str,
-                        label: String,
-                        status: Option<&str>,
-                        live: bool,
-                        meta: Option<String>| {
-                if nodes.len() >= MAX_NODES {
-                    *omitted += 1;
-                    return;
-                }
-                nodes.push(json!({
-                    "id": id, "kind": kind, "label": label,
-                    "status": status, "live": live, "meta": meta,
-                }));
-            };
-            for (id, task) in &graph.tasks {
-                push(
-                    &mut nodes,
-                    &mut omitted,
-                    id.clone(),
-                    "task",
-                    task.title.clone(),
-                    Some(task.status.as_str()),
-                    task.status == crate::workspace::Status::Working,
-                    None,
-                );
-            }
-            for row in crate::workspace::view(&home, None) {
-                let kind = match row.object.kind {
-                    crate::workspace::Kind::Deliverable => "deliverable",
-                    crate::workspace::Kind::Lesson => {
-                        if row.practice {
-                            "practice"
-                        } else {
-                            "lesson"
-                        }
-                    }
-                    _ => continue,
-                };
-                // The label ladder: a deliverable names itself, a lesson
-                // titles itself — either way the store's own word, never
-                // a bare id when the store has a name.
-                let label = row
-                    .entry
-                    .get("name")
-                    .or_else(|| row.entry.get("title"))
-                    .and_then(|name| name.as_str())
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or(row.object.id.as_str())
-                    .to_string();
-                let needs = row.entry.get("needs").and_then(|needs| needs.as_bool());
-                push(
-                    &mut nodes,
-                    &mut omitted,
-                    row.object.id.clone(),
-                    kind,
-                    label,
-                    None,
-                    false,
-                    needs
-                        .map(|needs| {
-                            if needs {
-                                "named refusals stand".to_string()
-                            } else {
-                                String::new()
-                            }
-                        })
-                        .filter(|meta| !meta.is_empty()),
-                );
-            }
-            // The recent sessions are the threads: the archive's own
-            // order, the newest twelve, bounded by the same cap. A run
-            // in flight is the one live node the pulse ring marks.
-            if let Ok(recent) = crate::session::list(&home) {
-                for summary in recent.into_iter().rev().take(12) {
-                    let label = summary
-                        .last_plan
-                        .clone()
-                        .or(summary.first_text.clone())
-                        .unwrap_or_else(|| summary.id.clone());
-                    push(
-                        &mut nodes,
-                        &mut omitted,
-                        summary.id.clone(),
-                        "thread",
-                        label,
-                        None,
-                        Some(summary.id.clone()) == driving,
-                        None,
-                    );
-                }
-            }
-            // The roles are the bots (the delegation surface's own list).
-            for role in crate::roles::load_all(&home) {
-                push(
-                    &mut nodes,
-                    &mut omitted,
-                    format!("bot:{}", role.name),
-                    "bot",
-                    role.name.clone(),
-                    None,
-                    false,
-                    None,
-                );
-            }
-            // Armada instances join the graph (U29): the fleet this install
-            // commands, each linked to it by the shared-mind edge. The face
-            // shows them when armada is on; off leaves fleet whole.
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|span| span.as_secs())
-                .unwrap_or_default();
-            let roster = crate::armada::roster::load(&home);
-            let mut instance_ids: Vec<String> = Vec::new();
-            for instance in roster.instances.values() {
-                let id = format!("instance:{}", instance.sid);
-                instance_ids.push(id.clone());
-                push(
-                    &mut nodes,
-                    &mut omitted,
-                    id,
-                    "instance",
-                    instance.sid.clone(),
-                    None,
-                    instance.live(now),
-                    Some(format!("v{}", instance.version)),
-                );
-            }
-            for edge in &graph.edges {
-                if edges.len() >= MAX_NODES * 2 {
-                    break;
-                }
-                edges.push(json!({
-                    "from": edge.from.id, "to": edge.to.id,
-                    "kind": edge.kind.as_str(),
-                    "hot": false,
-                }));
-            }
-            // The shared-mind edges: each instance inherits the mind, not the
-            // identity (U38) — the edge draws to this install.
-            for id in &instance_ids {
-                if edges.len() >= MAX_NODES * 2 {
-                    break;
-                }
-                edges.push(json!({
-                    "from": id, "to": "install", "kind": "shared_mind", "hot": false,
-                }));
-            }
-            // A fresh home's graph holds exactly ONE node (U34): this install,
-            // pulsing — every setup step grows the graph from it, and the user
-            // learns the pivot gesture on the neighborhood they built. The
-            // install is also the shared-mind anchor when instances exist.
-            if nodes.is_empty() || !instance_ids.is_empty() {
-                nodes.insert(
-                    0,
-                    json!({
-                        "id": "install", "kind": "install", "label": "this install",
-                        "status": null, "live": true, "meta": null,
-                    }),
-                );
-            }
+            let spine = crate::gui::spine::read(&home, &memories, driving.as_deref());
             json!({
                 "type": "tissue",
-                "nodes": nodes,
-                "edges": edges,
-                "bounded": MAX_NODES,
-                "omitted": omitted,
+                "nodes": spine.get("nodes").cloned().unwrap_or_else(|| json!([])),
+                "edges": spine.get("edges").cloned().unwrap_or_else(|| json!([])),
+                "bounded": crate::gui::spine::MAX_NODES,
+                "omitted": spine.get("omitted").cloned().unwrap_or_else(|| json!(0)),
             })
         })
         .await
-        .unwrap_or_else(|_| json!({"type": "tissue", "refused": ["the tissue read did not land"]}))
+        .unwrap_or_else(
+            |_| json!({"type": "tissue", "refused": ["the connections read did not land"]}),
+        )
     }
 
-    /// The workspace spine (the U-reskin, S6 / U0): ONE read over the
-    /// existing stores that the shell's lenses project from — the graph's
-    /// tasks, the deliverables, the recent threads, the fleet's instances,
-    /// and the intelligence segment counts. The center is a lens over this
-    /// context, not a panel that owns its own store: switching lens
-    /// re-projects the same objects, it never leaves the workspace. No new
-    /// capability — every field is a read the face already had, gathered
-    /// once so the lenses share one spine instead of five fetches.
+    /// The workspace spine (U43, the rebuild's P1): ONE read that serves
+    /// every lens. The work items, their transcript/artifact/skill/fact
+    /// relations, the connections graph, and the compatibility keys the
+    /// face still reads — all derived in [`crate::gui::spine`] from the
+    /// stores that already own each fact. Nothing is written here.
     pub async fn workspace(&self) -> Value {
         let home = self.home.clone();
+        let memories = self.memories.clone();
         tokio::task::spawn_blocking(move || {
-            let graph = crate::workspace::read(&home);
-            let tasks: Vec<Value> = graph
-                .tasks
-                .values()
-                .map(|task| {
-                    json!({
-                        "id": task.id,
-                        "title": task.title,
-                        "status": task.status.as_str(),
-                        "assignee": task.assignee.as_str(),
-                        "binding": task.binding,
-                    })
-                })
-                .collect();
-            let deliverables: Vec<Value> = crate::workspace::view(&home, None)
-                .into_iter()
-                .filter(|row| row.object.kind == crate::workspace::Kind::Deliverable)
-                .map(|row| {
-                    json!({
-                        "id": row.object.id,
-                        "name": row.entry.get("name").and_then(|n| n.as_str()).unwrap_or(row.object.id.as_str()),
-                        "needs": row.entry.get("needs").and_then(|n| n.as_bool()).unwrap_or(false),
-                        "binding": row.binding,
-                    })
-                })
-                .collect();
-            let threads: Vec<Value> = crate::session::list(&home)
-                .map(|recent| {
-                    recent
-                        .into_iter()
-                        .rev()
-                        .take(24)
-                        .map(|summary| {
-                            json!({
-                                "id": summary.id,
-                                "label": summary.last_plan.clone().or(summary.first_text.clone()).unwrap_or_else(|| summary.id.clone()),
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|span| span.as_secs())
-                .unwrap_or_default();
-            let roster = crate::armada::roster::load(&home);
-            let instances: Vec<Value> = roster
-                .instances
-                .values()
-                .map(|instance| {
-                    let grade = crate::armada::control::grade(&home, &instance.sid);
-                    json!({
-                        "sid": instance.sid,
-                        "live": instance.live(now),
-                        "calibrated": grade.calibrated,
-                        "reliability": grade.reliability,
-                    })
-                })
-                .collect();
-            // The intelligence segment counts — the same registries the
-            // Intelligence lens reads, gathered here so the spine carries
-            // them and the lens does not re-fetch to know its own shape.
+            let mut spine = crate::gui::spine::read(&home, &memories, None);
+            // The intelligence counts stay here: they are the bridge's own
+            // registry reads, gathered once so the lens does not re-fetch
+            // to know its own shape.
             let tools = tools_read(&home);
             let workflows = workflows_read(&home);
             let count = |value: &Value, key: &str| {
-                value.get(key).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0)
+                value
+                    .get(key)
+                    .and_then(|v| v.as_array())
+                    .map(|rows| rows.len())
+                    .unwrap_or(0)
             };
-            json!({
-                "type": "workspace",
-                "tasks": tasks,
-                "deliverables": deliverables,
-                "threads": threads,
-                "instances": instances,
-                "intelligence": {
-                    "tools": count(&tools, "tools"),
-                    "workflows": count(&workflows, "workflows"),
-                },
-            })
+            if let Some(map) = spine.as_object_mut() {
+                map.insert(
+                    "intelligence".to_string(),
+                    json!({
+                        "tools": count(&tools, "tools"),
+                        "workflows": count(&workflows, "workflows"),
+                    }),
+                );
+            }
+            spine
         })
         .await
-        .unwrap_or_else(|_| json!({"type": "workspace", "refused": ["the workspace read did not land"]}))
+        .unwrap_or_else(
+            |_| json!({"type": "workspace", "refused": ["the workspace read did not land"]}),
+        )
     }
 
     /// The armada panel's document (armada L9, C3): the flagship roster
