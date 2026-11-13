@@ -119,3 +119,35 @@ A fix to the shell channel is compiled into the bundle it delivers. A shell
 that cannot reach the updater today cannot press its way to a shell that can:
 the first release carrying the fix is installed by hand (dmg), and every
 release after it is a button.
+
+## The signing key's durability (the SPOF ruling, 2026-11-13)
+
+The updater's trust is one minisign keypair: the public half is pinned in
+every installed app, the private half signs every release. The owner's
+ruling: a key that lives on one machine is a single point of failure —
+absurd for an updater whose job is surviving machine events.
+
+The three homes:
+
+- **The vault (canonical, sealed)** — `FLEET_TAURI_UPDATE_KEY`, encrypted at
+  rest, opened with the owner's passphrase. The backup that survives
+  everything short of the vault itself.
+- **The working copy** — `~/.fleet/updater-key`, 0600. What the cut reads.
+  A cache, never the canonical.
+- **The fleet (the armada fix)** — the sealed key replicates with the
+  substrate, so any flagship can sign and machine loss is a non-event.
+
+The recovery truth, named so nobody invents it under pressure: a lost key
+cannot be bridged — the pubkey is baked into every installed app, so the only
+recovery is a manual reinstall per install. The bridge procedure (sign one
+release carrying the new pubkey) requires the OLD key, which is exactly the
+thing that is lost. **The backup must exist before the loss.**
+
+The loss signals: `/tmp` copies are swept after three days of disuse (the
+v0.7.5→v0.8.0 window hit it); the working copy at `~/.fleet/updater-key` is
+the durable one. If both are gone, restore from the vault — ONCE, to the
+home path:
+
+```sh
+export FLEET_VAULT_PASSPHRASE=... && fleet vault get FLEET_TAURI_UPDATE_KEY > ~/.fleet/updater-key && chmod 600 ~/.fleet/updater-key
+```
