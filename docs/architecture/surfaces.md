@@ -70,12 +70,10 @@ visible:
 
 ### Conversation — *work*
 
-**What it is.** The home and the workbench: "What are we building?"
-over three counts (facts the corpus knows, skills in reach, runs under
-this home), the method in three words, the lanes as chips, four offers
-that are prompts in disguise (walk the router, read the plan, review
-today's changes, ask what fleet knows), and the recent sessions to pick
-up where you left off.
+**What it is.** The home and the workbench: one question — "What do you
+want to work on?" — over the composer (U49; the counts, the method, the
+lanes, the offers and the recent list are retired, and the graph, the
+stats and the archive live on their own surfaces, one pivot away).
 
 **What you do.** Type a task. Choose how much to ask first — *Ask
 before*, *Autonomous*, *Full access* — and, if you want, which provider

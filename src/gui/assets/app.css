@@ -1935,24 +1935,8 @@ body[data-object-card="open"] .dock-object {
 }
 .onboard-ladder-step[data-done="true"] .onboard-ladder-mark { color: var(--dsw-alias-ok); }
 .onboard-ladder-step[data-current="true"] .onboard-ladder-mark { color: var(--dsw-alias-accent); }
-.empty[data-onboard="door"] .home-stats,
-.empty[data-onboard="preview"] .home-stats,
-.empty[data-onboard="door"] .recent,
-.empty[data-onboard="preview"] .recent,
-.empty[data-onboard="door"] .since,
-.empty[data-onboard="preview"] .since,
-.empty[data-onboard="door"] .next,
-.empty[data-onboard="preview"] .next,
 .empty[data-onboard="door"] .method:not(.onboard-mechanism),
 .empty[data-onboard="preview"] .method,
-.empty[data-onboard="door"] .lanes,
-.empty[data-onboard="preview"] .lanes,
-.empty[data-onboard="door"] .offers:not(#door-discovered),
-.empty[data-onboard="preview"] .offers,
-.empty[data-onboard="door"] .home-known,
-.empty[data-onboard="preview"] .home-known,
-.empty[data-onboard="door"] .empty-meta,
-.empty[data-onboard="preview"] .empty-meta,
 .empty[data-onboard="door"] .onboard-cards { display: none; }
 
 .onboard-door {
@@ -2126,58 +2110,7 @@ body[data-object-card="open"] .dock-object {
 
 /* The landing's greet: what needs you and what is waiting — the door's
    rows, the owner's own work and the queues, never the machine's. */
-.greet {
-  display: grid;
-  gap: 6px;
-  width: 100%;
-  max-width: 460px;
-  margin: 0 auto 18px;
-  text-align: left;
-}
 
-.greet-head { display: flex; align-items: center; gap: 8px; }
-.greet-title {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--dsw-alias-ink-tertiary);
-}
-
-.greet-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 10px;
-  border: var(--card-hairline);
-  border-radius: 8px;
-  background: var(--card-bg);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.greet-row:hover { border-color: var(--dsw-alias-accent); }
-.greet-kind {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--dsw-alias-ink-tertiary);
-}
-.greet-kind[data-tone="warn"] { color: var(--dsw-alias-warn); }
-.greet-main { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
-.greet-main b { font-size: 12.5px; font-weight: 600; }
-.greet-note {
-  font-size: 12px;
-  color: var(--dsw-alias-ink-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 .home-stats {
   display: grid;
@@ -2225,71 +2158,12 @@ body[data-object-card="open"] .dock-object {
 
 /* What the corpus remembers most, named rather than counted. A count is
    a fact about the corpus; the names are the part that helps. */
-.home-known {
-  display: block;
-  max-width: 640px;
-  margin: -6px 0 18px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--dsw-alias-ink-tertiary);
-  font-size: 12px;
-  line-height: 1.55;
-  text-align: left;
-  cursor: pointer;
-}
 
-.home-known:hover { color: var(--dsw-alias-ink-secondary); }
-.home-known b { color: var(--dsw-alias-ink-secondary); font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
-
-.since {
-  max-width: 640px;
-  margin: -10px 0 18px;
-  color: var(--dsw-alias-ok);
-  font-size: 12px;
-  line-height: 1.5;
-}
 
 /* The graph's next ready node, offered where the owner starts. This is
    the same read the delegation panel draws: the process aid is the
    harness's own model of the work, not a second suggestion engine. */
-.next {
-  max-width: 640px;
-  margin: 0 0 18px;
-  padding: 13px 15px;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-accent) 26%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--dsw-alias-accent) 5%, var(--dsw-alias-surface));
-}
 
-.next-eyebrow {
-  display: block;
-  color: var(--dsw-alias-accent-lift);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-.next-goal {
-  margin: 5px 0 10px;
-  color: var(--dsw-alias-ink);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.next-go {
-  padding: 6px 12px;
-  border: 0;
-  border-radius: 8px;
-  background: var(--dsw-alias-accent);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.next-go:hover { background: var(--dsw-alias-accent-deep); }
 
 /* The working loop the harness already enforces, named plainly. */
 .method {
@@ -2307,147 +2181,14 @@ body[data-object-card="open"] .dock-object {
   text-transform: uppercase;
 }
 
-.method-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  margin: 9px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.method-steps li { min-width: 0; }
-.method-step {
-  display: grid;
-  gap: 2px;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-.method-step b { color: var(--dsw-alias-ink); font-size: 12px; font-weight: 600; }
-.method-step span { color: var(--dsw-alias-ink-tertiary); font-size: 12px; line-height: 1.4; }
-.method-step:hover b { color: var(--dsw-alias-accent-lift); }
 
 /* The lanes the harness can reach, named where the work starts. Each is
    an action: a lane that is only a word is decoration. */
-.lanes {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  max-width: 640px;
-  margin-top: 18px;
-}
 
-.lanes-label {
-  margin-right: 2px;
-  color: var(--dsw-alias-ink-tertiary);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-.lane {
-  height: 27px;
-  padding: 0 10px;
-  border: 1px solid var(--dsw-alias-hairline);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--dsw-alias-ink-secondary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  cursor: pointer;
-  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease),
-    color var(--fast) var(--ease);
-}
-
-.lane:hover {
-  border-color: color-mix(in srgb, var(--dsw-alias-accent) 45%, transparent);
-  background: var(--dsw-alias-accent-wash);
-  color: var(--dsw-alias-accent-lift);
-}
 
 /* Continuity: the last few runs are one click away, so the console never
    opens as a blank page after a night's scheduled work. */
-.recent {
-  max-width: 640px;
-  margin-top: 26px;
-  padding-top: 16px;
-  border-top: var(--card-hairline);
-}
 
-.recent-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.recent-title {
-  margin: 0;
-  color: var(--dsw-alias-ink-tertiary);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-.recent-all {
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  color: var(--dsw-alias-accent-lift);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.recent-row {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 2px;
-  border: 0;
-  border-bottom: 1px solid var(--dsw-alias-hairline);
-  background: transparent;
-  color: var(--dsw-alias-ink-secondary);
-  text-align: left;
-  cursor: pointer;
-}
-
-.recent-row:last-child { border-bottom: 0; }
-.recent-row:hover { color: var(--dsw-alias-ink); }
-.recent-row:hover .recent-id { color: var(--dsw-alias-accent-lift); }
-
-.recent-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--dsw-alias-ink-tertiary);
-}
-
-.recent-dot[data-state="live"] { background: var(--dsw-alias-accent); }
-.recent-id {
-  overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.recent-when {
-  color: var(--dsw-alias-ink-tertiary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
 
 .empty-meta {
   margin: 24px 0 0 !important;
@@ -7337,8 +7078,6 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   .home-stats { margin-bottom: 14px; }
   .home-stat { padding: 10px 11px; }
   .home-stat-value { font-size: 19px; }
-  .method-steps { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-  .method-step { grid-template-columns: 86px minmax(0, 1fr); align-items: baseline; }
 
   .stage-board { padding: 18px 12px 36px; }
   .board { gap: 12px; }

@@ -4508,12 +4508,20 @@ async function theHomeIsAlwaysReachable() {
   check('N1 the home shows the welcome, not the transcript',
     page.IDS.empty.hidden === false && page.IDS.log.hidden === true,
     'empty: ' + page.IDS.empty.hidden + ' / log: ' + page.IDS.log.hidden);
-  const back = page.rows('.recent-row')[0];
-  check('N1 the recent list carries the conversation', !!back,
-    String(page.rows('.recent-row').length));
+  // The re-entry: the rail's archive item, then the conversation's own
+  // row — the landing's recent list is gone (U49), and the archive's
+  // rows are the way back.
+  const archive = page.rows('.surfaces-link').find((l) => l.dataset.address === 'board');
+  check('N1 the rail carries the archive item', !!archive,
+    String(page.rows('.surfaces-link').map((l) => l.dataset.address).join(' | ')));
+  if (archive) archive.click();
+  await flush(60);
+  const back = page.rows('.work-row').find((r) => (r.textContent || '').includes('the open conversation'));
+  check('N1 the archive carries the conversation', !!back,
+    String(page.rows('.work-row').length));
   if (back) back.click();
   await flush(80);
-  check('N1 the recent row re-enters the conversation',
+  check('N1 the archive row re-enters the conversation',
     page.window.location.hash === '#/sessions/fb-1' && page.IDS.empty.hidden === true,
     page.window.location.hash + ' / empty: ' + page.IDS.empty.hidden);
   // The round trip creates nothing: no session is minted, and the
@@ -6125,20 +6133,25 @@ async function theDoorIsTheWelcomeInItsFirstRunState() {
   page.open();
   await flush(80);
 
-  // The door lives inside .empty and reuses its eyebrow, title and lede.
+  // The door lives inside .empty, beside the landing's one question
+  // (U49): the eyebrow and lede are retired — the title carries it.
   check('OB the door is the welcome\u2019s own frame',
-    HTML.indexOf('id="onboard-door"') > HTML.indexOf('class="empty"') &&
-      HTML.indexOf('id="onboard-door"') < HTML.indexOf('id="home-stats"'),
+    HTML.indexOf('id="onboard-door"') > HTML.indexOf('id="empty-title"') &&
+      HTML.indexOf('id="onboard-door"') < HTML.indexOf('id="onboard-cards"'),
     'markup order');
-  check('OB the door\u2019s eyebrow and title are the welcome\u2019s own',
-    page.text('empty-eyebrow') === 'fleet \u00b7 first run' &&
-      page.text('empty-title') === 'One account, and fleet can think.',
-    page.text('empty-eyebrow') + ' | ' + page.text('empty-title'));
+  check('OB the door\u2019s title is the welcome\u2019s own, overridden',
+    page.text('empty-title') === 'One account, and fleet can think.',
+    page.text('empty-title'));
+  check('OB the landing asks and nothing else rides it',
+    HTML.includes('What do you want to work on?') &&
+      !HTML.includes('id="empty-eyebrow"') && !HTML.includes('id="empty-lede"') &&
+      !HTML.includes('id="home-stats"') && !HTML.includes('id="greet"') &&
+      !HTML.includes('id="offers"') && !HTML.includes('id="recent"'),
+    'the retired surfaces are gone from the markup');
 
   // The default path carries no mechanism word; each lives in the
   // disclosure only.
-  const shown = [page.text('empty-eyebrow'), page.text('empty-title'), page.text('empty-lede'),
-    page.text('onboard-key-go')].join(' ');
+  const shown = [page.text('empty-title'), page.text('onboard-key-go')].join(' ');
   const banned = ['_API_KEY', 'KEY_NAME', 'endpoint', 'roster', 'tier', 'vault', 'port'];
   check('OB the door\u2019s default path names no mechanism',
     banned.every((word) => shown.indexOf(word) === -1),
@@ -6160,7 +6173,7 @@ async function theDoorIsTheWelcomeInItsFirstRunState() {
 
   // No new design chrome: every colour/radius/font token the onboarding
   // CSS names is one the console already declares.
-  const onboardCss = CSS.slice(CSS.indexOf('.onboard-door'), CSS.indexOf('.home-stats'));
+  const onboardCss = CSS.slice(CSS.indexOf('.onboard-door'), CSS.indexOf('.onboard-cards'));
   const tokens = Array.from(onboardCss.matchAll(/var\((--[a-z0-9-]+)/g)).map((m) => m[1]);
   const undeclared = Array.from(new Set(tokens)).filter((token) => !CSS.includes(token + ':'));
   check('OB the onboarding introduces no new token',
@@ -10218,74 +10231,6 @@ async function theCalibrationRailCarriesTheGateAndTheDay() {
 }
 
 
-async function theLandingGreetsTheOwnersWork() {
-  // The home document in the bridge's own shape: one owner run at an
-  // approval seat, the queues (skills and calibration waiting, memory
-  // honestly empty), and the owner's recent conversations — titled.
-  // The machine's unclassed runs are the server's to omit (L1's pin);
-  // the face renders what the document carries.
-  const home = {
-    type: 'home',
-    memory: { live: 5, protected: 1, top: [], dates: [], day: '2026-10-30' },
-    skills: { count: 10, proposals: 2 },
-    runs: {
-      count: 3,
-      needs_yours: [{
-        id: 'seat-1', title: 'the run at the approval seat', state: 'needs-approval',
-      }],
-      recent: [
-        { id: 'mine-1', title: 'the titled conversation', created: '2026-10-30T09:00:00Z', ended: true, current: false },
-        { id: 'mine-2', title: null, created: '2026-10-29T09:00:00Z', ended: true, current: false },
-      ],
-      timeline: [],
-    },
-    waiting: { skills: 2, memory: 0, calibration: 3 },
-    next: null,
-    refused: [],
-  };
-  const page = boot({
-    width: 1440, hash: '#/chat',
-    documents: {
-      home,
-      state: (asked) => emptyState(asked),
-      onboard: onboardDoc({ door: false }),
-    },
-  });
-  await flush();
-  page.open();
-  await flush(120);
-
-  // The greet: what needs you first, then the waiting queues — an
-  // empty queue renders no row.
-  const greet = page.text('greet');
-  check('LAND the greet names what needs you',
-    !page.IDS['greet'].hidden &&
-      greet.includes('what needs you') &&
-      greet.includes('the run at the approval seat') &&
-      greet.includes('waiting at an approval seat'),
-    greet.slice(0, 200));
-  check('LAND the greet carries the waiting queues, empty ones absent',
-    greet.includes('2 skill proposals') && greet.includes('3 fit cells') &&
-      !greet.includes('queued for the cycle'),
-    greet.slice(0, 300));
-
-  // The rows address their surfaces.
-  const seatRow = page.rows('.greet-row')
-    .find((row) => row.textContent.includes('approval seat'));
-  check('LAND the seat row addresses the conversation',
-    seatRow && seatRow.textContent.includes('the run at the approval seat'),
-    seatRow ? seatRow.textContent.slice(0, 80) : 'missing');
-
-  // The recent list carries the owner's conversations, titled — the
-  // titled one by its name, the untitled one by its label.
-  const recent = page.text('recent');
-  check('LAND the recent list carries the owner\u2019s conversations, titled',
-    recent.includes('the titled conversation') &&
-      !recent.includes('mine-1') &&
-      recent.includes('pick up where you left off'),
-    recent.slice(0, 200));
-}
-
 
 async function theConversationNamesThemselvesByTheirWork() {
   // The sessions document in the bridge's own shape: one session named
@@ -13239,7 +13184,6 @@ const cases = [
   ['LEARN the learning rail carries the four sections', theLearningRailCarriesTheFourSections],
   ['WORKSPACE the workspace rail carries the projects and the pane', theWorkspaceRailCarriesTheProjectsAndThePane],
   ['CAL the calibration rail carries the gate and the day', theCalibrationRailCarriesTheGateAndTheDay],
-  ['LAND the landing greets the owner\u2019s work', theLandingGreetsTheOwnersWork],
   ['NAME the conversation names themselves by their work', theConversationNamesThemselvesByTheirWork],
   ['FOLD the freshness surfaces read the fold count', theFreshnessSurfacesReadTheFoldCount],
   ['D1 the conversation density holds', theConversationDensityHolds],

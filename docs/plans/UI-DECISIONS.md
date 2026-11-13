@@ -401,6 +401,16 @@ real work lands in sessions that are not objects.
   change state read as broken. *Constrains:* THEMES, the pre-paint
   script, the boot-fallback card, `motionOn`, both motion switches.
 
+- **U49 — The landing is the question.** The face's empty state carries
+  one line — "What do you want to work on?" — over the composer, plus the
+  onboard door when the home needs setup. The counts, the greet, the
+  next-from-the-graph offer, the method strip, the lanes, the offers, the
+  recent list and the meta paragraph are retired (the owner's 2026-11-13
+  ruling: everything else added unnecessary cognitive load); the graph,
+  the stats, the offers and the archive live on their own surfaces, one
+  pivot away. *Constrains:* `#empty`, paintEmpty's rail-where duty,
+  paintOnboard's copy writes, the readHome/`/api/home` retirement.
+
 ---
 
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the

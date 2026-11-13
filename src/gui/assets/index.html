@@ -396,12 +396,11 @@
       <div class="room-empty" id="room-empty" hidden></div>
 
       <div class="empty" id="empty">
-        <p class="empty-eyebrow" id="empty-eyebrow">fleet &middot; on this machine</p>
-        <h1 id="empty-title">What are we building?</h1>
-        <p class="empty-lede" id="empty-lede">
-          Your models, your memory, and your workspace are all here, on this machine.
-          Ask for something and watch the run happen.
-        </p>
+        <!-- The landing is the question (the owner's 2026-11-13 ruling):
+             one line over the composer, the onboard door when the home
+             needs setup, and nothing else — the graph, the stats, the
+             offers and the history live on their own surfaces. -->
+        <h1 id="empty-title">What do you want to work on?</h1>
         <!-- The door's interaction: the press for an account already on
              the machine, the field when none was found, and the mechanism
              disclosure every other word is kept out of. -->
@@ -420,52 +419,7 @@
             <p class="onboard-mechanism-body" id="onboard-mechanism-body"></p>
           </details>
         </div>
-        <div class="greet" id="greet" hidden></div>
-        <div class="home-stats" id="home-stats" hidden>
-          <button class="home-stat" type="button" data-go="#/memory">
-            <span class="home-stat-value" id="home-facts">&mdash;</span>
-            <span class="home-stat-label">facts fleet knows</span>
-          </button>
-          <button class="home-stat" type="button" data-go="#/skills">
-            <span class="home-stat-value" id="home-skills">&mdash;</span>
-            <span class="home-stat-label">skills in reach</span>
-          </button>
-          <button class="home-stat" type="button" data-go="#/sessions">
-            <span class="home-stat-value" id="home-runs">&mdash;</span>
-            <span class="home-stat-label">runs under this home</span>
-          </button>
-        </div>
-        <button class="home-known" id="home-known" type="button" hidden></button>
-        <p class="since" id="since" hidden></p>
-        <div class="next" id="next" hidden>
-          <span class="next-eyebrow" id="next-eyebrow">next from the graph</span>
-          <p class="next-goal" id="next-goal"></p>
-          <button class="next-go" id="next-go" type="button">take this step</button>
-        </div>
-        <div class="method" aria-label="the working method">
-          <span class="method-label">how a run works</span>
-          <ol class="method-steps">
-            <li><button class="method-step" type="button" data-step="plan"><b>Plan</b><span>it plans before it touches anything</span></button></li>
-            <li><button class="method-step" type="button" data-step="delegate"><b>Delegate</b><span>helpers do the steps in order</span></button></li>
-            <li><button class="method-step" type="button" data-step="verify"><b>Verify</b><span><span class="plain-only">every claim is checked against the evidence</span><span class="expert-only">sys1 grades the evidence</span></span></button></li>
-          </ol>
-        </div>
-        <div class="lanes" id="lanes" aria-label="the lanes">
-          <span class="lanes-label"><span class="plain-only">what it can do</span><span class="expert-only">lanes</span></span>
-          <button class="lane" type="button" data-lane="judge"><span class="plain-only">judge</span><span class="expert-only">sys1 judge</span></button>
-          <button class="lane" type="button" data-lane="memory"><span class="plain-only">remember</span><span class="expert-only">memory</span></button>
-          <button class="lane" type="button" data-lane="skills">skills</button>
-          <button class="lane" type="button" data-lane="web"><span class="plain-only">browse</span><span class="expert-only">web</span></button>
-          <button class="lane" type="button" data-lane="deck"><span class="plain-only">present</span><span class="expert-only">deck</span></button>
-        </div>
-        <div class="offers" id="offers"></div>
         <div class="onboard-cards" id="onboard-cards" hidden></div>
-        <div class="recent" id="recent" hidden></div>
-        <p class="empty-meta" id="empty-meta">
-          Your archive stays on this machine. Every turn is a card you can open; the models
-          that serve it are named in the route bar and in what it can do. A document escalated to Perception
-          goes to Nace.
-        </p>
       </div>
 
       <div class="log" id="log" aria-live="polite" aria-relevant="text">

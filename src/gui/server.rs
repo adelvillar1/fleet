@@ -431,7 +431,6 @@ async fn serve_connection(
             let session = asked_session(bridge, &request);
             write_reply(&mut stream, api(200, bridge.state(&session))).await
         }
-        ("GET", "/api/home") => write_reply(&mut stream, api(200, bridge.home().await)).await,
         ("GET", "/api/router") => write_reply(&mut stream, api(200, bridge.router().await)).await,
         ("GET", "/api/delegation") => {
             let session = asked_session(bridge, &request);

@@ -41,7 +41,6 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::Instant;
 
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
@@ -339,10 +338,6 @@ pub struct Bridge {
     /// what is down, what it costs, and the repair. The loop writes
     /// it, `/api/state` reads it, and the face paints its card.
     health: crate::health::SharedReport,
-    /// The welcome's one bounded read: the run archive, the corpus
-    /// summary, the skill count, and the graph's next node, cached for
-    /// half a minute so a reload is not a second walk of the machine.
-    home_cache: Arc<Mutex<Option<(Instant, Value)>>>,
     /// The cross-kind related index: the sidecar for skills, projects,
     /// routes, and cells beside the two recall caches' facts and
     /// sessions. Shared rather than moved because its warm pass and its
@@ -476,7 +471,6 @@ impl Bridge {
             rules,
             events,
             health: Arc::new(Mutex::new(None)),
-            home_cache: Arc::new(Mutex::new(None)),
             channels: Mutex::new(None),
             remote: Mutex::new(None),
             relay_secret: Mutex::new(None),
@@ -1374,7 +1368,6 @@ impl Bridge {
         }
         match query {
             "state" => Ok(self.state("")),
-            "home" => Ok(self.home().await),
             "router" => Ok(self.router().await),
             "delegation" => Ok(self.delegation("").await),
             "memory" => Ok(self.memory().await),
@@ -1439,228 +1432,6 @@ impl Bridge {
                     .to_string(),
             }))
             .collect::<Vec<_>>())
-    }
-
-    pub async fn home(&self) -> Value {
-        const HOME_TTL: std::time::Duration = std::time::Duration::from_secs(30);
-        {
-            let cache = lock(&self.home_cache);
-            if let Some((at, document)) = cache.as_ref() {
-                if at.elapsed() < HOME_TTL {
-                    return document.clone();
-                }
-            }
-        }
-
-        // The welcome is this face's own conversation: the launch
-        // session, which is the one a visitor's browser opens whether or
-        // not anything has been resumed.
-        let launch = self.launch();
-        let state = self.state(&launch);
-        // The four reads are independent; run them together so the
-        // welcome's first paint pays the slowest one, not their sum.
-        let (sessions, memory, skills, delegation) = tokio::join!(
-            self.sessions(&launch, "", None),
-            self.memory(),
-            self.skills(),
-            self.delegation(&launch)
-        );
-
-        let runs = sessions
-            .get("sessions")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        // The welcome's "pick up where you left off" is the owner's own
-        // screen: the newest of THEIR conversations, by the same ruling
-        // that keeps system sessions off the work rail. The machine's
-        // activity timeline keeps every run — it is a count of what the
-        // machine did, not a list of sessions.
-        let recent: Vec<Value> = owner_recent(&runs, 3);
-        let timeline: Vec<Value> = runs
-            .iter()
-            .map(|row| {
-                json!({
-                    "id": row.get("id").cloned().unwrap_or(Value::Null),
-                    "created": row.get("created").cloned().unwrap_or(Value::Null),
-                    "kind": row.get("kind").cloned().unwrap_or(Value::Null),
-                    "ended": row.get("ended").cloned().unwrap_or(Value::Null),
-                })
-            })
-            .collect();
-
-        let facts = memory
-            .get("facts")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let live: Vec<&Value> = facts
-            .iter()
-            .filter(|fact| fact.get("retired").and_then(Value::as_bool) != Some(true))
-            .collect();
-        let protected = live
-            .iter()
-            .filter(|fact| fact.get("protected").and_then(Value::as_bool) == Some(true))
-            .count();
-        let mut named: Vec<&Value> = live.clone();
-        named.sort_by_key(|fact| {
-            std::cmp::Reverse(
-                fact.get("recall_count")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-            )
-        });
-        let top: Vec<Value> = named
-            .iter()
-            .take(2)
-            .map(|fact| {
-                json!({
-                    "name": fact.get("name").cloned().unwrap_or(Value::Null),
-                    "recalls": fact.get("recall_count").cloned().unwrap_or(Value::Null),
-                })
-            })
-            .collect();
-        let dates: Vec<Value> = live
-            .iter()
-            .filter_map(|fact| fact.get("date").cloned())
-            .collect();
-
-        let skill_count = skills
-            .get("skills")
-            .and_then(Value::as_array)
-            .map(|rows| rows.len())
-            .unwrap_or(0);
-        // The waiting count is the queue's own: a proposal the gate
-        // already disposed of (applied, refused) is not waiting, and a
-        // greet that counted it would send the owner to a queue that
-        // is not there.
-        let proposals = skills
-            .get("proposals")
-            .and_then(Value::as_array)
-            .map(|rows| {
-                rows.iter()
-                    .filter(|row| {
-                        matches!(
-                            row.get("status").and_then(Value::as_str),
-                            None | Some("pending") | Some("waiting")
-                        )
-                    })
-                    .count()
-            })
-            .unwrap_or(0);
-
-        let nodes = delegation
-            .get("graph")
-            .and_then(|graph| graph.get("nodes"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut ready: Vec<&Value> = nodes
-            .iter()
-            .filter(|node| node.get("state").and_then(Value::as_str) == Some("ready"))
-            .collect();
-        ready.sort_by_key(|node| {
-            node.get("score")
-                .and_then(Value::as_i64)
-                .unwrap_or(i64::MAX)
-        });
-        let running = nodes
-            .iter()
-            .find(|node| node.get("state").and_then(Value::as_str) == Some("running"));
-        let next = running.or_else(|| ready.first().copied());
-        let next = next.map(|node| {
-            json!({
-                "id": node.get("id").cloned().unwrap_or(Value::Null),
-                "state": node.get("state").cloned().unwrap_or(Value::Null),
-                "approach": node.get("approach").cloned().unwrap_or(Value::Null),
-                "score": node.get("score").cloned().unwrap_or(Value::Null),
-                "peak": node.get("peak").cloned().unwrap_or(Value::Null),
-            })
-        });
-
-        let mut refused: Vec<Value> = Vec::new();
-        for document in [&sessions, &memory, &skills, &delegation] {
-            if let Some(rows) = document.get("refused").and_then(Value::as_array) {
-                refused.extend(rows.iter().cloned());
-            }
-        }
-
-        // The landing's greet: what needs you — the owner's own runs
-        // sitting at an approval seat or paused — and what is waiting,
-        // from the queues the rail revamps made legible. Computed here
-        // so the door and the surfaces cannot disagree about the
-        // counts.
-        let needs_yours: Vec<Value> = runs
-            .iter()
-            .filter(|row| row.get("class").and_then(Value::as_str) == Some("yours"))
-            .filter(|row| {
-                matches!(
-                    row.get("state").and_then(Value::as_str),
-                    Some("needs-approval") | Some("paused")
-                )
-            })
-            .map(|row| {
-                json!({
-                    "id": row.get("id").cloned().unwrap_or(Value::Null),
-                    "title": row.get("title").cloned().unwrap_or(Value::Null),
-                    "state": row.get("state").cloned().unwrap_or(Value::Null),
-                })
-            })
-            .collect();
-        let home_root = self.home.clone();
-        let memories_root = self.memories.clone();
-        let proposals_for_wait = proposals;
-        let waiting = tokio::task::spawn_blocking(move || {
-            let today = crate::calib::today();
-            let queue = crate::memory::preview(&memories_root, &today).total();
-            let calib = calibration_read_at(&home_root, None);
-            let short = calib
-                .get("cells")
-                .and_then(Value::as_array)
-                .map(|cells| {
-                    cells
-                        .iter()
-                        .filter(|cell| cell.get("fit").and_then(Value::as_str) != Some("fit"))
-                        .count()
-                })
-                .unwrap_or(0);
-            json!({
-                "skills": proposals_for_wait,
-                "memory": queue,
-                "calibration": short,
-            })
-        })
-        .await
-        .unwrap_or_else(|_| json!({"skills": proposals_for_wait, "memory": 0, "calibration": 0}));
-
-        let document = json!({
-            "type": "home",
-            "workspace": state.get("workspace").cloned().unwrap_or(Value::Null),
-            "session": state.get("session").cloned().unwrap_or(Value::Null),
-            "model": state.get("model").cloned().unwrap_or(Value::Null),
-            "runs": {
-                "count": runs.len(),
-                "recent": recent,
-                "needs_yours": needs_yours,
-                "timeline": timeline,
-            },
-            "waiting": waiting,
-            "memory": {
-                "live": live.len(),
-                "protected": protected,
-                "top": top,
-                "dates": dates,
-                "day": memory.get("day").cloned().unwrap_or(Value::Null),
-            },
-            "skills": {
-                "count": skill_count,
-                "proposals": proposals,
-            },
-            "next": next,
-            "refused": refused,
-        });
-        *lock(&self.home_cache) = Some((Instant::now(), document.clone()));
-        document
     }
 
     /// The router panel's document: the router board's own reads, shaped
@@ -8745,20 +8516,6 @@ fn title_ladder(
     }
 }
 
-fn owner_recent(runs: &[Value], take: usize) -> Vec<Value> {
-    // Exactly the owner's rows — KI-372's rule, applied at the landing
-    // after the work rail and the phone's inbox made it theirs. The
-    // `None` arm was a fossil of the era before the class stamping:
-    // kind-less rows read as the owner's, and the machine's sessions
-    // — scheduled runs, subagents, shells — landed on "pick up where
-    // you left off" as bare session ids.
-    runs.iter()
-        .filter(|row| row.get("class").and_then(Value::as_str) == Some("yours"))
-        .take(take)
-        .cloned()
-        .collect()
-}
-
 fn scheduled_job(entry: &session::SessionSummary) -> Option<String> {
     if entry.kind.as_deref() != Some(session::SCHEDULED_KIND) {
         return None;
@@ -15586,28 +15343,6 @@ mod tests {
         assert_eq!(from, "owner");
     }
 
-    #[test]
-    fn the_owner_recent_answers_the_owners_rows_only() {
-        // KI-372's rule at the landing: the recent list carries the
-        // owner's conversations and nothing else — a scheduled run, a
-        // delegated child, and an unclassed shell are the machine's,
-        // whatever their vintage.
-        let rows = vec![
-            serde_json::json!({"id": "sched", "class": "background"}),
-            serde_json::json!({"id": "child", "class": "delegated"}),
-            serde_json::json!({"id": "kindless"}),
-            serde_json::json!({"id": "probe", "class": "probe"}),
-            serde_json::json!({"id": "mine-1", "class": "yours"}),
-            serde_json::json!({"id": "mine-2", "class": "yours"}),
-        ];
-        let recent = owner_recent(&rows, 3);
-        let ids: Vec<&str> = recent
-            .iter()
-            .filter_map(|row| row.get("id").and_then(Value::as_str))
-            .collect();
-        assert_eq!(ids, vec!["mine-1", "mine-2"], "{recent:?}");
-    }
-
     use super::*;
     use crate::api::FunctionCall;
 
@@ -15920,24 +15655,6 @@ mod tests {
         assert_ne!(document["url"], again["url"]);
         std::fs::remove_dir_all(&home).ok();
     }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn home_summarises_the_reads_it_claims() {
-        let (bridge, _sources, _door) = bridge().await;
-        let first = bridge.home().await;
-        assert_eq!(first["type"], "home");
-        assert!(first["workspace"].is_string(), "{first:?}");
-        assert_eq!(first["runs"]["count"], 0, "{first:?}");
-        assert!(first["runs"]["recent"].is_array());
-        assert!(first["memory"]["live"].is_number());
-        assert!(first["memory"]["top"].is_array());
-        assert!(first["skills"]["count"].is_number());
-        assert!(first["next"].is_null() || first["next"]["id"].is_string());
-        assert!(first["refused"].is_array());
-        let second = bridge.home().await;
-        assert_eq!(first, second, "the cached read is the same document");
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn the_owner_message_lands_before_the_run_starts() {
         let (bridge, _sources, _door) = bridge().await;
@@ -19433,24 +19150,6 @@ mod tests {
         assert_eq!(preview_content_type("drawio"), Some("application/xml"));
         assert_eq!(preview_content_type("txt"), None);
         assert_eq!(preview_content_type("exe"), None);
-    }
-
-    #[test]
-    fn the_welcomes_recent_is_the_owners_only() {
-        let row = |id: &str, class: &str| json!({"id": id, "class": class});
-        let runs = vec![
-            row("sched-newest", "background"),
-            row("mine-1", "yours"),
-            row("sched-2", "background"),
-            row("mine-2", "yours"),
-            row("mine-3", "yours"),
-        ];
-        let recent = owner_recent(&runs, 3);
-        let ids: Vec<&str> = recent
-            .iter()
-            .map(|row| row["id"].as_str().expect("an id"))
-            .collect();
-        assert_eq!(ids, vec!["mine-1", "mine-2", "mine-3"]);
     }
 
     #[test]

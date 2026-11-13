@@ -406,13 +406,13 @@ mod tests {
             !html.contains("Nothing leaves this machine"),
             "index.html still claims it"
         );
+        // U49 (the owner's 2026-11-13 ruling): the landing is the
+        // question — the recipients paragraph is retired from it, and
+        // the data-flow facts live in surfaces.md, not on the screen.
         assert!(
-            js.contains("providers that serve them"),
-            "app.js does not name the recipients"
-        );
-        assert!(
-            js.contains("escalated to Perception") && html.contains("escalated to Perception"),
-            "the empty state does not name the Perception recipient"
+            !html.contains("escalated to Perception")
+                && !js.contains("a document escalated to Perception"),
+            "the landing carries the retired meta copy"
         );
     }
 

@@ -1082,14 +1082,7 @@ import { node, svg, clip } from './core/dom.js';
     log: document.getElementById('log'),
     toLive: document.getElementById('to-live'),
     empty: document.getElementById('empty'),
-    emptyEyebrow: document.getElementById('empty-eyebrow'),
     emptyTitle: document.getElementById('empty-title'),
-    emptyLede: document.getElementById('empty-lede'),
-    emptyMeta: document.getElementById('empty-meta'),
-    offers: document.getElementById('offers'),
-    recent: document.getElementById('recent'),
-    homeStats: document.getElementById('home-stats'),
-    greet: document.getElementById('greet'),
     onboardDoor: document.getElementById('onboard-door'),
     doorDiscovered: document.getElementById('door-discovered'),
     onboardKey: document.getElementById('onboard-key'),
@@ -1101,14 +1094,6 @@ import { node, svg, clip } from './core/dom.js';
     inboxBody: document.getElementById('ib-body'),
     inboxTotal: document.getElementById('ib-total'),
     inboxEmpty: document.getElementById('ib-empty'),
-    homeFacts: document.getElementById('home-facts'),
-    homeSkills: document.getElementById('home-skills'),
-    homeRuns: document.getElementById('home-runs'),
-    homeKnown: document.getElementById('home-known'),
-    next: document.getElementById('next'),
-    nextEyebrow: document.getElementById('next-eyebrow'),
-    nextGoal: document.getElementById('next-goal'),
-    nextGo: document.getElementById('next-go'),
     seat: document.getElementById('seat'),
     seatVerdict: document.getElementById('seat-verdict'),
     seatLabel: document.getElementById('seat-label'),
@@ -4489,134 +4474,12 @@ import { node, svg, clip } from './core/dom.js';
     return parts.length ? parts[parts.length - 1] : path;
   }
 
+  // The landing is the question (the owner's 2026-11-13 ruling): the h1
+  // is static, the door owns first-run, and this painter's one remaining
+  // duty is the rail header's workspace name — a fact the rail cannot
+  // know until the state read lands.
   function paintEmpty() {
-    if (!el.emptyEyebrow) return;
-    // The door owns the welcome's copy while it is up: its three
-    // sentences are the screen, and the greeting must not paint over
-    // them (the owner's rule: one screen, one decision).
-    if (face.onboard && !face.onboard.ready && face.onboard.door) return;
-    el.emptyEyebrow.textContent = greeting() + ' \u00b7 ' + workspaceName();
-    if (el.emptyMeta) {
-      el.emptyMeta.textContent = face.workspace
-        ? 'Local to ' + face.workspace + ' \u00b7 the archive stays here; turns go to the providers that serve them; a document escalated to Perception goes to Nace.'
-        : 'Your archive stays on this machine. Every turn is a card you can open; the models that serve it are named in the route bar and in what it can do. A document escalated to Perception goes to Nace.';
-    }
     if (el.railWhere) el.railWhere.textContent = workspaceName();
-  }
-
-  // The last few runs, one click from the welcome. A console that opens
-  // blank after a night of scheduled work is a console that forgot the
-  // owner was there.
-  // The landing's greet: what needs you and what is waiting — the
-  // door's rows, read from the home document so the door and the
-  // surfaces cannot disagree. A queue that has not landed renders
-  // nothing rather than a stale count.
-  function paintGreet() {
-    if (!el.greet) return;
-    var home = face.home || {};
-    var needs = (home.runs && home.runs.needs_yours) || [];
-    var waiting = home.waiting || {};
-    var rows = [];
-    needs.forEach(function (run) {
-      rows.push({
-        kind: 'needs you',
-        label: run.title || run.id,
-        note: run.state === 'paused' ? 'paused run' : 'waiting at an approval seat',
-        go: '#/sessions/' + encodeURIComponent(run.id)
-      });
-    });
-    if (waiting.skills > 0) {
-      rows.push({
-        kind: 'waiting', label: waiting.skills + ' skill proposal' +
-          (waiting.skills === 1 ? '' : 's') + ' awaiting an approve',
-        note: 'the decisions queue', go: '#/skills/needs-you'
-      });
-    }
-    if (waiting.memory > 0) {
-      rows.push({
-        kind: 'waiting', label: waiting.memory + ' fact' +
-          (waiting.memory === 1 ? '' : 's') + ' queued for the cycle',
-        note: 'the consolidation queue', go: '#/memory/needs-you'
-      });
-    }
-    if (waiting.calibration > 0) {
-      rows.push({
-        kind: 'waiting', label: waiting.calibration + ' fit cell' +
-          (waiting.calibration === 1 ? '' : 's') + ' short of fit',
-        note: 'the gate', go: '#/calibration/the-gate'
-      });
-    }
-    el.greet.hidden = !rows.length;
-    el.greet.textContent = '';
-    if (!rows.length) return;
-    var head = node('div', 'greet-head');
-    head.appendChild(node('span', 'greet-title', 'what needs you'));
-    el.greet.appendChild(head);
-    rows.forEach(function (row) {
-      var line = node('button', 'greet-row');
-      line.type = 'button';
-      var state = node('span', 'greet-kind', row.kind);
-      state.dataset.tone = row.kind === 'needs you' ? 'warn' : '';
-      line.appendChild(state);
-      var main = node('span', 'greet-main');
-      main.appendChild(node('b', null, row.label));
-      main.appendChild(node('span', 'greet-note', row.note));
-      line.appendChild(main);
-      line.addEventListener('click', function () {
-        window.location.hash = row.go;
-      });
-      el.greet.appendChild(line);
-    });
-  }
-
-  function paintRecent() {
-    paintHome();
-    // P4: the Threads lens projects the spine's work items — the runs that
-    // happened — falling back to the home/archive reads when the spine has
-    // not landed. A thread card opens its conversation; it is not a movable
-    // task, so no drag or bulk (the never-list).
-    var rows = (face.spine && Array.isArray(face.spine.work) && face.spine.work.length)
-      ? face.spine.work.map(function (w) {
-          return { id: w.id, title: w.title, ended: w.status === 'done', created: w.created || '' };
-        })
-      : ((face.home && face.home.runs && face.home.runs.recent)
-        || (face.sessions ? face.sessions.sessions.filter(railRow).slice(0, 3) : []));
-    if (!rows.length) { el.recent.hidden = true; return; }
-    el.recent.hidden = false;
-    el.recent.textContent = '';
-    var head = node('div', 'recent-head');
-    head.appendChild(node('h2', 'recent-title', 'pick up where you left off'));
-    var all = node('button', 'recent-all', 'open the archive');
-    all.type = 'button';
-    all.addEventListener('click', function () { window.location.hash = '#/sessions'; });
-    head.appendChild(all);
-    el.recent.appendChild(head);
-    rows.forEach(function (row) {
-      var line = node('button', 'recent-row');
-      line.type = 'button';
-      var dot = node('span', 'recent-dot');
-      dot.dataset.state = row.ended ? 'done' : 'live';
-      line.appendChild(dot);
-      // The owner's title when one is set; an untitled conversation
-      // reads as what it is — a conversation from that moment — never
-      // as a bare id fragment that reads as machine noise.
-      var when = String(row.created || '');
-      var fallback = 'a conversation' +
-        (when ? ' \u00b7 ' + when.slice(5, 16).replace('T', ' ') : '');
-      var id = node('span', 'recent-id',
-        (row.current ? 'this face \u00b7 ' : '') +
-        (row.title || fallback));
-      id.title = row.id;
-      line.appendChild(id);
-      var when = String(row.created || '');
-      line.appendChild(node('span', 'recent-when',
-        when ? when.slice(5, 16).replace('T', ' ') : '\u2014'));
-      line.addEventListener('click', function () {
-        el.recent.hidden = true;
-        window.location.hash = '#/sessions/' + encodeURIComponent(row.id);
-      });
-      el.recent.appendChild(line);
-    });
   }
 
   // ------------------------------------------------- the onboarding
@@ -5124,9 +4987,7 @@ import { node, svg, clip } from './core/dom.js';
     // The door's copy is the document's own; nothing here restates it.
     if (door) {
       var copy = doc.door || {};
-      if (el.emptyEyebrow) el.emptyEyebrow.textContent = copy.eyebrow || el.emptyEyebrow.textContent;
       if (el.emptyTitle) el.emptyTitle.textContent = copy.title || el.emptyTitle.textContent;
-      if (el.emptyLede) el.emptyLede.textContent = copy.lede || el.emptyLede.textContent;
       el.onboardDoor.hidden = false;
       // One state on the welcome's frame: the CSS hides every block a
       // first-run home has no business showing — the counts, the method
@@ -5512,88 +5373,6 @@ import { node, svg, clip } from './core/dom.js';
         var row = document.querySelector('.cfg-item[data-item="vault"]');
         if (row) row.click();
       }, 400);
-    }
-  }
-
-  // The welcome's three readings: the same memory, skills and sessions
-  // documents the panels read, reduced to what fits in a glance. They
-  // answer "what does this harness know about me and my work" without a
-  // second store and without inventing a number.
-  function paintHome() {
-    if (!el.homeStats) return;
-    var h = face.home || {};
-    var facts = h.memory ? h.memory.live
-      : face.memory
-        ? (face.memory.facts || []).filter(function (fact) { return !fact.retired; }).length
-        : null;
-    var skills = h.skills ? h.skills.count
-      : face.skills ? (face.skills.skills || []).length : null;
-    var runs = h.runs ? h.runs.count
-      : face.sessions ? (face.sessions.sessions || []).length : null;
-    paintGreet();
-    if (facts === null && skills === null && runs === null) {
-      el.homeStats.hidden = true;
-      return;
-    }
-    el.homeStats.hidden = false;
-    el.homeFacts.textContent = facts === null ? '\u2014' : String(facts);
-    el.homeSkills.textContent = skills === null ? '\u2014' : String(skills);
-    el.homeRuns.textContent = runs === null ? '\u2014' : String(runs);
-    if (!el.homeStats.dataset.wired) {
-      el.homeStats.dataset.wired = '1';
-      Array.prototype.forEach.call(el.homeStats.querySelectorAll('[data-go]'), function (button) {
-        button.addEventListener('click', function () {
-          window.location.hash = button.dataset.go;
-        });
-      });
-    }
-
-    // The part a count cannot say: which facts are carrying the most
-    // weight in this corpus. The home read names them; a panel read is
-    // the fallback when the owner arrived before the home landed.
-    if (el.homeKnown) {
-      var named = [];
-      if (h.memory && (h.memory.top || []).length) {
-        named = h.memory.top.map(function (fact) { return { name: fact.name, recalls: fact.recalls }; });
-      } else {
-        named = (face.memory ? face.memory.facts || [] : [])
-          .filter(function (fact) { return !fact.retired; })
-          .sort(function (left, right) { return right.recall_count - left.recall_count; })
-          .slice(0, 2);
-      }
-      el.homeKnown.hidden = !named.length;
-      if (named.length) {
-        el.homeKnown.textContent = '';
-        el.homeKnown.appendChild(document.createTextNode('Most recalled: '));
-        named.forEach(function (fact, at) {
-          if (at) el.homeKnown.appendChild(document.createTextNode(' \u00b7 '));
-          el.homeKnown.appendChild(node('b', null, fact.name));
-        });
-        el.homeKnown.onclick = function () { window.location.hash = '#/memory'; };
-      }
-    }
-
-    // The method's live edge: the graph's next ready node, offered as the
-    // first step of the day. The home read names it, so the welcome and
-    // the graph cannot point at different steps.
-    if (el.next) {
-      var pick = h.next || null;
-      if (!pick && face.delegation && face.delegation.graph) {
-        var nodes = face.delegation.graph.nodes || [];
-        var ready = nodes.filter(function (one) { return one.state === 'ready'; })
-          .sort(function (left, right) { return left.score - right.score; });
-        var running = nodes.filter(function (one) { return one.state === 'running'; });
-        pick = running[0] || ready[0] || null;
-      }
-      el.next.hidden = !pick;
-      if (pick) {
-        el.nextEyebrow.textContent = pick.state === 'running' ? 'running now' : 'next from the graph';
-        el.nextGoal.textContent = pick.id + (pick.approach ? ' \u00b7 ' + pick.approach : '');
-        el.nextGo.onclick = function () {
-          ask('work the next ready graph node: ' + pick.id +
-            (pick.approach ? '. ' + pick.approach : ''));
-        };
-      }
     }
   }
 
@@ -8047,34 +7826,6 @@ import { node, svg, clip } from './core/dom.js';
     return wrap;
   }
 
-  // The welcome's one read. The panels keep their own; this document is
-  // the bounded summary the home renders, cached server-side for half a
-  // minute so a reload or a return to the conversation does not walk the
-  // corpus and every log again.
-  function readHome(force) {
-    var now = Date.now();
-    if (!force && face.home && now - face.homeAt < 30000) return Promise.resolve();
-    face.homeAt = now;
-    return fetch('/api/home', { headers: { accept: 'application/json' } })
-      .then(function (reply) {
-        if (reply.status === 401) throw new Error('token');
-        return reply.json();
-      })
-      .then(function (doc) {
-        face.home = doc;
-        paintHome();
-        paintRecent();
-        paintSince();
-      })
-      .catch(function () {
-        // KI-380: the swallow here was the zombie tab's floor. A read
-        // that fails re-arms itself on a bounded clock and raises the
-        // connection banner, so a server that goes away and comes back
-        // is followed without the owner reloading by hand.
-        connectionDown('the home read');
-        window.setTimeout(function () { readHome(true); }, 5000);
-      });
-  }
 
   // The usage counters: one read when the page boots and one after
   // every record, so the ranking state is the store's own. Counters
@@ -8113,31 +7864,7 @@ import { node, svg, clip } from './core/dom.js';
     return 1 + Math.min(0.35, (accepted / shown) * 0.35);
   }
 
-  // What changed while the owner was away. The stamp is the browser's
-  // own; the counts are the archive's and the corpus's, so the sentence
-  // names real work rather than a streak.
-  function paintSince() {
-    var el0 = document.getElementById('since');
-    if (!el0) return;
-    var since = face.lastVisit;
-    var home = face.home;
-    if (!since || !home) { el0.hidden = true; return; }
-    var at = Date.parse(since);
-    if (isNaN(at)) { el0.hidden = true; return; }
-    var runs = ((home.runs && home.runs.timeline) || []).filter(function (row) {
-      return row.created && Date.parse(row.created) > at;
-    }).length;
-    var day = since.slice(0, 10);
-    var facts = ((home.memory && home.memory.dates) || []).filter(function (date) {
-      return date && date > day;
-    }).length;
-    if (!runs && !facts) { el0.hidden = true; return; }
-    var parts = [];
-    if (runs) parts.push(runs + (runs === 1 ? ' run' : ' runs'));
-    if (facts) parts.push(facts + (facts === 1 ? ' new fact' : ' new facts'));
-    el0.hidden = false;
-    el0.textContent = 'Since your last visit: ' + parts.join(' \u00b7 ');
-  }
+
 
   // ---- the learning surface (the learning plan's C7) ------------------------
   // The mockup's four sections: the lesson (the plan's coarse view and
@@ -10044,83 +9771,7 @@ import { node, svg, clip } from './core/dom.js';
   // keyed on it.
   window.history.replaceState(null, '', window.location.pathname + window.location.hash);
 
-  // The four offers, ordered by what the owner actually accepts. A
-  // familiar offer rises; nothing is hidden, and the static order is
-  // the order when the knob is off or the counters are empty.
-  function paintOffers() {
-    el.offers.textContent = '';
-    OFFERS.slice().sort(function (left, right) {
-      return usageBoost('offer', right.id) - usageBoost('offer', left.id);
-    }).forEach(function (offer) {
-      var button = node('button', 'offer');
-      button.type = 'button';
-      button.dataset.act = 'offer';
-      button.dataset.offer = offer.id;
-      var mark = node('span', 'offer-mark');
-      mark.appendChild(icon(offer.icon));
-      button.appendChild(mark);
-      var body = node('span', 'offer-body');
-      body.appendChild(node('span', 'offer-title', offer.title));
-      body.appendChild(node('span', 'offer-said', offer.said));
-      button.appendChild(body);
-      if (!face.offerShown[offer.id]) {
-        face.offerShown[offer.id] = 1;
-        usageRecord('suggestions', 'offer:' + offer.id, 'shown');
-      }
-      button.addEventListener('click', function () {
-        usageRecord('suggestions', 'offer:' + offer.id, 'accepted');
-        el.task.value = offer.prompt;
-        grow();
-        el.task.focus();
-      });
-      el.offers.appendChild(button);
-    });
-  }
-
-  paintOffers();
-
-  Array.prototype.forEach.call(el.empty.querySelectorAll('[data-step]'), function (button) {
-    button.addEventListener('click', function () {
-      if (button.dataset.step === 'plan') {
-        el.plan.click();
-        el.task.focus();
-      } else if (button.dataset.step === 'delegate') {
-        window.location.hash = '#/delegation';
-      } else {
-        ask('use the sys1 lane to review today\u2019s route decisions and report the fit');
-      }
-    });
-  });
-
-  Array.prototype.forEach.call(el.empty.querySelectorAll('[data-lane]'), function (button) {
-    button.addEventListener('click', function () {
-      var lane = button.dataset.lane;
-      if (lane === 'judge') {
-        ask('use the sys1 lane to review today\u2019s route decisions and report the fit');
-      } else if (lane === 'memory') {
-        window.location.hash = '#/memory';
-      } else if (lane === 'skills') {
-        window.location.hash = '#/skills';
-      } else if (lane === 'web') {
-        openPane();
-        showPaneTab('web');
-      } else if (lane === 'deck') {
-        ask('build a deck that summarises the plan\u2019s next increment');
-      }
-    });
-  });
-
-  try { face.lastVisit = window.localStorage.getItem('fleet-last-visit') || ''; } catch (error) { }
-
   paintEmpty();
-  // The welcome's one bounded read. It is the only boot-time read of the
-  // corpus, the library, the archive, and the graph; the panels keep
-  // their own reads for when the owner opens them.
-  readHome(false).then(function () {
-    try {
-      window.localStorage.setItem('fleet-last-visit', new Date().toISOString());
-    } catch (error) { }
-  }).catch(function () { });
 
   // The draft survives a reload, per conversation (D2). A twelve-hour
   // desk should not lose the sentence being typed because the face was
@@ -26564,11 +26215,6 @@ import { node, svg, clip } from './core/dom.js';
         if (p) p.hidden = key !== 'chat';
       });
       el.panelLater.hidden = true;
-      readHome(false).then(function () {
-        paintHome();
-        paintRecent();
-        paintSince();
-      }).catch(function () { });
       openPane();
       showPaneTab('preview');
       openFile(focusId);
@@ -26691,7 +26337,6 @@ import { node, svg, clip } from './core/dom.js';
         // The new-room door and the invitation offer the home's roles;
         // read them once so a press never opens an empty picker.
         readSettings(true);
-        readHome(false).then(paintRoomEmpty).catch(function () { });
         var asked = face.focus && face.focus.id ? face.focus.id : '';
         if (asked && asked !== face.session) {
           openRoom(asked, { keepHash: true });
@@ -26805,14 +26450,6 @@ import { node, svg, clip } from './core/dom.js';
         openWork(storedOpen, { keepHash: true });
         return;
       }
-      readHome(false).then(function () {
-        paintHome();
-        paintRecent();
-        paintSince();
-      }).catch(function () { });
-      // P4: the Threads lens projects the spine's work items; re-render the
-      // recent list once the spine read lands.
-      readSpine(false).then(paintRecent).catch(function () { });
     }
   }
 
@@ -29580,9 +29217,6 @@ import { node, svg, clip } from './core/dom.js';
     if (face.panel === 'second-brain') readPlugin(false);
   }, 5000);
 
-  // The counters land after the first offers paint; the offers repaint
-  // in their learned order, and the exposure was already recorded once.
-  readUsage().then(paintOffers);
 
   // ------------------------------------------------------------- pairing
 
@@ -29719,9 +29353,9 @@ import { node, svg, clip } from './core/dom.js';
       if (error && error.message === 'token') {
         el.empty.hidden = false;
         el.empty.querySelector('h1').textContent = 'This browser is not paired with fleet.';
-        el.empty.querySelector('p').textContent =
+        el.empty.appendChild(node('p', 'empty-meta',
           'Open the address fleet printed and pair this device. A paired device holds a cookie; ' +
-          'a browser without one sees only the pairing page.';
+          'a browser without one sees only the pairing page.'));
       }
     });
 })();
