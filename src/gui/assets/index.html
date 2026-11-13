@@ -1307,6 +1307,12 @@
     <div class="tissue-head">
       <span class="tissue-title">connections</span>
       <span class="tissue-where" id="tissue-where">what this connects to</span>
+      <!-- The collapse door (U12): the column's own chevron. It rides the
+           same state the console switch sets — one state, two doors — so
+           collapsing is reachable where the column is, not only in the
+           console footer. -->
+      <button class="tissue-collapse" id="tissue-collapse" type="button" aria-pressed="true"
+              title="collapse the connections column" aria-label="collapse the connections column"></button>
     </div>
     <div class="tissue-graph" id="tissue-graph" role="img"
          aria-label="what the focused item connects to"></div>
@@ -1334,6 +1340,14 @@
   </footer>
 
 </div>
+
+<!-- The connections column's way back (U12): when the column is away, a
+     slim tab holds the stage's right edge — the affordance never hides
+     with the pane it controls. Same state as the console switch and the
+     column's own chevron: one state, three doors. -->
+<button class="tissue-reveal" id="tissue-reveal" type="button"
+        title="expand the connections column" aria-label="expand the connections column"
+        aria-pressed="false"></button>
 
 <div class="scrim" id="scrim" hidden></div>
 

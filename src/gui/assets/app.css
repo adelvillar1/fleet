@@ -11055,6 +11055,76 @@ body[data-motion="off"] .tissue-edge.hot { animation: none; }
 
 :root { --tissue-width: 320px; }
 
+/* The connections column's collapse (U12): the head chevron, the console
+   switch and the edge tab are three doors on ONE state — body[data-tissue].
+   Collapsed, the column steps out of the grid and a slim tab holds the
+   stage's right edge, so the way back never hides with the pane it
+   controls. <=1080px the column is dropped by the breakpoint, the tab with
+   it. */
+.tissue-collapse {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1;
+  flex: none;
+}
+.tissue-collapse:hover { color: var(--text); background: var(--panel2); }
+.tissue-collapse::after { content: "\203A"; } /* › collapse — the column goes right */
+body[data-tissue="off"] .tissue-collapse::after { content: "\2039"; } /* ‹ */
+
+#tissue-reveal {
+  position: fixed;
+  right: 0;
+  top: 42%;
+  z-index: 30;
+  display: none;
+  place-items: center;
+  width: 26px;
+  height: 56px;
+  border: 1px solid var(--line2);
+  border-right: none;
+  border-radius: 9px 0 0 9px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+}
+#tissue-reveal:hover { color: var(--text); background: var(--panel2); }
+#tissue-reveal::after { content: "\2039"; }
+@media (min-width: 1081px) {
+  body[data-tissue="off"] #tissue-reveal { display: grid; }
+  body[data-tissue="off"] .face {
+    grid-template-columns: var(--rail-width) minmax(0, 1fr) 30px;
+  }
+  body[data-tissue="off"][data-pane="open"] .face {
+    grid-template-columns: var(--rail-width) minmax(0, 1fr) 30px var(--pane-width);
+  }
+  body[data-tissue="off"][data-pane="open"] .pane { grid-column: 4; }
+  body[data-tissue="off"] .tissue {
+    display: flex;
+    grid-column: 3;
+    padding: 0;
+    overflow: hidden;
+  }
+  body[data-tissue="off"] .tissue-head { padding: 10px 0; width: 100%; flex-direction: column; gap: 8px; }
+  body[data-tissue="off"] .tissue-title,
+  body[data-tissue="off"] .tissue-where,
+  body[data-tissue="off"] .tissue-graph,
+  body[data-tissue="off"] .tissue-legend,
+  body[data-tissue="off"] .tissue-focus,
+  body[data-tissue="off"] .tissue-empty { display: none; }
+  body[data-tissue="off"] .tissue-collapse { margin: 0 auto; }
+}
+
 /* --- U9: the lens-head's sub line --------------------------------- */
 
 /* The lens-head's sub line is `.page-note`, carried by the shared

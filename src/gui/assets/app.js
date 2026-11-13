@@ -1108,6 +1108,8 @@
     chromeSearch: document.getElementById('chrome-search-input'),
     ctlDensity: document.getElementById('ctl-density'),
     ctlConnections: document.getElementById('ctl-connections'),
+    tissueCollapse: document.getElementById('tissue-collapse'),
+    tissueReveal: document.getElementById('tissue-reveal'),
     ctlLabels: document.getElementById('ctl-labels'),
     ctlMotion: document.getElementById('ctl-motion'),
     ctlArmada: document.getElementById('ctl-armada'),
@@ -10757,6 +10759,11 @@
       String(document.body.dataset.density === 'compact'));
     if (el.ctlConnections) el.ctlConnections.setAttribute('aria-pressed',
       String(document.body.dataset.tissue === 'on'));
+    // The collapse doors sync off the same state: the head chevron's
+    // pressed flag mirrors the column, and the edge tab shows only when
+    // the column is away (its visibility is CSS off body[data-tissue]).
+    if (el.tissueCollapse) el.tissueCollapse.setAttribute('aria-pressed',
+      String(document.body.dataset.tissue === 'on'));
     if (el.ctlLabels) el.ctlLabels.setAttribute('aria-pressed',
       String(document.body.dataset.labels === 'on'));
     if (el.ctlMotion) el.ctlMotion.setAttribute('aria-pressed',
@@ -10779,6 +10786,16 @@
     consoleToggle('density', 'compact', 'comfortable');
   });
   if (el.ctlConnections) el.ctlConnections.addEventListener('click', function () {
+    consoleToggle('connections', 'on', 'off', paintTissueNote);
+  });
+  // The column's own doors (U12): the head chevron collapses where the
+  // column is, and the edge tab is the way back when it is away — both
+  // ride the same state the console switch sets, so the three never
+  // disagree.
+  if (el.tissueCollapse) el.tissueCollapse.addEventListener('click', function () {
+    consoleToggle('connections', 'on', 'off', paintTissueNote);
+  });
+  if (el.tissueReveal) el.tissueReveal.addEventListener('click', function () {
     consoleToggle('connections', 'on', 'off', paintTissueNote);
   });
   if (el.ctlLabels) el.ctlLabels.addEventListener('click', function () {

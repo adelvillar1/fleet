@@ -12808,6 +12808,40 @@ async function theBoardRendersColumnsAndSettlesMoves() {
 // renders in place. The board projects from the workspace spine (the
 // tasks endpoint is never fetched for it), and a graph-node pivot
 // reflects the lens in the address without leaving the workspace.
+// S6 (U12): the connections column's collapse — the head chevron, the
+// console switch and the edge tab ride ONE state, so the doors never
+// disagree, and the way back is always visible.
+async function theConnectionsColumnCollapsesFromItsOwnDoor() {
+  const page = boot({
+    documents: {
+      tissue: emptyTissue(),
+      workspace: { type: 'workspace', tasks: [], deliverables: [], threads: [],
+        instances: [], intelligence: { tools: 0, workflows: 0 } },
+    },
+    hash: '#/board',
+  });
+  page.open();
+  await flush(60);
+  check('S6 the column starts on', page.body.dataset.tissue === 'on', page.body.dataset.tissue);
+  check('S6 the head chevron carries the state',
+    page.IDS['tissue-collapse'].getAttribute('aria-pressed') === 'true',
+    page.IDS['tissue-collapse'].getAttribute('aria-pressed'));
+  page.IDS['tissue-collapse'].click();
+  await flush(60);
+  check('S6 the chevron collapses the column', page.body.dataset.tissue === 'off', page.body.dataset.tissue);
+  check('S6 the console switch agrees',
+    page.IDS['ctl-connections'].getAttribute('aria-pressed') === 'false',
+    page.IDS['ctl-connections'].getAttribute('aria-pressed'));
+  check('S6 the choice persists', page.window.localStorage.getItem('fleet-connections') === 'off',
+    page.window.localStorage.getItem('fleet-connections'));
+  page.IDS['tissue-reveal'].click();
+  await flush(60);
+  check('S6 the edge tab expands the column', page.body.dataset.tissue === 'on', page.body.dataset.tissue);
+  check('S6 the doors agree after a round trip',
+    page.IDS['ctl-connections'].getAttribute('aria-pressed') === 'true' &&
+      page.IDS['tissue-collapse'].getAttribute('aria-pressed') === 'true', 'doors');
+}
+
 async function theSpineFeedsTheLensesAndThePivotStaysInPlace() {
   const page = boot({
     documents: {
@@ -13037,6 +13071,7 @@ const cases = [
   ['S4 the board renders columns and settles moves', theBoardRendersColumnsAndSettlesMoves],
   ['S4 the inbox row wears the principal chip', theInboxRowWearsThePrincipalChip],
   ['S6 the spine feeds the lenses and the pivot stays in place', theSpineFeedsTheLensesAndThePivotStaysInPlace],
+  ['S6 the connections column collapses from its own door', theConnectionsColumnCollapsesFromItsOwnDoor],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));
