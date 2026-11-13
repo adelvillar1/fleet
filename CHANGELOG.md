@@ -12,6 +12,21 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.2 — 2026-11-13
+
+The substrate diagnosis tells the truth about which failure it sees. A
+machine restart reassigns Docker's published port and the worker's
+endpoint record cannot follow — the probe's refused path now asks Docker
+for the running container's actual port and names the stale record with
+both ports ("the worker answers on port 57888, not the 60207 the endpoint
+record names — the record is stale"), instead of reporting KI-493's
+dead-worker shape for a worker that is up. A record that agrees with a
+dead container still reads KI-493. And the repair press repaints
+honestly: the reply is the HealthReport document the face reads, so the
+card flips from the press's own answer instead of corrupting the face's
+state until the next health event. The repair itself needed no change —
+it reconciles the record and the worker in one press.
+
 ## v0.8.1 — 2026-11-13
 
 The dogfood pass — the owner ran fleet on fleet, and every defect the run
