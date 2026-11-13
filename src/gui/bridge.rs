@@ -6634,7 +6634,7 @@ pub(crate) fn save_titles(
 
 /// Read the archived set: `id → the stamp the owner archived it`. An
 /// entry whose session log is gone is dropped, like the titles map.
-fn load_archived(home: &std::path::Path) -> std::collections::HashMap<String, String> {
+pub(crate) fn load_archived(home: &std::path::Path) -> std::collections::HashMap<String, String> {
     let text = match std::fs::read_to_string(archived_path(home)) {
         Ok(text) => text,
         Err(_) => return std::collections::HashMap::new(),

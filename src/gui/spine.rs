@@ -239,6 +239,15 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
     }
 
     let sessions = recent_sessions(home, MAX_SESSIONS_SCANNED);
+    // The owner's archive is the one end a conversation can come to (the
+    // archive verb): an archived session leaves the spine — its work item,
+    // its thread and the nodes it fed are the surfaces' own history, kept
+    // on disk, out of the workspace's face.
+    let archived = crate::gui::bridge::load_archived(home);
+    let sessions: Vec<_> = sessions
+        .into_iter()
+        .filter(|summary| !archived.contains_key(&summary.id))
+        .collect();
     let mut budget = SCAN_BUDGET;
     let mut run_facts: BTreeMap<String, RunFacts> = BTreeMap::new();
     for summary in &sessions {
