@@ -241,7 +241,12 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       width.
 - [ ] C4 (P4): all eight lenses shipped one at a time, each with its negative
       cases and its empty states; no old panel remains reachable; onboarding
-      rebuilt on the finished shell.
+      rebuilt on the finished shell. **Progress 2026-11-13: the Board lens now
+      projects the spine's work items** — on a live home with no declared
+      tasks it shows the actual runs as read-only cards (verified done:12),
+      while declared tasks stay movable; a run is not a movable task, so no
+      drag/bulk on it (a control that lies is on the never-list). Harness +
+      gate green. Remaining lenses follow.
 - [ ] C5 (P5): the type floor holds; component pairs are measured at 7:1 for
       small text; graph labels are readable at any density. **Progress
       2026-11-12: the 12px floor landed** (464 sub-12px literals removed) and

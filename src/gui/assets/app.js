@@ -9057,8 +9057,23 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
   // separate fetch; the workspace context is the single source.
   function readTasks(force) {
     return readSpine(force).then(function (doc) {
-      if (doc && Array.isArray(doc.tasks)) {
-        face.tasksRead = { type: 'tasks', tasks: doc.tasks };
+      if (!doc) return;
+      // P4: the board is a lens over the workspace. When the spine carries
+      // real work items (runs), project them as read-only cards — they are
+      // not movable tasks, so no drag or bulk (a control that lies is on the
+      // never-list). Declared tasks, when present, stay movable.
+      var items = null;
+      if (Array.isArray(doc.work) && doc.work.length) {
+        items = doc.work.map(function (w) {
+          return { id: w.id, title: w.title, status: w.status,
+            assignee: w.owner || null, binding: w.binding || null,
+            readOnly: true };
+        });
+      } else if (Array.isArray(doc.tasks)) {
+        items = doc.tasks;
+      }
+      if (items) {
+        face.tasksRead = { type: 'tasks', tasks: items };
         face.tasksAt = Date.now();
       }
       if (face.panel === 'board') paintBoard();
@@ -9141,21 +9156,25 @@ import { face, CHAT_SCALES, CHAT_SCALE_DEFAULT } from './core/store.js';
 
   function boardCardTask(task, sel) {
     var card = node('div', 'board-card' + (task.status === 'working' ? ' running' : ''));
-    card.draggable = true;
+    card.draggable = !task.readOnly;
     card.dataset.id = task.id;
-    card.addEventListener('dragstart', function (event) {
-      event.dataTransfer.setData('text/plain', task.id);
-    });
+    if (!task.readOnly) {
+      card.addEventListener('dragstart', function (event) {
+        event.dataTransfer.setData('text/plain', task.id);
+      });
+    }
     var top = node('div', 'board-card-top');
-    var check = node('button', 'board-check' + (sel[task.id] ? ' on' : ''));
-    check.type = 'button';
-    check.setAttribute('aria-pressed', String(!!sel[task.id]));
-    check.setAttribute('aria-label', 'select ' + task.title);
-    check.addEventListener('click', function () {
-      sel[task.id] = !sel[task.id];
-      paintBoard();
-    });
-    top.appendChild(check);
+    if (!task.readOnly) {
+      var check = node('button', 'board-check' + (sel[task.id] ? ' on' : ''));
+      check.type = 'button';
+      check.setAttribute('aria-pressed', String(!!sel[task.id]));
+      check.setAttribute('aria-label', 'select ' + task.title);
+      check.addEventListener('click', function () {
+        sel[task.id] = !sel[task.id];
+        paintBoard();
+      });
+      top.appendChild(check);
+    }
     top.appendChild(node('span', 'board-card-title', task.title));
     card.appendChild(top);
     var tags = node('div', 'board-card-tags');
