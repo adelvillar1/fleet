@@ -1487,7 +1487,7 @@ fn file_proposal(home: &Path, lesson: &Lesson, source: &str) -> Option<PathBuf> 
 /// Returns the paths filed. A lesson whose name matches a live skill is
 /// filed as an update to that skill rather than a create, so the draft
 /// diffs against the file it would replace.
-pub fn draft_session(
+pub async fn draft_session(
     canonical: &Path,
     home: &Path,
     session_path: &Path,
@@ -1523,7 +1523,7 @@ pub fn draft_session(
         // byte-identical either way, and the slice-12 gate reads the
         // same file shape whatever drafted the body.
         let drafted_body = if lane_prose {
-            crate::generate::narrate_sync(
+            crate::generate::narrate_async(
                 home,
                 "You draft a skill body for fleet's skill library: markdown,                  no frontmatter, teaching the recovery procedure the evidence \
                  shows the session needed. Stay grounded in the evidence; keep \
@@ -1547,6 +1547,7 @@ pub fn draft_session(
                         Ok(())
                     },
                 )
+                .await
         } else {
             None
         };
@@ -1559,6 +1560,33 @@ pub fn draft_session(
         }
     }
     filed
+}
+
+/// The sync form for callers outside any runtime (the tests): the same
+/// draft on its own current-thread runtime. A caller inside the CLI's
+/// runtime awaits `draft_session` — a nested runtime there panics
+/// (KI-537).
+pub fn draft_session_sync(
+    canonical: &Path,
+    home: &Path,
+    session_path: &Path,
+    user_home: Option<&str>,
+    lane_prose: bool,
+) -> Vec<PathBuf> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()
+        .map(|runtime| {
+            runtime.block_on(draft_session(
+                canonical,
+                home,
+                session_path,
+                user_home,
+                lane_prose,
+            ))
+        })
+        .unwrap_or_default()
 }
 
 // --- curation --------------------------------------------------------------
@@ -2902,7 +2930,7 @@ mod tests {
             assistant(vec![tool_call("c2", "bash", "{}")]),
             result("c2", "bash", "exit 0"),
         ];
-        let filed = draft_session(
+        let filed = draft_session_sync(
             &canon(&home),
             &home,
             &session_log(&home, &records),
@@ -2948,7 +2976,7 @@ mod tests {
             assistant(vec![tool_call("c2", "read_file", "{}")]),
             result("c2", "read_file", "the text"),
         ];
-        let filed = draft_session(
+        let filed = draft_session_sync(
             &canon(&home),
             &home,
             &session_log(&home, &records),
@@ -2979,7 +3007,7 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        let second = draft_session(&canon(&home), &home, &second_log, None, false);
+        let second = draft_session_sync(&canon(&home), &home, &second_log, None, false);
         assert_eq!(second.len(), 1, "{second:?}");
         let draft = std::fs::read_to_string(filed[0].clone()).unwrap();
         assert!(draft.contains("## Further evidence"), "{draft}");
@@ -3022,7 +3050,7 @@ mod tests {
             result("c4", "grep", "the same call"),
         ];
         let log = session_log(&home, &records);
-        let filed = draft_session(&canon(&home), &home, &log, None, false);
+        let filed = draft_session_sync(&canon(&home), &home, &log, None, false);
         assert_eq!(filed.len(), 1, "{filed:?}");
         let draft = std::fs::read_to_string(&filed[0]).expect("the draft reads back");
         assert!(draft.contains("procedure-read-file-grep"), "{draft}");

@@ -182,6 +182,28 @@ fn save_summaries(home: &std::path::Path, summaries: &std::collections::HashMap<
 /// consumer's own acceptance check — a draft that fails it is as good
 /// as a dead lane. Sync by design: the CLI surfaces that narrate are
 /// sync, and each builds its own current-thread runtime here.
+/// The C11 narration pass, awaited: the same draft-and-validate contract
+/// for a caller already inside a runtime. The CLI dispatches every verb
+/// under one runtime, so a sync narration building its own runtime
+/// panicked there ("cannot start a runtime from within a runtime",
+/// KI-537) — the narrating callers await.
+pub async fn narrate_with_spec_async(
+    spec: &crate::mcp::ServerSpec,
+    system: &str,
+    facts: &str,
+    max_tokens: u32,
+    validate: impl Fn(&str) -> Result<(), String>,
+) -> Option<String> {
+    match text(spec, facts, Some(system), max_tokens).await {
+        Ok(answer) if validate(&answer.text).is_ok() => Some(answer.text),
+        Ok(answer) => {
+            let _ = validate(&answer.text).unwrap_err();
+            None
+        }
+        Err(_) => None,
+    }
+}
+
 pub fn narrate_with_spec(
     spec: &crate::mcp::ServerSpec,
     system: &str,
@@ -189,32 +211,24 @@ pub fn narrate_with_spec(
     max_tokens: u32,
     validate: impl Fn(&str) -> Result<(), String>,
 ) -> Option<String> {
-    // No ambient runtime here — the narrating surfaces are sync CLI
-    // paths — so this builds its own current-thread runtime, the same
-    // pattern the headless commands use.
+    // For a genuinely non-runtime caller: its own current-thread
+    // runtime over the awaited pass.
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .ok()
         .and_then(|runtime| {
-            runtime.block_on(async {
-                match text(spec, facts, Some(system), max_tokens).await {
-                    Ok(answer) if validate(&answer.text).is_ok() => Some(answer.text),
-                    Ok(answer) => {
-                        let _ = validate(&answer.text).unwrap_err();
-                        None
-                    }
-                    Err(_) => None,
-                }
-            })
+            runtime.block_on(narrate_with_spec_async(
+                spec, system, facts, max_tokens, validate,
+            ))
         })
 }
 
-/// The C11 narration pass, for a sync caller that holds only the home:
-/// resolve blend1 from the home's own lane chain, then narrate. `None`
-/// means "run today's path" — no lane, no narration, no error surfaced
-/// beyond the caller's own fallback line.
-pub fn narrate_sync(
+/// The C11 narration pass, for a caller inside a runtime that holds
+/// only the home: resolve blend1 from the home's own lane chain, then
+/// narrate, awaited. `None` means "run today's path" — no lane, no
+/// narration, no error surfaced beyond the caller's own fallback line.
+pub async fn narrate_async(
     home: &std::path::Path,
     system: &str,
     facts: &str,
@@ -222,7 +236,7 @@ pub fn narrate_sync(
     validate: impl Fn(&str) -> Result<(), String>,
 ) -> Option<String> {
     let spec = blend1_spec(home)?;
-    narrate_with_spec(&spec, system, facts, max_tokens, validate)
+    narrate_with_spec_async(&spec, system, facts, max_tokens, validate).await
 }
 
 /// The C19 form-filler: a validation-failed structured emission

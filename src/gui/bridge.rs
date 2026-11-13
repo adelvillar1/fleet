@@ -13989,7 +13989,16 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                 user_home.as_deref(),
             ) {
                 Some(canonical) => {
-                    crate::skills::draft_session(&canonical, &home, &path, user_home.as_deref(), true)
+                    // The agent thread is a native thread, outside the
+                    // face's runtime: the sync draft owns its own
+                    // current-thread runtime (KI-537).
+                    crate::skills::draft_session_sync(
+                        &canonical,
+                        &home,
+                        &path,
+                        user_home.as_deref(),
+                        true,
+                    )
                 }
                 None => Vec::new(),
             };

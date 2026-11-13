@@ -400,7 +400,7 @@ async fn run_command(options: &RunOptions) -> ExitCode {
     // The self-authoring half: after the session, the harness drafts the
     // skill changes its outcomes justify. Best-effort by construction —
     // drafting is the harness noticing, never the run's outcome.
-    draft_lessons(&home, session.path());
+    draft_lessons(&home, session.path()).await;
     match outcome {
         Ok(report) => match report.stop_reason {
             StopReason::Completed => ExitCode::SUCCESS,
@@ -568,7 +568,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         prepared.record_route(&judge_task);
     }
     // The session is over: draft its lessons into proposals, best-effort.
-    draft_lessons(&home, session.path());
+    draft_lessons(&home, session.path()).await;
     ExitCode::SUCCESS
 }
 
@@ -1112,19 +1112,23 @@ fn backticked_names(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn draft_lessons(home: &std::path::Path, session_path: &std::path::Path) {
+async fn draft_lessons(home: &std::path::Path, session_path: &std::path::Path) {
     let user_home = std::env::var("HOME").ok();
     let skills_dir = std::env::var("FLEET_SKILLS_DIR").ok();
     if let Some(canonical) =
         fleet::skills::resolve_skills_dir(skills_dir.as_deref(), user_home.as_deref())
     {
+        // Awaited, never nested-runtime: the verbs dispatch under one
+        // runtime, and a narration building its own panicked there
+        // (KI-537).
         let filed = fleet::skills::draft_session(
             &canonical,
             home,
             session_path,
             user_home.as_deref(),
             true,
-        );
+        )
+        .await;
         if !filed.is_empty() {
             eprintln!(
                 "fleet: skills: drafted {} proposal(s) awaiting the gate in {}",
@@ -1563,7 +1567,7 @@ async fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
                 .into_iter()
                 .map(str::to_string)
                 .collect();
-            let narrated = fleet::generate::narrate_sync(
+            let narrated = fleet::generate::narrate_async(
                 &home,
                 "You narrate fleet's tool-advice card for the owner: one short \
                  paragraph naming the tools and the actions the card carries, \
@@ -1587,6 +1591,7 @@ async fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
                     Ok(())
                 },
             )
+            .await
             .unwrap_or(card);
             println!("{narrated}");
         }

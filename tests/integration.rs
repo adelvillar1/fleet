@@ -7690,7 +7690,8 @@ async fn a_sessions_failure_then_correction_drafts_a_proposal() {
         .unwrap();
 
     let filed =
-        fleet::skills::draft_session(&skills_canon(&home), &home, session.path(), None, false);
+        fleet::skills::draft_session(&skills_canon(&home), &home, session.path(), None, false)
+            .await;
     assert_eq!(filed.len(), 1, "{filed:?}");
     let draft = std::fs::read_to_string(&filed[0]).unwrap();
     // The frontmatter carries the proposal flag, the kind, and the
@@ -7900,7 +7901,7 @@ fn the_skills_command_lists_cards_proposals_and_a_draft() {
         })
         .unwrap();
     let filed =
-        fleet::skills::draft_session(&skills_canon(&home), &home, session.path(), None, false);
+        fleet::skills::draft_session_sync(&skills_canon(&home), &home, session.path(), None, false);
     assert_eq!(filed.len(), 1, "{filed:?}");
 
     let shown = run(&["skills", "--show", "bash-recovery"]);
