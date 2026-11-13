@@ -295,8 +295,13 @@ rebuilt **after** Fleet, on the finished shell, from the same spine read.
       panel set is derived from the DOM (`panelEl`) keyed by the route table
       (`PANEL_KEYS`), so a new surface needs no second registration; routing
       verified in-browser (board ↔ memory swap correctly). The tower console
-      stays — it is live, feeding the inspector's project drawer. Remaining:
-      the legacy skills surface and the counts / ledger reconciliation.
+      stays — it is live, feeding the inspector's project drawer. **Counts
+      recorded:** app.js 29,940 lines (was 30,010); `core/store.js` +
+      `core/router.js` modules; 21 panel mains (was 22); 0 sub-12px rules;
+      `PANEL_EL` retired. The pointer index carries no stale face-panel refs.
+      Remaining: the legacy skills painter (unreachable — its removal must not
+      damage the Intelligence segment) and the full module split /
+      single-container stage.
 - [ ] C8: every phase carries a local four-leg gate on its committed tree, a
       green face harness, and the visual check against its mockup section;
       the version declarations move per release; **the beta bar is untouched
