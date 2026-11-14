@@ -10581,6 +10581,56 @@ body[data-motion="off"] .amb { display: none; }
   color: var(--faint);
 }
 
+/* The way back (the owner's 2026-11-14 ruling): the landing's
+   pick-up rows — compact, under the question, gone when the home holds
+   nothing to return to. */
+.recent { margin: 18px 0 0; display: grid; gap: 4px; }
+.recent[hidden] { display: none; }
+.recent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.recent-title {
+  margin: 0;
+  font-family: var(--disp);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.recent-all {
+  border: 0;
+  background: transparent;
+  color: var(--accent-lift);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.recent-all:hover { text-decoration: underline; }
+.recent-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.recent-row:hover { color: var(--text); background: var(--panel); }
+.recent-id {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* --- U0/U11: the tissue column ------------------------------------ */
 
 .tissue {

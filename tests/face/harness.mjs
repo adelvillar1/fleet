@@ -5581,7 +5581,7 @@ async function theRailBadgeSaysWhereTheWorkIs() {
   await flush();
   page.open();
   await flush(80);
-  const badge = page.rows('.surfaces-count').filter((s) => s.dataset.count === 'chat')[0];
+  const badge = page.rows('.surfaces-count').filter((s) => s.dataset.count === 'sessions')[0];
   check('N3 the badge shows the owner\u2019s waiting work',
     badge && badge.hidden === false && badge.textContent === '3',
     badge ? badge.hidden + ' / ' + badge.textContent : 'no badge');
@@ -5589,7 +5589,7 @@ async function theRailBadgeSaysWhereTheWorkIs() {
   await flush();
   quiet.open();
   await flush(80);
-  const qbadge = quiet.rows('.surfaces-count').filter((s) => s.dataset.count === 'chat')[0];
+  const qbadge = quiet.rows('.surfaces-count').filter((s) => s.dataset.count === 'sessions')[0];
   check('N3 a quiet archive hides the badge',
     qbadge && qbadge.hidden === true && qbadge.textContent === '',
     qbadge ? qbadge.hidden + ' / ' + JSON.stringify(qbadge.textContent) : 'no badge');
@@ -6142,12 +6142,13 @@ async function theDoorIsTheWelcomeInItsFirstRunState() {
   check('OB the door\u2019s title is the welcome\u2019s own, overridden',
     page.text('empty-title') === 'One account, and fleet can think.',
     page.text('empty-title'));
-  check('OB the landing asks and nothing else rides it',
+  check('OB the landing asks and carries only the way back',
     HTML.includes('What do you want to work on?') &&
+      HTML.includes('id="recent"') &&
       !HTML.includes('id="empty-eyebrow"') && !HTML.includes('id="empty-lede"') &&
       !HTML.includes('id="home-stats"') && !HTML.includes('id="greet"') &&
-      !HTML.includes('id="offers"') && !HTML.includes('id="recent"'),
-    'the retired surfaces are gone from the markup');
+      !HTML.includes('id="offers"'),
+    'the retired surfaces stay gone; the way back is the one addition');
 
   // The default path carries no mechanism word; each lives in the
   // disclosure only.
@@ -11118,16 +11119,16 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
-    // U44: seven lenses plus the Settings door. Everything else is folded
-    // behind it (Settings -> Advanced) and reached by the palette.
-    check('ICONS the rail lists the eight lenses', links.length === 8,
+    // U44's seven lenses plus the archive door (the owner's 2026-11-14
+    // ruling: the archive is a destination) plus the Settings door.
+    check('ICONS the rail lists the destinations', links.length === 9,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 8,
+      shapes.every(Boolean) && new Set(shapes).size === 9,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 

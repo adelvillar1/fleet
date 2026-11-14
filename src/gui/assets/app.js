@@ -291,6 +291,10 @@ import { node, svg, clip } from './core/dom.js';
     ['workspace', 'surfaces', [
       // What is being worked on right now.
       ['chat', 'threads'],
+      // Where the conversations live — the way back (the owner's
+      // 2026-11-14 ruling: the archive is a destination, not a
+      // palette secret).
+      ['sessions', 'archive'],
       // What is waiting, moving, or stuck.
       ['board', 'board'],
       // What landed, and whether it holds.
@@ -333,7 +337,7 @@ import { node, svg, clip } from './core/dom.js';
   ];
 
   var FOLDED = {
-    sessions: ['workspace', 'threads'],
+    sessions: ['workspace', 'archive'],
     huddles: ['workspace', 'threads'],
     design: ['settings', 'advanced'],
     router: ['settings', 'advanced'],
@@ -1084,6 +1088,7 @@ import { node, svg, clip } from './core/dom.js';
     toLive: document.getElementById('to-live'),
     empty: document.getElementById('empty'),
     emptyTitle: document.getElementById('empty-title'),
+    recent: document.getElementById('recent'),
     onboardDoor: document.getElementById('onboard-door'),
     doorDiscovered: document.getElementById('door-discovered'),
     onboardKey: document.getElementById('onboard-key'),
@@ -4476,11 +4481,54 @@ import { node, svg, clip } from './core/dom.js';
   }
 
   // The landing is the question (the owner's 2026-11-13 ruling): the h1
-  // is static, the door owns first-run, and this painter's one remaining
-  // duty is the rail header's workspace name — a fact the rail cannot
-  // know until the state read lands.
+  // is static, the door owns first-run, and this painter's duties are
+  // the rail header's workspace name and the way back — the threads
+  // this home owns, three at a time, with the archive behind them (the
+  // owner's 2026-11-14 ruling: the way back is a visible surface, not a
+  // palette secret).
   function paintEmpty() {
     if (el.railWhere) el.railWhere.textContent = workspaceName();
+    paintRecent();
+  }
+
+  // The pick-up rows: the three most recent owned threads, then the
+  // archive door. Live threads from the spine; the archive's own rows
+  // as the fallback while the spine is cold. Nothing renders when the
+  // home holds nothing to return to.
+  function paintRecent() {
+    if (!el.recent) return;
+    var rows = (face.spine && Array.isArray(face.spine.work) && face.spine.work.length)
+      ? face.spine.work.slice(0, 3).map(function (w) {
+          return { id: w.id, title: w.title, created: w.created || '' };
+        })
+      : ((face.sessions && face.sessions.sessions || []).filter(railRow).slice(0, 3)
+          .map(function (row) {
+            return { id: row.id, title: row.title, created: row.created || '' };
+          }));
+    el.recent.hidden = !rows.length;
+    el.recent.textContent = '';
+    if (!rows.length) return;
+    var head = node('div', 'recent-head');
+    head.appendChild(node('h2', 'recent-title', 'pick up where you left off'));
+    var all = node('button', 'recent-all', 'open the archive');
+    all.type = 'button';
+    all.addEventListener('click', function () { window.location.hash = '#/sessions'; });
+    head.appendChild(all);
+    el.recent.appendChild(head);
+    rows.forEach(function (row) {
+      var line = node('button', 'recent-row');
+      line.type = 'button';
+      var when = String(row.created || '');
+      var label = node('span', 'recent-id',
+        row.title || ('a conversation' +
+          (when ? ' \u00b7 ' + when.slice(5, 16).replace('T', ' ') : '')));
+      label.title = row.id;
+      line.appendChild(label);
+      line.addEventListener('click', function () {
+        window.location.hash = '#/sessions/' + encodeURIComponent(row.id);
+      });
+      el.recent.appendChild(line);
+    });
   }
 
   // ------------------------------------------------- the onboarding
@@ -11172,6 +11220,7 @@ import { node, svg, clip } from './core/dom.js';
       .then(function (doc) {
         face.sessions = doc;
         if (face.panel === 'sessions') paintWork();
+        paintRecent();
         paintConvHead();
         paintRailCounts();
       })
@@ -26383,10 +26432,15 @@ import { node, svg, clip } from './core/dom.js';
           return;
         }
         readSessions(true).then(function () {
+          // The archive lists itself (the owner's 2026-11-14 ruling: the
+          // route used to auto-open the newest row, wiping the list the
+          // owner asked for). The one bounce that survives is a run that
+          // needs the owner — a paused approval is the interruption that
+          // deserves the routing; everything else stays a list to pick
+          // from.
           var rows = workRows().filter(railRow);
           var needs = rows.filter(function (row) { return workNeeds(row.state); })[0];
-          var pick = face.session || (needs || rows[0] || {}).id;
-          if (pick) return openWork(pick);
+          if (!face.session && needs) return openWork(needs.id);
           paintWork();
           paintConvHead();
         });
@@ -27931,7 +27985,7 @@ import { node, svg, clip } from './core/dom.js';
           : '';
         return;
       }
-      if (span.dataset.count !== 'chat') return;
+      if (span.dataset.count !== 'sessions') return;
       span.hidden = !waiting;
       span.textContent = waiting ? String(waiting) : '';
       span.title = waiting

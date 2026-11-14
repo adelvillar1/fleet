@@ -126,6 +126,52 @@ fn recorded_endpoint_port(home: &Path) -> Result<u16, ServiceHealth> {
         })
 }
 
+/// The stale-record repair (the owner's 2026-11-14 ruling: the light
+/// path first). When the recorded port is refused and the running
+/// container answers on a different one, rewrite the endpoint record's
+/// port to the container's actual and report reconciled — seconds, no
+/// re-provision. `false` when the shape does not apply (the record
+/// answers, the container is gone, or the container agrees with the
+/// record) and the caller should run the full provision leg.
+pub(crate) fn reconcile_stale_record(home: &Path) -> bool {
+    reconcile_stale_record_with(home, worker_container_port())
+}
+
+/// The decision with the container's port injected, so the branches are
+/// testable without Docker.
+fn reconcile_stale_record_with(home: &Path, actual: Option<u16>) -> bool {
+    let recorded = match recorded_endpoint_port(home) {
+        Ok(port) => port,
+        Err(_) => return false,
+    };
+    let Some(actual) = actual else {
+        return false;
+    };
+    if actual == recorded {
+        return false;
+    }
+    let machine = crate::layerfs_tools::read_machine_at(home);
+    let endpoint = match machine.as_ref() {
+        Ok(m) => m.home.join("worker").join("endpoint.json"),
+        Err(_) => home
+            .join("layerfs-home")
+            .join("worker")
+            .join("endpoint.json"),
+    };
+    let Some(mut document) = std::fs::read_to_string(&endpoint)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value.as_object().cloned())
+    else {
+        return false;
+    };
+    document.insert("port".to_string(), serde_json::json!(actual));
+    let Some(text) = serde_json::to_string_pretty(&document).ok() else {
+        return false;
+    };
+    std::fs::write(&endpoint, text).is_ok()
+}
+
 fn layerfs_probe_with(port: u16, container: Option<u16>) -> ServiceHealth {
     if crate::net::listening("127.0.0.1", port, CONNECT_TIMEOUT) {
         ServiceHealth::up("layerfs")
@@ -582,6 +628,36 @@ mod tests {
     /// Docker, the card said down — the machine restart reassigned
     /// Docker's published port and the endpoint record cannot follow.
     /// The diagnosis names both ports and stays a repair away from true.
+    /// The light repair (the owner's 2026-11-14 ruling): a stale record
+    /// reconciles by rewriting the endpoint's port to the container's
+    /// actual — no provision leg. A record the container agrees with is
+    /// not stale, and no container means no reconciliation.
+    #[test]
+    fn the_light_repair_rewrites_the_port_and_reconciles() {
+        let home = scratch("light-repair");
+        write_endpoint(&home, 1);
+        assert!(reconcile_stale_record_with(&home, Some(57888)));
+        let endpoint = home
+            .join("layerfs-home")
+            .join("worker")
+            .join("endpoint.json");
+        let document: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&endpoint).unwrap()).unwrap();
+        assert_eq!(
+            document["port"], 57888,
+            "the record names the container's actual"
+        );
+        // The container agreeing with the record is not stale: no write.
+        write_endpoint(&home, 1);
+        assert!(!reconcile_stale_record_with(&home, Some(1)));
+        // No container: no reconciliation either.
+        assert!(!reconcile_stale_record_with(&home, None));
+        let document: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&endpoint).unwrap()).unwrap();
+        assert_eq!(document["port"], 1, "the record stands");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
     #[test]
     fn a_stale_record_names_the_running_worker() {
         let home = scratch("stale-record");

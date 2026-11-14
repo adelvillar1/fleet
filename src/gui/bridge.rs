@@ -3836,6 +3836,20 @@ impl Bridge {
     pub async fn repair_layerfs(self: &std::sync::Arc<Self>) -> Result<Value, String> {
         let _guard = self.repair_in_flight.lock().await;
         let home = self.home.clone();
+        // The light path first (the owner's 2026-11-14 ruling): a stale
+        // record — the worker running on a port the record does not name —
+        // reconciles by rewriting the endpoint record to the container's
+        // actual, no provision leg. A genuinely dead worker keeps the
+        // full install step below.
+        if crate::health::reconcile_stale_record(&home) {
+            let fresh = crate::health::probe(&home, false);
+            {
+                let mut guard = self.health.lock().expect("health slot");
+                *guard = Some(fresh.clone());
+            }
+            self.note_health_transition(&fresh);
+            return Ok(serde_json::to_value(&fresh).unwrap_or(Value::Null));
+        }
         let outcome = tokio::task::spawn_blocking(move || {
             let mut sink: Vec<u8> = Vec::new();
             let step = crate::install::layerfs_step(&home, &mut sink);
@@ -13937,16 +13951,18 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                 user_home.as_deref(),
             ) {
                 Some(canonical) => {
-                    // The agent thread is a native thread, outside the
-                    // face's runtime: the sync draft owns its own
-                    // current-thread runtime (KI-537).
-                    crate::skills::draft_session_sync(
+                    // The dispatcher loop runs inside the agent thread's
+                    // own runtime, so the draft AWAITS in it — a nested
+                    // runtime here is the KI-537 panic this site was
+                    // converted away from once already.
+                    crate::skills::draft_session(
                         &canonical,
                         &home,
                         &path,
                         user_home.as_deref(),
                         true,
                     )
+                    .await
                 }
                 None => Vec::new(),
             };

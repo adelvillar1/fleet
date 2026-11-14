@@ -989,16 +989,18 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                         user_home.as_deref(),
                     ) {
                         Some(canonical) => {
-                            // A native thread, outside any runtime: the
-                            // sync draft owns its own current-thread
-                            // runtime (KI-537).
-                            crate::skills::draft_session_sync(
+                            // The TUI loop runs inside this thread's own
+                            // runtime, so the draft AWAITS in it (KI-537:
+                            // a nested runtime here is the panic this
+                            // conversion exists for).
+                            crate::skills::draft_session(
                                 &canonical,
                                 &home,
                                 &path,
                                 user_home.as_deref(),
                                 true,
                             )
+                            .await
                         }
                         None => Vec::new(),
                     }
