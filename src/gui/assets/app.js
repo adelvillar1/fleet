@@ -812,6 +812,23 @@ import { node, svg, clip } from './core/dom.js';
       ['path', { d: 'M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6' }],
       ['path', { d: 'M17.7 3.2v3.5h-3.5M6.3 20.8v-3.5h3.5' }]
     ],
+    // the calibration lens's four new marks (the sinkhole audit): the
+    // footprint's gauge, the shape's curve, the curate funnel, the
+    // demand map's bars.
+    measure: [
+      ['path', { d: 'M4.5 16.5a7.5 7.5 0 0 1 15 0' }],
+      ['path', { d: 'M12 16.5l3.2-3.8' }],
+      ['circle', { cx: 12, cy: 16.5, r: 1.1, fill: 'currentColor', stroke: 'none' }]
+    ],
+    shape: [
+      ['path', { d: 'M4 17c3-8 5-8 8-3s4 4 8-7' }],
+      ['path', { d: 'M4 20h16' }]
+    ],
+    curate: [['path', { d: 'M4.5 5h15l-5.5 6.5v5l-4 2.5v-7.5z' }]],
+    demand: [
+      ['path', { d: 'M5.5 20v-5M10 20V9.5M14.5 20v-8M19 20V5.5' }],
+      ['path', { d: 'M3.5 20h17' }]
+    ],
     models: [
       ['rect', { x: 7, y: 7, width: 10, height: 10, rx: 2 }],
       ['path', { d: 'M12 7V3.6M12 20.4V17M7 12H3.6M20.4 12H17' }]
@@ -2322,17 +2339,22 @@ import { node, svg, clip } from './core/dom.js';
   function stripLine(event) {
     switch (event.type) {
       case 'routed': return (event.how || '') + (event.provider ? ' \u00b7 ' + event.provider : '');
-      case 'memory': return (event.facts != null ? event.facts + ' facts' : '') + (event.shape ? ' \u00b7 ' + event.shape : '');
-      case 'skills': return event.skipped && event.skipped.length
-        ? 'skipped ' + event.skipped.join(', ') : 'library loaded';
+      case 'memory': return (event.facts != null ? event.facts + ' facts' : '') + (event.shape ? ' \u00b7 ' + event.shape : '') +
+        (event.root ? ' \u00b7 from ' + event.root.split('/').filter(Boolean).pop() : '');
+      case 'skills': return (event.loaded != null ? 'loaded ' + event.loaded : 'library loaded') +
+        (event.skipped && event.skipped.length ? ' \u00b7 skipped ' + event.skipped.join(', ') : '');
       case 'lane': return (event.lane || '') +
         (event.withdrawn ? ' \u00b7 withdrawn' : (event.tools != null ? ' \u00b7 ' + event.tools + ' tools' : ''));
-      case 'cron': return (event.job || '') + (event.outcome ? ' \u00b7 ' + event.outcome : '');
+      case 'cron': return (event.job || '') + (event.outcome ? ' \u00b7 ' + event.outcome : '') +
+        (event.catch_up ? ' \u00b7 catch-up' : '') +
+        (event.session ? ' \u00b7 ' + event.session.slice(-8) : '');
       case 'compacted': return (event.turns || '?') + ' turns \u00b7 ' + tokens(event.before) + ' \u2192 ' + tokens(event.after);
-      // The checkpoint line names what it holds, not where the run stood:
-      // the ordinal is bookkeeping (the 2026-11-05 ruling) and the line's
-      // own rewind button already carries the destination internally.
-      case 'checkpoint': return event.files + ' files held';
+      // The checkpoint line names what it holds — the files AND the
+      // bytes, because an owner judging a rewind's cost wants the size —
+      // not where the run stood: the ordinal is bookkeeping (the
+      // 2026-11-05 ruling) and the line's own rewind button already
+      // carries the destination internally.
+      case 'checkpoint': return event.files + ' files held' + (event.bytes ? ' \u00b7 ' + tokens(event.bytes) : '');
       case 'folder': return event.note || (event.path ? 'set to ' + event.path : 'cleared');
       case 'goal': return event.text ? 'goal \u00b7 ' + event.text : 'goal cleared';
       case 'control':
@@ -3047,6 +3069,22 @@ import { node, svg, clip } from './core/dom.js';
         }
         closeAssistant();
         queuedRow(event);
+        // The owner's words come back to the composer (the way-back
+        // audit's D2): the task was recorded as the transcript's last
+        // owner message before the refusal, so the composer restores it
+        // — recoverable in one press, not hunted through the transcript.
+        if (el.task && !el.task.value) {
+          var lastOwner = null;
+          (face.events || []).forEach(function (stored) {
+            if (stored.type === 'message' && stored.role === 'owner') {
+              lastOwner = stored.text;
+            }
+          });
+          if (lastOwner) {
+            el.task.value = lastOwner;
+            grow();
+          }
+        }
         break;
       case 'health':
         // The loop's transition (the failsafe plan's phase A): the
@@ -3325,6 +3363,10 @@ import { node, svg, clip } from './core/dom.js';
     } else if (face.running) {
       el.statePill.textContent = 'running';
       el.statePill.dataset.state = 'working';
+      // The cap rides the hover (the sinkhole audit): the counter is
+      // the run's turns; the budget is the config's own cap.
+      el.statePill.title = face.turn + ' turns of ' +
+        (face.turnBudget || 'an uncapped main loop');
     } else {
       // An owner's stop reaches the page as a failure whose reason names
       // the owner. It is not a failure, and the header must not say so.
@@ -7099,9 +7141,12 @@ import { node, svg, clip } from './core/dom.js';
   // riding the same apply verb (never a silent promotion).
   function intelligenceSkillsCard() {
     var read = face.skills;
+    // The canonical library's directory (the sinkhole audit): computed
+    // per read, surfaced so the owner knows where the library lives.
     var card = boardCard(12, 'skills',
       read ? (read.skills || []).length + ' in reach' : null,
-      'the procedural memory: what the runs drew on, and what waits for the owner\u2019s word at the gate.');
+      'the procedural memory: what the runs drew on, and what waits for the owner\u2019s word at the gate.' +
+      (read && read.canonical ? ' The library: ' + read.canonical + '.' : ''));
     if (!read) {
       card.appendChild(node('p', 'board-empty',
         'The library read has not landed yet. It reads the canonical skills directory and the '
@@ -8555,6 +8600,9 @@ import { node, svg, clip } from './core/dom.js';
         (skill.category || 'everything-else') + ' \u00b7 ' +
         skill.uses + ' uses across ' + (face.skills ? face.skills.sessions : 0) + ' scanned sessions' +
         ' \u00b7 ' + skill.path)],
+      // The sinkhole audit's read: when the file last changed (computed
+      // per read, shown nowhere before).
+      ['last modified', node('p', 'derivation', String(skill.modified || 'unknown'))],
       ['related', relatedFor('skill', skill.name)],
       ['the body', node('pre', 'drawer-code', skill.body || '')],
       ['what the model sees', node('p', 'derivation',
@@ -8978,6 +9026,10 @@ import { node, svg, clip } from './core/dom.js';
       }).catch(function () {
         el.task.value = edited;
         saveDraft();
+        // The dead-end audit's edit-rewind notice: the words come back
+        // (above) and the gap is named, not silent.
+        notice('the rewind did not cross',
+          'the server did not answer — the words are back');
       });
       return;
     }
@@ -9100,10 +9152,21 @@ import { node, svg, clip } from './core/dom.js';
       return load().then(function () {
         if (face.events.length <= before) {
           notice('the run was refused', reply.body.error || 'the server did not take it');
+          // Restore-the-words (the way-back audit's D3): a run that
+          // never started gives the composer its task back, whether the
+          // send was typed or flushed from the queue.
+          if (!el.task.value) {
+            el.task.value = task;
+            grow();
+          }
         }
       });
     }).catch(function () {
       notice('the run was refused', 'the server did not answer');
+      if (!el.task.value) {
+        el.task.value = task;
+        grow();
+      }
     });
   }
 
@@ -9129,19 +9192,32 @@ import { node, svg, clip } from './core/dom.js';
       if (p && face.process === p && p.active) paintProcessControls(p);
       else if (el.processStop) el.processStop.disabled = false;
     };
-    post('/api/stop', {}).then(function (reply) {
-      if (reply.status === 200) {
-        if (p && face.process === p && p.active) {
-          p.stopping = true;
-          p.last = 'stopping \u00b7 the run ends at its next step';
-          paintProcess();
+    // Survive-the-gap (the way-back audit's D6): a stop pressed while
+    // the server is unreachable replays once after the connection
+    // recovers — the owner's intent is the decision, not one lost POST.
+    var attempts = 0;
+    var send_stop = function () {
+      attempts += 1;
+      post('/api/stop', {}).then(function (reply) {
+        if (reply.status === 200) {
+          if (p && face.process === p && p.active) {
+            p.stopping = true;
+            p.last = 'stopping \u00b7 the run ends at its next step';
+            paintProcess();
+          }
+          return;
         }
-        return;
-      }
-      refused((reply.body && reply.body.error) || 'the server did not take it');
-    }).catch(function () {
-      refused('the server did not answer');
-    });
+        refused((reply.body && reply.body.error) || 'the server did not take it');
+      }).catch(function () {
+        if (attempts < 3) {
+          notice('the stop did not cross', 'it replays when the face reaches the server again');
+          window.setTimeout(send_stop, 5000);
+          return;
+        }
+        refused('the server did not answer after three attempts');
+      });
+    };
+    send_stop();
   }
 
   function steerRun(event) {
@@ -9464,6 +9540,14 @@ import { node, svg, clip } from './core/dom.js';
           : 'the headline sets past its own box';
       card.appendChild(node('div', 'deck-card-fault', what + ' \u2014 ' + fault.node));
     });
+    // The repairs the grader applied, named (the sinkhole audit): the
+    // owner approving or reverting should know exactly what changed.
+    try {
+      JSON.parse(deck.fix_actions || '[]').forEach(function (fix) {
+        card.appendChild(node('div', 'deck-card-fix',
+          'applied: ' + (fix.description || fix.action || fix.node || 'the repair')));
+      });
+    } catch (error) { }
     var actions = node('div', 'deck-card-actions');
     var apply = node('button', 'deck-card-apply', 'keep the repaired render');
     apply.type = 'button';
@@ -9564,6 +9648,7 @@ import { node, svg, clip } from './core/dom.js';
     paintServices();
     face.budget = Number(state.budget) || 0;
     face.budgetModel = state.budget_model || '';
+    face.turnBudget = state.turn_budget || null;
     face.budgetDeclared = state.budget_declared !== false;
     face.running = !!state.running;
     // The session the bridge is executing, which is not always this one:
@@ -9761,17 +9846,25 @@ import { node, svg, clip } from './core/dom.js';
     // relay would be a held-open connection the transport does badly
     // and a header it cannot present.
     if (document.documentElement.getAttribute('data-relay') === '1') {
+      var relayFails = 0;
       var timer = null;
       var tick = function () {
         fetch('/events', { headers: { accept: 'application/json' } })
           .then(function (reply) { return reply.json(); })
           .then(function (doc) {
+            relayFails = 0;
             if (doc && doc.state) {
               replay(doc.state);
               paint();
             }
           })
-          .catch(function () { });
+          .catch(function () {
+            // The relayed face declares loss exactly like the direct one
+            // (the way-back audit's D5): KI-380's contract holds for the
+            // poll too — the phone learns its connection died.
+            relayFails += 1;
+            if (relayFails === 1) connectionDown('the relayed stream fell silent');
+          });
       };
       tick();
       timer = setInterval(tick, 2500);
@@ -10283,6 +10376,13 @@ import { node, svg, clip } from './core/dom.js';
     var path = '/api/goal' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
     post(path, { text: text }).then(function (reply) {
       if (reply.status === 200) {
+        // A 200 can still carry a refusal: the goal was SET but the run
+        // it would start was refused (capacity, the full-access floor).
+        // Silently treating that as plain success promised work that
+        // never began (the dead-end audit's D1).
+        if (reply.body.refused) {
+          notice('the goal is set, but its run was refused', reply.body.refused);
+        }
         face.goal = reply.body.text || null;
         paintGoal();
         // A goal set with no run in flight started one (the reply says
@@ -11203,7 +11303,12 @@ import { node, svg, clip } from './core/dom.js';
         }
         face.sessions = null;
         readSessions(true);
-      }).catch(function () { });
+      }).catch(function () {
+        // The dead-end audit's D6: the archive press during a gap names
+        // itself rather than doing nothing at all.
+        notice('the archive did not cross',
+          'the server did not answer — press again once fleet is back');
+      });
   }
 
   // The archive read: the log heads as summaries, newest first, with the
@@ -11765,6 +11870,12 @@ import { node, svg, clip } from './core/dom.js';
     if (!target || el.composer.parentNode === target) return;
     if (host) host.appendChild(el.composer);
     else composerHome.parent.insertBefore(el.composer, composerHome.next);
+    // The seat travels with the composer (the way-back audit's D4): a
+    // run raised from a desk or a lesson puts its approval buttons one
+    // lens away from the composer that caused the seat. Above it, the
+    // same place the prompt is — the one thing the owner must not have
+    // to scroll to.
+    if (el.seat && el.seat.parentNode) target.insertBefore(el.seat, el.composer);
     setComposerFocus(host === el.deskDock ? 'desk'
       : host === el.learningDock ? 'learning' : null);
   }
@@ -11785,7 +11896,18 @@ import { node, svg, clip } from './core/dom.js';
   /// and a refusal paints in the strip above the field.
   function surfaceSend(kind) {
     var text = el.task.value.trim();
-    if (!text || face.running) return;
+    if (!text) return;
+    // The borrowed composer queues while a run is in flight, exactly
+    // like the main one (the way-back audit): typed words never sit
+    // with no feedback and no way forward.
+    if (face.running) {
+      face.queued.push({ text: text, session: face.session, surface: kind });
+      el.task.value = '';
+      grow();
+      clearDraft();
+      paintQueue();
+      return;
+    }
     var path = '';
     var body = null;
     if (kind === 'desk') {
@@ -13327,7 +13449,12 @@ import { node, svg, clip } from './core/dom.js';
         paintRoomEmpty();
         readHuddles(true);
       });
-    }).catch(function () { });
+    }).catch(function () {
+      // A press during a network gap names itself (the dead-end audit's
+      // D6): the room did not open, and the owner knows to press again.
+      notice('that room did not open',
+        'the server did not answer — press again once fleet is back');
+    });
   }
 
   // One member in the room's head: the mark, the name, the voice it
@@ -14546,7 +14673,12 @@ import { node, svg, clip } from './core/dom.js';
         paintConvHead();
         readSessions(true);
       });
-    }).catch(function () { });
+    }).catch(function () {
+      // The dead-end audit's D6: a press during a gap is not a silent
+      // no-op — the conversation did not open, named.
+      notice('that conversation did not open',
+        'the server did not answer — press again once fleet is back');
+    });
   }
 
   // The detach the New control and the home ride: the conversation the
@@ -14787,7 +14919,14 @@ import { node, svg, clip } from './core/dom.js';
     ['explain', 'explains', 'question'],
     ['verify', 'verifies', 'verify'],
     ['embed_timing', 'embed timings', 'timing'],
-    ['lifecycle', 'lifecycles', 'cycle']
+    ['lifecycle', 'lifecycles', 'cycle'],
+    ['footprint', 'footprint checks', 'measure'],
+    ['shape', 'shapes', 'shape'],
+    ['curate', 'curations', 'curate'],
+    ['validate', 'validations', 'verify'],
+    ['demand', 'demand signals', 'demand'],
+    ['learn_probe', 'learn probes', 'learning'],
+    ['learn_check', 'learn checks', 'learning']
   ];
 
   /// The sections the day carries: the gate first, then the ops with
@@ -15295,7 +15434,37 @@ import { node, svg, clip } from './core/dom.js';
         return (row.kind || '?') + ' \u00b7 ' + (row.action || '?') +
           ' \u00b7 ' + (row.name || '?') +
           (row.reason ? ' \u00b7 ' + clip(row.reason, 80) : '');
-      }
+      },
+      // The seven ops the calibration lens gained (the sinkhole audit):
+      // each line names the row's own facts, from the fields the
+      // stream's record functions wrote. Spend is not among them — it
+      // is a home-side sidecar ledger, not a stream op, so the
+      // stream-grouped lens does not carry it.
+      footprint: function () {
+        return (row.class || '?') + ' \u00b7 estimate ' + Math.round((row.estimate_kib || 0) / 1024) +
+          ' MiB \u00b7 reserve ' + Math.round((row.reserve_kib || 0) / 1024) + ' MiB (' +
+          (row.reserve_source || '?') + ')';
+      },
+      shape: function () {
+        return (row.outcome || '?') + ' \u00b7 ' + (row.compactions || 0) + ' compactions';
+      },
+      curate: function () {
+        return (row.needs_recall ? 'needs recall' : 'no recall needed') +
+          ' \u00b7 confidence ' + fmtRate(row.confidence);
+      },
+      validate: function () {
+        return (row.fact || '?') + (row.verdict ? ' \u00b7 ' + row.verdict : '');
+      },
+      demand: function () {
+        return (row.classes || '?') + ' classes in ' + (row.window_days || '?') +
+          ' days \u00b7 top: ' + (row.top_class || '?');
+      },
+      learn_probe: function () {
+        return (row.answers || '?') + ' answers \u00b7 ' + (row.goal || '?');
+      },
+      learn_check: function () {
+        return (row.node || '?') + ' \u00b7 ' + (row.confusion || '?');
+      },
     }[op];
   }
 
@@ -15305,7 +15474,10 @@ import { node, svg, clip } from './core/dom.js';
     var names = {
       route: 'routes', route_judged: 'judgments', turn: 'turns',
       propose: 'proposals', eval_corpus: 'eval runs', recall_hit: 'recall hits',
-      consolidate: 'consolidations', tool_screen: 'tool screens', explain: 'explains'
+      consolidate: 'consolidations', tool_screen: 'tool screens', explain: 'explains',
+      footprint: 'footprint checks', shape: 'shapes', curate: 'curations',
+      validate: 'validations', demand: 'demand signals', learn_probe: 'learn probes',
+      learn_check: 'learn checks'
     };
     var card = boardCard(12, names[op] || op, rows.length + ' row' + (rows.length === 1 ? '' : 's'),
       null);
@@ -26016,17 +26188,17 @@ import { node, svg, clip } from './core/dom.js';
   // message records as a plan, and the card it lands in is editable —
   // Build posts the edited text as an ordinary run.
   function planSend() {
-    var task = el.task.value.trim();
-    if (!task || face.running || face.seat) return;
-    el.task.value = '';
-    grow();
-    clearDraft();
-    el.empty.hidden = true;
-    el.log.hidden = false;
-    face.planned = true;
+    var task = el.task.value;
+    if (!task.trim() || face.running || face.seat) return;
+    var planPath = '/api/plan' + (face.session
+      ? '?session=' + encodeURIComponent(face.session) : '');
     Promise.resolve(folderSync).then(function () {
-      var planPath = '/api/plan' + (face.session
-        ? '?session=' + encodeURIComponent(face.session) : '');
+      el.task.value = '';
+      grow();
+      clearDraft();
+      el.empty.hidden = true;
+      el.log.hidden = false;
+      face.planned = true;
       return post(planPath, { task: task });
     }).then(function (reply) {
       if (reply.status === 200) {
@@ -26037,9 +26209,16 @@ import { node, svg, clip } from './core/dom.js';
         return;
       }
       face.planned = false;
+      el.task.value = task;
+      grow();
       notice('the plan did not start',
         (reply.body && reply.body.error) || 'the face said no without a reason');
-    }).catch(function () { face.planned = false; });
+    }).catch(function () {
+      face.planned = false;
+      el.task.value = task;
+      grow();
+      notice('the plan did not send', 'the server did not answer — the words are back');
+    });
   }
 
   // Enter in plan mode plans; the Send button still runs.
@@ -26074,7 +26253,12 @@ import { node, svg, clip } from './core/dom.js';
         ' files the checkpoint never saw removed');
       window.location.hash = '#/chat';
       load(true);
-    }).catch(function () { });
+    }).catch(function () {
+      // The dead-end audit's edit-rewind notice: a rewind over a dead
+      // network leaves the tree unchanged, and says so.
+      notice('the rewind did not cross',
+        'the server did not answer — the working tree is unchanged');
+    });
   }
 
   // The rewind record, replayed: what the log says happened.

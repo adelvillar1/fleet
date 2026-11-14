@@ -2078,8 +2078,11 @@ async fn recall_with_nothing_matching_says_so_by_name() {
         output.contains("nothing in this harness's memory"),
         "{output}"
     );
-    // The channel it did not search is named rather than left out.
-    assert!(output.contains("session index is not warmed"), "{output}");
+    // The session channel opens itself on first use (the sinkhole audit,
+    // 2026-11-14): this home's sessions directory holds the run's own log,
+    // so the index warms and the channel is named as warm-and-empty rather
+    // than permanently "not searched".
+    assert!(output.contains("session index is warm"), "{output}");
     std::fs::remove_dir_all(&home).ok();
 }
 

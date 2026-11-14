@@ -9988,6 +9988,51 @@ fn row_json(row: &crate::calib::ReadRow) -> Value {
             put("latency_ms", json!(row.latency_ms));
             put("eval_only", json!(row.eval_only));
         }
+        // The seven ops the calibration lens gained (the sinkhole audit,
+        // 2026-11-14): each ships the fields its face line reads, from
+        // the row's own record — the stream wrote them all along; only
+        // the shaping and the render were missing.
+        "footprint" => {
+            put("class", json!(row.class));
+            put("estimate_kib", json!(row.estimate_kib));
+            put("reserve_kib", json!(row.reserve_kib));
+            put("reserve_source", json!(row.reserve_source));
+            put("settled_kib", json!(row.settled_kib));
+            put("verdict", json!(row.verdict));
+        }
+        "shape" => {
+            put("outcome", json!(row.outcome));
+            put("compactions", json!(row.compactions));
+            put("stop_reason", json!(row.stop_reason));
+        }
+        "curate" => {
+            put("needs_recall", json!(row.needs_recall));
+            put("confidence", json!(row.confidence));
+            put("decision", json!(row.decision));
+        }
+        "validate" => {
+            put("fact", json!(row.fact));
+            put("verdict", json!(row.verdict));
+            put("confidence", json!(row.confidence));
+            put("decision", json!(row.decision));
+        }
+        "demand" => {
+            put("window_days", json!(row.window_days));
+            put("classes", json!(row.classes));
+            put("top_class", json!(row.top_class));
+            put("top_rate", json!(row.top_rate));
+        }
+        "learn_probe" => {
+            put("session", json!(row.session));
+            put("answers", json!(row.answers));
+            put("goal", json!(row.goal));
+        }
+        "learn_check" => {
+            put("session", json!(row.session));
+            put("node", json!(row.node));
+            put("confusion", json!(row.confusion));
+            put("held", json!(row.held));
+        }
         // A future slice's op crosses whole, its fields the reader
         // already parsed: an op this match does not name still rides,
         // because dropping a row the stream holds would make the panel
@@ -13106,12 +13151,11 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
             "verdict": verdict,
             "judged_from": judged_from,
             "reason": reason,
-            "order": order,
-            "execution": execution,
             "order": order
                 .iter()
                 .map(|(provider, model)| json!({"provider": provider, "model": model}))
                 .collect::<Vec<_>>(),
+            "execution": execution,
         }),
         UiEvent::Checkpoint { turn, files, bytes } => {
             json!({"type": "checkpoint", "turn": turn, "files": files, "bytes": bytes})
@@ -14878,6 +14922,70 @@ mod goal_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn row_json_shapes_the_calibration_lens_ops() {
+        // The sinkhole audit (2026-11-14): the seven ops the lens gained
+        // ship the fields their face lines read — the stream wrote them
+        // all along; the shaping was the missing half.
+        let shape = |op: &str, fill: fn(&mut crate::calib::ReadRow)| {
+            let mut row = crate::calib::ReadRow {
+                op: op.to_string(),
+                ..Default::default()
+            };
+            fill(&mut row);
+            super::row_json(&row)
+        };
+        let footprint = shape("footprint", |r| {
+            r.class = "release-gate".into();
+            r.estimate_kib = 2048;
+            r.reserve_kib = 1024;
+            r.reserve_source = "declared".into();
+            r.settled_kib = 1500;
+            r.verdict = "clean".into();
+        });
+        assert_eq!(footprint["class"], "release-gate");
+        assert_eq!(footprint["estimate_kib"], 2048);
+        assert_eq!(footprint["reserve_source"], "declared");
+        let curate = shape("curate", |r| {
+            r.needs_recall = true;
+            r.confidence = 0.8;
+            r.decision = "curated".into();
+        });
+        assert_eq!(curate["needs_recall"], true);
+        assert_eq!(curate["decision"], "curated");
+        let demand = shape("demand", |r| {
+            r.window_days = 7;
+            r.classes = 5;
+            r.top_class = "release-assets".into();
+            r.top_rate = 0.4;
+        });
+        assert_eq!(demand["classes"], 5);
+        assert_eq!(demand["top_class"], "release-assets");
+        let probe = shape("learn_probe", |r| {
+            r.answers = 3;
+            r.goal = "the bracket".into();
+        });
+        assert_eq!(probe["answers"], 3);
+        assert_eq!(probe["goal"], "the bracket");
+        let check = shape("learn_check", |r| {
+            r.node = "n1".into();
+            r.confusion = "the step".into();
+            r.held = true;
+        });
+        assert_eq!(check["node"], "n1");
+        assert_eq!(check["held"], true);
+        let validate = shape("validate", |r| {
+            r.fact = "a-fact".into();
+            r.verdict = "supported".into();
+        });
+        assert_eq!(validate["fact"], "a-fact");
+        let shape_row = shape("shape", |r| {
+            r.outcome = "ok".into();
+            r.compactions = 2;
+        });
+        assert_eq!(shape_row["compactions"], 2);
+    }
+
     // --- the design canvas ---------------------------------------------------
 
     /// The reference scan and its cached facts: the task carries them, and

@@ -1557,16 +1557,24 @@ impl App {
                     tokens_after,
                 }));
             }
-            UiEvent::Memory { shape, facts, .. } => {
+            UiEvent::Memory { shape, facts, root } => {
                 // What the run's assembled memory carried: the status bar
                 // shows the shape and the fact count, the live half of the
-                // `memory` record the log carries. The adopted corpus root
-                // rides the event too; the status bar keeps the two it
-                // always showed.
+                // `memory` record the log carries — and now the corpus
+                // root's basename, so the owner can tell which corpus a
+                // run recalled from (the sinkhole audit, 2026-11-14).
+                let base = root
+                    .rsplit('/')
+                    .next()
+                    .filter(|base| !base.is_empty())
+                    .map(str::to_string);
                 self.run.stage = Stage::Act;
                 self.run.facts = facts;
                 self.run.shape = shape.clone();
-                self.run.last = format!("memory \u{b7} {facts} facts");
+                self.run.last = match &base {
+                    Some(base) => format!("memory \u{b7} {facts} facts \u{b7} {base}"),
+                    None => format!("memory \u{b7} {facts} facts"),
+                };
                 self.status.memory = Some((shape, facts));
             }
             UiEvent::CronFire {

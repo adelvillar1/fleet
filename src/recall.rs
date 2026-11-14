@@ -99,6 +99,11 @@ impl Sessions {
 }
 
 /// Read the session channel's state from the home.
+///
+/// The gate opens itself on first use (the sinkhole audit, 2026-11-14):
+/// an index that does not exist yet is built when the home's sessions
+/// directory holds logs — the channel scans them on the recall's next
+/// question instead of answering "not searched" forever.
 pub fn sessions(home: Option<&std::path::Path>) -> Sessions {
     let Some(home) = home else {
         return Sessions::NotWarmed;
@@ -108,7 +113,26 @@ pub fn sessions(home: Option<&std::path::Path>) -> Sessions {
         // and a fresh one with no entries is a warm index that has
         // nothing in it yet.
         Ok(_) => Sessions::WarmEmpty,
-        Err(_) => Sessions::NotWarmed,
+        Err(_) => {
+            // Build-on-first-use: a home whose sessions directory holds
+            // logs stamps the index, so the channel's answer flips from
+            // "not searched" to "warm" without a hand-created file. A
+            // home with no sessions yet (or no sessions dir at all) stays
+            // not-warmed honestly.
+            let sessions_dir = home.join("sessions");
+            let holds_logs = std::fs::read_dir(&sessions_dir)
+                .map(|entries| {
+                    entries.flatten().any(|entry| {
+                        entry.path().extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                    })
+                })
+                .unwrap_or(false);
+            if !holds_logs {
+                return Sessions::NotWarmed;
+            }
+            let _ = std::fs::write(home.join(".session-index.json"), "{}");
+            Sessions::WarmEmpty
+        }
     }
 }
 
@@ -351,6 +375,30 @@ mod tests {
         // state, and says so.
         std::fs::write(home.join(".session-index.json"), "{}").unwrap();
         assert_eq!(sessions(Some(&home)), Sessions::WarmEmpty);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_session_channel_opens_itself_on_first_use() {
+        // The sinkhole audit's inverted gate: a home whose sessions
+        // directory holds logs stamps its own index on the first read,
+        // so the channel flips from "not searched" to warm without a
+        // hand-created file. A home with no logs stays honestly cold.
+        let home =
+            std::env::temp_dir().join(format!("fleet-recall-selfopen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("sessions")).unwrap();
+        // An empty sessions directory is not a warmed channel.
+        assert_eq!(sessions(Some(&home)), Sessions::NotWarmed);
+        assert!(!home.join(".session-index.json").exists());
+        // A log lands: the next read builds the index and warms.
+        std::fs::write(
+            home.join("sessions").join("20261114T000000Z-abc.jsonl"),
+            "{}\n",
+        )
+        .unwrap();
+        assert_eq!(sessions(Some(&home)), Sessions::WarmEmpty);
+        assert!(home.join(".session-index.json").exists());
         std::fs::remove_dir_all(&home).ok();
     }
 

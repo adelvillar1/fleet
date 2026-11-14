@@ -13070,6 +13070,91 @@ async function theInboxRowWearsThePrincipalChip() {
     'chips=' + chips.length);
 }
 
+// The sinkhole audit (2026-11-14): the calibration lens surfaces every
+// stream op, the seven it gained among them — each section names the
+// row's own facts, the fields the bridge now shapes.
+async function theCalibrationLensSurfacesTheGainedOps() {
+  const doc = {
+    type: 'calibration', read_at: 'now', day: '2026-11-14', cap: 512, rows_read: 7,
+    gate: { informs_failover: false, name: 'calibration.informs_failover' },
+    fit_rule: { rows: 8, span: 0.3 },
+    cells: [],
+    stream: {
+      footprint: [{ ts: '2026-11-14T10:00:01Z', class: 'release-gate', estimate_kib: 2048, reserve_kib: 1024, reserve_source: 'declared', settled_kib: 1500, verdict: 'clean' }],
+      shape: [{ ts: '2026-11-14T10:00:02Z', outcome: 'ok', compactions: 2, stop_reason: 'completed' }],
+      curate: [{ ts: '2026-11-14T10:00:03Z', needs_recall: true, confidence: 0.8, decision: 'curated' }],
+      validate: [{ ts: '2026-11-14T10:00:04Z', fact: 'a-fact', verdict: 'supported', confidence: 0.9, decision: 'stamped' }],
+      demand: [{ ts: '2026-11-14T10:00:05Z', window_days: 7, classes: 5, top_class: 'release-assets', top_rate: 0.4 }],
+      learn_probe: [{ ts: '2026-11-14T10:00:06Z', session: 'lesson-one', answers: 3, goal: 'the bracket' }],
+      learn_check: [{ ts: '2026-11-14T10:00:07Z', session: 'lesson-one', node: 'n1', confusion: 'the step', held: true }],
+    },
+  };
+  const bootLens = (hash) => boot({
+    width: 1440, hash,
+    documents: {
+      calibration: doc,
+      state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  const page = bootLens('#/calibration');
+  await flush();
+  page.open();
+  await flush(80);
+  const railText = page.rows('.section-rail-row').map((row) => row.textContent);
+  check('CAL the lens carries every gained op',
+    ['footprint checks', 'shapes', 'curations', 'validations', 'demand signals', 'learn probes', 'learn checks']
+      .every((name) => railText.some((t) => t.includes(name))),
+    railText.join(' | '));
+  const expect = {
+    footprint: ['release-gate', 'estimate', 'declared'],
+    shape: ['ok', '2 compactions'],
+    curate: ['needs recall', 'confidence'],
+    validate: ['a-fact', 'supported'],
+    demand: ['5 classes', 'release-assets'],
+    learn_probe: ['3 answers', 'the bracket'],
+    learn_check: ['n1', 'the step'],
+  };
+  for (const op of Object.keys(expect)) {
+    const section = bootLens('#/calibration/' + op);
+    await flush();
+    section.open();
+    await flush(80);
+    const text = section.text('calibration-board');
+    check('CAL ' + op + ' names its own facts',
+      expect[op].every((s) => text.includes(s)), text.slice(0, 200));
+  }
+}
+
+// The dead-end audit's D6 (2026-11-14): a press during a network gap
+// names itself rather than doing nothing — the archive verb is the
+// representative; the open and rewind presses ride the same discipline.
+async function aPressDuringAGapNamesItself() {
+  const page = boot({
+    hash: '#/sessions',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, archived: 0, earlier: 0, total: 1 },
+        sessions: [row('live-1', 'handed back', { title: 'the handed-back one' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked, events: [{ type: 'message', role: 'owner', text: 'the task' }] }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  const live = page.rows('.work-row').find((r) => r.dataset.state === 'handed back');
+  const chip = live && live.querySelector('.work-archive');
+  check('D6 the live row carries the archive press', !!chip, chip && chip.textContent);
+  page.setFailNext((url) => url === '/api/session/archive');
+  if (chip) chip.click();
+  await flush(80);
+  check('D6 a failed archive press names itself',
+    page.text('log').includes('the archive did not cross'),
+    page.text('log').slice(-200));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -13133,6 +13218,7 @@ const cases = [
   ['C5 the workspace-history section draws the tree it read', theWorkspaceHistorySectionDrawsTheTreeItRead],
   ['ARMADA the armada section draws the roster it reads', theArmadaSectionDrawsTheRosterItRead],
   ['ARCH the archive is the one end and the owner\u2019s verb', theArchiveIsTheOneEndAndTheOwnersVerb],
+  ['D6 a press during a gap names itself', aPressDuringAGapNamesItself],
   ['REVIEW the chat counts exchanges and shows its controls', theChatCountsExchangesAndShowsItsControls],
   ['TURN the turn controls grade, fork, and hook', theTurnControlsGradeForkAndHook],
   ['VERBS the composer carries the two verb icons', theComposerVerbsAreIcons],
@@ -13185,6 +13271,7 @@ const cases = [
   ['LEARN the learning rail carries the four sections', theLearningRailCarriesTheFourSections],
   ['WORKSPACE the workspace rail carries the projects and the pane', theWorkspaceRailCarriesTheProjectsAndThePane],
   ['CAL the calibration rail carries the gate and the day', theCalibrationRailCarriesTheGateAndTheDay],
+  ['CAL the lens surfaces the gained ops and their facts', theCalibrationLensSurfacesTheGainedOps],
   ['NAME the conversation names themselves by their work', theConversationNamesThemselvesByTheirWork],
   ['FOLD the freshness surfaces read the fold count', theFreshnessSurfacesReadTheFoldCount],
   ['D1 the conversation density holds', theConversationDensityHolds],

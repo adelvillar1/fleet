@@ -1419,7 +1419,7 @@ pub const OP_DELEGATION: &str = "delegation";
 /// calib` groups them. The three the reads used to drop — `verify`,
 /// `embed_timing`, `lifecycle` — ride their own row shapes; the face's
 /// rail carries them beside the rest (the calibration revamp, 2026-10-30).
-pub const OPS: [&str; 19] = [
+pub const OPS: [&str; 20] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -1439,6 +1439,11 @@ pub const OPS: [&str; 19] = [
     OP_LEARN_PROBE,
     OP_LEARN_CHECK,
     OP_FOOTPRINT,
+    // The curate judgment is a graded stream op like the rest; its
+    // absence here was the sinkhole audit's find — the reader dropped
+    // every curate row at the gate, so the lens could never show the
+    // panel's fire/hold votes (2026-11-14).
+    OP_CURATE,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -2431,6 +2436,41 @@ pub struct ReadRow {
     /// for every other op.
     #[serde(default)]
     pub validation: ReadExplainValidation,
+    /// The footprint row's work class — `release-gate`, `release-assets`,
+    /// `lane-bootstrap`, or `run:<folder>`. Empty for every other op.
+    #[serde(default)]
+    pub class: String,
+    /// The footprint row's admission estimate, the reserve in force, and
+    /// what the work settled to, in kibibytes, with the reserve's source
+    /// (`declared`/`inferred`). Zero/empty for every other op.
+    #[serde(default)]
+    pub estimate_kib: u64,
+    #[serde(default)]
+    pub reserve_kib: u64,
+    #[serde(default)]
+    pub reserve_source: String,
+    #[serde(default)]
+    pub settled_kib: u64,
+    /// The curate row's fire/hold vote — the panel's majority. False for
+    /// every other op.
+    #[serde(default)]
+    pub needs_recall: bool,
+    /// The demand row's window in days, the class count, and the top
+    /// demand class with its bad-rate. Zero/empty for every other op.
+    #[serde(default)]
+    pub window_days: usize,
+    #[serde(default)]
+    pub classes: usize,
+    #[serde(default)]
+    pub top_class: String,
+    #[serde(default)]
+    pub top_rate: f64,
+    /// The learn-probe row's captured answer count and pinned goal.
+    /// Zero/empty for every other op.
+    #[serde(default)]
+    pub answers: u64,
+    #[serde(default)]
+    pub goal: String,
 }
 
 /// One `explain` row's route half, as the reader keeps it.
@@ -5256,7 +5296,8 @@ mod tests {
                 "demand",
                 "learn_probe",
                 "learn_check",
-                "footprint"
+                "footprint",
+                "curate"
             ]
         );
     }
