@@ -1,7 +1,7 @@
 ---
 title: the way back — the archive lists itself, the threads lens remembers, the runtime question
 date: 2026-11-14
-status: active
+status: completed (2026-11-14; the archive lists itself, the threads lens remembers, the light repair reconciles a stale record, kiri captured as direction; Chrome-specific API-read stall filed open as KI-541 — obscura is the verification engine until it closes; the gate green)
 ---
 
 # The way back
@@ -26,19 +26,19 @@ wide. Both are small fixes.
 
 ## Acceptance criteria
 
-- [ ] C1: the sessions route renders the list and stays on it; the only
+- [x] C1: the sessions route renders the list and stays on it; the only
   auto-open left is a needs-you row; the crumb reads "archive"; the C8
   pins reworked.
-- [ ] C2: the threads lens regains a compact "pick up where you left
+- [x] C2: the threads lens regains a compact "pick up where you left
   off" (three owned/live threads + the open-the-archive door) rendered
   only when there is something to return to; the rail gains an archive
   destination carrying the needs/working badge (moved off the chat link).
-- [ ] C3: a stale-record repair takes the light path — read the running
+- [x] C3: a stale-record repair takes the light path — read the running
   container's published port, rewrite endpoint.json, re-probe; seconds,
   no re-provision. A dead worker keeps the full install leg.
-- [ ] C4: kiri captured as direction (Docker Engine API compatible; no
+- [x] C4: kiri captured as direction (Docker Engine API compatible; no
   fleet code change; the owner tries it on this machine).
-- [ ] C5: the gate; commits on master, push; local deploy (rm-then-cp →
+- [x] C5: the gate; commits on master, push; local deploy (rm-then-cp →
   face relaunch); no release steps.
 
 ## Verification
