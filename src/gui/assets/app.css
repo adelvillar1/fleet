@@ -10546,6 +10546,41 @@ body[data-motion="off"] .amb { display: none; }
 
 .view-save:hover { color: var(--text); background: var(--panel); }
 
+
+/* The role's owned threads, end-to-end (the orchestrator ruling):
+   one bordered row per assigned thread — live, ended, archived — the
+   archive's own row shape, opened from the role card. */
+.owned-threads {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.owned-thread {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.owned-thread:hover { color: var(--text); background: var(--panel2); }
+.owned-thread-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.owned-thread-flag {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+
 /* --- U0/U11: the tissue column ------------------------------------ */
 
 .tissue {

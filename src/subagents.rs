@@ -2064,7 +2064,15 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     let mut degraded: Option<String> = None;
     let own_route = match (home.as_deref(), client.router().is_some()) {
         (Some(home), true) => {
-            match crate::route::prepare_child(home, &message, &lane_specs, pin.as_deref()).await {
+            match crate::route::prepare_child(
+                home,
+                &message,
+                &lane_specs,
+                pin.as_deref(),
+                role.as_ref().and_then(|r| r.workload.as_deref()),
+            )
+            .await
+            {
                 Ok(prepared) => Some(prepared),
                 // A route that cannot be prepared is not a work
                 // refusal (the failsafe plan's C2): the child rides
@@ -2108,7 +2116,19 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         &parent_session,
         principal.as_ref().map(|p| p.as_str()),
     ) {
-        Ok(child) => child,
+        Ok(child) => {
+            // The role owns the threads assigned to it end-to-end (the
+            // owner's orchestrator ruling): the attribution is written
+            // at dispatch and survives the thread's own lifecycle —
+            // disposal, archiving, the spine's budget — never derived
+            // from recency.
+            if let Some(role) = &role {
+                if let Some(home) = &home {
+                    crate::roles::record_session_role(home, child.id(), &role.name);
+                }
+            }
+            child
+        }
         Err(error) => {
             return SubagentResult::refused(format!(
                 "the child session could not be created: {error}"
@@ -3189,6 +3209,7 @@ mod tests {
             verdict: Some("pass".to_string()),
             execution: None,
             reason: "sys1 judged `hard`".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string())],

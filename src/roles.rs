@@ -42,6 +42,13 @@ pub struct Role {
     /// The memory shapes this role's recall draws from. Empty means
     /// every shape, which is the parent's own recall.
     pub shapes: Vec<String>,
+    /// The workload this role's runs walk — the routing table's own
+    /// name (`hard`, `quick`, `prose`, …). `None` means the judged
+    /// workload stands, as every unassigned route always has. A named
+    /// workload is the role's standing default the judgment still runs
+    /// under: sys1 judges every task and the row records its label; the
+    /// named chain walks (the owner's orchestrator ruling, 2026-11-13).
+    pub workload: Option<String>,
     /// The system-prompt overlay: everything after the frontmatter
     /// fence, bounded where it rides.
     pub overlay: String,
@@ -116,12 +123,31 @@ impl Role {
         let modified = std::fs::metadata(&path)
             .and_then(|meta| meta.modified())
             .ok();
+        // The workload is the routing table's own closed set, validated
+        // at authoring: a role naming an unknown workload is refused by
+        // name, never silently judged.
+        let workload = field("workload");
+        if let Some(named) = &workload {
+            let carried: Vec<&str> = crate::route::JUDGED_WORKLOADS
+                .iter()
+                .copied()
+                .chain(std::iter::once(crate::route::VISION_WORKLOAD))
+                .collect();
+            if !carried.contains(&named.as_str()) {
+                return Err(format!(
+                    "the role names the workload `{named}`, which the routing table does not \
+                     carry — the closed set is {}",
+                    carried.join(", ")
+                ));
+            }
+        }
         Ok(Role {
             name: name.to_string(),
             description,
             tools: list_field(&field("tools")),
             skills: list_field(&field("skills")),
             shapes: list_field(&field("shapes")),
+            workload,
             overlay: lines[closing + 1..].join("\n").trim().to_string(),
             path,
             modified,
@@ -282,6 +308,7 @@ pub struct RoleFields {
     pub tools: Vec<String>,
     pub skills: Vec<String>,
     pub shapes: Vec<String>,
+    pub workload: Option<String>,
     pub overlay: String,
 }
 
@@ -318,7 +345,7 @@ pub fn write(home: &Path, name: &str, fields: &RoleFields) -> Result<(), String>
             }
         }
     }
-    let known = ["description", "tools", "skills", "shapes"];
+    let known = ["description", "tools", "skills", "shapes", "workload"];
     pairs.retain(|(key, _)| !known.contains(&key.as_str()));
     pairs.push(("description".to_string(), description.to_string()));
     for (key, values) in [
@@ -329,6 +356,13 @@ pub fn write(home: &Path, name: &str, fields: &RoleFields) -> Result<(), String>
         if !values.is_empty() {
             pairs.push((key.to_string(), values.join(", ")));
         }
+    }
+    // The workload rides only when named: the known-retain above
+    // already removed a stale name, so clearing the picker drops the
+    // key and the judged workload stands again. An empty value would
+    // fail the parser's own empty-value rule.
+    if let Some(named) = &fields.workload {
+        pairs.push(("workload".to_string(), named.clone()));
     }
     pairs.sort_by(|left, right| left.0.cmp(&right.0));
     let mut text = String::from("---\n");
@@ -420,7 +454,7 @@ pub fn render(roles: &[Role]) -> String {
             description = bound(&role.description, 40)
         ));
         body.push(format!(
-            "{DIM}\u{b7} {narrows} \u{b7} skills: {skills} \u{b7} shapes: {shapes}{RESET}",
+            "{DIM}\u{b7} {narrows} \u{b7} skills: {skills} \u{b7} shapes: {shapes} \u{b7} workload: {workload}{RESET}",
             narrows = bound(&narrows, 40),
             skills = if role.skills.is_empty() {
                 "the parent's".to_string()
@@ -432,6 +466,7 @@ pub fn render(roles: &[Role]) -> String {
             } else {
                 role.shapes.join(", ")
             },
+            workload = role.workload.as_deref().unwrap_or("the judged workload"),
         ));
     }
     frame(
@@ -440,6 +475,49 @@ pub fn render(roles: &[Role]) -> String {
         body,
         "the `subagent` tool's `role` argument names one; an unknown name is a named refusal",
     )
+}
+
+/// The role's thread ownership (the owner's orchestrator ruling,
+/// 2026-11-13): session id → role name, written at dispatch. Ownership is
+/// by assignment and survives the thread's own lifecycle — disposal,
+/// archiving, the spine's budget-capped scans cannot lose it. The logs
+/// stay in the sessions dir; this index is the role's own record, and the
+/// persona work graph reads it.
+const SESSION_ROLES_FILE: &str = "sessions-roles.json";
+
+fn session_roles_path(home: &Path) -> PathBuf {
+    home.join(SESSION_ROLES_FILE)
+}
+
+/// Write one ownership entry under the index's own file lock, so two
+/// concurrent dispatches cannot lose each other's entries.
+pub fn record_session_role(home: &Path, session: &str, role: &str) {
+    let path = session_roles_path(home);
+    let _guard = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(&path));
+    let mut map = load_session_roles(home);
+    map.insert(session.to_string(), role.to_string());
+    if let Ok(text) = serde_json::to_string_pretty(&map) {
+        let _ = std::fs::write(&path, text);
+    }
+}
+
+/// The role's owned threads, as the index carries them: session id →
+/// role name. Read per view; the entries outlive every lifecycle the
+/// threads themselves go through.
+pub fn load_session_roles(home: &Path) -> std::collections::BTreeMap<String, String> {
+    std::fs::read_to_string(session_roles_path(home))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// The threads one role owns, in the index's own order.
+pub fn owned_sessions(home: &Path, role: &str) -> Vec<String> {
+    load_session_roles(home)
+        .into_iter()
+        .filter(|(_session, owned)| owned == role)
+        .map(|(session, _)| session)
+        .collect()
 }
 
 // --- the small shared helpers ----------------------------------------------
@@ -519,6 +597,85 @@ mod tests {
 
     fn write_role(home: &Path, name: &str, text: &str) {
         std::fs::write(home.join(ROLES_DIR).join(format!("{name}.md")), text).unwrap();
+    }
+
+    /// The orchestrator ruling's closed set (2026-11-13): the role's
+    /// workload names one of the routing table's own workloads at
+    /// authoring — an unknown name is a named refusal, never a silent
+    /// judgment. A named workload survives the write and clears when the
+    /// editor empties it.
+    #[test]
+    fn a_role_names_its_workload_from_the_closed_set() {
+        let home = home("workload-set");
+        std::fs::create_dir_all(home.join(ROLES_DIR)).unwrap();
+        write_role(
+            &home,
+            "prose-worker",
+            "---\ndescription: \"the prose lane's own worker\"\nworkload: prose\n---\n\nthe overlay",
+        );
+        let role = load(&home, "prose-worker").expect("the role");
+        assert_eq!(role.workload.as_deref(), Some("prose"));
+        write_role(
+            &home,
+            "wrong-worker",
+            "---\ndescription: \"names nothing the table carries\"\nworkload: imaginary\n---\n\nbody",
+        );
+        let refused = load(&home, "wrong-worker").expect_err("the closed set");
+        assert!(refused.contains("imaginary"), "{refused}");
+        assert!(refused.contains("deep_context"), "{refused}");
+        // The editor writes the workload and clears it, and the parser
+        // agrees both ways.
+        let wrote = write(
+            &home,
+            "prose-worker",
+            &RoleFields {
+                description: "the prose lane's own worker".to_string(),
+                workload: Some("quick".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(wrote.is_ok(), "{wrote:?}");
+        let role = load(&home, "prose-worker").expect("the role");
+        assert_eq!(role.workload.as_deref(), Some("quick"));
+        let cleared = write(
+            &home,
+            "prose-worker",
+            &RoleFields {
+                description: "the prose lane's own worker".to_string(),
+                workload: None,
+                ..Default::default()
+            },
+        );
+        assert!(cleared.is_ok(), "{cleared:?}");
+        let role = load(&home, "prose-worker").expect("the role");
+        assert_eq!(role.workload, None, "the judged workload stands again");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The role owns the threads assigned to it end-to-end (the owner's
+    /// orchestrator ruling): the attribution is written at dispatch,
+    /// survives every lifecycle the thread goes through, and
+    /// `owned_sessions` answers with the role's own — and only its own.
+    #[test]
+    fn the_role_owns_its_threads_end_to_end() {
+        let home = home("owned-threads");
+        record_session_role(&home, "thread-live", "scholar");
+        record_session_role(&home, "thread-gone", "scholar");
+        record_session_role(&home, "thread-other", "clerk");
+        // The thread was disposed of (archived, its log gone from the
+        // read cap): the ownership entry stands — that is the whole of
+        // the ruling.
+        // The index answers in its own key order; the view sorts for
+        // display. The assertion reads the set.
+        let scholar = owned_sessions(&home, "scholar");
+        assert_eq!(scholar, vec!["thread-gone", "thread-live"]);
+        let clerk = owned_sessions(&home, "clerk");
+        assert_eq!(clerk, vec!["thread-other"]);
+        // Re-recording the same session moves it, never duplicates it.
+        record_session_role(&home, "thread-live", "clerk");
+        let scholar = owned_sessions(&home, "scholar");
+        assert_eq!(scholar, vec!["thread-gone"], "the moved thread left");
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[test]
@@ -639,6 +796,7 @@ mod tests {
             &home,
             "auditor",
             &RoleFields {
+                workload: None,
                 description: "reads a diff".to_string(),
                 tools: vec!["bash".to_string(), "read_file".to_string()],
                 skills: vec!["codebase-survey".to_string()],
@@ -665,6 +823,7 @@ mod tests {
     fn the_writer_refuses_a_path_and_the_catalog_names_a_broken_file() {
         let home = scratch("refusals");
         let fields = RoleFields {
+            workload: None,
             description: "x".to_string(),
             ..RoleFields::default()
         };

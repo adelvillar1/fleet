@@ -734,7 +734,7 @@ impl Bridge {
         persona: Option<&str>,
         goal: Option<&str>,
     ) -> Result<String, String> {
-        let personas: Option<Vec<String>> = match persona.map(str::trim) {
+        let role_names: Option<Vec<String>> = match persona.map(str::trim) {
             Some(name) if !name.is_empty() => {
                 let role = crate::roles::load(&self.home, name)
                     .map_err(|error| format!("the persona `{name}` does not resolve: {error}"))?;
@@ -742,9 +742,17 @@ impl Bridge {
             }
             _ => None,
         };
-        let created = session::Session::create_with_persona(&self.home, &self.model, personas)
-            .map_err(|error| format!("could not create a conversation: {error}"))?;
+        let created =
+            session::Session::create_with_persona(&self.home, &self.model, role_names.clone())
+                .map_err(|error| format!("could not create a conversation: {error}"))?;
         let id = created.id().to_string();
+        // The persona owns the thread assigned to it, end-to-end (the
+        // owner's orchestrator ruling): the attribution is written at
+        // assignment and outlives every lifecycle the thread goes
+        // through.
+        for role in role_names.iter().flatten() {
+            crate::roles::record_session_role(&self.home, &id, role);
+        }
         let folder = {
             let mut state = lock(&self.state);
             state.name_launch(&id)
@@ -786,9 +794,14 @@ impl Bridge {
         if names.is_empty() {
             return Err("a huddle needs at least one bot — pick who is in the room".to_string());
         }
-        let created = session::Session::create_with_persona(&self.home, &self.model, Some(names))
-            .map_err(|error| format!("could not create a room: {error}"))?;
+        let created =
+            session::Session::create_with_persona(&self.home, &self.model, Some(names.clone()))
+                .map_err(|error| format!("could not create a room: {error}"))?;
         let id = created.id().to_string();
+        // Each member persona owns the room's thread end-to-end.
+        for persona in &names {
+            crate::roles::record_session_role(&self.home, &id, persona);
+        }
         if let Some(text) = goal.map(str::trim).filter(|text| !text.is_empty()) {
             let mut goals = load_goals(&self.home);
             goals.insert(id.clone(), text.to_string());
@@ -4892,10 +4905,17 @@ impl Bridge {
         dotenv: &std::collections::HashMap<String, String>,
     ) -> Result<String, String> {
         const TASK: &str = "say hello in five words";
-        let prepared =
-            crate::route::prepare_with_pin(home, dotenv, TASK, &Default::default(), None, None)
-                .await
-                .map_err(|error| format!("{error}"))?;
+        let prepared = crate::route::prepare_with_pin(
+            home,
+            dotenv,
+            TASK,
+            &Default::default(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .map_err(|error| format!("{error}"))?;
         let client = crate::api::Client::routed(prepared.router.clone());
         let model = prepared.decision.model.clone();
         let handle = tokio::runtime::Handle::current();
@@ -5271,6 +5291,7 @@ impl Bridge {
                     "a side question about the work in progress",
                     &std::collections::HashMap::new(),
                     pin.as_deref(),
+                    None,
                     Some(session.as_str()),
                 )
                 .await
@@ -10525,27 +10546,51 @@ fn roles_document(home: &std::path::Path) -> Value {
     let entries = crate::roles::catalog(home)
         .into_iter()
         .map(|entry| match entry.role {
-            Some(role) => json!({
-                "name": role.name,
-                "description": role.description,
-                "tools": role.tools,
-                "skills": role.skills,
-                "shapes": role.shapes,
-                "overlay": role.overlay,
-                // An owner-supplied image beside the role file (C11);
-                // null when the derived initial stands.
-                "avatar": crate::roles::avatar_path(home, &role.name)
-                    .map(|_| format!("/api/avatar?name={}", role.name)),
-                "path": role.path.display().to_string(),
-                "modified": role.modified.and_then(|at| crate::session::iso_utc_stamp(at).ok()),
-                "broken": Value::Null,
-            }),
+            Some(role) => {
+                // The role's owned threads, end-to-end (the owner's
+                // orchestrator ruling): the attribution index is the
+                // record, so disposed and archived threads stay listed
+                // beside the live ones. Titles ride the archive's own
+                // title map.
+                let owned = crate::roles::owned_sessions(home, &role.name);
+                let titles = load_titles(home);
+                let owned_rows: Vec<Value> = owned
+                    .iter()
+                    .map(|session| {
+                        json!({
+                            "session": session,
+                            "title": titles.get(session).cloned().unwrap_or_default(),
+                            "archived": crate::gui::bridge::load_archived(home)
+                                .contains_key(session),
+                        })
+                    })
+                    .collect();
+                json!({
+                    "name": role.name,
+                    "description": role.description,
+                    "tools": role.tools,
+                    "skills": role.skills,
+                    "shapes": role.shapes,
+                    "workload": role.workload,
+                    "owned": owned_rows,
+                    "overlay": role.overlay,
+                    // An owner-supplied image beside the role file (C11);
+                    // null when the derived initial stands.
+                    "avatar": crate::roles::avatar_path(home, &role.name)
+                        .map(|_| format!("/api/avatar?name={}", role.name)),
+                    "path": role.path.display().to_string(),
+                    "modified": role.modified.and_then(|at| crate::session::iso_utc_stamp(at).ok()),
+                    "broken": Value::Null,
+                })
+            }
             None => json!({
                 "name": entry.name,
                 "description": "",
                 "tools": [],
                 "skills": [],
                 "shapes": [],
+                "workload": Value::Null,
+                "owned": [],
                 "overlay": "",
                 "avatar": Value::Null,
                 "path": "",
@@ -11975,6 +12020,10 @@ fn settings_apply(
         "role" => {
             let name = text("name")?;
             let fields = crate::roles::RoleFields {
+                workload: arguments
+                    .get("workload")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
                 description: text("description")?,
                 tools: list("tools"),
                 skills: list("skills"),
@@ -14062,12 +14111,22 @@ async fn drive_run(
             )
             .await
         } else {
+            // The conversation's orchestrator assignment: the lead
+            // persona's role carries the workload its runs walk (the
+            // owner's orchestrator ruling, 2026-11-13). The persona rides
+            // the log's Start record; an unassigned conversation walks the
+            // leader's standing workload exactly as it always has.
+            let named = session::start_personas(&home, &driving)
+                .and_then(|personas| personas.into_iter().next())
+                .and_then(|persona| crate::roles::load(&home, &persona).ok())
+                .and_then(|role| role.workload);
             crate::route::prepare_with_pin(
                 &home,
                 &dotenv,
                 &task,
                 &std::collections::HashMap::new(),
                 pin.as_deref(),
+                named.as_deref(),
                 Some(driving.as_str()),
             )
             .await

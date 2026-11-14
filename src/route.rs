@@ -811,13 +811,20 @@ pub const TAIL_PROVIDER: &str = "deepseek";
 
 /// Which session's chain a `select` walks. The leading session — the run
 /// that assigns work and supervises it — walks [`ORCHESTRATOR_WORKLOAD`]'s
-/// chain whatever its task was judged. Everything else walks the judged
+/// chain whatever its task was judged. A persona's named workload walks
+/// its own chain the same way: the standing choice the judgment still
+/// records, never a bypass of it. Everything else walks the judged
 /// workload's own chain: that is what makes the judgment load-bearing for
 /// the routes it serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Walk {
+pub enum Walk<'a> {
     Leader,
     Judged,
+    /// A persona's standing workload (the owner's orchestrator ruling,
+    /// 2026-11-13): the named chain walks when the routing table
+    /// carries it, else the judged workload serves — a named
+    /// degradation, never a mid-run refusal.
+    Named(&'a str),
 }
 
 /// A roster plus its optional pin. The chain order is the compiled-in
@@ -1873,6 +1880,12 @@ pub struct RouteDecision {
     /// row and the `routed` event carry it; a judged walk may steer by
     /// it (C2). Absent when the lane answered the workload only.
     pub execution: Option<ExecutionHead>,
+    /// The workload that actually walked, when it differs from the
+    /// judged one: a persona's standing choice (the orchestrator
+    /// ruling), the leader's, or an image's forced vision. The row and
+    /// the event carry it so the calibration stream grades the standing
+    /// choice against its outcomes.
+    pub walked: Option<String>,
     /// Why this route, in one line — the decision row and the status bar
     /// both read it.
     pub reason: String,
@@ -1937,6 +1950,7 @@ pub fn workload_decision(workload: &str) -> Option<RouteDecision> {
         Some(workload.to_string()),
         None,
         None,
+        Some(workload.to_string()),
         format!("the {workload} workload's own chain"),
         JudgedFrom::None,
     ))
@@ -1984,7 +1998,7 @@ pub async fn select_with_home(
     table: &[Preference],
     gates: Gates,
     cache: Option<&mut crate::route_cache::Cache>,
-    walk: Walk,
+    walk: Walk<'_>,
     home: Option<&Path>,
 ) -> (RouteDecision, u128) {
     select_walk_with_home(
@@ -2005,7 +2019,7 @@ pub async fn select_walk(
     table: &[Preference],
     gates: Gates,
     cache: Option<&mut crate::route_cache::Cache>,
-    walk: Walk,
+    walk: Walk<'_>,
 ) -> (RouteDecision, u128) {
     select_walk_with_home(
         resolved, pin, task, specs, table, gates, cache, walk, None, false,
@@ -2024,7 +2038,7 @@ pub async fn select_walk_with_home(
     table: &[Preference],
     gates: Gates,
     cache: Option<&mut crate::route_cache::Cache>,
-    walk: Walk,
+    walk: Walk<'_>,
     masked_from: Option<&Path>,
     carries_image: bool,
 ) -> (RouteDecision, u128) {
@@ -2046,6 +2060,7 @@ pub async fn select_walk_with_home(
                             &gates,
                         ),
                         How::Pinned,
+                        None,
                         None,
                         None,
                         None,
@@ -2108,6 +2123,7 @@ pub async fn select_walk_with_home(
                     Some(VISION_WORKLOAD.to_string()),
                     None,
                     None,
+                    Some(VISION_WORKLOAD.to_string()),
                     format!("{pin_note}the turn carries an image, so the `{VISION_WORKLOAD}` workload's chain serves it"),
                     JudgedFrom::None,
                 ),
@@ -2182,7 +2198,9 @@ pub async fn select_walk_with_home(
         _ if execution_steer && preference_for(table, ORCHESTRATOR_WORKLOAD).is_some() => {
             ORCHESTRATOR_WORKLOAD
         }
+        Walk::Named(named) if preference_for(table, named).is_some() => named,
         Walk::Leader | Walk::Judged => workload.as_str(),
+        Walk::Named(_) => workload.as_str(),
     };
     let orchestrator_note = if walked == workload {
         String::new()
@@ -2193,6 +2211,8 @@ pub async fn select_walk_with_home(
              planner tier; ",
             head.label, head.confidence
         )
+    } else if let Walk::Named(named) = walk {
+        format!("the persona's standing workload `{named}` walks its own chain; ")
     } else {
         format!("the orchestrator walks `{ORCHESTRATOR_WORKLOAD}`'s chain; ")
     };
@@ -2320,6 +2340,11 @@ pub async fn select_walk_with_home(
                     Some(workload.clone()),
                     verdict.clone(),
                     execution.clone(),
+                    if walked == workload {
+                        None
+                    } else {
+                        Some(walked.to_string())
+                    },
                     format!("{note}{reason}"),
                     judged_from,
                 )
@@ -2356,6 +2381,7 @@ fn decision_from(
     workload: Option<String>,
     verdict: Option<String>,
     execution: Option<ExecutionHead>,
+    walked: Option<String>,
     reason: String,
     judged_from: JudgedFrom,
 ) -> RouteDecision {
@@ -2379,6 +2405,7 @@ fn decision_from(
         workload,
         verdict,
         execution,
+        walked,
         reason,
         judged_from,
         start_index,
@@ -2429,6 +2456,7 @@ fn fallback(
     let mut decision = decision_from(
         with_tail(order, resolved, &gates),
         How::Fallback,
+        None,
         None,
         None,
         None,
@@ -3919,7 +3947,7 @@ pub async fn prepare(
     specs: &HashMap<String, ServerSpec>,
     session_seed: Option<&str>,
 ) -> Result<Prepared, ConfigError> {
-    prepare_with_pin(home, dotenv, task, specs, None, session_seed).await
+    prepare_with_pin(home, dotenv, task, specs, None, None, session_seed).await
 }
 
 /// [`prepare`] with the chat's own provider pin laid over the roster's:
@@ -3934,19 +3962,14 @@ pub async fn prepare_with_pin(
     task: &str,
     specs: &HashMap<String, ServerSpec>,
     pin: Option<&str>,
+    named: Option<&str>,
     session_seed: Option<&str>,
 ) -> Result<Prepared, ConfigError> {
-    prepare_walk(
-        home,
-        dotenv,
-        task,
-        specs,
-        pin,
-        Walk::Leader,
-        session_seed,
-        false,
-    )
-    .await
+    // The conversation's orchestrator assignment: a named workload walks
+    // its own chain (the owner's orchestrator ruling); without one the
+    // leader's standing walk is exactly what it always was.
+    let walk = named.map(Walk::Named).unwrap_or(Walk::Leader);
+    prepare_walk(home, dotenv, task, specs, pin, walk, session_seed, false).await
 }
 
 /// The route for a turn that carries pictures.
@@ -3991,11 +4014,15 @@ pub async fn prepare_child(
     brief: &str,
     specs: &HashMap<String, ServerSpec>,
     pin: Option<&str>,
+    named: Option<&str>,
 ) -> Result<Prepared, ConfigError> {
     let dotenv = crate::home::read_dotenv_with_process_vault(home);
     // A child is its own conversation: a fresh id, per the lifecycle
-    // contract the session-header-parity plan holds.
-    prepare_walk(home, &dotenv, brief, specs, pin, Walk::Judged, None, false).await
+    // contract the session-header-parity plan holds. The role's named
+    // workload walks when the dispatch carries one; the judged workload
+    // stands otherwise.
+    let walk = named.map(Walk::Named).unwrap_or(Walk::Judged);
+    prepare_walk(home, &dotenv, brief, specs, pin, walk, None, false).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4005,7 +4032,7 @@ async fn prepare_walk(
     task: &str,
     specs: &HashMap<String, ServerSpec>,
     pin: Option<&str>,
-    walk: Walk,
+    walk: Walk<'_>,
     session_seed: Option<&str>,
     carries_image: bool,
 ) -> Result<Prepared, ConfigError> {
@@ -5890,6 +5917,7 @@ mod tests {
             verdict: None,
             execution: None,
             reason: "test".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::None,
             start_index: 0,
             order: vec![("deepseek".to_string(), "deepseek-model".to_string())],
@@ -5938,6 +5966,7 @@ mod tests {
             verdict: None,
             execution: None,
             reason: "test".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::None,
             start_index: 0,
             order: vec![("deepseek".to_string(), "deepseek-model".to_string())],
@@ -5986,6 +6015,7 @@ mod tests {
             verdict: None,
             execution: None,
             reason: "test".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![("deepseek".to_string(), "deepseek-model".to_string())],
@@ -6469,6 +6499,7 @@ mod tests {
             verdict: None,
             execution: None,
             reason: "test".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string())],
@@ -6504,6 +6535,7 @@ mod tests {
             verdict: Some("pass".to_string()),
             execution: None,
             reason: "sys1 judged `hard`".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![
@@ -6870,6 +6902,7 @@ mod tests {
             verdict: None,
             execution: None,
             reason: "test".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![("deepseek".to_string(), "auto".to_string())],
@@ -6901,6 +6934,7 @@ mod tests {
             verdict: None,
             execution: None,
             reason: "test".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![
@@ -7145,6 +7179,7 @@ mod tests {
             verdict: None,
             execution: None,
             reason: "sys1 gave no usable verdict".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![
@@ -7439,6 +7474,7 @@ mod tests {
             Some("hard".to_string()),
             None,
             None,
+            None,
             "sys1 judged `hard`; ".to_string(),
             JudgedFrom::Fresh,
         );
@@ -7481,6 +7517,7 @@ mod tests {
         let pinned = decision_from(
             vec![(TAIL_PROVIDER.to_string(), "deepseek-flash".to_string())],
             How::Pinned,
+            None,
             None,
             None,
             None,
@@ -7670,6 +7707,63 @@ mod tests {
         // Both are closed by the reserve.
         assert_eq!(tail_of(&leader.order).map(|(p, _)| p), Some(TAIL_PROVIDER));
         assert_eq!(tail_of(&child.order).map(|(p, _)| p), Some(TAIL_PROVIDER));
+    }
+
+    #[tokio::test]
+    async fn a_persona_s_named_workload_walks_its_chain_and_the_judgment_still_records() {
+        // The orchestrator ruling's minimal shape: the persona's
+        // standing workload walks its own chain, the judgment still
+        // runs and the decision carries both labels — the judged
+        // workload in `workload`, the standing choice in `walked`.
+        let resolved = keyed_default_roster();
+        let table = default_preferences();
+        let gates = Gates::default();
+        let specs = dead_judge();
+        let (named, _) = select_walk(
+            &resolved,
+            None,
+            "a task",
+            &specs,
+            &table,
+            gates,
+            None,
+            Walk::Named("prose"),
+        )
+        .await;
+        let prose_head = preference_for(&table, "prose")
+            .expect("the prose workload")
+            .candidates[0];
+        assert_eq!(
+            (named.order[0].0.as_str(), named.order[0].1.as_str()),
+            prose_head
+        );
+        assert_eq!(named.walked.as_deref(), Some("prose"));
+        assert!(
+            named.reason.contains("the persona's standing workload"),
+            "{}",
+            named.reason
+        );
+        // A table without the named workload degrades to the judged
+        // chain, named — never a mid-run refusal.
+        let empty: Vec<Preference> = Vec::new();
+        let (degraded, _) = select_walk(
+            &resolved,
+            None,
+            "a task",
+            &specs,
+            &empty,
+            gates,
+            None,
+            Walk::Named("prose"),
+        )
+        .await;
+        assert!(
+            degraded.reason.is_empty()
+                || !degraded.reason.contains("the persona's standing workload"),
+            "{}",
+            degraded.reason
+        );
+        assert!(degraded.walked.is_none() || degraded.walked.as_deref() != Some("prose"));
     }
 
     #[test]

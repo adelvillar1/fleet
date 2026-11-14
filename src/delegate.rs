@@ -311,9 +311,22 @@ pub async fn rerun(
     probe: &ProbeVerdict,
 ) -> Result<String, String> {
     let brief = brief_from_log(row)?;
-    let prepared = crate::route::prepare_child(home, &brief.shape(), &Default::default(), None)
-        .await
-        .map_err(|error| format!("the child's route could not be prepared: {error}"))?;
+    // The role's standing workload walks its own chain (the owner's
+    // orchestrator ruling); a role that names none stands judged.
+    let named = brief
+        .role
+        .as_deref()
+        .and_then(|name| crate::roles::load(home, name).ok())
+        .and_then(|role| role.workload);
+    let prepared = crate::route::prepare_child(
+        home,
+        &brief.shape(),
+        &Default::default(),
+        None,
+        named.as_deref(),
+    )
+    .await
+    .map_err(|error| format!("the child's route could not be prepared: {error}"))?;
     let client = crate::api::Client::routed(prepared.router.clone());
     let sessions_dir = home.join("sessions");
     let mut approver = crate::agent::ConsoleApprover::new();

@@ -1015,6 +1015,7 @@ import { node, svg, clip } from './core/dom.js';
     personaDoor: document.getElementById('persona-door'),
     personaName: document.getElementById('persona-name'),
     personaDescription: document.getElementById('persona-description'),
+    personaWorkload: document.getElementById('persona-workload'),
     personaTools: document.getElementById('persona-tools'),
     personaSkills: document.getElementById('persona-skills'),
     personaOverlay: document.getElementById('persona-overlay'),
@@ -13751,6 +13752,7 @@ import { node, svg, clip } from './core/dom.js';
       tools: picked(el.personaTools),
       skills: picked(el.personaSkills),
       shapes: [],
+      workload: (el.personaWorkload && el.personaWorkload.value) || null,
       overlay: el.personaOverlay.value || '',
       temporal: el.personaTemporal.value === 'temporal'
     };
@@ -21722,11 +21724,36 @@ import { node, svg, clip } from './core/dom.js';
   }
 
   function roleSections(read, role) {
+    // The role's owned threads, end-to-end (the orchestrator ruling):
+    // every thread assigned to it — live, ended, archived — opens on
+    // press. Ownership is the attribution index's own record; the
+    // spine's recency filters do not touch this view.
+    var ownedRows = null;
+    if ((role.owned || []).length) {
+      ownedRows = node('div', 'owned-threads');
+      (role.owned || []).forEach(function (thread) {
+        var row = node('button', 'owned-thread');
+        row.type = 'button';
+        row.appendChild(node('span', 'owned-thread-title',
+          thread.title || thread.session));
+        if (thread.archived) row.appendChild(node('span', 'owned-thread-flag', 'archived'));
+        row.addEventListener('click', function () {
+          window.location.hash = '#/sessions/' + encodeURIComponent(thread.session);
+        });
+        ownedRows.appendChild(row);
+      });
+    }
     return [
       // The role's own mark (the huddles plan's C11): the owner-supplied
       // image where it keeps one, the derived initial otherwise.
       ['its mark', huddleMark(role.name, 'md', role.avatar)],
       ['the role', node('p', 'derivation', role.description || '(no description)')],
+      ['its workload', node('p', 'derivation',
+        role.workload
+          ? role.workload + ' \u2014 its runs walk this chain; the judgment still records its label'
+          : 'the judged workload stands')],
+      ['its threads', ownedRows || node('p', 'derivation',
+        'none assigned yet \u2014 a dispatch under this role lands here, end-to-end')],
       ['its tools', node('p', 'derivation',
         (role.tools || []).length ? role.tools.join(', ') : 'inherits the run\u2019s')],
       ['its skills', node('p', 'derivation',

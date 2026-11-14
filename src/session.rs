@@ -672,6 +672,23 @@ pub struct Session {
     kind: Option<String>,
 }
 
+/// The personas a session's Start record carries, read from the log's
+/// first record only — the route preparation reads this per run, and a
+/// full replay to learn who leads would walk the whole archive line.
+pub fn start_personas(home: &Path, session: &str) -> Option<Vec<String>> {
+    let path = session_path(home, session);
+    let first = std::fs::read_to_string(path).ok()?;
+    let line = first.lines().next()?;
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let personas = value.get("personas")?;
+    let list = personas.as_array()?;
+    Some(
+        list.iter()
+            .filter_map(|entry| entry.as_str().map(str::to_string))
+            .collect(),
+    )
+}
+
 impl Session {
     /// Create a new session under `sessions_dir(home)`, writing the `start`
     /// record. The id is a UTC stamp plus a uniqueness suffix from the

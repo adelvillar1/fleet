@@ -204,6 +204,17 @@ room's lessons into facts and skill proposals; archive it when the work is
 put away. When a bot names a capability the room lacks, convene a role the
 home keeps or hire a persona for the gap.
 
+A persona carries its own workload: the role's file names one of the
+routing table's workloads, and every run dispatched under it walks that
+chain — the judgment still runs and the row still records its label, so
+the standing choice is graded like any other routing decision. The persona
+owns the threads assigned to it end-to-end — live, ended, archived — the
+attribution index is the record, and the persona's card lists them with
+the role's own work graph. The orchestrator assignment is per conversation:
+the lead persona's workload is what the conversation's runs walk, and the
+orchestrator's duties — delegating to role bots, convening rooms, hiring
+personas for gaps — are the router's own dispatch work, carried by a name.
+
 **Why.** A room is a knowledge space, not a deliverable factory: what it
 recalled and what it produced sit beside its outcomes, so a room that
 produced no files but taught the home three things reads as three. And a
