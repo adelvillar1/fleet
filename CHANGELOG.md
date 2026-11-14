@@ -12,6 +12,31 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.3 — 2026-11-14
+
+The orchestrator — the owner's hub topology, built on the routing and
+persona machinery the 0.8 line already carried.
+
+A persona can name its workload: the role file's `workload` key names one
+of the routing table's own workloads, and every run dispatched under it
+walks that chain — sys1 still judges every task and the decision row
+records both labels (`walked_as`), so the standing choice is graded
+against outcomes like any other route. A conversation carries an
+orchestrator assignment: the lead persona's workload is what its runs
+walk, and an unassigned conversation walks the leader's `hard` exactly as
+before. The role owns the threads assigned to it end-to-end — a durable
+attribution index (`sessions-roles.json`) is written at dispatch and
+survives disposal, archiving, and the spine's budget; the persona's card
+lists its threads and its own work graph beside them. The topology is
+hub-and-spoke: a dispatched persona has `message_orchestrator`, a line to
+the conversation that dispatched it, delivered attributed through the
+control channel; same-level personas do not address each other directly —
+a member's address to a peer in a room reroutes to the lead with an
+*unresolved dependency* signal, the visible evidence that the task
+breakdown missed a dependency. Roles are also git-tracked in the store
+convention, and the pairing card mints in the app with no terminal
+command anywhere in the flow.
+
 ## v0.8.2 — 2026-11-13
 
 The substrate diagnosis tells the truth about which failure it sees. A
