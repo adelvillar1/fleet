@@ -60,20 +60,19 @@ only resolved on the runtime that computed it; kiri recomputes local
 IDs), so the reference travels with the machine, not with Docker
 Desktop.
 
-**The boundary**: the layerfs worker itself is Docker-Desktop-shaped.
-Its container mounts `/var/run/docker.sock` (the socket Docker Desktop
-exposes) and `/var/lib/docker/volumes` (Desktop's host-side volume
-path), and its inner docker CLI pins that socket. Kiri's socket lives at
-`~/.kiri/run/docker.sock` and its volumes live inside the VM's data
-disk — the worker's start fails on those mounts (KI-543). The substrate
-(delegation sandboxes) is degraded by name until either:
+**The boundary, resolved the same day**: the layerfs worker's
+socket/volume mounts needed no bundle change — the host compat socket
+`/var/run/docker.sock` (Docker Desktop's own symlink, dead after the
+quit) repointed at kiri's live Engine API socket, and the worker's
+socket mount and inner docker CLI reached kiri unchanged. The worker
+runs under kiri (KI-543 closed). Fleet's half: the provisioning records
+the image reference in the runtime-portable repo-digest form — a bare
+config-digest pin only resolved on the runtime that computed it, and
+kiri honours the repo digest instead. The recorded port followed kiri's
+assignment (56511), and the health probe reads clean.
 
-- **(a) the layerfs bundle adaptation** — the pinned checkout's worker
-  (`api/runtime/src/worker/server.js`) and fleet's install scripts take
-  the socket and volume host paths from the endpoint/config, so kiri's
-  layout provisions the same substrate; or
-- **(b) Docker Desktop back** for delegation work until (a) lands —
-  restart it and the old worker resumes on the recorded port.
+Docker Desktop is quit on this machine; the substrate's delegation
+sandboxes run under kiri.
 
 ## The line
 
