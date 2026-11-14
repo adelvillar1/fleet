@@ -222,8 +222,35 @@ pub fn use_skill_spec() -> ToolSpec {
     )
 }
 
+/// The request declaration for `message_orchestrator` (the owner's hub
+/// ruling, 2026-11-13): one line to the conversation that dispatched
+/// this persona. The orchestrator reads it at its next step — the words
+/// ride the orchestrator's own transcript, attributed to this thread.
+pub fn message_orchestrator_spec() -> ToolSpec {
+    ToolSpec::function(
+        MESSAGE_ORCHESTRATOR_TOOL,
+        "Send a message to the orchestrator that dispatched you — the conversation whose task          you are running. Use it when the work needs something only the orchestrator can settle:          a missing input, a decision between two readings of the brief, a blocker the task          breakdown did not provide for. Say what you need and why, in one line or three; the          orchestrator reads it at its next step and answers or re-dispatches. Do not use it to          report progress — your result already does that when your work ends.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "The message, stated so it can be acted on without this                                     conversation's context: what you need, what is in the way,                                     and what you have already tried.",
+                },
+            },
+            "required": ["message"],
+        }),
+    )
+}
+
 /// The model-visible name of the persona-authoring tool.
 pub const AUTHOR_PERSONA_TOOL: &str = "author_persona";
+
+/// The model-visible name of the persona-to-orchestrator channel (the
+/// owner's hub ruling, 2026-11-13): a dispatched persona's line to the
+/// conversation that dispatched it. Admitted only for role-carrying
+/// dispatches, never in the default set.
+pub const MESSAGE_ORCHESTRATOR_TOOL: &str = "message_orchestrator";
 
 /// The model-visible name of the vision tool.
 pub const VISION_TOOL: &str = "vision";

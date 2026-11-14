@@ -4538,6 +4538,7 @@ async fn a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_
         workload: None,
         verdict: None,
         execution: None,
+        walked: None,
         reason: String::new(),
         judged_from: fleet::route::JudgedFrom::None,
         start_index: 0,
@@ -5757,6 +5758,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         workload: None,
         verdict: None,
         execution: None,
+        walked: None,
         reason: "test head".to_string(),
         judged_from: fleet::route::JudgedFrom::Fresh,
         start_index: 0,
@@ -5884,6 +5886,7 @@ async fn a_committed_quota_failure_unlocks_the_walk() {
         verdict: None,
         execution: None,
         reason: "test committed quota".to_string(),
+        walked: None,
         judged_from: fleet::route::JudgedFrom::Fresh,
         start_index: 0,
         order: vec![
@@ -6779,12 +6782,21 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
         "{child_system}"
     );
     // And its declarations are the role's admitted set — the harness
-    // prompt rode along, but write_file was never declared to it.
+    // prompt rode along, but write_file was never declared to it. The
+    // orchestrator channel rides beside the narrowing (the owner's hub
+    // ruling, 2026-11-13): the role's own list never carried it and the
+    // dispatched persona still has its line to the orchestrator.
     let declared = declared_tools(&bodies[1]);
     // The role narrows the work tools; delivery rides along regardless.
     assert_eq!(
         declared,
-        vec!["bash", "read_file", "read_document", "send_file"],
+        vec![
+            "bash",
+            "read_file",
+            "message_orchestrator",
+            "read_document",
+            "send_file"
+        ],
         "{declared:?}"
     );
     // The parent's own prompt is untouched: a role is a delegation's
@@ -9710,6 +9722,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         verdict: None,
         execution: None,
         reason: "pinned for the test".to_string(),
+        walked: None,
         judged_from: fleet::route::JudgedFrom::Fresh,
         start_index: 0,
         // The walk's entry names the candidate's own model — that is
@@ -10973,6 +10986,7 @@ impl CronHarness {
             verdict: None,
             execution: None,
             reason: "the mock is the only candidate".to_string(),
+            walked: None,
             judged_from: fleet::route::JudgedFrom::None,
             start_index: 0,
             order: vec![("cand-mock".to_string(), "test-model".to_string())],

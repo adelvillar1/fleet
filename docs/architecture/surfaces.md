@@ -215,6 +215,18 @@ the lead persona's workload is what the conversation's runs walk, and the
 orchestrator's duties — delegating to role bots, convening rooms, hiring
 personas for gaps — are the router's own dispatch work, carried by a name.
 
+The topology is hub-and-spoke. A dispatched persona has a channel to its
+orchestrator (`message_orchestrator`): a need only the orchestrator can
+settle — a missing input, an ambiguous brief — goes up the hub, lands in
+the orchestrator's transcript attributed to the persona and its thread,
+and is read at the orchestrator's next step. Same-level personas do not
+address each other directly: in a room, a member's address to another
+member reroutes to the lead with an *unresolved dependency* signal — the
+need itself is evidence the task breakdown missed a dependency, and the
+fix is re-planning through the hub, not peer chatter. The signal renders
+on the room's own surface, so breakdown quality is visible instead of
+silent.
+
 **Why.** A room is a knowledge space, not a deliverable factory: what it
 recalled and what it produced sit beside its outcomes, so a room that
 produced no files but taught the home three things reads as three. And a

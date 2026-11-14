@@ -1118,6 +1118,15 @@ pub enum Control {
     /// rides as a user-role message labelled as the owner's, never as
     /// the model's own words.
     Steer(String),
+    /// A dispatched persona's message to its orchestrator (the owner's
+    /// hub ruling, 2026-11-13): the persona's own channel, landed as a
+    /// user-role message attributed to the persona and its thread —
+    /// never as the owner's words, never as the run's own reasoning.
+    PersonaMessage {
+        role: Option<String>,
+        session: String,
+        text: String,
+    },
     /// The owner wants this run to end now. The partial result lands
     /// with the typed reason and the run's own log path.
     Stop,
@@ -2140,12 +2149,19 @@ impl<'a> Agent<'a> {
                 _ => format!("`{name}`"),
             })
             .collect();
+        let lead = self.personas.first().cloned().unwrap_or_default();
         let mut line = format!(
-            "## The room\n\nYou share this huddle with {}. Address another member with `@name` \
-             and the next turn belongs to them; address `you` with `@you` and the owner is \
-             asked, never run.",
+            "## The room\n\nYou share this huddle with {}. The orchestrator of this work is \
+             `{lead}`: it dispatched the work, settles what crosses it, and can re-plan or \
+             bring in help. Address another member with `@name` and the next turn belongs to \
+             them; address `you` with `@you` and the owner is asked, never run.",
             members.join(", ")
         );
+        line.push_str(&format!(
+            " Same-level members do not address each other directly — a need to is an \
+             unresolved dependency in the task breakdown, so the address goes to `{lead}` with \
+             the dependency named."
+        ));
         if !self.available_roles.is_empty() {
             let others: Vec<String> = self
                 .available_roles
@@ -2487,6 +2503,19 @@ impl<'a> Agent<'a> {
         // something to recall.
         if admitted(tools::RECALL_TOOL) {
             specs.push(tools::recall_spec());
+        }
+        // The persona-to-orchestrator channel (the owner's hub ruling):
+        // declared only where the dispatch admitted it — a role-carrying
+        // child's scope — and never in a scope-less run's default set,
+        // which is why the check reads the scope directly rather than
+        // the `admitted` closure above (a scope-less run admits
+        // everything beside-the-four, and this tool is not among them).
+        if self
+            .scope
+            .as_ref()
+            .is_some_and(|scope| scope.admits(tools::MESSAGE_ORCHESTRATOR_TOOL))
+        {
+            specs.push(tools::message_orchestrator_spec());
         }
         // A server's resources and prompts are reachable only by naming
         // it, so the two tools name it: declared on every run, beside
@@ -4206,6 +4235,14 @@ impl<'a> Agent<'a> {
     async fn apply_control(&mut self, control: Control) -> Result<ControlEffect, AgentError> {
         match control {
             Control::Steer(text) => self.apply_steer(&text).await?,
+            Control::PersonaMessage {
+                role,
+                session,
+                text,
+            } => {
+                self.apply_persona_message(role.as_deref(), &session, &text)
+                    .await?
+            }
             Control::Stop => return Ok(ControlEffect::Stop),
             Control::Fold => self.compact_now = true,
             Control::Pin(text) => self.apply_pin(&text).await?,
@@ -4240,6 +4277,7 @@ impl<'a> Agent<'a> {
             "a mid-run re-route",
             &specs,
             pin,
+            None,
             self.options.session_id.as_deref(),
         )
         .await
@@ -4625,6 +4663,30 @@ impl<'a> Agent<'a> {
         let _ = writeln!(self.progress, "\u{2014} steer: {}", preview(&bounded, 72));
         let _ = self.progress.flush();
         self.push_message(Message::text(Role::User, steer_frame(&bounded)))?;
+        self.maybe_curate(&bounded).await
+    }
+
+    /// A dispatched persona's message to its orchestrator, landed beside the
+    /// steer: the same user-role discipline, the persona's own attribution.
+    async fn apply_persona_message(
+        &mut self,
+        role: Option<&str>,
+        session: &str,
+        text: &str,
+    ) -> Result<(), AgentError> {
+        let bounded = steer_text(text);
+        let _ = writeln!(
+            self.progress,
+            "\u{2014} from {} ({}): {}",
+            role.unwrap_or("a dispatched persona"),
+            session,
+            preview(&bounded, 72)
+        );
+        let _ = self.progress.flush();
+        self.push_message(Message::text(
+            Role::User,
+            persona_message_frame(role, session, &bounded),
+        ))?;
         self.maybe_curate(&bounded).await
     }
 
@@ -6063,6 +6125,12 @@ impl<'a> Agent<'a> {
         if call.function.name == tools::AUTHOR_PERSONA_TOOL {
             return self.run_author_persona(call).await;
         }
+        if call.function.name == tools::MESSAGE_ORCHESTRATOR_TOOL {
+            return Ok((
+                self.run_message_orchestrator(&call.function.arguments),
+                false,
+            ));
+        }
         // An imagine call shapes the lane's base64 answer into files
         // before the text reaches the model: the bytes never ride the
         // conversation.
@@ -6593,6 +6661,73 @@ impl<'a> Agent<'a> {
     /// the role is written through the loader's own grammar, the join is a
     /// row in the log, and the new persona speaks next. It stays in the
     /// home's roles, so every later huddle can convene it too.
+    /// The persona-to-orchestrator channel (the owner's hub ruling,
+    /// 2026-11-13): the message is delivered through the orchestrator's
+    /// own control file — the same one-shot channel the owner's steer
+    /// uses — and lands in the orchestrator's transcript attributed to
+    /// this thread. The orchestrator is resolved from this run's own
+    /// start record (hard rule 5): a run dispatched by no conversation
+    /// has nobody to message, and says so rather than guessing.
+    fn run_message_orchestrator(&self, arguments: &str) -> String {
+        let parsed = parse_arguments(arguments);
+        let message = parsed
+            .get("message")
+            .and_then(|message| message.as_str())
+            .map(str::trim)
+            .unwrap_or_default();
+        if message.is_empty() {
+            return "error: the message is empty — say what you need and why, so the                     orchestrator can act on it without this thread's context."
+                .to_string();
+        }
+        // The orchestrator: this run's own start record names the
+        // conversation that dispatched it.
+        let path = self.session.path();
+        let parent = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.lines().next().map(str::to_string))
+            .and_then(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+            .and_then(|value| {
+                value
+                    .get("parent")
+                    .and_then(|parent| parent.as_str())
+                    .map(str::to_string)
+            });
+        let Some(parent) = parent else {
+            return "error: this run was not dispatched by an orchestrator — there is no                     parent conversation to message. Put the words in your final answer instead."
+                .to_string();
+        };
+        let bounded = steer_text(message);
+        let own = self.session.id().to_string();
+        // The orchestrator's control file, beside its log in the same
+        // sessions directory this thread's own log lives in.
+        let control = path
+            .parent()
+            .map(|dir| dir.join(format!("{parent}.control")))
+            .expect("a log path always has a parent directory");
+        // Compose with anything already pending — a stop the owner queued
+        // is not lost to this message; the newest write still wins for
+        // the same key.
+        let mut payload = serde_json::from_str::<serde_json::Value>(
+            &std::fs::read_to_string(&control).unwrap_or_default(),
+        )
+        .unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "persona_message".to_string(),
+                serde_json::json!({ "session": own, "text": bounded }),
+            );
+        }
+        match std::fs::write(&control, payload.to_string()) {
+            Ok(()) => {
+                "delivered to your orchestrator \u{2014} it reads the message at its next                  step, attributed to this thread. Keep working while you wait; do not repeat                  the message or wait idle for the answer."
+                    .to_string()
+            }
+            Err(error) => format!(
+                "error: the message could not be delivered ({error}) \u{2014} put the words                  in your final answer instead."
+            ),
+        }
+    }
+
     async fn run_author_persona(&mut self, call: &ToolCall) -> Result<(String, bool), AgentError> {
         let arguments: serde_json::Value =
             serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
@@ -6621,6 +6756,7 @@ impl<'a> Agent<'a> {
             ));
         }
         let fields = crate::roles::RoleFields {
+            workload: None,
             description: description.clone(),
             tools: string_list(&arguments, "tools"),
             skills: string_list(&arguments, "skills"),
@@ -6941,6 +7077,38 @@ impl<'a> Agent<'a> {
         };
         let mentions_owner = member == crate::session::MENTION_OWNER;
         let in_room = self.personas.iter().any(|name| name == member);
+        // The hub rule (the owner's orchestrator ruling, 2026-11-13):
+        // same-level personas do not address each other directly — a
+        // need to is an unresolved dependency in the task breakdown, and
+        // the dependency belongs to the orchestrator. A member's address
+        // to another member reroutes to the lead with the signal named;
+        // the lead's own addresses, the owner's, and `@you` all pass.
+        let lead = self.personas.first().cloned();
+        let author = self.active_speaker.as_deref();
+        let author_is_member = author.is_some_and(|name| Some(name) != lead.as_deref());
+        let target_is_member = in_room && Some(member) != lead.as_deref();
+        if author_is_member && target_is_member {
+            let reason = following.trim();
+            let reason = if reason.is_empty() {
+                "the address itself is the signal: the work this member needed is a                  dependency the breakdown did not resolve"
+                    .to_string()
+            } else {
+                reason.to_string()
+            };
+            self.record(&Record::Recommend {
+                name: member.to_string(),
+                kind: "unresolved dependency".to_string(),
+                reason,
+                from: self.active_speaker.clone(),
+                at: crate::boards::now_stamp(),
+            })?;
+            // The hub receives the turn: the orchestrator reads what the
+            // member needed and settles it — answer, re-dispatch, or
+            // re-plan.
+            let lead_name = lead.expect("the room's lead");
+            self.apply_speaker(&lead_name)?;
+            return Ok(());
+        }
         if !mentions_owner && !in_room {
             // A role the home keeps but the room does not hold: the address
             // proposes convening it rather than routing (C5). A name that
@@ -8960,6 +9128,26 @@ fn parse_control(value: &serde_json::Value) -> Option<Control> {
     if let Some(pin) = value.get("pin").and_then(|pin| pin.as_str()) {
         return Some(Control::Pin(pin.trim().to_string()));
     }
+    if let Some(message) = value.get("persona_message") {
+        let text = message.get("text").and_then(|t| t.as_str()).map(str::trim);
+        let session = message
+            .get("session")
+            .and_then(|s| s.as_str())
+            .map(str::trim)
+            .unwrap_or_default();
+        if let Some(text) = text.filter(|text| !text.is_empty()) {
+            if !session.is_empty() {
+                return Some(Control::PersonaMessage {
+                    role: message
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .map(str::to_string),
+                    session: session.to_string(),
+                    text: text.to_string(),
+                });
+            }
+        }
+    }
     let text = value
         .get("steer")
         .and_then(|steer| steer.as_str())
@@ -9128,6 +9316,22 @@ fn mean(values: &[f64]) -> f64 {
 fn steer_frame(text: &str) -> String {
     format!(
         "[the owner of this run steered it through its control file \u{2014} this is the owner speaking, not you]\n{text}"
+    )
+}
+
+/// The frame a dispatched persona's message rides in: attributed to the
+/// persona and its thread, never dressed as the owner's words and never
+/// as the run's own reasoning (the steer_frame discipline, one layer
+/// down). The owner's hub ruling: the persona talks to its orchestrator
+/// through this channel, and the orchestrator must be able to tell whose
+/// line it is reading.
+fn persona_message_frame(role: Option<&str>, session: &str, text: &str) -> String {
+    let who = match role {
+        Some(role) => format!("your dispatched persona `{role}`"),
+        None => "a dispatched persona".to_string(),
+    };
+    format!(
+        "[a message from {who} \u{2014} dispatched thread `{session}`; this is the persona          speaking, not you, and not the owner]\n{text}"
     )
 }
 
@@ -11071,6 +11275,204 @@ mod tests {
         }
         assert_eq!(mentions, 1, "one address, one routing row");
         assert_eq!(authors, vec![Some("auditor".to_string())]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn a_member_addressing_a_member_reroutes_to_the_orchestrator_with_the_signal() {
+        // The hub rule (the owner's orchestrator ruling, 2026-11-13):
+        // same-level personas do not address each other directly — a need
+        // to is an unresolved dependency in the task breakdown. The
+        // address reroutes to the lead with the signal named, and the
+        // speaker moves to the orchestrator, not the addressed peer.
+        let m = fold_mock("the run is complete");
+        let home = scratch("hub-gate");
+        // tower is the lead (first named); auditor and clerk are members.
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["tower".to_string()]),
+        )
+        .unwrap();
+        for member in ["auditor", "clerk"] {
+            session
+                .record(&crate::session::Record::Join {
+                    persona: member.to_string(),
+                    role: None,
+                    temporal: false,
+                    at: "2026-11-03T14:00:00Z".to_string(),
+                })
+                .unwrap();
+        }
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let options = AgentOptions {
+            principal: None,
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 3,
+            capped: false,
+            health_note: false,
+            lane_prose: false,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let path = session.path().to_path_buf();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        // The lead authored the last turn, so auditor (a member) is the
+        // speaker now: auditor addressing clerk is the member-to-member
+        // case.
+        agent
+            .route_mention("@auditor check the ledger")
+            .expect("the lead's address routes");
+        assert_eq!(agent.active_speaker.as_deref(), Some("auditor"));
+        agent
+            .route_mention("@clerk I need your numbers before I can finish")
+            .expect("the address is taken");
+        // The speaker moved to the ORCHESTRATOR, not the addressed peer.
+        assert_eq!(
+            agent.active_speaker.as_deref(),
+            Some("tower"),
+            "the hub receives the turn"
+        );
+        drop(agent);
+        let records = crate::session::replay(&path).expect("the log replays");
+        let signals: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                matches!(
+                    record,
+                    Record::Recommend { kind, .. } if kind == "unresolved dependency"
+                )
+            })
+            .collect();
+        assert_eq!(signals.len(), 1, "one dependency signal: {records:?}");
+        if let Record::Recommend { name, from, .. } = signals[0] {
+            assert_eq!(name, "clerk");
+            assert_eq!(from.as_deref(), Some("auditor"));
+        }
+        // The lead's own address and the owner's `@you` still pass
+        // untouched — covered by the neighbouring mention tests; this
+        // case's lead turn already proved the lead's address routes.
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_persona_message_is_delivered_to_the_orchestrators_control_file() {
+        // The hub channel's delivery: a dispatched run (its start record
+        // names the parent) writes the parent's control file with the
+        // attributed payload; a run dispatched by nobody is refused by
+        // name.
+        let home = scratch("persona-message");
+        let parent = crate::session::Session::create(&home, "m").expect("the parent log");
+        let parent_id = parent.id().to_string();
+        drop(parent);
+        let child = crate::session::Session::create_subagent(&home, "m", &parent_id, None)
+            .expect("the child log");
+        let client = Client::new("http://127.0.0.1:1".to_string(), "test-key");
+        let options = AgentOptions {
+            principal: None,
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 3,
+            capped: false,
+            health_note: false,
+            lane_prose: false,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut session = child;
+        let child_id = session.id().to_string();
+        {
+            let agent = Agent::new(
+                &client,
+                options.clone(),
+                &mut session,
+                Box::new(ApproveAll),
+                &mut *progress,
+            )
+            .unwrap();
+            let delivered = agent.run_message_orchestrator(
+                r#"{"message": "the corpus path the brief names is missing"}"#,
+            );
+            assert!(delivered.contains("delivered"), "{delivered}");
+        }
+        // A run dispatched by nobody is refused by name.
+        {
+            let mut orphan = crate::session::Session::create(&home, "m").expect("an orphan log");
+            let orphan_agent = Agent::new(
+                &client,
+                AgentOptions {
+                    session_id: None,
+                    ..options
+                },
+                &mut orphan,
+                Box::new(ApproveAll),
+                &mut *progress,
+            )
+            .unwrap();
+            let refused = orphan_agent.run_message_orchestrator(r#"{"message": "hello"}"#);
+            assert!(
+                refused.contains("not dispatched by an orchestrator"),
+                "{refused}"
+            );
+        }
+        // The parent's control file carries the attributed payload.
+        let control = home.join("sessions").join(format!("{parent_id}.control"));
+        let payload: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&control).expect("the control"))
+                .expect("the payload parses");
+        let message = &payload["persona_message"];
+        assert_eq!(message["session"].as_str().unwrap(), child_id);
+        assert!(
+            message["text"]
+                .as_str()
+                .unwrap()
+                .contains("the corpus path"),
+            "{message}"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -15744,6 +16146,7 @@ You are auditing a change. Read the diff before you judge it.
             verdict: Some("pass".to_string()),
             execution: None,
             reason: "sys1 judged `hard`".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![("stepfun".to_string(), "step-5-preview".to_string())],
@@ -16794,6 +17197,36 @@ You are auditing a change. Read the diff before you judge it.
         assert_eq!(
             parse_control(&serde_json::json!({"stop": true})),
             Some(Control::Stop)
+        );
+        // The persona's channel (the owner's hub ruling): the payload the
+        // message_orchestrator tool writes, parsed whole — and a payload
+        // missing its text or its thread is nothing, not a guess.
+        assert_eq!(
+            parse_control(&serde_json::json!({"persona_message": {
+                "session": "20261113T170000Z-child",
+                "text": "the brief's second reading is ambiguous; which did you mean?",
+            }})),
+            Some(Control::PersonaMessage {
+                role: None,
+                session: "20261113T170000Z-child".to_string(),
+                text: "the brief's second reading is ambiguous; which did you mean?".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_control(&serde_json::json!({"persona_message": {
+                "role": "scholar",
+                "session": "20261113T170000Z-child",
+                "text": "need the corpus path",
+            }})),
+            Some(Control::PersonaMessage {
+                role: Some("scholar".to_string()),
+                session: "20261113T170000Z-child".to_string(),
+                text: "need the corpus path".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_control(&serde_json::json!({"persona_message": {"session": "x"}})),
+            None
         );
         assert_eq!(
             parse_control(&serde_json::json!({"steer": "go left"})),
@@ -17993,6 +18426,7 @@ mod tier_tests {
             verdict: Some("pass".into()),
             execution: None,
             reason: "test".into(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: Vec::new(),

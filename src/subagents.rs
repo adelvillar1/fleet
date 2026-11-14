@@ -1284,6 +1284,27 @@ pub struct ChildRoute {
 /// is by resolving a different model right here. It does not: the
 /// child's model is the parent's, read from the parent's own options,
 /// and the parent's active decision rides along only to be named.
+/// A role-dispatch's tool set (the owner's hub ruling, 2026-11-13):
+/// the role narrows the run's own set, and every role-carrying dispatch
+/// gains the line to its orchestrator — the channel is structural, not
+/// a capability a role narrows or widens. A dispatch under no role is
+/// untouched.
+fn role_scope_tools(
+    tools: Option<Vec<String>>,
+    role: Option<&crate::roles::Role>,
+) -> Option<Vec<String>> {
+    let Some(role) = role else { return tools };
+    let base = tools.unwrap_or_else(Scope::default_admitted);
+    let narrowed: Vec<String> = base
+        .into_iter()
+        .filter(|tool| role.admits(tool) || tool == tools::MESSAGE_ORCHESTRATOR_TOOL)
+        .chain(std::iter::once(
+            tools::MESSAGE_ORCHESTRATOR_TOOL.to_string(),
+        ))
+        .collect();
+    Some(narrowed)
+}
+
 pub fn child_route(parent_model: &str, decision: Option<&RouteDecision>) -> ChildRoute {
     ChildRoute {
         model: parent_model.to_string(),
@@ -1967,16 +1988,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // the call's own declaration when it carried one, the harness's
     // default-admitted set when it did not — because narrowing an
     // absent declaration would leave the child with nothing at all.
-    let tools = match &role {
-        Some(role) if !role.tools.is_empty() => Some(
-            tools
-                .unwrap_or_else(Scope::default_admitted)
-                .into_iter()
-                .filter(|tool| role.admits(tool))
-                .collect(),
-        ),
-        _ => tools,
-    };
+    let tools = role_scope_tools(tools, role.as_ref());
     // The role's skills ride beside the parent's, resolved the way a
     // foreground run resolves the library — the fleet home is not a
     // skills library, and loading it directly declared nothing
@@ -3222,6 +3234,70 @@ mod tests {
         let plain = child_route("test-model", None);
         assert_eq!(plain.model, "test-model");
         assert_eq!(plain.provider, None);
+    }
+
+    /// The hub ruling's admission pin (2026-11-13): the channel is
+    /// structural — every role-carrying dispatch gains it, whatever the
+    /// role's tool breadth, and a dispatch under no role never carries
+    /// it.
+    #[test]
+    fn a_role_dispatch_gains_the_orchestrator_channel_and_a_roleless_one_does_not() {
+        let role = crate::roles::Role {
+            name: "scholar".to_string(),
+            description: "reads the corpus".to_string(),
+            tools: vec!["read_file".to_string(), "grep".to_string()],
+            skills: Vec::new(),
+            shapes: Vec::new(),
+            workload: None,
+            overlay: String::new(),
+            path: std::path::PathBuf::from("/roles/scholar.md"),
+            modified: None,
+        };
+        // A narrowed role: the channel rides BESIDE the narrowing, not
+        // inside it — the role's list never carried it and the child
+        // still has the line.
+        let narrowed = role_scope_tools(
+            Some(vec!["read_file".to_string(), "grep".to_string()]),
+            Some(&role),
+        )
+        .expect("the role declared tools");
+        assert!(narrowed.contains(&"read_file".to_string()));
+        assert!(
+            !narrowed.contains(&"write_file".to_string()),
+            "{narrowed:?}"
+        );
+        assert!(
+            narrowed
+                .iter()
+                .any(|tool| tool == tools::MESSAGE_ORCHESTRATOR_TOOL),
+            "{narrowed:?}"
+        );
+        // A role that narrows nothing: the default set plus the channel.
+        let open = crate::roles::Role {
+            tools: Vec::new(),
+            ..role.clone()
+        };
+        let opened = role_scope_tools(None, Some(&open)).expect("the default set");
+        assert!(
+            opened
+                .iter()
+                .any(|tool| tool == tools::MESSAGE_ORCHESTRATOR_TOOL),
+            "{opened:?}"
+        );
+        assert!(opened.contains(&"bash".to_string()), "{opened:?}");
+        // No role: the helper passes the caller's set through untouched —
+        // `None` stays `None` (the caller applies its own default), and a
+        // carried set never gains the channel.
+        assert!(role_scope_tools(None, None).is_none(), "a pass-through");
+        let carried = Some(vec!["bash".to_string()]);
+        let plain_set = role_scope_tools(carried.clone(), None).expect("carried through");
+        assert_eq!(plain_set, vec!["bash".to_string()]);
+        assert!(
+            !plain_set
+                .iter()
+                .any(|tool| tool == tools::MESSAGE_ORCHESTRATOR_TOOL),
+            "{plain_set:?}"
+        );
     }
 
     #[test]
