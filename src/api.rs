@@ -2439,6 +2439,7 @@ mod tests {
             verdict: None,
             execution: None,
             reason: "test".to_string(),
+            walked: None,
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string())],

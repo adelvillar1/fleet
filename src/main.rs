@@ -351,6 +351,7 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         &options.task,
         &HashMap::new(),
         pin.as_deref(),
+        None,
         options.session.as_deref(),
     )
     .await
@@ -517,6 +518,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
                 trimmed,
                 &HashMap::new(),
                 pin.as_deref(),
+                None,
                 Some(session.id()),
             )
             .await

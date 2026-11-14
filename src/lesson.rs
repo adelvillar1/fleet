@@ -273,6 +273,7 @@ pub fn seed_teacher(home: &Path) -> Result<(), String> {
         return Ok(());
     }
     let fields = crate::roles::RoleFields {
+        workload: None,
         description: "The learning teacher — moves one reasoning step at a time, from what the learner holds to the goal.".to_string(),
         tools: Vec::new(),
         skills: Vec::new(),
@@ -321,6 +322,7 @@ pub fn seed_prober(home: &Path) -> Result<(), String> {
         return Ok(());
     }
     let fields = crate::roles::RoleFields {
+        workload: None,
         description: "The learning prober — asks what the learner holds, where it ends, and what they are reaching for.".to_string(),
         tools: Vec::new(),
         skills: Vec::new(),
@@ -905,6 +907,7 @@ pub fn seed_practitioner(home: &Path) -> Result<(), String> {
         return Ok(());
     }
     let fields = crate::roles::RoleFields {
+        workload: None,
         description: "The learning practitioner — poses varied problems that require the knowledge to come to mind unnamed.".to_string(),
         tools: Vec::new(),
         skills: Vec::new(),
