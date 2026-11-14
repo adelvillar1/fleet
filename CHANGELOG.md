@@ -12,6 +12,35 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.4 — 2026-11-14
+
+Draining the sinkholes and closing the dead ends — two audits of the
+places fleet produced information it never resurfaced, and the journeys
+that left the owner stuck, answered in one pass.
+
+The calibration lens now shows every measurement the stream records. The
+seven ops that were written and never displayed — footprint, shape,
+curate, validate, demand, learn probes, learn checks — each render their
+own facts, grouped beside the three the lens already carried; the curate
+vote was being dropped at the read gate and now survives it. The facts a
+run already transported but no surface read come into view: which corpus
+a recall came from, a checkpoint's size, the turn cap beside the climbing
+counter, a cron fire's catch-up mark and its session, how many skills the
+run carried, the repairs the grader applied, and a skill's last-modified
+time and canonical library. The recall-over-past-sessions channel opens
+itself on first use instead of answering "not searched" forever, and the
+routed event carries one order shape, not a shadowed duplicate.
+
+The dead ends close on the face: a refusal gives the owner their words
+back — the goal that set but whose run was refused, a queued message the
+server turned away, a plan that would not send — instead of destroying
+them; the borrowed composer on the desk and a lesson queues while a run
+is in flight like the main one; the seat's decision buttons travel with
+the composer that raised them; a relayed face declares its connection
+lost like a direct one; a stop pressed during a network gap replays when
+the server is reachable again; and the archive, open, and rewind presses
+name themselves when a gap swallows them rather than doing nothing.
+
 ## v0.8.3 — 2026-11-14
 
 The orchestrator — the owner's hub topology, built on the routing and
