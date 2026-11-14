@@ -910,16 +910,43 @@ pub fn layerfs_step(home: &Path, progress: &mut dyn std::io::Write) -> LayerfsSt
             .status()
             .is_ok_and(|status| status.success())
     };
-    let image_in_docker = |bundle: Option<&std::path::Path>| {
-        bundle.and_then(bundle_image).is_some_and(|image| {
-            std::process::Command::new("docker")
-                .args(["image", "inspect", &image])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-        })
+    // The image reference, resolved BEFORE the plan so the plan sees the
+    // runtime's present image — in the runtime's most portable form: the
+    // recorded repo digest (`repo@sha256:…`, which survives runtime
+    // switches and re-pulls), the pin's repo digest resolved from the
+    // active runtime's RepoDigests, or the pin as named. A bare
+    // config-digest pin only resolved on the runtime that computed it;
+    // kiri recomputes local IDs and honours the repo digest instead, so
+    // the pin stranded the worker after the runtime switch (the owner's
+    // 2026-11-14 kiri ruling).
+    let pinned = bundle.as_deref().and_then(bundle_image).unwrap_or_default();
+    let recorded_portable = crate::layerfs_tools::read_machine_at(home)
+        .ok()
+        .map(|machine| machine.image)
+        .filter(|image| image.contains("@sha256:"));
+    let mut image =
+        recorded_portable.unwrap_or_else(|| image_repo_digest(&pinned).unwrap_or(pinned.clone()));
+    let image_in_docker = |image: &str| {
+        std::process::Command::new("docker")
+            .args(["image", "inspect", image])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     };
+    // The runtime lacks the reference: pull by it — the repo-digest pull
+    // works on every Engine-API runtime (proven on kiri).
+    if !image.is_empty() && !image_in_docker(&image) {
+        let pulled = std::process::Command::new("docker")
+            .args(["pull", &image])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if !pulled && image != pinned && image_in_docker(&pinned) {
+            image = pinned.clone();
+        }
+    }
     let mut plan = plan_layerfs(
         configured,
         worker_up,
@@ -927,11 +954,7 @@ pub fn layerfs_step(home: &Path, progress: &mut dyn std::io::Write) -> LayerfsSt
         node_present(),
         git_present(),
         bundle.as_deref(),
-        // The image the sealed bundle recorded — the bundle's own
-        // manifest, so a clean environment provisions the same machine
-        // a provisioned one verifies. The operator's LAYERFS_IMAGE pin
-        // wins when it names one.
-        image_in_docker(bundle.as_deref()),
+        image_in_docker(&image),
     );
     if matches!(plan, LayerfsStep::Build) {
         // The chain runs, the world is re-read, the plan re-decides: a
@@ -940,6 +963,12 @@ pub fn layerfs_step(home: &Path, progress: &mut dyn std::io::Write) -> LayerfsSt
         match build_bundle(progress) {
             Ok(()) => {
                 bundle = discover_bundle();
+                // The freshly-built bundle's pin: the plan re-decides
+                // against it — and the portable resolution (the recorded
+                // repo digest, the pin's repo digest) applies to it the
+                // same way.
+                let built = bundle.as_deref().and_then(bundle_image).unwrap_or_default();
+                let built = image_repo_digest(&built).unwrap_or(built);
                 plan = plan_layerfs(
                     configured,
                     worker_up,
@@ -947,7 +976,7 @@ pub fn layerfs_step(home: &Path, progress: &mut dyn std::io::Write) -> LayerfsSt
                     node_present(),
                     true,
                     bundle.as_deref(),
-                    image_in_docker(bundle.as_deref()),
+                    image_in_docker(&built),
                 );
             }
             Err(reason) => {
@@ -990,7 +1019,14 @@ pub fn layerfs_step(home: &Path, progress: &mut dyn std::io::Write) -> LayerfsSt
     // The worker, started through the bundle's runtime: a home whose
     // worker cannot answer is not a provisioned substrate, so a failed
     // start is a named skip and the facts stay unrecorded.
-    let image = bundle.as_deref().and_then(bundle_image).unwrap_or_default();
+    //
+    // The image reference is recorded in the runtime's own most portable
+    // form: the repo digest when the runtime names one (Docker, kiri —
+    // both resolve `repo@sha256:…` on every restart), the caller's
+    // reference otherwise. A bare config-digest pin only resolved on
+    // Docker Desktop; kiri recomputes local IDs and honours the repo
+    // digest instead, so the pin stranded the worker after the runtime
+    // switch (the owner's 2026-11-14 kiri ruling).
     let started = std::process::Command::new("node")
         .arg(layerfs_home.join(crate::layerfs_tools::WORKER_SCRIPT))
         .args([
@@ -1326,6 +1362,51 @@ fn install_layerfs_scripts(layerfs_home: &std::path::Path) {
 /// a provisioned one verifies (the old path read the process env, and
 /// a clean env recorded an empty image, which the doctor then failed
 /// on). The operator's `LAYERFS_IMAGE` pin wins when it names one.
+/// The runtime's most portable reference for `image`: the repo digest
+/// (`repo@sha256:…`) of the image whose digests carry the pin. A bare
+/// config-digest pin resolves only on the runtime that computed it —
+/// kiri recomputes local IDs and honours repo digests instead — while
+/// the repo digest resolves on every Engine-API runtime. Scans the
+/// image list rather than inspecting the pin, because a runtime that
+/// recomputes IDs cannot resolve the pin by name at all.
+fn image_repo_digest(image: &str) -> Option<String> {
+    if image.is_empty() {
+        return None;
+    }
+    let output = std::process::Command::new("docker")
+        .args([
+            "images",
+            "--digests",
+            "--format",
+            "{{.Repository}}:{{.Tag}} {{.Digest}} {{.ID}}",
+        ])
+        .output()
+        .ok()?;
+    repo_digest_from_list(&String::from_utf8_lossy(&output.stdout), image)
+}
+
+/// The pure half of [`image_repo_digest`]: the image list's lines against
+/// the pin. The repo reference is the image's first named repository with
+/// the digest the pin names — `repo@sha256:…`, portable across runtimes
+/// (Docker resolves it from RepoDigests, kiri from its own store).
+fn repo_digest_from_list(list: &str, image: &str) -> Option<String> {
+    // The scan reads the `--digests` table's columns (`{{.Repository}}:{{.Tag}}
+    // {{.Digest}} {{.ID}}`): the line whose digest IS the pin names the
+    // repository, and `repo@pin` is the portable reference — resolvable
+    // on Docker Desktop (RepoDigests) and kiri (its own store) alike.
+    for line in list.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 3 {
+            continue;
+        }
+        if fields[1] == image {
+            let repo = fields[0].split(':').next()?;
+            return Some(format!("{repo}@{image}"));
+        }
+    }
+    None
+}
+
 fn bundle_image(bundle: &std::path::Path) -> Option<String> {
     if let Some(pinned) = std::env::var("LAYERFS_IMAGE")
         .ok()
@@ -1666,6 +1747,34 @@ fn render_credentials(home: &Path) -> String {
 mod tests {
     /// C3's decision, pure: each missing prerequisite names its
     /// provision, and a configured machine verifies.
+    /// The kiri switch's portability pin (the owner's 2026-11-14
+    /// ruling): the provisioning records the repo-digest reference —
+    /// `repo@sha256:…` — because a bare config-digest pin only resolved
+    /// on the runtime that computed it. The scan matches the digest
+    /// wherever the runtime carries it and never invents a reference
+    /// for an image it does not hold.
+    #[test]
+    fn the_image_reference_is_the_portable_repo_digest() {
+        let pin = "sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0";
+        // Docker Desktop's RepoDigests list shape.
+        let desktop = "node:latest sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0 3d27e5c11e57\nalpine:latest sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf b90627b8f429";
+        assert_eq!(
+            repo_digest_from_list(desktop, pin).as_deref(),
+            Some("node@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0"),
+        );
+        // Kiri's RepoDigests list shape: the same pin, its own local
+        // ID, the repository unnamed — the repodigest carries the pin
+        // even where its Digest column is empty.
+        let kiri = "node:<none> sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0 689ab4a50592\nalpine:latest sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf abbc135a7d39";
+        assert_eq!(
+            repo_digest_from_list(kiri, pin).as_deref(),
+            Some("node@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0"),
+        );
+        // An image the runtime does not hold: no invented reference.
+        assert_eq!(repo_digest_from_list(desktop, "sha256:not-there"), None);
+        assert_eq!(repo_digest_from_list("", pin), None);
+    }
+
     #[test]
     fn the_layerfs_decision_names_each_missing_prerequisite() {
         // Configured AND answering: the machine verifies in

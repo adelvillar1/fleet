@@ -48,8 +48,36 @@ volumes over, and the worker re-provisions onto it through the ordinary
    switch is proven. If it recurs under kiri, the record-reconcile repair
    stays the answer and the runtime question reopens.
 
+## The switch, executed 2026-11-14 — and the boundary it found
+
+Kiri 0.2.0 installed (`/Applications/Kiri.app`, the CLI on PATH), the
+`kiri` docker context created against its socket
+(`~/.kiri/run/docker.sock`), the pinned runtime image pulled by repo
+digest, and the fleet project's store volume copied over
+(34.1M). Fleet's provisioning records the image reference in the
+runtime-portable form now (`repo@sha256:…` — a bare config-digest pin
+only resolved on the runtime that computed it; kiri recomputes local
+IDs), so the reference travels with the machine, not with Docker
+Desktop.
+
+**The boundary**: the layerfs worker itself is Docker-Desktop-shaped.
+Its container mounts `/var/run/docker.sock` (the socket Docker Desktop
+exposes) and `/var/lib/docker/volumes` (Desktop's host-side volume
+path), and its inner docker CLI pins that socket. Kiri's socket lives at
+`~/.kiri/run/docker.sock` and its volumes live inside the VM's data
+disk — the worker's start fails on those mounts (KI-543). The substrate
+(delegation sandboxes) is degraded by name until either:
+
+- **(a) the layerfs bundle adaptation** — the pinned checkout's worker
+  (`api/runtime/src/worker/server.js`) and fleet's install scripts take
+  the socket and volume host paths from the endpoint/config, so kiri's
+  layout provisions the same substrate; or
+- **(b) Docker Desktop back** for delegation work until (a) lands —
+  restart it and the old worker resumes on the recorded port.
+
 ## The line
 
 Fleet stays runtime-agnostic by construction: it speaks the Engine API,
-not a vendor. No fleet code changes for this switch; if kiri is proven,
-Docker Desktop simply leaves the machine.
+not a vendor. The image-reference portability is fleet's own now; the
+socket/volume layout lives in the layerfs bundle, and that is the piece
+the kiri switch still has to carry across.

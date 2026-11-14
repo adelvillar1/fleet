@@ -36,8 +36,13 @@ wide. Both are small fixes.
 - [x] C3: a stale-record repair takes the light path — read the running
   container's published port, rewrite endpoint.json, re-probe; seconds,
   no re-provision. A dead worker keeps the full install leg.
-- [x] C4: kiri captured as direction (Docker Engine API compatible; no
-  fleet code change; the owner tries it on this machine).
+- [x] C4: kiri captured as direction AND the switch executed (the
+  owner's order): kiri 0.2.0 installed, the context + image + store
+  volume migrated, the provisioning records the portable repo-digest
+  reference now. The boundary found: the layerfs worker's
+  socket/volume mounts are Docker-Desktop-shaped (KI-543) — the
+  substrate is degraded by name until the bundle adaptation or Docker
+  Desktop back.
 - [x] C5: the gate; commits on master, push; local deploy (rm-then-cp →
   face relaunch); no release steps.
 
