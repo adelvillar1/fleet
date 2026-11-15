@@ -815,8 +815,9 @@ fn plan_layerfs(
     }
     if !docker {
         return LayerfsStep::Skipped {
-            reason: "Docker is not running".to_string(),
-            provision: "start Docker Desktop — the worker and every Sandbox are containers"
+            reason: "the container runtime is not running".to_string(),
+            provision: "start the container runtime (kiri or Docker) — the worker and every \
+                        Sandbox are containers"
                 .to_string(),
         };
     }
@@ -1791,8 +1792,8 @@ mod tests {
         ));
         match plan_layerfs(false, false, false, true, false, None, true) {
             LayerfsStep::Skipped { reason, provision } => {
-                assert!(reason.contains("Docker"), "{reason}");
-                assert!(provision.contains("Docker Desktop"), "{provision}");
+                assert!(reason.contains("container runtime"), "{reason}");
+                assert!(provision.contains("container runtime"), "{provision}");
             }
             other => panic!("expected the docker skip, got {other:?}"),
         }

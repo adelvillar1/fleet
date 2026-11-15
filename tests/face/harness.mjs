@@ -13348,6 +13348,30 @@ async function theDeskLandingIsProjectCentric() {
     page.rows('.dk-design-card').length === 1, String(page.rows('.dk-design-card').length));
 }
 
+// The self-healing extension: the app drives the substrate's fix. A
+// starting worker paints progress (no press); no runtime paints the
+// install-kiri offer.
+async function theSubstrateHealsItselfAndOffersKiri() {
+  const withServices = (services) => boot({
+    documents: { state: (asked) => ({ ...emptyState(asked), services: { services } }) },
+  });
+  const starting = withServices([
+    { name: 'layerfs', up: false, note: 'the worker does not answer', repair: 'fleet install', starting: true },
+  ]);
+  await flush(); starting.open(); await flush();
+  check('HEAL the starting card shows progress, not a press',
+    starting.text('svc-down').includes('starting container') &&
+    starting.rows('.svc-repair').length === 0,
+    starting.text('svc-down'));
+  const noruntime = withServices([
+    { name: 'docker', up: false, note: 'no container runtime is installed', repair: 'start the container runtime', needs_runtime: true },
+  ]);
+  await flush(); noruntime.open(); await flush();
+  check('HEAL the no-runtime card offers to install kiri',
+    noruntime.text('svc-down').includes('Install kiri and start the container'),
+    noruntime.text('svc-down'));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -13504,6 +13528,7 @@ const cases = [
   ['RESKIN the Motion switch freezes the shell', theMotionSwitchFreezesTheShell],
   ['U8 the Motion switch overrides the OS default on press', theMotionSwitchOverridesTheOsDefaultOnPress],
   ['HEALTH the down substrate asks and the press repairs', theDownSubstrateAsksAndThePressRepairs],
+  ['HEAL the substrate heals itself and offers kiri', theSubstrateHealsItselfAndOffersKiri],
   ['HEALTH another down service keeps its words', anotherDownServiceKeepsItsWords],
   ['RESKIN the Mission card paints the install', theMissionCardPaintsTheInstall],
   ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],

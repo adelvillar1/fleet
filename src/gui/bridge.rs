@@ -398,6 +398,13 @@ pub struct Bridge {
     /// presses never race two workers (the self-healing effort's
     /// ask-then-act, 2026-11-13).
     repair_in_flight: tokio::sync::Mutex<()>,
+    /// The app-driven substrate heal (the self-healing extension): true
+    /// while the health loop is starting the worker container itself, so
+    /// the face paints "starting container…" rather than a press.
+    heal_starting: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The last auto-heal attempt, for the cooldown that keeps the probe
+    /// loop from thrashing a worker that will not start.
+    last_heal: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 /// The bot face's pairing-card facts, attached at launch.
@@ -478,6 +485,8 @@ impl Bridge {
             remote_bring_up: tokio::sync::Mutex::new(()),
             remote_shutdowns: std::sync::Mutex::new(Vec::new()),
             repair_in_flight: tokio::sync::Mutex::new(()),
+            heal_starting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            last_heal: std::sync::Mutex::new(None),
             workspace_rail: std::sync::Mutex::new(None),
             trace_tail: Arc::new(std::sync::Mutex::new(
                 crate::layerfs_view::TraceTail::default(),
@@ -645,8 +654,107 @@ impl Bridge {
                         let _ = bridge.note_health_transition(report);
                     }
                 }
+                // The app-driven heal (the self-healing extension): keep
+                // the starting flag on the card, then start the worker
+                // itself when it is down and a runtime answers.
+                bridge.overlay_heal_state();
+                bridge.auto_heal_substrate().await;
             }
         });
+    }
+
+    /// Overlay the app-driven heal's starting flag onto the shared report
+    /// so the face paints "starting container…" while the loop heals (the
+    /// self-healing extension). The probe rebuilds the report each pass;
+    /// this re-applies the flag the heal owns.
+    fn overlay_heal_state(&self) {
+        let starting = self
+            .heal_starting
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let mut guard = self.health.lock().expect("health slot");
+        if let Some(report) = guard.as_mut() {
+            for service in report.services.iter_mut() {
+                if service.name == "layerfs" {
+                    service.starting = starting;
+                }
+            }
+        }
+    }
+
+    /// Send the current services on the health event with a given sentence
+    /// — the face repaints the card from it (the self-healing extension).
+    fn send_health_event(&self, text: &str) {
+        let guard = self.health.lock().expect("health slot");
+        if let Some(report) = guard.as_ref() {
+            let _ = self.events.send(json!({
+                "type": "health",
+                "text": text,
+                "services": serde_json::to_value(&report.services).unwrap_or_default(),
+            }));
+        }
+    }
+
+    /// The app drives the substrate's fix (the self-healing extension):
+    /// when the worker is down and a runtime answers, start it without a
+    /// press — the face paints "starting container…". A cooldown and the
+    /// repair guard keep the probe loop from thrashing a worker that will
+    /// not start. No runtime is the install offer's job, not this one's.
+    async fn auto_heal_substrate(self: &std::sync::Arc<Self>) {
+        let layerfs_down = {
+            let guard = self.health.lock().expect("health slot");
+            guard
+                .as_ref()
+                .map(|r| r.services.iter().any(|s| s.name == "layerfs" && !s.up))
+                .unwrap_or(false)
+        };
+        if !layerfs_down {
+            return;
+        }
+        let runtime = crate::health::detect_runtime();
+        if !runtime.installed {
+            // No runtime at all is the install offer's job, not this one's.
+            return;
+        }
+        if !runtime.answering {
+            // Installed but asleep: wake the daemon; the next pass sees it
+            // answering and starts the worker. Cheap, so no cooldown.
+            crate::health::wake_runtime(runtime.kind);
+            return;
+        }
+        {
+            let mut last = self.last_heal.lock().expect("heal cooldown");
+            if let Some(t) = *last {
+                if t.elapsed() < std::time::Duration::from_secs(60) {
+                    return;
+                }
+            }
+            *last = Some(std::time::Instant::now());
+        }
+        let Ok(_guard) = self.repair_in_flight.try_lock() else {
+            return;
+        };
+        self.heal_starting
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.overlay_heal_state();
+        self.send_health_event("starting the layerfs worker container…");
+        let home = self.home.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = crate::install::layerfs_step(&home, &mut std::io::sink());
+        })
+        .await;
+        self.heal_starting
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let task_home = self.home.clone();
+        let task_slot = std::sync::Arc::clone(&self.health);
+        let _ = tokio::task::spawn_blocking(move || {
+            crate::health::probe_once(&task_home, 0, &task_slot)
+        })
+        .await;
+        self.overlay_heal_state();
+        let guard = self.health.lock().expect("health slot");
+        if let Some(report) = guard.as_ref() {
+            let _ = self.note_health_transition(report);
+        }
     }
 
     /// A transition's one sentence on the transcript: what changed and
@@ -3950,6 +4058,25 @@ impl Bridge {
         // HealthReport, `services` included — so the pressing face's
         // `face.services = reply.body` lands the shape paintServices
         // reads, and the card repaints from the reply honestly.
+        Ok(serde_json::to_value(&fresh).unwrap_or(Value::Null))
+    }
+
+    /// The app drives the runtime install (the self-healing extension):
+    /// download the kiri dmg and open its installer. The owner completes
+    /// the macOS install; the health loop wakes the daemon and starts the
+    /// worker once the runtime answers. Loopback-only, like the repair —
+    /// the remote allowlist does not gain this route.
+    pub async fn repair_install_runtime(self: &std::sync::Arc<Self>) -> Result<Value, String> {
+        let _guard = self.repair_in_flight.lock().await;
+        tokio::task::spawn_blocking(install_kiri)
+            .await
+            .map_err(|_| "the install did not land".to_string())??;
+        let fresh = crate::health::probe(&self.home, false);
+        {
+            let mut guard = self.health.lock().expect("health slot");
+            *guard = Some(fresh.clone());
+        }
+        self.note_health_transition(&fresh);
         Ok(serde_json::to_value(&fresh).unwrap_or(Value::Null))
     }
 
@@ -9524,6 +9651,44 @@ fn doctor_rows(home: &std::path::Path) -> Vec<Value> {
         }));
     }
     rows
+}
+
+/// Download the kiri dmg and open its installer (the self-healing
+/// extension's install path, the owner's choice). The macOS install is the
+/// owner's to complete; the health loop wakes the daemon and starts the
+/// worker once the runtime answers. Fleet stays runtime-agnostic — this
+/// only fetches the installer the owner asked for.
+fn install_kiri() -> Result<(), String> {
+    let release: Value = ureq::get("https://api.github.com/repos/libracoder/kiri/releases/latest")
+        .set("User-Agent", "fleet-substrate-heal")
+        .call()
+        .map_err(|e| format!("could not reach the kiri release: {e}"))?
+        .into_json()
+        .map_err(|e| format!("the kiri release was unreadable: {e}"))?;
+    let dmg_url = release["assets"]
+        .as_array()
+        .and_then(|assets| {
+            assets.iter().find_map(|asset| {
+                let url = asset["browser_download_url"].as_str()?;
+                url.ends_with(".dmg").then(|| url.to_string())
+            })
+        })
+        .ok_or_else(|| "the kiri release carries no dmg installer".to_string())?;
+    let dmg = std::env::temp_dir().join("fleet-kiri-installer.dmg");
+    let response = ureq::get(&dmg_url)
+        .set("User-Agent", "fleet-substrate-heal")
+        .call()
+        .map_err(|e| format!("the kiri dmg would not download: {e}"))?;
+    let mut file =
+        std::fs::File::create(&dmg).map_err(|e| format!("could not write the kiri dmg: {e}"))?;
+    let mut reader = response.into_reader();
+    std::io::copy(&mut reader, &mut file)
+        .map_err(|e| format!("the kiri dmg download failed: {e}"))?;
+    std::process::Command::new("open")
+        .arg(&dmg)
+        .status()
+        .map_err(|e| format!("could not open the kiri installer: {e}"))?;
+    Ok(())
 }
 
 /// The Health lens's doctor read (the project-centered workspace plan):

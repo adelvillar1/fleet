@@ -52,3 +52,10 @@ event repaints it everywhere); a refusal names its cause.
 
 The TUI's services read; the repair route on the paired-device allowlist;
 auto-repair without asking (the ruling is ask-then-act).
+
+**Amendment (2026-11-15):** the auto-repair carve-out is reversed for the
+substrate — the owner ruled the app should drive the fix. The health loop
+now starts a stopped worker itself ("starting container…"), wakes a
+sleeping runtime, and offers to install kiri when no runtime is present.
+The ask-then-act press stays for a worker that will not auto-start. See
+[`2026-11-15-substrate-self-healing.md`](2026-11-15-substrate-self-healing.md).

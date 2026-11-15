@@ -1391,7 +1391,11 @@ import { node, svg, clip } from './core/dom.js';
       name.textContent = s.name;
       line.appendChild(name);
       line.appendChild(document.createTextNode(' \u00b7 ' + (s.note || 'down')));
-      if (s.name === 'layerfs') {
+      if (s.name === 'layerfs' && s.starting) {
+        // The app is driving the fix (the self-healing extension): the
+        // worker is starting itself — progress, not a press.
+        line.appendChild(document.createTextNode(' \u00b7 starting container\u2026'));
+      } else if (s.name === 'layerfs') {
         // The ask, then the act (the self-healing effort's shape, the
         // owner's 2026-11-13 ruling): the card asks, the press runs the
         // repair — never a narrated command.
@@ -1423,6 +1427,35 @@ import { node, svg, clip } from './core/dom.js';
           });
         });
         line.appendChild(button);
+      } else if (s.name === 'docker' && s.needs_runtime) {
+        // No runtime installed (the self-healing extension): the app
+        // offers to install kiri and start the container, not a command.
+        var install = document.createElement('button');
+        install.type = 'button';
+        install.className = 'svc-repair';
+        install.textContent = 'Install kiri and start the container';
+        install.addEventListener('click', function () {
+          install.disabled = true;
+          install.textContent = 'downloading kiri\u2026';
+          post('/api/repair/install-runtime', {}).then(function (reply) {
+            if (reply.status === 200) {
+              face.services = reply.body;
+              paintServices();
+              notice('kiri is installing',
+                'complete the macOS install \u2014 the worker starts after');
+              return;
+            }
+            install.disabled = false;
+            install.textContent = 'Install kiri and start the container';
+            notice('the install did not land',
+              (reply.body && reply.body.error) || 'the server did not answer');
+          }).catch(function () {
+            install.disabled = false;
+            install.textContent = 'Install kiri and start the container';
+            notice('the install did not land', 'the server did not answer');
+          });
+        });
+        line.appendChild(install);
       } else {
         line.appendChild(document.createTextNode(
           ' \u00b7 repair: ' + (s.repair || 'fleet doctor names it')));

@@ -1494,6 +1494,13 @@ async fn serve_connection(
             Ok(document) => write_reply(&mut stream, api(200, document)).await,
             Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
         },
+        // The app drives the runtime install (the self-healing extension):
+        // download + open the kiri dmg. Loopback only, like the repair —
+        // the remote allowlist does not gain this route.
+        ("POST", "/api/repair/install-runtime") => match bridge.repair_install_runtime().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
         // Name a session: the owner's title for the archive.
         ("POST", "/api/session/title") => {
             let body = match read_body(&mut stream, &request, rest).await {

@@ -36,6 +36,15 @@ pub struct ServiceHealth {
     pub note: String,
     /// The repair map's verb: what brings this service back.
     pub repair: &'static str,
+    /// The app is driving the fix right now (the self-healing extension):
+    /// the worker container is starting. The face paints progress, not a
+    /// press — the app heals itself.
+    #[serde(default)]
+    pub starting: bool,
+    /// No container runtime is installed (the self-healing extension): the
+    /// face offers to install kiri rather than narrating a command.
+    #[serde(default)]
+    pub needs_runtime: bool,
 }
 
 impl ServiceHealth {
@@ -45,6 +54,8 @@ impl ServiceHealth {
             up: true,
             note: String::new(),
             repair: repair_for(name),
+            starting: false,
+            needs_runtime: false,
         }
     }
     fn down(name: &'static str, note: impl Into<String>) -> Self {
@@ -53,6 +64,8 @@ impl ServiceHealth {
             up: false,
             note: note.into(),
             repair: repair_for(name),
+            starting: false,
+            needs_runtime: false,
         }
     }
 }
@@ -278,21 +291,121 @@ fn lanes_probe() -> ServiceHealth {
 
 /// The slow tier: docker's daemon answers at all. The LayerFS worker
 /// is a container; a dead daemon is the substrate's root cause.
-fn docker_probe() -> ServiceHealth {
-    let ok = std::process::Command::new("docker")
+/// The container runtime the substrate runs on (the self-healing
+/// extension). Fleet speaks the Engine API, not a vendor — this only
+/// NAMES the runtime so the face's messages are honest, and tells
+/// "installed but asleep" from "not installed at all".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Runtime {
+    Kiri,
+    Docker,
+    None,
+}
+
+impl Runtime {
+    /// The runtime's own name, for the face's messages.
+    pub fn name(self) -> &'static str {
+        match self {
+            Runtime::Kiri => "kiri",
+            Runtime::Docker => "Docker",
+            Runtime::None => "the container runtime",
+        }
+    }
+}
+
+/// What the runtime probe found: which runtime, whether it is installed,
+/// and whether its daemon answers the Engine API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeProbe {
+    pub kind: Runtime,
+    pub installed: bool,
+    pub answering: bool,
+}
+
+/// Detect the container runtime: the Engine API answering means a runtime
+/// is present; the app bundles and socket name which one. A runtime that
+/// is installed but not answering is asleep (kiri's VM sleeps when idle);
+/// neither installed is the install-kiri offer.
+pub fn detect_runtime() -> RuntimeProbe {
+    let home = std::env::var("HOME").ok();
+    let kiri_installed = Path::new("/Applications/Kiri.app").exists()
+        || home
+            .as_ref()
+            .map(|h| Path::new(h).join(".kiri/run/docker.sock").exists())
+            .unwrap_or(false);
+    let docker_installed = Path::new("/Applications/Docker.app").exists();
+    let answering = docker_answering();
+    classify_runtime(kiri_installed, docker_installed, answering)
+}
+
+/// The runtime classification, pure so its branches are testable without
+/// a machine: kiri's markers win, then Docker's, then a runtime that
+/// answers with no marker (name the chosen one), then none.
+fn classify_runtime(kiri_installed: bool, docker_installed: bool, answering: bool) -> RuntimeProbe {
+    let kind = if kiri_installed {
+        Runtime::Kiri
+    } else if docker_installed {
+        Runtime::Docker
+    } else if answering {
+        Runtime::Kiri
+    } else {
+        Runtime::None
+    };
+    RuntimeProbe {
+        kind,
+        installed: kiri_installed || docker_installed,
+        answering,
+    }
+}
+
+/// Wake an installed-but-sleeping runtime's daemon (the self-healing
+/// extension): opening the app starts its daemon — kiri's VM wakes on
+/// open, Docker Desktop launches. The next probe pass sees it answering
+/// and starts the worker. A no-op when no runtime is installed.
+pub fn wake_runtime(kind: Runtime) {
+    let app = match kind {
+        Runtime::Kiri => "Kiri",
+        Runtime::Docker => "Docker",
+        Runtime::None => return,
+    };
+    let _ = std::process::Command::new("open")
+        .args(["-a", app])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Whether the Engine API answers (`docker info`), the runtime-agnostic
+/// probe fleet has always used.
+fn docker_answering() -> bool {
+    std::process::Command::new("docker")
         .arg("info")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .map(|s| s.success())
-        .unwrap_or(false);
-    if ok {
+        .unwrap_or(false)
+}
+
+fn docker_probe() -> ServiceHealth {
+    let runtime = detect_runtime();
+    if runtime.answering {
         ServiceHealth::up("docker")
-    } else {
+    } else if runtime.installed {
         ServiceHealth::down(
             "docker",
-            "docker's daemon is down — the LayerFS worker cannot run",
+            format!(
+                "the {} daemon is not answering — the LayerFS worker cannot run",
+                runtime.kind.name()
+            ),
         )
+    } else {
+        let mut service = ServiceHealth::down(
+            "docker",
+            "no container runtime is installed — the LayerFS worker needs kiri or Docker",
+        );
+        service.needs_runtime = true;
+        service
     }
 }
 
@@ -394,7 +507,7 @@ pub fn repair_for(name: &str) -> &'static str {
     match name {
         "layerfs" => "fleet install (re-provisions the worker and re-records the endpoint)",
         "lanes" => "fleet install (rebuilds the lane venvs)",
-        "docker" => "start Docker Desktop",
+        "docker" => "start the container runtime (kiri or Docker)",
         "release" => {
             "scripts/release.sh tag v<version>, then scripts/release.sh assets v<version> \
              — the cut is the delivery; a local install is not"
@@ -563,6 +676,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch home");
         dir
+    }
+
+    /// The runtime classifier's branches (the self-healing extension),
+    /// pure so they pin without a machine: kiri's markers win, then
+    /// Docker's, then an answering runtime with no marker, then none.
+    #[test]
+    fn the_runtime_classifier_names_each_branch() {
+        assert_eq!(classify_runtime(true, true, true).kind, Runtime::Kiri);
+        assert_eq!(classify_runtime(false, true, true).kind, Runtime::Docker);
+        assert_eq!(classify_runtime(false, false, true).kind, Runtime::Kiri);
+        assert_eq!(classify_runtime(false, false, false).kind, Runtime::None);
+        // Installed but asleep is still installed — the wake path, not the
+        // install offer.
+        let asleep = classify_runtime(true, false, false);
+        assert!(asleep.installed && !asleep.answering);
+        let absent = classify_runtime(false, false, false);
+        assert!(!absent.installed);
+        assert_eq!(Runtime::Kiri.name(), "kiri");
+        assert_eq!(Runtime::Docker.name(), "Docker");
+    }
+
+    /// The repair wording is runtime-neutral (the self-healing extension):
+    /// no "Docker Desktop" command narrated under kiri.
+    #[test]
+    fn the_docker_repair_is_runtime_neutral() {
+        let repair = repair_for("docker");
+        assert!(repair.contains("container runtime"), "{repair}");
+        assert!(!repair.contains("Docker Desktop"), "{repair}");
+    }
+
+    /// The heal states serialize for the face (the self-healing extension):
+    /// starting and needs_runtime default off and ride the services doc.
+    #[test]
+    fn the_heal_states_ride_the_service_document() {
+        let up = ServiceHealth::up("layerfs");
+        assert!(!up.starting && !up.needs_runtime);
+        let json = serde_json::to_value(&up).expect("serialize");
+        assert_eq!(json["starting"], false);
+        assert_eq!(json["needs_runtime"], false);
     }
 
     /// The auto-update channel's supply, pinned without a network or a
@@ -762,6 +914,8 @@ mod tests {
                 up: true,
                 note: String::new(),
                 repair: "none",
+                starting: false,
+                needs_runtime: false,
             }
         }
         let slow = HealthReport {
