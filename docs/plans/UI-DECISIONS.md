@@ -370,6 +370,19 @@ real work lands in sessions that are not objects.
   **Settings → Advanced**, one page each: reachable, named, never in the main
   rail. *Constrains:* the rail, the palette, the address grammar, every deep
   link, the TUI's surface list when it is next rebuilt.
+  - **U44 amendment (2026-11-15, the project-centered workspace plan).** The
+    burial hid real capability — the owner could not find the second brain,
+    and the desk could not reach a project's design deliverables. Health
+    (the second brain) is now a rail lens, with the lanes' live probe and the
+    doctor's checks beside the atlas. Routing's live decision and tier chains
+    ride a Reviews section; the spine carries a delegated child's parent as a
+    `delegates_to` edge. Design boards are deliverables: the desk's project
+    column and shelf reach them and open the canvas. The Advanced doors answer
+    to their plain names in the palette (secrets, assistants, versions). The
+    rail stays lean — one lens added, the rest woven into existing lenses, not
+    a return to the twenty-panel dashboard. The landing strips stay retired
+    (U49 holds). See
+    [`2026-11-15-project-centered-workspace.md`](2026-11-15-project-centered-workspace.md).
 
 - **U45 — Two registers, plain by default.** Every user-facing string
   resolves through [`../design/VOCABULARY.md`](../design/VOCABULARY.md). The
