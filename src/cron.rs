@@ -679,6 +679,10 @@ pub struct Job {
     /// The last completed run's stamp, `YYYY-MM-DDTHH:MMZ`.
     #[serde(default)]
     pub last_success: Option<String>,
+    /// The retries a failed run has already spent (the self-healing
+    /// extension): one bounded retry on the next tick, then it stops.
+    #[serde(default)]
+    pub retries: u8,
 }
 
 /// The store's document shape: one object listing the jobs. A wrapper
@@ -1157,6 +1161,7 @@ impl Store {
             runs: 0,
             successes: 0,
             last_success: None,
+            retries: 0,
         };
         self.jobs.push(job.clone());
         self.save()?;
@@ -1259,11 +1264,24 @@ impl Store {
             .iter_mut()
             .find(|job| job.name == name)
             .ok_or_else(|| CronError::Missing(name.to_string()))?;
+        // A scheduled failure earns one bounded retry (the self-healing
+        // extension): the retries field is 1 while a retry is available, 2
+        // once the retry itself has failed, 0 after a success. Whether the
+        // minute was scheduled (vs a retry's off-schedule minute) tells the
+        // two failures apart.
+        let scheduled = Schedule::parse(&job.schedule)
+            .map(|schedule| schedule.matches(minute))
+            .unwrap_or(false);
         job.last_run = Some(minute.stamp());
         job.runs += 1;
-        if matches!(outcome, Outcome::Completed) {
-            job.successes += 1;
-            job.last_success = Some(minute.stamp());
+        match outcome {
+            Outcome::Completed => {
+                job.successes += 1;
+                job.last_success = Some(minute.stamp());
+                job.retries = 0;
+            }
+            _ if scheduled => job.retries = 1,
+            _ => job.retries = 2,
         }
         job.last_outcome = Some(outcome);
         self.save()
@@ -2266,6 +2284,31 @@ impl Scheduler {
                 catch_up: false,
             });
         }
+        // The bounded retry (the self-healing extension): a job whose
+        // scheduled run failed gets one off-schedule retry on the next
+        // tick its expression does not already match. A retry consumes
+        // the field (retries 1 → 2 on failure, → 0 on success), so exactly
+        // one retry fires per failed run.
+        for job in jobs {
+            if !job.enabled || job.last_outcome != Some(Outcome::Failed) || job.retries != 1 {
+                continue;
+            }
+            let Ok(schedule) = Schedule::parse(&job.schedule) else {
+                continue;
+            };
+            if schedule.matches(now) || self.latch.get(&job.name) == Some(&now) {
+                continue;
+            }
+            if !claim_minute(&self.home, &job.name, now) {
+                continue;
+            }
+            self.latch.insert(job.name.clone(), now);
+            due.push(Due {
+                job: job.clone(),
+                minute: now,
+                catch_up: false,
+            });
+        }
         due
     }
 
@@ -2852,6 +2895,7 @@ mod tests {
             runs: 0,
             successes: 0,
             last_success: None,
+            retries: 0,
         }
     }
 
@@ -3103,6 +3147,39 @@ mod tests {
         // window at `now` is newer than the floor and the job serves.
         assert_eq!(due.len(), 1, "{due:?}");
         assert_eq!(due[0].minute, now, "{due:?}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The bounded retry (the self-healing extension): a scheduled failure
+    /// earns one off-schedule retry, the retry's failure spends it, and a
+    /// success clears the count.
+    #[test]
+    fn a_failed_scheduled_run_earns_one_retry() {
+        let home = temp_home("cron-retry");
+        let mut store = Store::open(&home).unwrap();
+        store.add("hourly", "0 7 * * *", "do it", false).unwrap();
+        store
+            .record_run("hourly", minute(2026, 10, 15, 7, 0), Outcome::Failed)
+            .unwrap();
+        assert_eq!(
+            store.jobs()[0].retries,
+            1,
+            "a scheduled failure earns a retry"
+        );
+        // The retry fires off-schedule at 07:01.
+        let jobs = store.jobs().to_vec();
+        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("nothing"));
+        let due = scheduler.tick_due(&jobs, minute(2026, 10, 15, 7, 1));
+        assert_eq!(due.len(), 1, "the retry fires: {due:?}");
+        // Its failure (off-schedule) spends the retry; a success clears it.
+        store
+            .record_run("hourly", minute(2026, 10, 15, 7, 1), Outcome::Failed)
+            .unwrap();
+        assert_eq!(store.jobs()[0].retries, 2, "the retry's failure stops it");
+        store
+            .record_run("hourly", minute(2026, 10, 16, 7, 0), Outcome::Completed)
+            .unwrap();
+        assert_eq!(store.jobs()[0].retries, 0, "a success clears it");
         let _ = std::fs::remove_dir_all(&home);
     }
 

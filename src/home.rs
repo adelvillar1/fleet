@@ -88,9 +88,27 @@ pub fn read_dotenv_with_vault(home: &Path, passphrase: Option<&str>) -> HashMap<
         return map;
     };
     let Ok(vault) = crate::vault::Vault::from_json(&text) else {
+        // A malformed vault is not a silent fallback (the self-healing
+        // review): the sealed keys are simply absent, and the owner should
+        // know why.
+        eprintln!(
+            "fleet: the vault file is unreadable or malformed \u{2014} sealed entries are not \
+             opened; the plaintext .env is the fallback"
+        );
         return map;
     };
-    for (name, value) in vault.open_all(passphrase) {
+    let opened = vault.open_all(passphrase);
+    if !vault.is_empty() && opened.is_empty() {
+        // A wrong launch passphrase opens nothing — name it rather than
+        // silently serving the plaintext map (the self-healing review).
+        let sealed = vault.names().len();
+        eprintln!(
+            "fleet: the vault did not unlock with the launch passphrase \u{2014} {sealed} sealed \
+             entr{} not opened; the plaintext .env is the fallback",
+            if sealed == 1 { "y" } else { "ies" }
+        );
+    }
+    for (name, value) in opened {
         if !value.is_empty() {
             map.insert(name, value);
         }

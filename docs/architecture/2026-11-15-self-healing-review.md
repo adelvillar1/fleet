@@ -130,3 +130,29 @@ detection line in the health loop (or a request-time signal), then one
 idempotent action — or an ask, for the consequential class. The loop, the
 guard, the cooldown, and the `starting`/`needs_runtime` card states already
 prove the pattern; the next slices reuse them.
+
+## Delivered (the first slice, 2026-11-15)
+
+- **API key present-but-invalid** — `api_probe` now takes the tier: fast is
+  key presence, slow makes one real no-token `GET /models`
+  (`discover_provider_models`) through the vault-overlay key, so a refused
+  key names itself before a run waits. The silent failure #1 closes.
+- **Vault wrong-passphrase / malformed vault** — named at launch, not
+  swallowed (#5).
+- **Corrupt checkpoint manifests** — named, not silently dropped (#6).
+- **ENOSPC** — `is_enospc` matches errno 28; the run's session-log write and
+  the checkpoint capture run fleet's own `cache-sweep.sh` once (guarded,
+  five-minute cooldown) and name it (#7).
+- **Cron failure retry** — a scheduled failure earns one bounded
+  off-schedule retry on the next tick; the retry's failure stops it, a
+  success clears it (#9).
+
+## Remaining (the next slices)
+
+- **Lane handshake + MCP server health** in the loop (#3, #4) — heavier
+  process-spawning probes, needing an infrequent cadence.
+- **Update rollback** (#11), **lane rebuild**, **corpus sync** — the
+  owner-approved cards.
+- **Scheduler-thread supervisor** (#12) — an architectural change.
+- **Device-store corruption messaging** (#10) and the surface-only
+  detection gaps (API connectivity, corpus drift).

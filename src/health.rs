@@ -74,7 +74,7 @@ impl ServiceHealth {
 /// process spawn (docker) — the loop alternates so a tick never pays
 /// for both.
 pub fn probe(home: &Path, fast_only: bool) -> HealthReport {
-    let mut services = vec![layerfs_probe(home), api_probe(home)];
+    let mut services = vec![layerfs_probe(home), api_probe(home, fast_only)];
     if !fast_only {
         services.push(docker_probe());
         services.push(lanes_probe());
@@ -232,24 +232,45 @@ fn stale_record_note(recorded: u16, actual: u16) -> String {
 /// The API half: the walk cannot serve without a key. Resolution is
 /// the standing chain — the process environment, then the home's
 /// `.env` — never a third place.
-fn api_probe(home: &Path) -> ServiceHealth {
-    let from_env = std::env::var("DEEPSEEK_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty());
-    if from_env.is_some() {
-        return ServiceHealth::up("api");
-    }
-    let from_home = crate::home::read_dotenv(home)
-        .get("DEEPSEEK_API_KEY")
-        .cloned()
-        .filter(|k| !k.trim().is_empty());
-    match from_home {
-        Some(_) => ServiceHealth::up("api"),
-        None => ServiceHealth::down(
+fn api_probe(home: &Path, fast_only: bool) -> ServiceHealth {
+    let Some(key) = resolve_api_key(home) else {
+        return ServiceHealth::down(
             "api",
             "no DEEPSEEK_API_KEY in the environment or the home's .env",
+        );
+    };
+    if fast_only {
+        return ServiceHealth::up("api");
+    }
+    // The slow tier makes one real, no-token request (GET /models): a key
+    // that is set but refused names itself here, before a run waits for a
+    // 401 (the self-healing review's top silent failure). The chat path
+    // still fails over at request time.
+    let base = std::env::var("DEEPSEEK_BASE_URL")
+        .ok()
+        .filter(|base| !base.trim().is_empty())
+        .unwrap_or_else(|| crate::api::DEFAULT_BASE_URL.to_string());
+    match crate::settings::discover_provider_models(&base, None, Some(&key)) {
+        Ok(_) => ServiceHealth::up("api"),
+        Err(reason) => ServiceHealth::down(
+            "api",
+            format!("the key is set but the API refused it \u{2014} {reason}"),
         ),
     }
+}
+
+/// The API key from the own-home chain: the environment first, then the
+/// home's `.env` with the vault overlay (the own-home credentials ruling).
+fn resolve_api_key(home: &Path) -> Option<String> {
+    std::env::var("DEEPSEEK_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .or_else(|| {
+            crate::home::read_dotenv_with_process_vault(home)
+                .get("DEEPSEEK_API_KEY")
+                .cloned()
+                .filter(|key| !key.trim().is_empty())
+        })
 }
 
 /// The slow tier: the six vendored cores' presence — one file stat
@@ -500,6 +521,51 @@ fn version_lt(a: &str, b: &str) -> bool {
     }
 }
 
+/// Whether an io error is "no space left on device" (ENOSPC, errno 28) —
+/// the self-healing extension's ENOSPC trigger, checked where the raw
+/// `io::Error` is still live.
+pub fn is_enospc(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(28) || error.kind() == std::io::ErrorKind::StorageFull
+}
+
+/// Reclaim build caches once when the disk fills (the self-healing
+/// extension's ENOSPC healing): run fleet's own `scripts/cache-sweep.sh`,
+/// best effort, behind a five-minute cooldown so a full disk does not
+/// spawn sweeps in a loop. The script lives beside the checkout; an
+/// installed machine without one names the absence and does nothing.
+pub fn sweep_once() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|span| span.as_secs())
+        .unwrap_or(0);
+    if now.saturating_sub(LAST.load(Ordering::Relaxed)) < 300 {
+        return;
+    }
+    LAST.store(now, Ordering::Relaxed);
+    let Some(root) = crate::lanes::services_root()
+        .ok()
+        .and_then(|services| services.parent().map(|parent| parent.to_path_buf()))
+    else {
+        eprintln!(
+            "fleet: the disk is full but no checkout resolves \u{2014} run scripts/cache-sweep.sh \
+             by hand"
+        );
+        return;
+    };
+    let script = root.join("scripts").join("cache-sweep.sh");
+    if !script.exists() {
+        eprintln!(
+            "fleet: the disk is full but {} is absent \u{2014} reclaim by hand",
+            script.display()
+        );
+        return;
+    }
+    eprintln!("fleet: the disk is full \u{2014} running fleet's own cache sweep");
+    let _ = std::process::Command::new("sh").arg(&script).output();
+}
+
 /// The repair map, one line per service: what the face paints, what
 /// the repair note quotes, what the main session attempts. An
 /// owner-action wording for what no command can self-repair.
@@ -695,6 +761,16 @@ mod tests {
         assert!(!absent.installed);
         assert_eq!(Runtime::Kiri.name(), "kiri");
         assert_eq!(Runtime::Docker.name(), "Docker");
+    }
+
+    /// The ENOSPC matcher (the self-healing extension): errno 28 is the
+    /// full-disk trigger; every other error is not.
+    #[test]
+    fn the_enospc_matcher_names_only_a_full_disk() {
+        use std::io::{Error, ErrorKind};
+        assert!(is_enospc(&Error::from_raw_os_error(28)));
+        assert!(!is_enospc(&Error::from_raw_os_error(13)));
+        assert!(!is_enospc(&Error::new(ErrorKind::NotFound, "gone")));
     }
 
     /// The repair wording is runtime-neutral (the self-healing extension):

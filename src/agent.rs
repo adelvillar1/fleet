@@ -5276,6 +5276,9 @@ impl<'a> Agent<'a> {
                 unread: snapshot.unread,
             }),
             Ok(Err(error)) => {
+                if crate::health::is_enospc(&error) {
+                    crate::health::sweep_once();
+                }
                 eprintln!("fleet: the turn {turn} checkpoint could not be captured: {error}")
             }
             Err(_) => eprintln!("fleet: the turn {turn} checkpoint thread failed"),
@@ -7069,7 +7072,14 @@ impl<'a> Agent<'a> {
     }
 
     fn record(&mut self, record: &Record) -> Result<(), AgentError> {
-        self.session.record(record).map_err(AgentError::Io)
+        self.session.record(record).map_err(|error| {
+            // A full disk mid-run: reclaim the build caches once (the
+            // self-healing extension), then surface the failure honestly.
+            if crate::health::is_enospc(&error) {
+                crate::health::sweep_once();
+            }
+            AgentError::Io(error)
+        })
     }
 
     /// Route a mention in an assistant's text to its member (the huddles

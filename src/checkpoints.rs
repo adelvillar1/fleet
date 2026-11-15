@@ -347,18 +347,30 @@ pub fn list(store: &Path, session: &str) -> Vec<Snapshot> {
     let Ok(read) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
-    let mut out: Vec<Snapshot> = read
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().is_dir())
-        .filter_map(|entry| read_manifest(&entry.path()).ok().flatten())
-        .map(|manifest| Snapshot {
-            turn: manifest.turn,
-            at: manifest.at,
-            files: manifest.files,
-            bytes: manifest.bytes,
-            unread: manifest.unread,
-        })
-        .collect();
+    let mut out: Vec<Snapshot> = Vec::new();
+    for entry in read.filter_map(|entry| entry.ok()) {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        match read_manifest(&entry.path()) {
+            Ok(Some(manifest)) => out.push(Snapshot {
+                turn: manifest.turn,
+                at: manifest.at,
+                files: manifest.files,
+                bytes: manifest.bytes,
+                unread: manifest.unread,
+            }),
+            Ok(None) => {}
+            // A corrupt manifest is named, not silently dropped (the
+            // self-healing review): the turn is absent from the list, and
+            // a re-capture is safe.
+            Err(error) => eprintln!(
+                "fleet: a checkpoint manifest is unreadable ({}) \u{2014} its turn is not listed; \
+                 a re-capture is safe: {error}",
+                entry.path().display()
+            ),
+        }
+    }
     out.sort_by_key(|one| std::cmp::Reverse(one.turn));
     out
 }
