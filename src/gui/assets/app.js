@@ -12140,6 +12140,7 @@ import { node, svg, clip } from './core/dom.js';
     var projects = face.desk || [];
     var unreadable = face.deskUnreadable || [];
     var needs = projects.filter(function (d) { return deskState(d).needs; });
+    var design = dkDesignSection();
 
     var newButton = node('button', 'dk-btn primary', 'new deliverable');
     newButton.type = 'button';
@@ -12163,6 +12164,9 @@ import { node, svg, clip } from './core/dom.js';
     });
 
     if (!projects.length) {
+      // Design boards stand even with no desk deliverable yet (the
+      // project-centered workspace plan): the canvas output is reachable.
+      if (design) { board.appendChild(design); return; }
       // In the pane, the welcome is the centre's now: this column says
       // what is true and points at it rather than repeating the card.
       board.appendChild(into
@@ -12177,6 +12181,7 @@ import { node, svg, clip } from './core/dom.js';
     zones.appendChild(dkShelf(projects));
     zones.appendChild(dkOwed(projects));
     board.appendChild(zones);
+    if (design) board.appendChild(design);
   }
 
   function dkEmpty() {
@@ -12287,6 +12292,49 @@ import { node, svg, clip } from './core/dom.js';
     }
     shown.forEach(function (desk) { shelf.appendChild(dkCard(desk)); });
     return shelf;
+  }
+
+  // The design deliverables of the workspace (the project-centered
+  // workspace plan): boards from the canvas store, joined by their binding
+  // path, reachable from the desk beside the desk's own deliverables. The
+  // composer's promise — "its sessions, its design, its facts" — kept.
+  function dkDesignSection() {
+    var doc = face.projects;
+    if (!doc || refusals(doc)) return null;
+    var boards = [];
+    (doc.projects || []).forEach(function (project) {
+      (project.deliverables || []).forEach(function (kid) {
+        if (kid.source === 'design') boards.push({ kid: kid, project: project.name });
+      });
+    });
+    ((doc.unbound || {}).deliverables || []).forEach(function (kid) {
+      if (kid.source === 'design') boards.push({ kid: kid, project: 'unbound' });
+    });
+    if (!boards.length) return null;
+    var section = node('div', 'dk-design');
+    section.appendChild(node('h3', 'dk-rail-h',
+      'design \u00b7 ' + boards.length + (boards.length === 1 ? ' board' : ' boards')));
+    var grid = node('div', 'dk-shelf');
+    boards.forEach(function (row) { grid.appendChild(dkDesignCard(row.kid, row.project)); });
+    section.appendChild(grid);
+    return section;
+  }
+
+  function dkDesignCard(kid, projectName) {
+    var card = node('button', 'dk-card s-idle');
+    card.type = 'button';
+    card.title = 'open the design board';
+    card.addEventListener('click', function () {
+      window.location.hash = '#/design/' + encodeURIComponent(kid.slug);
+    });
+    var top = node('div', 'top');
+    top.appendChild(node('span', 'dk-name', kid.name || kid.slug));
+    top.appendChild(dkPill('design', 'idle'));
+    top.appendChild(node('span', 'bind mono', projectName || 'unbound'));
+    card.appendChild(top);
+    card.appendChild(node('p', 'claimline',
+      (kid.frames || 0) + (kid.frames === 1 ? ' frame' : ' frames') + ' \u00b7 open the canvas to iterate'));
+    return card;
   }
 
   function dkCard(desk) {
@@ -14398,11 +14446,16 @@ import { node, svg, clip } from './core/dom.js';
   // document — the list says what the store knows, not what a count said.
   function projectKidRow(kid, surface, projectName) {
     var desk = surface === 'desk';
+    // A design board is a deliverable too (the project-centered workspace
+    // plan): it rides the same project rows, opens the canvas, and names
+    // its frames rather than a desk stage.
+    var isDesign = desk && kid.source === 'design';
     var button = node('button', 'work-row');
     button.type = 'button';
-    var full = desk ? (face.desk || []).filter(function (d) { return d.slug === kid.slug; })[0] : null;
+    var full = (desk && !isDesign) ? (face.desk || []).filter(function (d) { return d.slug === kid.slug; })[0] : null;
     var tone = full ? deskState(full) : null;
-    var state = desk ? (tone ? tone.edge : (kid.needs ? 's-warn' : 's-idle'))
+    var state = isDesign ? 's-idle'
+      : desk ? (tone ? tone.edge : (kid.needs ? 's-warn' : 's-idle'))
       : (kid.ended ? 's-done' : 's-warn');
     button.dataset.state = state;
     var open = desk ? face.deskOpenDesk : null;
@@ -14415,13 +14468,14 @@ import { node, svg, clip } from './core/dom.js';
     var body = node('span', 'work-body');
     body.appendChild(node('span', 'work-name', desk ? (kid.name || kid.slug) : (kid.title || kid.id)));
     var meta = node('span', 'work-meta');
-    var word = node('span', 'work-state', desk
-      ? (tone ? tone.word : (kid.needs ? 'needs you' : 'holding'))
+    var word = node('span', 'work-state', isDesign
+      ? ((kid.frames || 0) + (kid.frames === 1 ? ' frame' : ' frames'))
+      : desk ? (tone ? tone.word : (kid.needs ? 'needs you' : 'holding'))
       : (kid.ended ? 'held' : 'in progress'));
     word.dataset.state = tone ? tone.tone : '';
     meta.appendChild(word);
     meta.appendChild(node('span', null, '\u00b7'));
-    meta.appendChild(node('span', null, desk ? 'deliverable' : 'lesson'));
+    meta.appendChild(node('span', null, isDesign ? 'design' : desk ? 'deliverable' : 'lesson'));
     if (projectName) {
       meta.appendChild(node('span', null, '\u00b7'));
       meta.appendChild(node('span', null, projectName));
@@ -14429,7 +14483,8 @@ import { node, svg, clip } from './core/dom.js';
     body.appendChild(meta);
     button.appendChild(body);
     button.addEventListener('click', function () {
-      if (desk) openDeskDeliverable(kid.slug);
+      if (isDesign) window.location.hash = '#/design/' + encodeURIComponent(kid.slug);
+      else if (desk) openDeskDeliverable(kid.slug);
       else openLesson(kid.id);
     });
     return button;
@@ -28764,6 +28819,12 @@ import { node, svg, clip } from './core/dom.js';
     var target = FOCUS_LENSES[kind];
     if (!target || !target.lens) return;
     if (kind === 'thread') { openWork(id); return; }
+    // A design board pivots to the canvas, not the desk stages (the
+    // project-centered workspace plan): the namespaced id carries the slug.
+    if (kind === 'deliverable' && id.indexOf('design:') === 0) {
+      window.location.hash = '#/design/' + encodeURIComponent(id.slice('design:'.length));
+      return;
+    }
     if (face.panel !== target.lens) {
       try { window.history.replaceState(null, '', '#/' + target.lens); } catch (error) { }
       readSpine(true);

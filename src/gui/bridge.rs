@@ -1648,6 +1648,30 @@ impl Bridge {
                     _ => {}
                 }
             }
+            // Design boards are deliverables too (the project-centered
+            // workspace plan): the canvas store's boards join the same
+            // project rows by their binding path, so the desk reaches a
+            // project's design output beside its desk deliverables. Tagged
+            // source:"design" so the face opens the canvas, not the desk
+            // stages.
+            for board in crate::canvas::projects(&home) {
+                let entry = json!({
+                    "slug": board.slug,
+                    "name": board.name,
+                    "needs": false,
+                    "source": "design",
+                    "frames": board.frames,
+                });
+                match board.project.as_deref() {
+                    Some(path) => {
+                        let index = slot(&mut rows, &mut at, path);
+                        if let Some(list) = rows[index].1["deliverables"].as_array_mut() {
+                            list.push(entry);
+                        }
+                    }
+                    None => unbound_deliverables.push(entry),
+                }
+            }
             rows.sort_by(|a, b| {
                 let name =
                     |row: &(String, Value)| row.1["name"].as_str().unwrap_or_default().to_string();

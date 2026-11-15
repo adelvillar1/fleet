@@ -210,6 +210,10 @@ fn plain_title(summary: &crate::session::SessionSummary) -> String {
 pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
     let graph = crate::workspace::read(home);
     let desks = crate::desk::projects(home);
+    // Design boards are deliverables too (the project-centered workspace
+    // plan): the canvas store joins the same workspace by its binding path,
+    // so a project's design output rides the spine beside its desk work.
+    let boards = crate::canvas::projects(home);
     let roles = crate::roles::load_all(home);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -449,6 +453,22 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
             None,
             false,
             None,
+        );
+    }
+    // A design board rides as a deliverable, namespaced `design:<slug>` so a
+    // canvas board never collides with a desk slug; the meta names the source
+    // so the face pivots to the canvas, not the desk stages (the
+    // project-centered workspace plan).
+    for board in &boards {
+        add_node(
+            &mut nodes,
+            &mut omitted,
+            &format!("design:{}", board.slug),
+            "deliverable",
+            &board.name,
+            None,
+            false,
+            Some(format!("design · {} frames", board.frames)),
         );
     }
     // Lessons come from the summaries already in hand: `workspace::view`

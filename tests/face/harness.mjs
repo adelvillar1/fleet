@@ -13212,6 +13212,38 @@ async function theStripSurfacesCheckpointCostAndCronSession() {
     page.text('conv-name').includes('the cron fire'), page.text('conv-name'));
 }
 
+// The project-centered workspace plan (P1): a design board is a
+// deliverable — the desk's project column and shelf reach it, and it
+// opens the canvas, not the desk stages.
+async function theDeskReachesDesignDeliverables() {
+  const doc = projectsDoc();
+  doc.projects[0].deliverables.push({ slug: 'landing-board', name: 'The landing board', needs: false, source: 'design', frames: 3 });
+  const page = boot({
+    hash: '#/desk',
+    documents: {
+      desk: { projects: [Object.assign(deskProject(), { session: 'desk-s1' })] },
+      projects: doc,
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+  const rows = page.rows('#work-list .work-row');
+  const designRow = rows.find((r) => /landing board/i.test(r.textContent));
+  check('P1 the desk column reaches the design board',
+    !!designRow && /3 frames/.test(designRow.textContent) && /design/.test(designRow.textContent),
+    rows.map((r) => r.textContent).join(' | '));
+  const designCard = page.rows('.dk-design .dk-card');
+  check('P1 the shelf carries the design board',
+    designCard.length === 1 && /landing board/i.test(designCard[0].textContent),
+    String(designCard.length));
+  if (designRow) designRow.click();
+  await flush(60);
+  check('P1 the design row opens the canvas',
+    page.window.location.hash === '#/design/landing-board',
+    page.window.location.hash);
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -13301,6 +13333,7 @@ const cases = [
   ['IBC the keyboard walks the queue', theInboxKeyboardWalks],
   ['IBC a dismissed row can come back', aDismissedRowCanComeBack],
   ['PWS the desk is projects, work and a thread', theDeskOrganisesByProjectAndThread],
+  ['P1 the desk reaches design deliverables', theDeskReachesDesignDeliverables],
   ['PWS learning is projects, the lesson and its thread', theLearningOrganisesByProjectAndThread],
   ['IB a seat answers in place', aSeatAnswersInPlace],
   ['IB the empty inbox is the honest absence', theInboxIsEmptyHonestly],
