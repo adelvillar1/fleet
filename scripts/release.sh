@@ -133,6 +133,22 @@ preflight_disk() {
   echo "== disk: ${free} GiB free (floor ${DISK_FLOOR_GIB}); the gate lane is capped at ${LANE_MAX_GIB} GiB"
 }
 
+# A stale mounted fleet disk image — a prior cut's dmg, or a failed bundle's
+# rw staging image — holds a volume the dmg bundler needs and fails it with
+# "Resource busy" (met 2026-11-15: three stale images broke the cut). Eject
+# fleet's own images before bundling; only paths that name a fleet_*.dmg or
+# an rw.*fleet* staging image, never the operator's others.
+eject_stale_dmgs() {
+  [ "$(uname)" = "Darwin" ] || return 0
+  hdiutil info 2>/dev/null | awk '
+    /^image-path[ \t]*:/ { want = ($0 ~ /fleet_[0-9]/ || $0 ~ /rw\..*fleet/) }
+    $1 ~ /^\/dev\/disk[0-9]+$/ { if (want) { print $1; want = 0 } }
+  ' | while read -r device; do
+    hdiutil detach "$device" -force >/dev/null 2>&1 &&
+      echo "== ejected a stale fleet disk image ($device) =="
+  done
+}
+
 # Settle the work that just finished: the delta against the budget it declared,
 # as the binary's own arithmetic and its own row (C2/C5). A runaway is named
 # and returns non-zero so the caller stops; a clean settle is a line.
@@ -323,6 +339,9 @@ cargo build --release > /tmp/release-build.log 2>&1 ||
 tail -1 /tmp/release-build.log
 
 echo "== bundling the dmg (cargo tauri build) =="
+# Clear our own stale mounted images first, or a prior cut's dmg fails the
+# bundler with "Resource busy" (the 2026-11-15 failure).
+eject_stale_dmgs
 cargo tauri build > /tmp/release-tauri-build.log 2>&1 ||
   { echo "cargo tauri build failed — /tmp/release-tauri-build.log"; exit 1; }
 grep -o 'fleet_[^ ]*\.dmg' /tmp/release-tauri-build.log | tail -1
