@@ -1151,6 +1151,23 @@ pub fn unavailable_all(reason: &str) -> Vec<LaneHealth> {
 
 /// Probe one lane: spawn, initialize, list, tear down — in that order,
 /// with the child never outliving the probe.
+/// A light lane handshake (the self-healing extension): resolve, spawn,
+/// initialize, close — the first half of [`probe_lane`], skipping
+/// `tools/list` and the per-lane doctor calls, so the health loop can name
+/// a lane that cannot answer at all without running the deep probe on
+/// every pass. `Ok(())` when the lane's MCP handshake answers.
+pub async fn handshake_lane(lane: &Lane) -> Result<(), String> {
+    let home = match resolve_home(lane) {
+        LaneHome::Resolved { home, .. } => home,
+        LaneHome::Unavailable { reason } => return Err(reason),
+    };
+    let spec = configured_spec(lane, &home)?;
+    let server = McpServer::spawn(&spec).map_err(|error| error.to_string())?;
+    let result = server.initialize().await.map_err(|error| error.to_string());
+    let _ = server.close().await;
+    result.map(|_| ())
+}
+
 pub async fn probe_lane(lane: &Lane) -> LaneHealth {
     let started = Instant::now();
     let home = match resolve_home(lane) {

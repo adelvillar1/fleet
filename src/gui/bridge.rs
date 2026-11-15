@@ -659,8 +659,70 @@ impl Bridge {
                 // itself when it is down and a runtime answers.
                 bridge.overlay_heal_state();
                 bridge.auto_heal_substrate().await;
+                // The light lane/MCP probes ride an infrequent cadence (they
+                // spawn children): a lane that cannot answer and a broken MCP
+                // server are named on the card every ~10 minutes.
+                if pass.is_multiple_of(crate::health::LANE_HANDSHAKE_EVERY_NTH_PASS) {
+                    bridge.probe_lanes_and_mcp().await;
+                }
             }
         });
+    }
+
+    /// The throttled lane handshake + MCP probe (the self-healing
+    /// extension): `handshake_lane` (spawn + initialize + close) names a
+    /// lane that cannot answer, and `probe_server` names a broken MCP
+    /// server (its `ok` is the answer). Both fold into the shared report as
+    /// service lines; the deep `/api/lanes` probe stays on demand.
+    async fn probe_lanes_and_mcp(self: &std::sync::Arc<Self>) {
+        let mut lane_failures: Vec<(String, String)> = Vec::new();
+        for lane in crate::lanes::LANES {
+            if let Err(reason) = crate::lanes::handshake_lane(lane).await {
+                lane_failures.push((lane.name.to_string(), reason));
+            }
+        }
+        let home = self.home.clone();
+        let dotenv: std::collections::BTreeMap<String, String> =
+            crate::home::read_dotenv_with_process_vault(&home)
+                .into_iter()
+                .collect();
+        let mut mcp_failures: Vec<(String, String)> = Vec::new();
+        if let Ok(servers) = crate::mcp_registry::read_servers(&home) {
+            for (name, entry) in servers {
+                if !entry.enabled {
+                    continue;
+                }
+                match crate::mcp_registry::probe_server(&home, &name, &dotenv).await {
+                    Ok(probe) => {
+                        if !probe.ok {
+                            mcp_failures.push((name.clone(), probe.reason.clone()));
+                        }
+                        let _ = crate::settings::record_server_probe(&home, &name, probe);
+                    }
+                    Err(reason) => mcp_failures.push((name, reason)),
+                }
+            }
+        }
+        {
+            let mut guard = self.health.lock().expect("health slot");
+            if let Some(report) = guard.as_mut() {
+                crate::health::apply_probe_failures(
+                    report,
+                    "lanes",
+                    "a lane cannot answer",
+                    &lane_failures,
+                );
+                crate::health::apply_probe_failures(
+                    report,
+                    "mcp",
+                    "an MCP server cannot answer",
+                    &mcp_failures,
+                );
+            }
+        }
+        if !lane_failures.is_empty() || !mcp_failures.is_empty() {
+            self.send_health_event("the health loop names a lane or MCP server down");
+        }
     }
 
     /// Overlay the app-driven heal's starting flag onto the shared report
@@ -4078,6 +4140,66 @@ impl Bridge {
         }
         self.note_health_transition(&fresh);
         Ok(serde_json::to_value(&fresh).unwrap_or(Value::Null))
+    }
+
+    /// Restore the previous build (the self-healing extension): the owner
+    /// pressed "restore the previous build" after a stale or broken update.
+    /// Installs `<exe>.prev` over the served binary; the face restarts to
+    /// run it. Loopback-only, like the repair.
+    pub async fn rollback(self: &std::sync::Arc<Self>) -> Result<Value, String> {
+        let _guard = self.repair_in_flight.lock().await;
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            let installed = crate::reload::installed_in_home(&home);
+            let previous = crate::update::previous_for(&installed);
+            if !previous.exists() {
+                return Err("no previous build is kept on this machine".to_string());
+            }
+            crate::reload::install_binary(&previous, &installed)
+        })
+        .await
+        .map_err(|_| "the rollback did not land".to_string())??;
+        Ok(json!({
+            "type": "rollback",
+            "restored": true,
+            "note": "the previous build is in place \u{2014} restart the face to run it",
+        }))
+    }
+
+    /// Rebuild the lane venvs (the self-healing extension): the owner
+    /// pressed "rebuild the lanes" for a lane that cannot answer.
+    /// `bootstrap_lane` is idempotent (the receipt), so only a missing or
+    /// broken lane rebuilds. Loopback-only.
+    pub async fn rebuild_lanes(self: &std::sync::Arc<Self>) -> Result<Value, String> {
+        let _guard = self.repair_in_flight.lock().await;
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            for lane in crate::install::LANES {
+                let mut sink: Vec<u8> = Vec::new();
+                let _ = crate::install::bootstrap_lane(&home, lane, None, &mut sink);
+            }
+        })
+        .await
+        .map_err(|_| "the lane rebuild did not land".to_string())?;
+        let fresh = crate::health::probe(&self.home, false);
+        {
+            let mut guard = self.health.lock().expect("health slot");
+            *guard = Some(fresh.clone());
+        }
+        self.note_health_transition(&fresh);
+        Ok(serde_json::to_value(&fresh).unwrap_or(Value::Null))
+    }
+
+    /// Sync the corpus (the self-healing extension): the owner pressed
+    /// "sync now". `corpus::sync` aborts safely on a merge conflict.
+    /// Loopback-only.
+    pub async fn corpus_sync(self: &std::sync::Arc<Self>) -> Result<Value, String> {
+        let _guard = self.repair_in_flight.lock().await;
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || crate::corpus::sync(&home, None))
+            .await
+            .map_err(|_| "the sync did not land".to_string())??;
+        Ok(json!({ "type": "corpus-sync", "synced": true }))
     }
 
     pub async fn update_apply(&self) -> Result<Value, String> {
@@ -8563,22 +8685,30 @@ fn channels_read(home: &std::path::Path) -> Value {
 }
 
 fn access_read(home: &std::path::Path) -> Value {
-    let devices = crate::remote::pairing::DeviceStore::load(home)
-        .map(|store| {
-            store
-                .devices
-                .iter()
-                .map(|device| {
-                    json!({
-                        "id": device.id,
-                        "name": device.name,
-                        "paired": device.created_at,
-                        "seen": device.last_seen_at,
-                    })
+    let mut refused: Vec<String> = Vec::new();
+    let devices = match crate::remote::pairing::DeviceStore::load(home) {
+        Ok(store) => store
+            .devices
+            .iter()
+            .map(|device| {
+                json!({
+                    "id": device.id,
+                    "name": device.name,
+                    "paired": device.created_at,
+                    "seen": device.last_seen_at,
                 })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+            })
+            .collect::<Vec<_>>(),
+        // A corrupt store is named, not silently painted as zero devices
+        // (the self-healing review): the tokens are hashed and cannot be
+        // rebuilt, so the owner re-pairs.
+        Err(error) => {
+            refused.push(format!(
+                "the paired-device store is unreadable \u{2014} re-pair the devices: {error}"
+            ));
+            Vec::new()
+        }
+    };
     // Every channel's store, not one of them: a paired Telegram chat is
     // as much a way into this face as a paired webhook, and a read that
     // walked only the webhook would tell the owner half the truth about
@@ -8613,6 +8743,7 @@ fn access_read(home: &std::path::Path) -> Value {
         "read_at": crate::boards::now_stamp(),
         "devices": devices,
         "peers": peers,
+        "refused": refused,
     })
 }
 

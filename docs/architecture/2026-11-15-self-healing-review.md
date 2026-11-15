@@ -131,8 +131,9 @@ idempotent action — or an ask, for the consequential class. The loop, the
 guard, the cooldown, and the `starting`/`needs_runtime` card states already
 prove the pattern; the next slices reuse them.
 
-## Delivered (the first slice, 2026-11-15)
+## Delivered (2026-11-15)
 
+**First slice — detection + idempotent repairs:**
 - **API key present-but-invalid** — `api_probe` now takes the tier: fast is
   key presence, slow makes one real no-token `GET /models`
   (`discover_provider_models`) through the vault-overlay key, so a refused
@@ -147,12 +148,25 @@ prove the pattern; the next slices reuse them.
   off-schedule retry on the next tick; the retry's failure stops it, a
   success clears it (#9).
 
-## Remaining (the next slices)
+**Second slice — heavier probes + owner-approved actions:**
+- **Lane handshake** — a light `spawn`+`initialize`+`close` on a ~10-minute
+  cadence names a lane that cannot answer (#4).
+- **MCP server health** — configured servers are probed on the same cadence
+  and a broken one is **surfaced** (never auto-disabled — that is a
+  persistent config change) (#3).
+- **Update rollback**, **lane rebuild**, **corpus sync** — the
+  owner-approved cards + loopback action routes (`/api/repair/rollback`,
+  `/api/repair/lanes`, `/api/corpus/sync`), on the Health lens and the
+  services card (#11 + the rebuild/sync offers).
+- **Device-store corruption messaging** — the access read carries a named
+  refusal instead of silently painting zero devices (#10).
 
-- **Lane handshake + MCP server health** in the loop (#3, #4) — heavier
-  process-spawning probes, needing an infrequent cadence.
-- **Update rollback** (#11), **lane rebuild**, **corpus sync** — the
-  owner-approved cards.
-- **Scheduler-thread supervisor** (#12) — an architectural change.
-- **Device-store corruption messaging** (#10) and the surface-only
-  detection gaps (API connectivity, corpus drift).
+## Remaining (the next slice)
+
+- **Scheduler-thread supervisor** (#12) — the tick thread already catches a
+  per-job panic; a watchdog to restart the thread on its own death needs
+  thread-lifecycle plumbing (the handle is discarded at both spawn sites and
+  `ui_tx` is a constructor local). Named, not built.
+- **Surface-only gaps** — the API-connectivity line from a request-time
+  signal, and corpus drift as a read-time staleness note (a fetch in the
+  loop is too heavy).

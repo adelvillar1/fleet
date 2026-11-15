@@ -13372,6 +13372,30 @@ async function theSubstrateHealsItselfAndOffersKiri() {
     noruntime.text('svc-down'));
 }
 
+// The owner-approved self-healing actions (the self-healing extension):
+// the Health lens carries the corpus sync and the build restore; a down
+// lane offers the rebuild press on the services card.
+async function theOwnerApprovedActionsAreOnTheCards() {
+  const page = boot({ documents: {} });
+  page.hash('#/second-brain');
+  await flush(120);
+  const board = page.text('brain-board');
+  check('HEAL the health lens offers the corpus sync and the build restore',
+    board.includes('the corpus') && board.includes('sync now') &&
+    board.includes('the build') && board.includes('restore the previous build'),
+    board.slice(0, 240));
+  const lanes = boot({
+    documents: { state: (asked) => ({ ...emptyState(asked), services: { services: [
+      { name: 'lanes', up: false, note: 'a lane cannot answer', repair: 'fleet install (rebuilds the lane venvs)' },
+    ] } }) },
+  });
+  await flush();
+  lanes.open();
+  await flush();
+  check('HEAL a down lane offers the rebuild press',
+    lanes.text('svc-down').includes('Rebuild the lanes'), lanes.text('svc-down'));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -13529,6 +13553,7 @@ const cases = [
   ['U8 the Motion switch overrides the OS default on press', theMotionSwitchOverridesTheOsDefaultOnPress],
   ['HEALTH the down substrate asks and the press repairs', theDownSubstrateAsksAndThePressRepairs],
   ['HEAL the substrate heals itself and offers kiri', theSubstrateHealsItselfAndOffersKiri],
+  ['HEAL the owner-approved actions are on the cards', theOwnerApprovedActionsAreOnTheCards],
   ['HEALTH another down service keeps its words', anotherDownServiceKeepsItsWords],
   ['RESKIN the Mission card paints the install', theMissionCardPaintsTheInstall],
   ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],

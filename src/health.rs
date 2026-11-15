@@ -22,6 +22,11 @@ pub const FAST_INTERVAL: Duration = Duration::from_secs(30);
 /// process launch, not a connect).
 pub const SLOW_EVERY_NTH_PASS: u64 = 2;
 
+/// The lane handshake and MCP probe ride an infrequent cadence (the
+/// self-healing extension): each spawns a child process, so they run every
+/// ~10 minutes (20 × the 30 s fast interval), not every slow pass.
+pub const LANE_HANDSHAKE_EVERY_NTH_PASS: u64 = 20;
+
 /// The loopback connect timeout for a fast probe.
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(750);
 
@@ -68,6 +73,40 @@ impl ServiceHealth {
             needs_runtime: false,
         }
     }
+}
+
+/// Fold a throttled probe's verdicts into the report's service line (the
+/// self-healing extension): the named service is down with the failures
+/// listed, up (and its note cleared) when they clear. The face hides an up
+/// line, so a green lane/mcp line is quiet; the carried-forward verdicts
+/// (`merged_over`) keep it honest between cadences.
+pub fn apply_probe_failures(
+    report: &mut HealthReport,
+    service: &'static str,
+    summary: &str,
+    failures: &[(String, String)],
+) {
+    let note = failures
+        .iter()
+        .map(|(name, reason)| format!("{name}: {reason}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if let Some(line) = report.services.iter_mut().find(|line| line.name == service) {
+        line.up = failures.is_empty();
+        line.note = if failures.is_empty() {
+            String::new()
+        } else {
+            format!("{summary} \u{2014} {note}")
+        };
+        return;
+    }
+    if failures.is_empty() {
+        return;
+    }
+    report.services.push(ServiceHealth::down(
+        service,
+        format!("{summary} \u{2014} {note}"),
+    ));
 }
 
 /// One pass over the probe set. `fast_only` skips the slow tier's
@@ -771,6 +810,37 @@ mod tests {
         assert!(is_enospc(&Error::from_raw_os_error(28)));
         assert!(!is_enospc(&Error::from_raw_os_error(13)));
         assert!(!is_enospc(&Error::new(ErrorKind::NotFound, "gone")));
+    }
+
+    /// The throttled-probe folding (the self-healing extension): a failing
+    /// probe sets the service line down with the failure named; a clear
+    /// probe sets it back up and clears the note; an absent service is
+    /// added on failure, not on a clear.
+    #[test]
+    fn a_throttled_probe_folds_into_its_service_line() {
+        let mut report = HealthReport {
+            services: vec![ServiceHealth::up("lanes")],
+            stamp: "d".into(),
+        };
+        apply_probe_failures(
+            &mut report,
+            "lanes",
+            "a lane cannot answer",
+            &[("sys1".to_string(), "no python".to_string())],
+        );
+        let line = report.services.iter().find(|s| s.name == "lanes").unwrap();
+        assert!(!line.up);
+        assert!(line.note.contains("sys1") && line.note.contains("no python"));
+        apply_probe_failures(&mut report, "lanes", "a lane cannot answer", &[]);
+        let line = report.services.iter().find(|s| s.name == "lanes").unwrap();
+        assert!(line.up && line.note.is_empty());
+        apply_probe_failures(
+            &mut report,
+            "mcp",
+            "an MCP server cannot answer",
+            &[("remote".to_string(), "spawn failed".to_string())],
+        );
+        assert!(report.services.iter().any(|s| s.name == "mcp" && !s.up));
     }
 
     /// The repair wording is runtime-neutral (the self-healing extension):

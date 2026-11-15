@@ -1456,6 +1456,33 @@ import { node, svg, clip } from './core/dom.js';
           });
         });
         line.appendChild(install);
+      } else if (s.name === 'lanes') {
+        // The self-healing extension: a lane that cannot answer offers a
+        // rebuild (idempotent \u2014 only a missing or broken lane rebuilds).
+        var rebuild = document.createElement('button');
+        rebuild.type = 'button';
+        rebuild.className = 'svc-repair';
+        rebuild.textContent = 'Rebuild the lanes';
+        rebuild.addEventListener('click', function () {
+          rebuild.disabled = true;
+          rebuild.textContent = 'rebuilding\u2026';
+          post('/api/repair/lanes', {}).then(function (reply) {
+            if (reply.status === 200) {
+              face.services = reply.body;
+              paintServices();
+              return;
+            }
+            rebuild.disabled = false;
+            rebuild.textContent = 'Rebuild the lanes';
+            notice('the rebuild did not land',
+              (reply.body && reply.body.error) || 'the server did not answer');
+          }).catch(function () {
+            rebuild.disabled = false;
+            rebuild.textContent = 'Rebuild the lanes';
+            notice('the rebuild did not land', 'the server did not answer');
+          });
+        });
+        line.appendChild(rebuild);
       } else {
         line.appendChild(document.createTextNode(
           ' \u00b7 repair: ' + (s.repair || 'fleet doctor names it')));
@@ -16679,6 +16706,64 @@ import { node, svg, clip } from './core/dom.js';
     return card;
   }
 
+  // The owner-approved self-healing actions (the self-healing extension):
+  // the corpus syncs on a press, and a bad update's previous build is
+  // restorable on a press. Each posts to its loopback action route.
+  function healthCorpusCard() {
+    var card = boardCard(12, 'the corpus', null,
+      'The shared memory, synced from its remote \u2014 a merge conflict aborts safely.');
+    var sync = node('button', 'replay-button replay-resume', 'sync now');
+    sync.type = 'button';
+    sync.addEventListener('click', function () {
+      sync.disabled = true;
+      sync.textContent = 'syncing\u2026';
+      post('/api/corpus/sync', {}).then(function (reply) {
+        sync.disabled = false;
+        sync.textContent = 'sync now';
+        if (reply.status === 200) {
+          notice('the corpus is synced', '');
+          return;
+        }
+        notice('the sync did not land',
+          (reply.body && reply.body.error) || 'the server did not answer');
+      }).catch(function () {
+        sync.disabled = false;
+        sync.textContent = 'sync now';
+        notice('the sync did not land', 'the server did not answer');
+      });
+    });
+    card.appendChild(sync);
+    return card;
+  }
+
+  function healthBuildCard() {
+    var card = boardCard(12, 'the build', null,
+      'The running binary. A bad update keeps the previous build \u2014 restore it here.');
+    var restore = node('button', 'replay-button', 'restore the previous build');
+    restore.type = 'button';
+    restore.addEventListener('click', function () {
+      restore.disabled = true;
+      restore.textContent = 'restoring\u2026';
+      post('/api/repair/rollback', {}).then(function (reply) {
+        restore.disabled = false;
+        restore.textContent = 'restore the previous build';
+        if (reply.status === 200) {
+          notice('the previous build is in place',
+            (reply.body && reply.body.note) || 'restart the face to run it');
+          return;
+        }
+        notice('the rollback did not land',
+          (reply.body && reply.body.error) || 'the server did not answer');
+      }).catch(function () {
+        restore.disabled = false;
+        restore.textContent = 'restore the previous build';
+        notice('the rollback did not land', 'the server did not answer');
+      });
+    });
+    card.appendChild(restore);
+    return card;
+  }
+
   function paintBrain() {
     var read = face.brain;
     el.brainBoard.textContent = '';
@@ -16688,6 +16773,8 @@ import { node, svg, clip } from './core/dom.js';
     spineCards(el.brainBoard);
     el.brainBoard.appendChild(healthLanesCard());
     el.brainBoard.appendChild(healthDoctorCard());
+    el.brainBoard.appendChild(healthCorpusCard());
+    el.brainBoard.appendChild(healthBuildCard());
     if (!read) {
       el.brainBoard.appendChild(brainHead({}));
       var waiting = boardCard(12, 'reading', null, null);

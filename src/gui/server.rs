@@ -1501,6 +1501,21 @@ async fn serve_connection(
             Ok(document) => write_reply(&mut stream, api(200, document)).await,
             Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
         },
+        // The owner-approved self-healing actions (the self-healing
+        // extension): restore the previous build, rebuild the lane venvs,
+        // sync the corpus. Loopback-only, like the repair.
+        ("POST", "/api/repair/rollback") => match bridge.rollback().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
+        ("POST", "/api/repair/lanes") => match bridge.rebuild_lanes().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
+        ("POST", "/api/corpus/sync") => match bridge.corpus_sync().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
         // Name a session: the owner's title for the archive.
         ("POST", "/api/session/title") => {
             let body = match read_body(&mut stream, &request, rest).await {
