@@ -10148,8 +10148,9 @@ async function theCalibrationRailCarriesTheGateAndTheDay() {
   const railRows = page.rows('.section-rail-row');
   const railText = railRows.map((row) => row.textContent);
   check('CAL the rail leads with the gate and carries the day\u2019s ops',
-    railRows.length === 6 &&
+    railRows.length === 7 &&
       railText[0].includes('the gate') &&
+      railText.some((t) => t.includes('routing')) &&
       railText.some((t) => t.includes('delegations')) &&
       railText.some((t) => t.includes('embed timings')) &&
       railText.some((t) => t.includes('lifecycles')) &&

@@ -15020,6 +15020,18 @@ import { node, svg, clip } from './core/dom.js';
       badge: (read.cells || []).length, badgeTitle: (read.cells || []).length + ' fit cells',
       paint: function () { return [calibrationGate(read)]; }
     }];
+    // Routing lives in Reviews too (the project-centered workspace plan):
+    // the live decision and the tier chains, beside the graded stream —
+    // the Routing surface's own cards, reached without leaving the lens.
+    sections.push({
+      id: 'routing', name: 'routing', icon: 'router',
+      badge: null, badgeTitle: 'the live routing decision and the tier chains',
+      paint: function () {
+        var cards = [decisionCard()];
+        if (face.router && !refusals(face.router)) cards.push(chainCard(face.router));
+        return cards;
+      }
+    });
     CALIBRATION_OPS.forEach(function (named) {
       var rows = stream[named[0]];
       if (!rows || !rows.length) return;
@@ -26794,7 +26806,7 @@ import { node, svg, clip } from './core/dom.js';
           paintConvHead();
         });
       },
-      calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); readSpine(false).then(paintCalibration); },
+      calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); readRouter(false).then(paintCalibration); readSpine(false).then(paintCalibration); },
       design: function () {
         // `#/design/<slug>` opens that board: the steer card names the
         // board its page landed on, so the press lands on the work.

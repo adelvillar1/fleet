@@ -56,6 +56,9 @@ pub struct RunFacts {
     pub stop: Option<String>,
     /// The end record's turn count.
     pub turns: Option<u64>,
+    /// The start record's parent session, when this run was delegated
+    /// (the project-centered workspace plan): the lineage edge's source.
+    pub parent: Option<String>,
 }
 
 /// Read at most `budget` bytes of a file — the whole file when it fits, its
@@ -148,6 +151,12 @@ pub fn scan_run(path: &Path, budget: u64) -> RunFacts {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 facts.turns = record.get("turns").and_then(|v| v.as_u64());
+            }
+            Some("start") => {
+                facts.parent = record
+                    .get("parent")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
             }
             _ => {}
         }
@@ -440,6 +449,12 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
             );
             push_edge(&mut edges, &summary.id, fact, "wrote_fact");
         }
+        // The delegation lineage (the project-centered workspace plan): a
+        // child run names its parent in the start record; the edge joins
+        // them in the tissue when both are in the neighborhood.
+        if let Some(parent) = &facts.parent {
+            push_edge(&mut edges, parent, &summary.id, "delegates_to");
+        }
     }
 
     // The artifacts, lessons, bots and machines the rest of the shell needs.
@@ -671,6 +686,26 @@ mod tests {
         assert_eq!(facts.facts, vec!["a-fact-that-was-written".to_string()]);
         assert_eq!(facts.stop.as_deref(), Some("completed"));
         assert_eq!(facts.turns, Some(7));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn the_scan_reads_the_delegation_parent() {
+        // The project-centered workspace plan: a delegated child names its
+        // parent in the start record; the spine joins them with an edge.
+        let root = scratch("parent");
+        let path = root.join("sessions").join("20260101T000000Z-dddd.jsonl");
+        std::fs::write(
+            &path,
+            [
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-01T00:00:00Z","kind":null,"workspace":"/","parent":"20260101T000000Z-parent"}"#,
+                r#"{"type":"end","stop_reason":"completed","turns":2}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let facts = scan_run(&path, 1 << 20);
+        assert_eq!(facts.parent.as_deref(), Some("20260101T000000Z-parent"));
         std::fs::remove_dir_all(root).ok();
     }
 
