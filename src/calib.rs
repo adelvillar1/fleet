@@ -980,18 +980,24 @@ pub const SETTLE_FLOOR: usize = 3;
 /// that a machine that changed shape is not still paying for last month.
 pub const SETTLE_WINDOW: usize = 10;
 
-/// The median of a slice of numbers, or `None` for an empty one.
-fn median(mut values: Vec<u64>) -> Option<u64> {
+/// The percentile the learned estimate reads for its bound (see
+/// [`percentile`]): high enough to cover a class's natural spread, so a cut
+/// within its usual range is not flagged abnormal.
+pub const SETTLE_PERCENTILE: usize = 90;
+
+/// The p-th percentile (nearest-rank on the sorted values), the robust bound
+/// the learned estimate uses. A budget is a BOUND, not a typical value: the
+/// median of a naturally variable class sits below half its passages and
+/// flags them abnormal — the release-assets lane, whose cuts vary 1.0–3.6 GiB,
+/// ran away on every cut under the median. The high percentile allows the
+/// class's own spread, so a cut within its usual range is not abnormal.
+fn percentile(mut values: Vec<u64>, p: usize) -> Option<u64> {
     if values.is_empty() {
         return None;
     }
     values.sort_unstable();
-    let mid = values.len() / 2;
-    Some(if values.len().is_multiple_of(2) {
-        (values[mid - 1] + values[mid]) / 2
-    } else {
-        values[mid]
-    })
+    let rank = ((values.len() - 1) * p.min(100)) / 100;
+    Some(values[rank])
 }
 
 /// The settlements a [`FootprintRow`] read carries: only rows that actually
@@ -1016,10 +1022,14 @@ fn settled_of<'a>(rows: &'a [FootprintRow], class: &'a str) -> impl Iterator<Ite
 }
 
 /// C8: the estimate a work class should be admitted against, and where the
-/// number came from. The median of the class's last [`SETTLE_WINDOW`]
-/// settlements once it has [`SETTLE_FLOOR`] of them, the declared prior before
-/// that — so a class pays for its own history and not for a constant someone
-/// guessed once.
+/// number came from. The [`SETTLE_PERCENTILE`]-th (90th) percentile of the
+/// class's last [`SETTLE_WINDOW`] settlements once it has [`SETTLE_FLOOR`] of
+/// them, the declared prior before that — so a class pays for its own history
+/// and not for a constant someone guessed once. A high percentile, not the
+/// median: the budget is the bound a class may take before it is abnormal,
+/// and the median of a variable class sits below half its passages (the
+/// release-assets lane, whose cuts vary 1.0–3.6 GiB, ran away on every cut
+/// under the median).
 ///
 /// A class with no history and no prior keeps the run budget: work whose cost
 /// nobody has declared is still admitted against *some* bound, and the run
@@ -1053,7 +1063,7 @@ pub fn estimate_for_with_prior(
     if recent.len() < SETTLE_FLOOR {
         return (prior, "prior");
     }
-    match median(recent) {
+    match percentile(recent, SETTLE_PERCENTILE) {
         Some(learned) => (learned, "settled"),
         None => (prior, "prior"),
     }
@@ -4840,7 +4850,7 @@ mod tests {
     }
 
     #[test]
-    fn the_estimate_is_the_prior_until_three_settles_then_its_median() {
+    fn the_estimate_is_the_prior_until_three_settles_then_its_high_percentile() {
         let gate = crate::footprint::CLASS_RELEASE_GATE;
         let prior = crate::footprint::ESTIMATE_RELEASE_GATE_KIB;
         // Two settlements: still the prior, and the source says so.
@@ -4871,17 +4881,13 @@ mod tests {
             "bounds",
         ));
         assert_eq!(estimate_for(gate, &rows), (5 * 1024 * 1024, "settled"));
-        // The window is the last ten: eleven settlements 1..=11 GiB, so the
-        // window keeps 11 down to 2. Its median is 6.5 GiB; all eleven would
-        // have given 6 GiB, so the dropped oldest reading is exactly what the
-        // window removes from the number.
+        // The window is the last ten: eleven settlements 1..=11 GiB over the
+        // window's 2..=11. The 90th percentile (rank 8 of ten) is 10 GiB — the
+        // high bound, not the median.
         let many: Vec<FootprintRow> = (1..=11)
             .map(|i| fp(gate, FOOTPRINT_CLEAN, i * 1024 * 1024, "bounds"))
             .collect();
-        assert_eq!(
-            estimate_for(gate, &many),
-            (6 * 1024 * 1024 + 512 * 1024, "settled")
-        );
+        assert_eq!(estimate_for(gate, &many), (10 * 1024 * 1024, "settled"));
         // A class with no history and no prior keeps the run budget.
         assert_eq!(
             estimate_for("run:/tmp/scratch", &[]),
@@ -4903,6 +4909,31 @@ mod tests {
             estimate_for(gate, &cheaper),
             (5 * 1024 * 1024, "settled"),
             "the 8 GiB prior must correct down to what the class keeps costing"
+        );
+    }
+
+    #[test]
+    fn a_variable_class_is_budgeted_at_its_high_percentile_so_a_normal_cut_settles_clean() {
+        // The release-assets shape (the self-healing review): cuts varying
+        // widely. The 90th-percentile bound covers the usual high cut, so it
+        // settles clean — the median would have flagged it every time.
+        let class = crate::footprint::CLASS_RELEASE_ASSETS;
+        let mib = 1024 * 1024;
+        let deltas = [1024u64, 1711, 2310, 2640, 2670, 2900, 2900, 3600];
+        let rows: Vec<FootprintRow> = deltas
+            .iter()
+            .map(|delta| fp(class, FOOTPRINT_CLEAN, delta * mib, "bounds"))
+            .collect();
+        let (budget, source) = estimate_for(class, &rows);
+        assert_eq!(source, "settled");
+        assert!(
+            budget >= 2900 * mib,
+            "the bound covers the usual high cut: {budget}"
+        );
+        // A 2.9 GiB cut is within the bound: a clean settle, not a runaway.
+        assert!(
+            !crate::footprint::settle(10_000 * mib, (10_000 - 2900) * mib, budget).runaway,
+            "a normal high cut settles clean"
         );
     }
 
