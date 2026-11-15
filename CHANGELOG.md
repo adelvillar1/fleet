@@ -12,6 +12,27 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.5 — 2026-11-15
+
+The project-centered workspace — the capability the 0.8 rebuild buried is
+back, reachable through the spine instead of hidden in Settings.
+
+The desk reaches a project's design deliverables: a design board is a
+deliverable now, joined to the same project as the desk's own work, so the
+project column and the shelf carry it and a press opens the canvas — the
+composer's promise of "its sessions, its design, its facts" kept. The
+second brain is a visible **Health** lens at last: the rail names it, the
+palette finds it by "health", and the lanes' live probe and the doctor's
+checks render beside the atlas (the inbox "open doctor" press opens it
+too). Routing's live decision and tier chains ride a Reviews section; the
+connections column joins a delegated helper to the run that sent it. The
+Advanced surfaces answer to their plain names — secrets, assistants,
+versions — not only their subsystem labels. The rail stays lean: one lens
+added, the rest woven into the lenses already there.
+
+Also from the sinkhole pass: a checkpoint names when it was held and what
+the cap left out, and a cron fire's drawer opens the session it ran in.
+
 ## v0.8.4 — 2026-11-14
 
 Draining the sinkholes and closing the dead ends — two audits of the
