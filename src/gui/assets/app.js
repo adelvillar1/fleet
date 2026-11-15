@@ -28443,15 +28443,21 @@ import { node, svg, clip } from './core/dom.js';
     GROUPS.forEach(function (group) {
       group[2].forEach(function (item) { railed[item[0]] = true; });
     });
+    // The Advanced doors' plain names ride the search (the project-centered
+    // workspace plan): "secrets" finds the vault, "assistants" the bots,
+    // "versions" the workspace history — the words the owner knows, not
+    // only the subsystem's own label.
+    var advancedNames = {};
+    ADVANCED.forEach(function (entry) { advancedNames[entry[0]] = entry[1] + ' ' + entry[2]; });
     var folded = ROUTES
       .filter(function (route) { return !railed[route[0]] && route[0] !== 'skills'; })
-      .map(function (route) { return [route[0], route[1]]; });
+      .map(function (route) { return [route[0], route[1], advancedNames[route[0]] || '']; });
     var all = GROUPS.slice();
     if (folded.length) all.push(['advanced', 'advanced', folded]);
     all.forEach(function (group) {
       var hits = group[2].filter(function (item) {
         if (!query) return true;
-        var hay = (item[1] + ' ' + item[0] + ' ' + group[1]).toLowerCase();
+        var hay = (item[1] + ' ' + item[0] + ' ' + group[1] + ' ' + (item[2] || '')).toLowerCase();
         return hay.indexOf(query) !== -1;
       });
       if (hits.length) groups.push([group, hits]);

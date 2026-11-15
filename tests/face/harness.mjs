@@ -13275,6 +13275,28 @@ async function theHealthLensIsVisibleAndFindable() {
     board.includes('the lanes') && board.includes('the doctor'), board.slice(0, 160));
 }
 
+// The project-centered workspace plan (P4): the Advanced surfaces are
+// findable by the plain words the owner knows, not only the subsystem's
+// own label — secrets→vault, assistants→bots, versions→workspace history.
+async function theAdvancedSurfacesAreFindableByTheirPlainNames() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush();
+  page.IDS['palette-open'].click();
+  await flush();
+  const search = async (word) => {
+    page.IDS['palette-input'].value = word;
+    page.fireOn('palette-input', 'input', {});
+    await flush();
+    return page.IDS['palette-rows'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('palette-row')).map((r) => r.dataset.address);
+  };
+  check('P4 secrets finds the vault', (await search('secrets')).includes('vault'));
+  check('P4 assistants finds the bots', (await search('assistants')).includes('bots'));
+  check('P4 versions finds the workspace history',
+    (await search('versions')).includes('workspace-history'));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -13366,6 +13388,7 @@ const cases = [
   ['PWS the desk is projects, work and a thread', theDeskOrganisesByProjectAndThread],
   ['P1 the desk reaches design deliverables', theDeskReachesDesignDeliverables],
   ['P2 the health lens is visible and findable', theHealthLensIsVisibleAndFindable],
+  ['P4 the advanced surfaces are findable by their plain names', theAdvancedSurfacesAreFindableByTheirPlainNames],
   ['PWS learning is projects, the lesson and its thread', theLearningOrganisesByProjectAndThread],
   ['IB a seat answers in place', aSeatAnswersInPlace],
   ['IB the empty inbox is the honest absence', theInboxIsEmptyHonestly],
