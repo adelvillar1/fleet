@@ -2354,7 +2354,8 @@ import { node, svg, clip } from './core/dom.js';
       // not where the run stood: the ordinal is bookkeeping (the
       // 2026-11-05 ruling) and the line's own rewind button already
       // carries the destination internally.
-      case 'checkpoint': return event.files + ' files held' + (event.bytes ? ' \u00b7 ' + tokens(event.bytes) : '');
+      case 'checkpoint': return event.files + ' files held' + (event.bytes ? ' \u00b7 ' + tokens(event.bytes) : '') +
+        (event.unread ? ' \u00b7 ' + event.unread + ' left out' : '');
       case 'folder': return event.note || (event.path ? 'set to ' + event.path : 'cleared');
       case 'goal': return event.text ? 'goal \u00b7 ' + event.text : 'goal cleared';
       case 'control':
@@ -2441,9 +2442,31 @@ import { node, svg, clip } from './core/dom.js';
         // still reach, not a hole. The drawer is the record — the same
         // pane every row's card opens — so the strip keeps the transcript
         // short without hiding anything the conversation saw.
-        openDrawer(one.kind, [
-          ['the record', node('pre', 'raw', JSON.stringify(one.event || {}, null, 2))]
-        ]);
+        var sections = [];
+        var ev = one.event || {};
+        // The cron fire's session is a click-through (the sinkhole audit):
+        // the fire ran in a session the owner can open, not just an id
+        // suffix on the line.
+        if (ev.type === 'cron' && ev.session) {
+          var cronSession = ev.session;
+          var go = node('button', 'replay-button replay-resume', 'open the session it ran in');
+          go.type = 'button';
+          go.addEventListener('click', function () { openWork(cronSession); });
+          sections.push(['the session', go]);
+        }
+        // The checkpoint's cost facts (the sinkhole audit): when it was
+        // held and what the cap left out — the numbers a rewind decision
+        // wants, beside the raw record.
+        if (ev.type === 'checkpoint') {
+          var held = node('div', 'drawer-facts');
+          held.appendChild(node('p', 'derivation', 'held at ' + (ev.at || 'unknown')));
+          held.appendChild(node('p', 'derivation',
+            (ev.files || 0) + ' files \u00b7 ' + tokens(ev.bytes || 0) +
+            (ev.unread ? ' \u00b7 ' + ev.unread + ' left out by the cap' : '')));
+          sections.push(['what it holds', held]);
+        }
+        sections.push(['the record', node('pre', 'raw', JSON.stringify(ev, null, 2))]);
+        openDrawer(one.kind, sections);
       };
       line.addEventListener('click', open);
       line.addEventListener('keydown', function (event) {

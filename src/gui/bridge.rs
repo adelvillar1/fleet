@@ -13157,8 +13157,14 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
                 .collect::<Vec<_>>(),
             "execution": execution,
         }),
-        UiEvent::Checkpoint { turn, files, bytes } => {
-            json!({"type": "checkpoint", "turn": turn, "files": files, "bytes": bytes})
+        UiEvent::Checkpoint {
+            turn,
+            files,
+            bytes,
+            at,
+            unread,
+        } => {
+            json!({"type": "checkpoint", "turn": turn, "files": files, "bytes": bytes, "at": at, "unread": unread})
         }
         UiEvent::Compacted {
             turns,

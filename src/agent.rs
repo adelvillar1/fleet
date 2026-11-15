@@ -875,7 +875,13 @@ pub enum UiEvent {
     /// A turn's file state was checkpointed: the store holds the working
     /// tree as this turn left it, so the run can be rewound to here. One
     /// emission per turn that ran, after the turn's results landed.
-    Checkpoint { turn: u64, files: usize, bytes: u64 },
+    Checkpoint {
+        turn: u64,
+        files: usize,
+        bytes: u64,
+        at: String,
+        unread: usize,
+    },
     /// The conversation outgrew the window and was compacted: `turns`
     /// turns became one summary, and the context went from
     /// `tokens_before` to `tokens_after`. Emitted once per crossing,
@@ -5266,6 +5272,8 @@ impl<'a> Agent<'a> {
                 turn: snapshot.turn,
                 files: snapshot.files,
                 bytes: snapshot.bytes,
+                at: snapshot.at,
+                unread: snapshot.unread,
             }),
             Ok(Err(error)) => {
                 eprintln!("fleet: the turn {turn} checkpoint could not be captured: {error}")

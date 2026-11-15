@@ -4743,6 +4743,8 @@ mod tests {
             turn: 3,
             files: 2,
             bytes: 10,
+            at: "2026-11-14T00:00:00Z".to_string(),
+            unread: 0,
         });
         assert_eq!(app.run.checkpoint, Some(3));
 

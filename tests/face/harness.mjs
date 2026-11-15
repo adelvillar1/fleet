@@ -13155,6 +13155,63 @@ async function aPressDuringAGapNamesItself() {
     page.text('log').slice(-200));
 }
 
+// The sinkhole audit's last C3 reads (2026-11-14): the checkpoint line
+// names what the cap left out and its drawer carries the held-at stamp
+// and the cost; the cron fire's drawer offers a click-through to the
+// session it ran in.
+async function theStripSurfacesCheckpointCostAndCronSession() {
+  // The face anchors the fire's own session: the session gate paints a
+  // cron line only there, so the click-through re-opens that session.
+  const page = boot({
+    hash: '#/sessions/sess-cron-123',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, yours: 1, total: 1 },
+        sessions: [row('sess-cron-123', 'working', { title: 'the cron fire' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'message', role: 'owner', text: 'go' });
+  page.push({ type: 'turn', turn: 5 });
+  page.push({ type: 'checkpoint', turn: 5, files: 3, bytes: 2048, at: '2026-11-14T10:00:00Z', unread: 2 });
+  page.push({ type: 'cron', job: 'nightly-sweep', outcome: 'ok', session: 'sess-cron-123', catch_up: true });
+  page.push({ type: 'finished', reason: 'stop' });
+  await flush();
+  const head = page.rows('.strip-head')[0];
+  if (head) head.click();
+  await flush();
+  const cpLine = page.rows('.strip-line').find((l) => l.textContent.includes('files held'));
+  check('C3 the checkpoint line names what the cap left out',
+    !!cpLine && cpLine.textContent.includes('2 left out'), cpLine && cpLine.textContent);
+  if (cpLine) cpLine.click();
+  await flush();
+  const cpBody = page.text('dock-object-body');
+  check('C3 the checkpoint drawer shows when it was held and its cost',
+    cpBody.includes('held at') && cpBody.includes('2026-11-14T10:00:00Z') && cpBody.includes('left out by the cap'),
+    cpBody.slice(0, 200));
+  const cronLine = page.rows('.strip-line').find((l) => l.textContent.includes('nightly-sweep'));
+  check('C3 the cron line carries its catch-up mark', !!cronLine && cronLine.textContent.includes('catch-up'),
+    cronLine && cronLine.textContent);
+  if (cronLine) cronLine.click();
+  await flush();
+  check('C3 the cron drawer offers the session click-through',
+    page.text('dock-object-body').includes('open the session it ran in'),
+    page.text('dock-object-body').slice(0, 200));
+  const go = page.rows('.replay-button').find((b) => b.textContent.includes('open the session it ran in'));
+  check('C3 the click-through is a press', !!go, String(page.rows('.replay-button').length));
+  if (go) go.click();
+  await flush();
+  // openWork ran on the fire's session: the conversation head repaints its
+  // title (the same-session path), proving the press is wired, not dead.
+  check('C3 the click-through opens the fire’s session',
+    page.text('conv-name').includes('the cron fire'), page.text('conv-name'));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -13215,6 +13272,7 @@ const cases = [
   ['C2 a thought row opens on a press', aThoughtRowOpensOnAPress],
   ['C3 a command row names what ran', aCommandRowNamesWhatRan],
   ['C4 the strip lines open their record', theStripsLinesOpenTheirRecord],
+  ['C3 the strip surfaces checkpoint cost and the cron session', theStripSurfacesCheckpointCostAndCronSession],
   ['C5 the workspace-history section draws the tree it read', theWorkspaceHistorySectionDrawsTheTreeItRead],
   ['ARMADA the armada section draws the roster it reads', theArmadaSectionDrawsTheRosterItRead],
   ['ARCH the archive is the one end and the owner\u2019s verb', theArchiveIsTheOneEndAndTheOwnersVerb],
