@@ -12,6 +12,23 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.7 — 2026-11-15
+
+Fleet heals more of itself — the self-healing review, built out.
+
+The substrate was already self-healing; this release takes the rest of
+the review's candidates. The API probe makes a real no-token request, so
+a key that is set but refused (or an API that is unreachable) names itself
+before a run waits. A wrong vault passphrase and a corrupt checkpoint
+manifest are named, not swallowed. A full disk triggers fleet's own cache
+sweep once. A cron job that fails on its schedule gets one bounded retry
+on the next tick. The health loop now also names a lane that cannot answer
+and a broken MCP server (surfaced, never auto-disabled), and a cron thread
+that dies restarts itself. On the owner's word: a bad update's previous
+build is restorable, the lane venvs rebuild, and the corpus syncs — each a
+card that asks, then acts. Corpus drift shows on the health lens, and a
+corrupt device store is named instead of painting zero devices.
+
 ## v0.8.6 — 2026-11-15
 
 The substrate heals itself, and the desk is project-centric.
