@@ -4616,23 +4616,34 @@ import { node, svg, clip } from './core/dom.js';
   // palette secret).
   function paintEmpty() {
     if (el.railWhere) el.railWhere.textContent = workspaceName();
+    // The way back reads the archive, so the landing asks for it itself:
+    // before this it painted only when some other lens had already loaded
+    // the read, and a cold landing showed nothing to return to (the
+    // findability fix, 2026-11-15). Throttled by the read's own cache.
+    readSessions(false);
     paintRecent();
   }
 
   // The pick-up rows: the three most recent owned threads, then the
-  // archive door. Live threads from the spine; the archive's own rows
-  // as the fallback while the spine is cold. Nothing renders when the
-  // home holds nothing to return to.
+  // archive door. The owner's own conversations first — the archive read
+  // classes every row and the owner's are the ones the rail renders — and
+  // the spine's work items as the fallback while that read is cold. The
+  // spine is a fallback, never the head: its work items can be a task or
+  // a run, and the row's link is an archive link. Nothing renders when
+  // the home holds nothing to return to.
   function paintRecent() {
     if (!el.recent) return;
-    var rows = (face.spine && Array.isArray(face.spine.work) && face.spine.work.length)
-      ? face.spine.work.slice(0, 3).map(function (w) {
-          return { id: w.id, title: w.title, created: w.created || '' };
-        })
-      : ((face.sessions && face.sessions.sessions || []).filter(railRow).slice(0, 3)
-          .map(function (row) {
-            return { id: row.id, title: row.title, created: row.created || '' };
-          }));
+    var rows = ((face.sessions && face.sessions.sessions) || [])
+      .filter(railRow)
+      .slice(0, 3)
+      .map(function (row) {
+        return { id: row.id, title: row.title, created: row.created || '' };
+      });
+    if (!rows.length && face.spine && Array.isArray(face.spine.work)) {
+      rows = face.spine.work.slice(0, 3).map(function (w) {
+        return { id: w.id, title: w.title, created: w.created || '' };
+      });
+    }
     el.recent.hidden = !rows.length;
     el.recent.textContent = '';
     if (!rows.length) return;

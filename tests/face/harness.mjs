@@ -4534,6 +4534,51 @@ async function theHomeIsAlwaysReachable() {
     'resumes: ' + resumes.length + ' / news: ' + news.length);
 }
 
+// F1: the way back reads the owner's own conversations (the findability
+// fix, 2026-11-15). The archive classes every row; scheduled runs are
+// background and never lead the landing — and the landing asks for the
+// read itself, so a cold landing has something to return to instead of
+// waiting for another lens to load it.
+async function theLandingPrefersTheOwnersConversations() {
+  const page = boot({
+    width: 1440, hash: '#/chat',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 9, earlier: 2, total: 11 },
+        sessions: [
+          row('sweep-1', 'completed', {
+            title: 'lifecycle-sweep', kind: 'scheduled', class: 'background', job: 'lifecycle-sweep',
+          }),
+          row('mine-1', 'completed', { title: 'the conversation I asked for' }),
+          row('mine-2', 'completed', { title: 'the design deliverable review' }),
+        ],
+      },
+      // The spine's work items are the fallback, never the head: a run
+      // there must not outrank the archive's owner rows.
+      workspace: {
+        type: 'workspace',
+        work: [{ id: 'sweep-9', kind: 'session', title: 'corpus-refresh', status: 'done' }],
+        tasks: [], deliverables: [], threads: [], instances: [],
+        intelligence: { tools: 0, workflows: 0 },
+      },
+    },
+  });
+  await flush();
+  page.open();
+  await flush(80);
+  const words = page.rows('.recent-row').map((r) => r.textContent || '');
+  check('F1 the landing asks for the archive itself',
+    page.calls.some((c) => c.url === '/api/sessions'),
+    String(page.calls.filter((c) => c.url === '/api/sessions').length));
+  check('F1 the pick-up rows are the owner\u2019s conversations',
+    words.length === 2 && words[0].includes('the conversation I asked for'),
+    JSON.stringify(words));
+  check('F1 a background run never leads the landing',
+    words.every((word) => !word.includes('lifecycle-sweep') && !word.includes('corpus-refresh')),
+    JSON.stringify(words));
+}
+
 // New mints a real conversation at the press (the owner's 2026-11-05
 // ruling, replacing N2's create-then-send): the log exists before any
 // words, so the send that follows can only name this conversation —
@@ -13466,6 +13511,7 @@ const cases = [
   ['VERBS the composer carries the two verb icons', theComposerVerbsAreIcons],
   ['N0 the work rail renders the owner\u2019s work only', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['N1 the home is always reachable', theHomeIsAlwaysReachable],
+  ['F1 the landing prefers the owner\u2019s conversations', theLandingPrefersTheOwnersConversations],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],

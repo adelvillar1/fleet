@@ -8913,6 +8913,17 @@ fn paused_by_owner(home: &std::path::Path, id: &str) -> bool {
 /// pass would be a classifier nobody measured against ground truth.
 pub const SEARCH_BOUND: usize = 200;
 
+/// The background rows the archive document carries beside the owner's
+/// work. Scheduled runs, delegated children, peer channels and probes get
+/// their own small window (the findability fix, 2026-11-15): the jobs line
+/// and a diagnosis need a handful, and none of them may crowd the owner's
+/// conversations out of the read. Before this the document was one
+/// newest-`SEARCH_BOUND` window across every class, and on a machine whose
+/// scheduled jobs fire every few minutes 175 of the newest 200 rows were
+/// `lifecycle-sweep`/`corpus-refresh` runs — 164 of the owner's own
+/// conversations were outside the read entirely, asked for and unfindable.
+pub(crate) const BACKGROUND_WINDOW: usize = 40;
+
 /// The inbox tail read's per-row byte bound (B2): the last 16 KiB of a
 /// session log, parsed backwards for the newest sayable line. 50 rows ×
 /// 16 KiB is the read's whole worst case, named in the plan and bounded
@@ -9558,10 +9569,52 @@ fn sessions_read(
     // The cap keeps the NEWEST SEARCH_BOUND logs: the list arrives
     // oldest-first (session::list sorts by id), so the bound takes from
     // the tail and the order is restored for the reverse render below.
+    // The window is per class (the findability fix, 2026-11-15): the
+    // owner's conversations keep their own full bound, and the system's
+    // runs keep `BACKGROUND_WINDOW`, so a week of scheduled jobs can
+    // never evict the owner's work from the read — the very thing that
+    // made a conversation the owner asked for unfindable. A kind filter
+    // (the Learning surface) already names one class, and keeps the
+    // single window.
+    let class_of = |entry: &session::SessionSummary| {
+        if probes.contains_key(&entry.id) {
+            "probe"
+        } else {
+            work_class(entry)
+        }
+    };
+    let background_total = entries
+        .iter()
+        .filter(|entry| {
+            matches!(
+                class_of(entry),
+                "background" | "delegated" | "channel" | "probe"
+            )
+        })
+        .count();
     let mut entries = entries;
-    entries.reverse();
-    entries.truncate(SEARCH_BOUND);
-    entries.reverse();
+    if kind.is_some() {
+        entries.reverse();
+        entries.truncate(SEARCH_BOUND);
+        entries.reverse();
+    } else {
+        let mut kept: Vec<session::SessionSummary> = Vec::new();
+        let mut owner = 0usize;
+        let mut system = 0usize;
+        for entry in entries.into_iter().rev() {
+            if class_of(&entry) == "yours" {
+                if owner < SEARCH_BOUND {
+                    owner += 1;
+                    kept.push(entry);
+                }
+            } else if system < BACKGROUND_WINDOW {
+                system += 1;
+                kept.push(entry);
+            }
+        }
+        kept.reverse();
+        entries = kept;
+    }
     let searched = needle.as_ref().map(|_| entries.len());
     let sessions = entries
         .iter()
@@ -9641,11 +9694,7 @@ fn sessions_read(
                 // Whose work this is: the log's own kind, or the
                 // legacy sidecar's mark for the kind-less logs that
                 // were verification traffic before the word existed.
-                "class": if probes.contains_key(&entry.id) {
-                    "probe"
-                } else {
-                    work_class(entry)
-                },
+                "class": class_of(entry),
                 "goal": goal,
                 "job": scheduled_job(entry),
                 // The one derived word the list groups by.
@@ -9667,7 +9716,8 @@ fn sessions_read(
     // peer channels) in the log, never on the user screen — so the
     // owner-facing counts are owner-scoped: a head that counted a row
     // the list will not render would lie. The background count stays
-    // the document's own all-class fact.
+    // the archive's own whole-archive fact, read before the per-class
+    // window (its rows are bounded, its count is not).
     let count_owner = |wanted: &[&str]| {
         sessions
             .iter()
@@ -9682,15 +9732,7 @@ fn sessions_read(
     };
     let needs = count_owner(&["needs-approval", "paused"]);
     let working = count_owner(&["working"]);
-    let background = sessions
-        .iter()
-        .filter(|row| {
-            matches!(
-                row.get("class").and_then(Value::as_str),
-                Some("background") | Some("delegated") | Some("channel")
-            )
-        })
-        .count();
+    let background = background_total;
     let archived_count = count_owner(&["archived"]);
     let total = sessions.len();
     let owner_total = sessions
@@ -19702,6 +19744,70 @@ mod tests {
         // The verb refuses an id that is not a log, by name.
         let refused = mark_probes(&home, &["no-such-log".into()]);
         assert!(refused.is_err());
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_pile_of_scheduled_runs_cannot_evict_the_owners_conversations() {
+        // The findability fix (2026-11-15): the document's window is per
+        // class. The owner's conversation is the OLDEST row here, behind
+        // more scheduled runs than the background window carries — the
+        // single newest-N window this replaces would have dropped it
+        // entirely, which is how a conversation the owner asked for
+        // became unfindable on a machine whose jobs fire every few
+        // minutes.
+        let home = std::env::temp_dir().join(format!("fleet-gui-window-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let mut mine = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        mine.record(&crate::session::Record::User {
+            content: "the work I asked for".into(),
+        })
+        .unwrap();
+        mine.record(&crate::session::Record::End {
+            stop_reason: "completed".into(),
+            turns: 2,
+            served_model: None,
+        })
+        .unwrap();
+        let mine_id = mine.id().to_string();
+        drop(mine);
+        let runs = BACKGROUND_WINDOW + 5;
+        for _ in 0..runs {
+            let mut run =
+                crate::session::Session::create_scheduled(&home, "deepseek-flash").unwrap();
+            run.record(&crate::session::Record::User {
+                content: "[scheduled run — job `lifecycle-sweep`]".into(),
+            })
+            .unwrap();
+            run.record(&crate::session::Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+                served_model: None,
+            })
+            .unwrap();
+        }
+        let live = LiveFace {
+            driving: None,
+            seats: Default::default(),
+        };
+        let document = sessions_read(&home, "", &live, "", None);
+        let rows = document["sessions"].as_array().expect("rows");
+        // The owner's row is in the read despite being the oldest.
+        assert!(
+            rows.iter()
+                .any(|row| row["id"] == mine_id && row["class"] == "yours"),
+            "{document}"
+        );
+        // The background rows are bounded; the count is the archive's own.
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["class"] == "background")
+                .count(),
+            BACKGROUND_WINDOW
+        );
+        assert_eq!(document["counts"]["background"], runs);
+        assert_eq!(document["counts"]["yours"], 1);
         std::fs::remove_dir_all(&home).ok();
     }
 

@@ -424,6 +424,22 @@ real work lands in sessions that are not objects.
   pivot away. *Constrains:* `#empty`, paintEmpty's rail-where duty,
   paintOnboard's copy writes, the readHome/`/api/home` retirement.
 
+- **U50 — A window is per class; the owner's work is never crowded out.**
+  Every read that bounds rows by recency bounds the owner's own
+  conversations and the system's runs separately: the archive's
+  `SEARCH_BOUND` window belongs to the owner, and the background runs keep
+  a small `BACKGROUND_WINDOW` of their own; the spine's mtime scan
+  classifies each log from its first line and walks past scheduled runs
+  and probes to the owner's conversations behind them (the owner's
+  2026-11-15 ruling: "I'm concerned of asking fleet to do something and
+  then not being able to find it"). One newest-N window across every class
+  let a machine whose jobs fire every few minutes evict 164 of the owner's
+  183 conversations from the read entirely — present on disk, absent from
+  every surface. The landing's pick-up rows are the archive's owner rows,
+  loaded by the landing itself; the spine is the fallback. *Constrains:*
+  `sessions_read`'s window, `BACKGROUND_WINDOW`, `spine::recent_sessions`'
+  class peek, paintRecent's order, paintEmpty's own read.
+
 ---
 
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the

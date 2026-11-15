@@ -1336,7 +1336,12 @@ impl SessionSummary {
 /// The start record's kind, read from a log's first line — the kind a
 /// log was born with, recovered on open. A head that cannot be parsed
 /// reads as the owner's own (no kind).
-fn start_kind(path: &Path) -> Option<String> {
+///
+/// Cheap by design (one `read_line`, never the whole log): callers that
+/// only need to *classify* a log — the spine's newest-first scan, which
+/// must skip a week of scheduled runs without parsing each one — can
+/// filter first and `summarize` only what they keep.
+pub(crate) fn start_kind(path: &Path) -> Option<String> {
     let file = File::open(path).ok()?;
     let mut first = String::new();
     BufRead::read_line(&mut std::io::BufReader::new(file), &mut first).ok()?;

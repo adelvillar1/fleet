@@ -166,6 +166,17 @@ pub fn scan_run(path: &Path, budget: u64) -> RunFacts {
 
 /// The newest sessions, without parsing the whole archive: files by mtime,
 /// then only the ones this read can use.
+///
+/// The scan classifies each log from its first line before summarizing it
+/// (the findability fix, 2026-11-15): a scheduled run and a verification
+/// probe are system-initiated work — the 2026-10-29 ruling keeps them in
+/// the archive, never on the workspace screen — so the spine walks past
+/// them and summarizes the newest owner runs behind them. Before this the
+/// scan took the newest `limit` files of any kind: on a machine whose
+/// scheduled jobs fire every few minutes those were all `lifecycle-sweep`
+/// and `corpus-refresh` rows, and the workspace's work items were cron.
+/// Delegated children stay: they carry the `delegates_to` lineage the
+/// tissue draws, and they are work the owner's own run started.
 fn recent_sessions(home: &Path, limit: usize) -> Vec<crate::session::SessionSummary> {
     let dir = crate::home::sessions_dir(home);
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -183,6 +194,12 @@ fn recent_sessions(home: &Path, limit: usize) -> Vec<crate::session::SessionSumm
     files.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     files
         .into_iter()
+        .filter(|(_, path)| {
+            !matches!(
+                crate::session::start_kind(path).as_deref(),
+                Some(crate::session::SCHEDULED_KIND) | Some(crate::session::PROBE_KIND)
+            )
+        })
         .take(limit)
         .filter_map(|(_, path)| crate::session::summarize(&path))
         .collect()
@@ -664,6 +681,58 @@ mod tests {
         .unwrap();
         let summary = crate::session::summarize(&path).expect("summarize");
         assert_eq!(plain_title(&summary), "corpus-refresh-sys1");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn the_scan_walks_past_scheduled_runs_to_the_owners_work() {
+        // The findability fix (2026-11-15): on a machine whose scheduled
+        // jobs fire every few minutes the newest files are all runs, and
+        // the spine's work items were cron. The scan classifies each log
+        // from its first line and keeps walking to the owner's own
+        // conversations behind them; a scheduled run never rides the
+        // workspace.
+        let root = scratch("recent");
+        let owner = root.join("sessions").join("20260101T000001Z-owner.jsonl");
+        std::fs::write(
+            &owner,
+            [
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-01T00:00:01Z","kind":null,"workspace":"/"}"#,
+                r#"{"type":"user","content":"the conversation I asked for"}"#,
+                r#"{"type":"end","stop_reason":"completed","turns":2}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let probe = root.join("sessions").join("20260102T000000Z-probe.jsonl");
+        std::fs::write(
+            &probe,
+            [
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-02T00:00:00Z","kind":"probe","workspace":"/"}"#,
+                r#"{"type":"user","content":"say the single word: ok"}"#,
+                r#"{"type":"end","stop_reason":"completed","turns":1}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        for index in 0..20 {
+            let path = root
+                .join("sessions")
+                .join(format!("20260103T0000{index:02}Z-run.jsonl"));
+            std::fs::write(
+                &path,
+                [
+                    r#"{"type":"start","v":1,"model":"m","created":"2026-01-03T00:00:00Z","kind":"scheduled","workspace":"/"}"#,
+                    r#"{"type":"user","content":"[scheduled run — job `lifecycle-sweep`]"}"#,
+                    r#"{"type":"end","stop_reason":"completed","turns":1}"#,
+                ]
+                .join("\n"),
+            )
+            .unwrap();
+        }
+        let recent = recent_sessions(&root, MAX_SESSIONS_SCANNED);
+        assert_eq!(recent.len(), 1, "{recent:?}");
+        assert_eq!(recent[0].id, "20260101T000001Z-owner");
         std::fs::remove_dir_all(root).ok();
     }
 
