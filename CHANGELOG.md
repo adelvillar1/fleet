@@ -12,6 +12,25 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.6 — 2026-11-15
+
+The substrate heals itself, and the desk is project-centric.
+
+The kiri/Docker substrate is now self-healing: when the worker container
+is stopped the app starts it itself and the card shows "starting
+container…" — progress, not a press; a sleeping runtime is woken; and when
+no container runtime is installed at all the card offers "Install kiri and
+start the container", downloads the kiri installer and opens it, then
+starts the worker once the runtime answers. The messages name the runtime
+honestly now (kiri or Docker), retiring the stale "start Docker Desktop".
+The manual Repair press stays for a worker that will not auto-start.
+
+The desk landing is project-centric: deliverables group by project — the
+briefs and the design boards beside each other — with a project selector,
+and runs are the fallback only when nothing has been made. The expert
+switch, which flipped a flag nothing read, now reveals the subsystem name
+behind each plain lens label.
+
 ## v0.8.5 — 2026-11-15
 
 The project-centered workspace — the capability the 0.8 rebuild buried is
