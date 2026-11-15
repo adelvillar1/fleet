@@ -13235,9 +13235,9 @@ async function theDeskReachesDesignDeliverables() {
   check('P1 the desk column reaches the design board',
     !!designRow && /3 frames/.test(designRow.textContent) && /design/.test(designRow.textContent),
     rows.map((r) => r.textContent).join(' | '));
-  const designCard = page.rows('.dk-design .dk-card');
+  const designCard = page.rows('.dk-shelf .dk-card').filter((c) => /landing board/i.test(c.textContent));
   check('P1 the shelf carries the design board',
-    designCard.length === 1 && /landing board/i.test(designCard[0].textContent),
+    designCard.length === 1 && /design/.test(designCard[0].textContent),
     String(designCard.length));
   if (designRow) designRow.click();
   await flush(60);
@@ -13295,6 +13295,57 @@ async function theAdvancedSurfacesAreFindableByTheirPlainNames() {
   check('P4 assistants finds the bots', (await search('assistants')).includes('bots'));
   check('P4 versions finds the workspace history',
     (await search('versions')).includes('workspace-history'));
+}
+
+// The expert switch (U45): it flipped body[data-expert] but nothing wore
+// expert-only, so it did nothing. Now the rail wears the subsystem names
+// the switch reveals.
+async function theExpertSwitchRevealsTheSubsystemNames() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush();
+  check('EXP expert is off by default', page.body.dataset.expert !== 'on', page.body.dataset.expert);
+  page.IDS['ctl-expert'].click();
+  await flush();
+  check('EXP the switch turns the expert register on',
+    page.body.dataset.expert === 'on', page.body.dataset.expert);
+  const annotations = page.rows('.surfaces-expert');
+  check('EXP the rail wears the subsystem names',
+    annotations.some((a) => a.textContent === 'corpus') &&
+    annotations.some((a) => a.textContent === 'calibration'),
+    annotations.map((a) => a.textContent).join(','));
+  page.IDS['ctl-expert'].click();
+  await flush();
+  check('EXP the switch turns it back off', page.body.dataset.expert === 'off', page.body.dataset.expert);
+}
+
+// The desk landing is project-centric: a project's work (briefs and design
+// boards) shows, not a fallback to runs — even when only a design board
+// exists and no desk deliverable does.
+async function theDeskLandingIsProjectCentric() {
+  const doc = projectsDoc();
+  doc.projects[0].deliverables = [
+    { slug: 'landing-board', name: 'The landing board', needs: false, source: 'design', frames: 2 },
+  ];
+  const page = boot({
+    hash: '#/desk',
+    documents: { desk: { projects: [] }, projects: doc },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+  const rail = page.rows('.dk-rail .dk-rrow');
+  check('DESK the landing lists the project',
+    rail.some((r) => /landing/.test(r.textContent)), rail.map((r) => r.textContent).join('|'));
+  check('DESK the landing shows the project work, not runs',
+    page.rows('.dk-shelf .dk-card').length >= 1 && page.rows('.board-col-well').length === 0,
+    'cards=' + page.rows('.dk-shelf .dk-card').length + ' runs=' + page.rows('.board-col-well').length);
+  // Scoping to the project keeps its board.
+  const projectRow = rail.find((r) => /landing/.test(r.textContent));
+  if (projectRow) projectRow.click();
+  await flush(80);
+  check('DESK scoping to the project keeps its board',
+    page.rows('.dk-design-card').length === 1, String(page.rows('.dk-design-card').length));
 }
 
 const cases = [
@@ -13389,6 +13440,8 @@ const cases = [
   ['P1 the desk reaches design deliverables', theDeskReachesDesignDeliverables],
   ['P2 the health lens is visible and findable', theHealthLensIsVisibleAndFindable],
   ['P4 the advanced surfaces are findable by their plain names', theAdvancedSurfacesAreFindableByTheirPlainNames],
+  ['EXP the expert switch reveals the subsystem names', theExpertSwitchRevealsTheSubsystemNames],
+  ['DESK the landing is project-centric', theDeskLandingIsProjectCentric],
   ['PWS learning is projects, the lesson and its thread', theLearningOrganisesByProjectAndThread],
   ['IB a seat answers in place', aSeatAnswersInPlace],
   ['IB the empty inbox is the honest absence', theInboxIsEmptyHonestly],

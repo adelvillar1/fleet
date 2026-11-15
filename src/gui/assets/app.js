@@ -12079,14 +12079,18 @@ import { node, svg, clip } from './core/dom.js';
       // the work is, the moment the read lands.
       readDesk(false).then(function () {
         if (face.deskOpenDesk) return;
-        if ((face.desk || []).length) { paintDeskShelf(shell.center); return; }
-        // P4: the desk is a lens over the workspace. With no deliverables
-        // yet, project the spine's work items as read-only cards so the
-        // desk reflects real work instead of a blank canvas.
-        readSpine(false).then(function (doc) {
-          if (!face.deskOpenDesk && doc && Array.isArray(doc.work) && doc.work.length) {
-            paintDeskWork(shell.center, doc.work);
-          }
+        readProjects(false).then(function () {
+          if (face.deskOpenDesk) return;
+          // Project-centric (the project-centered workspace plan): the
+          // shelf shows a project's deliverables — briefs and design
+          // boards together. Runs are the fallback only when nothing has
+          // been made yet, never over a project's work.
+          if (deskHasDeliverables()) { paintDeskShelf(shell.center); return; }
+          readSpine(false).then(function (doc) {
+            if (!face.deskOpenDesk && doc && Array.isArray(doc.work) && doc.work.length) {
+              paintDeskWork(shell.center, doc.work);
+            }
+          });
         });
       });
     }
@@ -12138,12 +12142,53 @@ import { node, svg, clip } from './core/dom.js';
     into.appendChild(zones);
   }
 
+  // The desk's deliverables grouped by project (the project-centered
+  // workspace plan): desk deliverables (the full documents in face.desk)
+  // and design boards (summaries in the projects read), joined by the
+  // binding path. The landing is organized around projects, not runs.
+  function deskProjectGroups() {
+    var groups = [];
+    var byPath = {};
+    var group = function (path, name) {
+      var key = path || '';
+      if (!byPath[key]) {
+        byPath[key] = { path: key, name: name || 'unbound', desks: [], designs: [] };
+        groups.push(byPath[key]);
+      }
+      return byPath[key];
+    };
+    (face.desk || []).forEach(function (d) {
+      var name = d.project ? d.project.split('/').filter(Boolean).pop() : 'unbound';
+      group(d.project, name).desks.push(d);
+    });
+    var doc = face.projects;
+    if (doc && !refusals(doc)) {
+      (doc.projects || []).forEach(function (p) {
+        (p.deliverables || []).forEach(function (kid) {
+          if (kid.source === 'design') group(p.path, p.name).designs.push(kid);
+        });
+      });
+      ((doc.unbound || {}).deliverables || []).forEach(function (kid) {
+        if (kid.source === 'design') group('', 'unbound').designs.push(kid);
+      });
+    }
+    return groups.filter(function (g) { return g.desks.length || g.designs.length; });
+  }
+
+  function deskHasDeliverables() {
+    if ((face.desk || []).length) return true;
+    var doc = face.projects;
+    if (!doc || refusals(doc)) return false;
+    var any = (doc.projects || []).some(function (p) { return (p.deliverables || []).length; });
+    return any || ((doc.unbound || {}).deliverables || []).length > 0;
+  }
+
   function paintDeskShelf(into) {
     var board = into || el.deskBoard;
-    var projects = face.desk || [];
+    var groups = deskProjectGroups();
     var unreadable = face.deskUnreadable || [];
-    var needs = projects.filter(function (d) { return deskState(d).needs; });
-    var design = dkDesignSection();
+    var totalDesks = (face.desk || []).length;
+    var needs = (face.desk || []).filter(function (d) { return deskState(d).needs; });
 
     var newButton = node('button', 'dk-btn primary', 'new deliverable');
     newButton.type = 'button';
@@ -12153,11 +12198,12 @@ import { node, svg, clip } from './core/dom.js';
       paintDesk();
     });
     var stamp = node('span', 'page-stamp mono',
-      projects.length + (projects.length === 1 ? ' deliverable' : ' deliverables')
+      groups.length + (groups.length === 1 ? ' project' : ' projects') + ' \u00b7 '
+      + totalDesks + (totalDesks === 1 ? ' deliverable' : ' deliverables')
       + ' \u00b7 ' + needs.length + ' need you');
     board.appendChild(dkHead('Knowledge', 'The desk',
-      'A brief, not a blank canvas: the sources are read, the claims carry their sentences, '
-      + 'and a deliverable cannot end while a refusal stands.', [stamp, newButton]));
+      'Everything a project made, in one place \u2014 the briefs and the design boards '
+      + 'beside each other. Pick a project to see its work.', [stamp, newButton]));
 
     unreadable.forEach(function (row) {
       var broken = node('div', 'dk-broken');
@@ -12166,12 +12212,7 @@ import { node, svg, clip } from './core/dom.js';
       board.appendChild(broken);
     });
 
-    if (!projects.length) {
-      // Design boards stand even with no desk deliverable yet (the
-      // project-centered workspace plan): the canvas output is reachable.
-      if (design) { board.appendChild(design); return; }
-      // In the pane, the welcome is the centre's now: this column says
-      // what is true and points at it rather than repeating the card.
+    if (!groups.length) {
       board.appendChild(into
         ? node('p', 'pw-quiet',
           'nothing made yet \u2014 the composer below opens the first brief')
@@ -12179,12 +12220,40 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
 
+    // The project rail: a press scopes the shelf to one project; "all"
+    // shows every project's work grouped. The desk is project-centric.
+    var scope = face.deskProject == null ? null : face.deskProject;
     var zones = node('div', 'dk-zones');
-    zones.appendChild(dkRail(projects));
-    zones.appendChild(dkShelf(projects));
-    zones.appendChild(dkOwed(projects));
+    var rail = node('aside', 'dk-rail');
+    rail.appendChild(node('h3', 'dk-rail-h', 'projects'));
+    var allRow = node('button', 'dk-rrow' + (scope == null ? ' here' : ''));
+    allRow.type = 'button';
+    allRow.appendChild(node('span', 'dk-name', 'all projects'));
+    allRow.appendChild(node('span', 'cnt', String(groups.length)));
+    allRow.addEventListener('click', function () { face.deskProject = null; paintDesk(); });
+    rail.appendChild(allRow);
+    groups.forEach(function (g) {
+      var row = node('button', 'dk-rrow' + (scope === g.path ? ' here' : ''));
+      row.type = 'button';
+      row.appendChild(node('span', 'dk-name', g.name));
+      row.appendChild(node('span', 'cnt', String(g.desks.length + g.designs.length)));
+      row.addEventListener('click', function () {
+        face.deskProject = scope === g.path ? null : g.path;
+        paintDesk();
+      });
+      rail.appendChild(row);
+    });
+    zones.appendChild(rail);
+
+    var shelf = node('div', 'dk-shelf');
+    var shown = scope == null ? groups : groups.filter(function (g) { return g.path === scope; });
+    shown.forEach(function (g) {
+      if (scope == null) shelf.appendChild(node('h3', 'dk-rail-h', g.name));
+      g.desks.forEach(function (d) { shelf.appendChild(dkCard(d)); });
+      g.designs.forEach(function (kid) { shelf.appendChild(dkDesignCard(kid, g.name)); });
+    });
+    zones.appendChild(shelf);
     board.appendChild(zones);
-    if (design) board.appendChild(design);
   }
 
   function dkEmpty() {
@@ -12220,111 +12289,8 @@ import { node, svg, clip } from './core/dom.js';
     return wrap;
   }
 
-  // Zone 1. The groups are derived from the deliverables themselves, so a
-  // word on this rail is a fact about the store and not a decoration.
-  function dkRail(projects) {
-    var rail = node('aside', 'dk-rail');
-    var filter = face.deskFilter;
-    var here = function (kind, value) {
-      return filter && filter.kind === kind && filter.value === value;
-    };
-    var row = function (label, count, kind, value, dot) {
-      var made = node('button', 'dk-rrow' + (here(kind, value) ? ' here' : ''));
-      made.type = 'button';
-      if (dot) made.appendChild(node('span', 'dot ' + dot));
-      made.appendChild(node('span', 'dk-name', label));
-      made.appendChild(node('span', 'cnt', String(count)));
-      made.addEventListener('click', function () {
-        face.deskFilter = here(kind, value) ? null : { kind: kind, value: value };
-        paintDesk();
-      });
-      return made;
-    };
-
-    rail.appendChild(node('div', 'dk-rail-h', 'the desk'));
-    rail.appendChild(row('all deliverables', projects.length, 'all', ''));
-    var needing = projects.filter(function (d) { return deskState(d).needs; }).length;
-    if (needing) rail.appendChild(row('needs you', needing, 'needs', '', 'warn'));
-
-    var byProject = {};
-    projects.forEach(function (desk) {
-      var key = desk.project || 'unbound';
-      byProject[key] = (byProject[key] || 0) + 1;
-    });
-    rail.appendChild(node('div', 'dk-rail-h', 'by project'));
-    Object.keys(byProject).forEach(function (key) {
-      var short = key === 'unbound' ? key : key.split('/').filter(Boolean).pop();
-      rail.appendChild(row(short, byProject[key], 'project', key, key === 'unbound' ? 'idle' : 'ok'));
-    });
-
-    rail.appendChild(node('div', 'dk-rail-h', 'state'));
-    var byState = { running: 0, refused: 0, ended: 0 };
-    projects.forEach(function (desk) {
-      var state = deskState(desk);
-      if (state.live) byState.running += 1;
-      else if (state.tone === 'down' || state.tone === 'warn') byState.refused += 1;
-      else if (state.edge === 's-done') byState.ended += 1;
-    });
-    if (byState.running) rail.appendChild(row('running', byState.running, 'state', 'running', 'idle'));
-    if (byState.refused) rail.appendChild(row('refused', byState.refused, 'state', 'refused', 'warn'));
-    if (byState.ended) rail.appendChild(row('ended', byState.ended, 'state', 'ended', 'ok'));
-    return rail;
-  }
-
-  // Zone 2. A row is a real button: Tab reaches it and Enter presses it
-  // (C13) — the shipped cards carried no tabindex, no role and no key
-  // handler, so the whole shelf was mouse-only (KI-441).
-  function dkShelf(projects) {
-    var shelf = node('div', 'dk-shelf');
-    var filter = face.deskFilter;
-    var shown = projects.filter(function (desk) {
-      if (!filter) return true;
-      var state = deskState(desk);
-      if (filter.kind === 'needs') return state.needs;
-      if (filter.kind === 'project') return (desk.project || 'unbound') === filter.value;
-      if (filter.kind === 'state') {
-        if (filter.value === 'running') return state.live;
-        if (filter.value === 'refused') return state.tone === 'down' || state.tone === 'warn';
-        if (filter.value === 'ended') return state.edge === 's-done';
-      }
-      return true;
-    });
-    if (!shown.length) {
-      shelf.appendChild(node('p', 'dk-rail-h', 'nothing under that filter'));
-      return shelf;
-    }
-    shown.forEach(function (desk) { shelf.appendChild(dkCard(desk)); });
-    return shelf;
-  }
-
-  // The design deliverables of the workspace (the project-centered
-  // workspace plan): boards from the canvas store, joined by their binding
-  // path, reachable from the desk beside the desk's own deliverables. The
-  // composer's promise — "its sessions, its design, its facts" — kept.
-  function dkDesignSection() {
-    var doc = face.projects;
-    if (!doc || refusals(doc)) return null;
-    var boards = [];
-    (doc.projects || []).forEach(function (project) {
-      (project.deliverables || []).forEach(function (kid) {
-        if (kid.source === 'design') boards.push({ kid: kid, project: project.name });
-      });
-    });
-    ((doc.unbound || {}).deliverables || []).forEach(function (kid) {
-      if (kid.source === 'design') boards.push({ kid: kid, project: 'unbound' });
-    });
-    if (!boards.length) return null;
-    var section = node('div', 'dk-design');
-    section.appendChild(node('h3', 'dk-rail-h',
-      'design \u00b7 ' + boards.length + (boards.length === 1 ? ' board' : ' boards')));
-    var grid = node('div', 'dk-shelf');
-    boards.forEach(function (row) { grid.appendChild(dkDesignCard(row.kid, row.project)); });
-    section.appendChild(grid);
-    return section;
-  }
-
   function dkDesignCard(kid, projectName) {
-    var card = node('button', 'dk-card s-idle');
+    var card = node('button', 'dk-card s-idle dk-design-card');
     card.type = 'button';
     card.title = 'open the design board';
     card.addEventListener('click', function () {
@@ -12423,77 +12389,6 @@ import { node, svg, clip } from './core/dom.js';
 
     card.appendChild(dkCoverage(desk));
     return card;
-  }
-
-  // Zone 3: what the desk owes the owner, gathered from every deliverable.
-  function dkOwed(projects) {
-    var owed = node('aside', 'dk-owed');
-    var head = node('div', 'dk-owed-h');
-    var items = [];
-    projects.forEach(function (desk) {
-      (desk.refusals || []).forEach(function (refusal, index) {
-        items.push({
-          tone: 'down',
-          what: 'An assertion nobody sourced \u2014 \u201c' + refusal.assertion + '\u201d.',
-          whom: desk.name + ' \u00b7 review',
-          act: 'see the near miss',
-          go: function () { openDeskProject(desk.slug, index); },
-        });
-      });
-      (desk.number_refusals || []).forEach(function (refusal) {
-        items.push({
-          tone: 'down',
-          what: 'An unsourced number, ' + refusal.raw + ', in the draft. No source carries it.',
-          whom: desk.name + ' \u00b7 review',
-          act: 'open the review',
-          go: function () { openDeskProject(desk.slug); },
-        });
-      });
-      var state = deskState(desk);
-      if (desk.coverage && desk.coverage.material_gap) {
-        items.push({
-          tone: 'warn',
-          what: 'Coverage says ' + desk.coverage.score + ' of 5 \u2014 the outline runs a named gap.',
-          whom: desk.name + ' \u00b7 coverage',
-          act: 'add a source',
-          go: function () { openDeskProject(desk.slug); },
-        });
-      }
-      if (state.live) {
-        items.push({
-          tone: 'acc',
-          what: desk.name + '\u2019s ' + state.word.replace(' \u00b7 running', '') + ' is running. It renders in the pane when it lands.',
-          whom: desk.name + ' \u00b7 stages',
-          act: 'watch it',
-          go: function () { openDeskProject(desk.slug); },
-        });
-      }
-    });
-
-    head.appendChild(node('div', 't', 'what the desk owes you'));
-    head.appendChild(node('div', 's', items.length
-      ? items.length + (items.length === 1 ? ' thing stands' : ' things stand') + ' between the work and its end'
-      : 'nothing stands \u2014 every deliverable can end'));
-    owed.appendChild(head);
-
-    if (!items.length) {
-      owed.appendChild(node('p', 'quiet', 'The desk owes you nothing. Every refusal is closed.'));
-      return owed;
-    }
-    items.slice(0, 6).forEach(function (item) {
-      var row = node('div', 'dk-owe');
-      row.appendChild(node('span', 'mk ' + item.tone));
-      var body = node('div', 'bd');
-      body.appendChild(node('div', 'what', item.what));
-      body.appendChild(node('div', 'whom mono', item.whom));
-      var go = node('button', 'dk-go', item.act);
-      go.type = 'button';
-      go.addEventListener('click', item.go);
-      body.appendChild(go);
-      row.appendChild(body);
-      owed.appendChild(row);
-    });
-    return owed;
   }
 
   // ---- the deliverable -----------------------------------------------
@@ -28239,6 +28134,18 @@ import { node, svg, clip } from './core/dom.js';
     try { window.localStorage.setItem(RAIL_FOLDED_KEY, JSON.stringify(held)); } catch (error) { }
   }
 
+  // The expert register's lens names (U45, VOCABULARY.md): the subsystem
+  // each plain lens label stands for. The expert switch annotates the
+  // rail with these; it never hides the plain word.
+  var EXPERT_NAMES = {
+    chat: 'sessions', sessions: 'archive', board: 'tasks', desk: 'deliverables',
+    memory: 'corpus', learning: 'lessons', calibration: 'calibration',
+    inbox: 'owner-inbox', 'second-brain': 'tower', armada: 'armada',
+    settings: 'config', router: 'route::select', delegation: 'delegate',
+    bots: 'channels', vault: 'vault.json', plugins: 'bundles', design: 'canvas',
+    'workspace-history': 'layerfs', about: 'version'
+  };
+
   function buildRail() {
     el.railTree.textContent = '';
     var folded = railFoldedGroups();
@@ -28290,6 +28197,13 @@ import { node, svg, clip } from './core/dom.js';
         });
         link.appendChild(icon(isPlugin ? 'plugin' : address, 'surfaces-icon'));
         link.appendChild(node('span', 'surfaces-label', name));
+        // The expert register (U45): the subsystem name behind the plain
+        // label, revealed when the console's expert switch is on. The
+        // switch flipped body[data-expert] but nothing wore expert-only,
+        // so it did nothing — this annotation is what it reveals.
+        if (EXPERT_NAMES[address]) {
+          link.appendChild(node('span', 'surfaces-expert expert-only', EXPERT_NAMES[address]));
+        }
         // A surface that has something waiting says so on the rail, and
         // says nothing when it does not — an empty counter is decoration.
         var count = node('span', 'surfaces-count');

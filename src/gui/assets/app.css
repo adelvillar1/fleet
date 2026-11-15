@@ -684,6 +684,17 @@ button, input, textarea, select { font: inherit; }
   white-space: nowrap;
 }
 
+/* The expert register's annotation (U45): the subsystem name beside the
+   plain label, revealed by the console's expert switch. Small and quiet —
+   it annotates, never replaces. */
+.surfaces-expert {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
 .surfaces-foot {
   margin-top: auto;
   display: flex;
