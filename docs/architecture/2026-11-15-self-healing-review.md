@@ -161,12 +161,18 @@ prove the pattern; the next slices reuse them.
 - **Device-store corruption messaging** — the access read carries a named
   refusal instead of silently painting zero devices (#10).
 
-## Remaining (the next slice)
+**Third slice — the leftovers:**
+- **Scheduler-thread supervisor** (#12) — the tick loop runs under a
+  `catch_unwind`, so a panic that would kill the thread restarts it (the
+  per-minute claims prevent a double fire). The one exit is a runtime that
+  cannot build — named, not silent.
+- **API connectivity** (#2) — the slow `api_probe` already makes a real
+  request; its failure now names "the API did not answer" for both a
+  refused key (401/403) and an unreachable API (network), so the card is
+  the connectivity line.
+- **Corpus drift** (#8) — a cheap HEAD-vs-last-sync read (`corpus::drift`,
+  no fetch) surfaces as a failing `corpus` check on the Health lens's
+  doctor card when the local corpus has moved since its last sync.
 
-- **Scheduler-thread supervisor** (#12) — the tick thread already catches a
-  per-job panic; a watchdog to restart the thread on its own death needs
-  thread-lifecycle plumbing (the handle is discarded at both spawn sites and
-  `ui_tx` is a constructor local). Named, not built.
-- **Surface-only gaps** — the API-connectivity line from a request-time
-  signal, and corpus drift as a read-time staleness note (a fetch in the
-  loop is too heavy).
+Every candidate in the review is now shipped or explicitly by-design (the
+release probe on a checkout-less install).

@@ -2130,67 +2130,91 @@ impl Scheduler {
         ui_tx: Option<UnboundedSender<UiEvent>>,
         model: String,
     ) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    eprintln!("fleet: cron: the scheduler runtime failed to start: {error}");
-                    return;
-                }
-            };
-            runtime.block_on(async move {
-                let runner_home = home.clone();
-                let runner: Runner = Box::new(move |job, minute, catch_up| {
-                    let home = runner_home.clone();
-                    Box::pin(async move { run_job(&home, &job, minute, catch_up).await })
-                });
-                // The built-in eval cadence: run the corpus headless once a
-                // day, its row landing in the stream like any run. It rides
-                // the scheduler's own hook (not a job-store entry) because
-                // the corpus is a deterministic run, not a conversation.
-                let eval_home = home.clone();
-                let eval: EvalRunner = Box::new(move || {
-                    let home = eval_home.clone();
-                    Box::pin(async move {
-                        let user_home = std::env::var("HOME").ok();
-                        let root = crate::calib::resolve_root(&home, user_home.as_deref());
-                        match crate::eval::mock_server_binary() {
-                            None => Err(
-                                "the mock-server binary was not found beside the fleet executable"
-                                    .to_string(),
-                            ),
-                            Some(bin) => {
-                                let report = crate::eval::run(&root, &bin).await;
-                                Ok(format!(
-                                    "ran \u{2014} {} passed, {} failed, score {:.2}",
-                                    report.passed(),
-                                    report.failed().len(),
-                                    report.score()
-                                ))
-                            }
+        // A supervisor (the self-healing extension): the tick loop runs
+        // under a catch_unwind, so a panic that would kill the thread
+        // restarts it — the per-minute claims keep a restart from firing a
+        // window twice. The one exit is a runtime that cannot build (a
+        // named, unrecoverable failure). The tick loop already isolates a
+        // per-job panic (`run_job`'s own catch); this covers the loop body.
+        thread::spawn(move || loop {
+            let cycle_home = home.clone();
+            let cycle_ui = ui_tx.clone();
+            let cycle_model = model.clone();
+            let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Self::run_scheduler(cycle_home, cycle_ui, cycle_model);
+            }));
+            if ran.is_ok() {
+                return;
+            }
+            eprintln!(
+                "fleet: cron: the scheduler thread panicked \u{2014} restarting it (the claims \
+                 prevent a double fire)"
+            );
+        })
+    }
+
+    /// One scheduler lifetime: build the runtime, run the startup pass, then
+    /// the tick loop forever. Returns only when the runtime cannot build.
+    fn run_scheduler(home: PathBuf, ui_tx: Option<UnboundedSender<UiEvent>>, model: String) {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                eprintln!("fleet: cron: the scheduler runtime failed to start: {error}");
+                return;
+            }
+        };
+        runtime.block_on(async move {
+            let runner_home = home.clone();
+            let runner: Runner = Box::new(move |job, minute, catch_up| {
+                let home = runner_home.clone();
+                Box::pin(async move { run_job(&home, &job, minute, catch_up).await })
+            });
+            // The built-in eval cadence: run the corpus headless once a
+            // day, its row landing in the stream like any run. It rides
+            // the scheduler's own hook (not a job-store entry) because
+            // the corpus is a deterministic run, not a conversation.
+            let eval_home = home.clone();
+            let eval: EvalRunner = Box::new(move || {
+                let home = eval_home.clone();
+                Box::pin(async move {
+                    let user_home = std::env::var("HOME").ok();
+                    let root = crate::calib::resolve_root(&home, user_home.as_deref());
+                    match crate::eval::mock_server_binary() {
+                        None => Err(
+                            "the mock-server binary was not found beside the fleet executable"
+                                .to_string(),
+                        ),
+                        Some(bin) => {
+                            let report = crate::eval::run(&root, &bin).await;
+                            Ok(format!(
+                                "ran \u{2014} {} passed, {} failed, score {:.2}",
+                                report.passed(),
+                                report.failed().len(),
+                                report.score()
+                            ))
                         }
-                    })
-                });
-                let mut scheduler = Scheduler::new(home, runner).with_ui(ui_tx).with_eval(eval);
-                scheduler.eval_model = Some(model);
-                for line in scheduler.start(Minute::now()).await {
+                    }
+                })
+            });
+            let mut scheduler = Scheduler::new(home, runner).with_ui(ui_tx).with_eval(eval);
+            scheduler.eval_model = Some(model);
+            for line in scheduler.start(Minute::now()).await {
+                eprintln!("{line}");
+            }
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(CRON_TICK_SECONDS)).await;
+                let now = Minute::now();
+                for line in scheduler.tick(now).await {
                     eprintln!("{line}");
                 }
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(CRON_TICK_SECONDS)).await;
-                    let now = Minute::now();
-                    for line in scheduler.tick(now).await {
-                        eprintln!("{line}");
-                    }
-                    for line in scheduler.run_eval_if_due(now).await {
-                        eprintln!("{line}");
-                    }
+                for line in scheduler.run_eval_if_due(now).await {
+                    eprintln!("{line}");
                 }
-            });
-        })
+            }
+        });
     }
 
     /// The startup pass's decision: every enabled job whose most recent

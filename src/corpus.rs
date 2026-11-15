@@ -193,6 +193,23 @@ pub fn corpus_root(home: &Path) -> PathBuf {
     home.join("memories")
 }
 
+/// Whether the local corpus has moved since its last sync (the
+/// self-healing extension): the working HEAD against the recorded
+/// revision — a cheap read, no fetch. `None` when the corpus is not a git
+/// work tree (nothing to drift) or sync was never configured.
+pub fn drift(home: &Path) -> Option<bool> {
+    let root = corpus_root(home);
+    if !root.join(".git").exists() {
+        return None;
+    }
+    let head = git(&root, &["rev-parse", "HEAD"]).ok()?;
+    let state = SyncState::load(home);
+    Some(match state.last_revision {
+        Some(last) => last.trim() != head.trim(),
+        None => true,
+    })
+}
+
 /// Sync the corpus with its remote (D23): fetch → merge → push. With no
 /// remote configured, refuses by name (C0). The merge takes over only the
 /// conflicted fact files; any unresolvable conflict aborts the merge and
@@ -390,6 +407,18 @@ mod tests {
         assert!(basis_rank("confirmed-by") > basis_rank("validated"));
         assert!(basis_rank("validated") > basis_rank("inferred"));
         assert!(basis_rank("inferred") > basis_rank("unknown"));
+    }
+
+    #[test]
+    fn drift_is_none_without_a_corpus_git_tree() {
+        // A home whose memories dir is not a git work tree has nothing to
+        // drift (the self-healing extension's cheap read names no drift
+        // rather than a false one).
+        let home = std::env::temp_dir().join(format!("fleet-corpus-drift-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("memories")).unwrap();
+        assert_eq!(drift(&home), None);
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[test]

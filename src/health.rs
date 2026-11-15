@@ -291,10 +291,12 @@ fn api_probe(home: &Path, fast_only: bool) -> ServiceHealth {
         .unwrap_or_else(|| crate::api::DEFAULT_BASE_URL.to_string());
     match crate::settings::discover_provider_models(&base, None, Some(&key)) {
         Ok(_) => ServiceHealth::up("api"),
-        Err(reason) => ServiceHealth::down(
-            "api",
-            format!("the key is set but the API refused it \u{2014} {reason}"),
-        ),
+        // The request names whether the key was refused (401/403) or the
+        // API was unreachable (network) — so the card covers both, not only
+        // an invalid key (the self-healing review's connectivity line).
+        Err(reason) => {
+            ServiceHealth::down("api", format!("the API did not answer \u{2014} {reason}"))
+        }
     }
 }
 

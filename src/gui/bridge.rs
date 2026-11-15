@@ -9853,6 +9853,15 @@ fn doctor_read(home: &std::path::Path) -> Value {
         "check": "credentials", "ok": credentials_check.ok,
         "why": crate::doctor::render(&credentials_check),
     }));
+    // Corpus drift (the self-healing extension): the local corpus has moved
+    // since its last sync — a cheap HEAD-vs-revision read, surfaced as a
+    // failing check the Health lens paints.
+    if crate::corpus::drift(home) == Some(true) {
+        checks.push(json!({
+            "check": "corpus", "ok": false,
+            "why": "the corpus has moved since its last sync \u{2014} sync it from the Health lens",
+        }));
+    }
     json!({ "type": "doctor", "checks": checks })
 }
 
