@@ -440,6 +440,22 @@ real work lands in sessions that are not objects.
   `sessions_read`'s window, `BACKGROUND_WINDOW`, `spine::recent_sessions`'
   class peek, paintRecent's order, paintEmpty's own read.
 
+- **U51 — The spine is the owner's conversations, and their delegation.**
+  The workspace spine's **work items** are user-initiated conversations only
+  (the owner's 2026-11-15 ruling: "the spine should only use user initiated
+  sessions, everything else is internal housekeeping"). A scheduled run, a
+  verification probe and a peer channel's conversation are housekeeping:
+  kept in the archive, off the spine — no work item, no thread, no node.
+  A lesson or practice run is user-initiated (the owner asked for it) and
+  stays. **A delegated child is not a work item either, but its process
+  belongs to the parent goal it serves** (the same ruling's second half:
+  "the delegation is not user initiated but the processes belong to the
+  parent's goal"): the child rides as a node under its parent and the
+  `delegates_to` edge joins them — and a child whose parent is not in the
+  neighborhood does not ride at all. *Constrains:* `spine::recent_sessions`
+  (start-line kind + parent, channel and probe marks, archived set), the
+  work loop's delegated branch, `RunFacts.parent`.
+
 ---
 
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the

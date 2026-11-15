@@ -1351,6 +1351,20 @@ pub(crate) fn start_kind(path: &Path) -> Option<String> {
     }
 }
 
+/// The delegating session's id, from a child log's first line. Read only
+/// after [`start_kind`] names a delegated child, so the extra open costs
+/// one head read per child — what lets the spine attach a child to the
+/// parent goal without summarizing a log it will not use.
+pub(crate) fn start_parent(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut first = String::new();
+    BufRead::read_line(&mut std::io::BufReader::new(file), &mut first).ok()?;
+    match serde_json::from_str::<Record>(first.trim()).ok()? {
+        Record::Start { parent, .. } => parent,
+        _ => None,
+    }
+}
+
 /// List every log in `sessions_dir(home)`, oldest first; logs that fail to
 /// parse are reported as entries with an `unreadable` model rather than
 /// hiding them.

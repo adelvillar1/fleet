@@ -6999,7 +6999,7 @@ pub(crate) fn load_archived(home: &std::path::Path) -> std::collections::HashMap
 
 /// Read the probe set: `id → the stamp the mark was made`. An entry
 /// whose session log is gone is dropped, like the titles map.
-fn load_probes(home: &std::path::Path) -> std::collections::HashMap<String, String> {
+pub(crate) fn load_probes(home: &std::path::Path) -> std::collections::HashMap<String, String> {
     let text = match std::fs::read_to_string(probes_path(home)) {
         Ok(text) => text,
         Err(_) => return std::collections::HashMap::new(),

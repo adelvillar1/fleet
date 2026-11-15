@@ -32,7 +32,9 @@ connected to work items, without returning to the dashboard.
 - [x] C3: routing and helpers weave into the lenses. Reviews gains a
   routing section (the live decision + tier chains, the Routing surface's
   own cards). The spine reads a delegated child's parent from the start
-  record and emits a `delegates_to` edge.
+  record and emits a `delegates_to` edge. **Amended 2026-11-15 (U51):**
+  the edge stays, but only as the parent goal's own process — the child
+  rides as a node under its parent and never as a work item.
 - [x] C4: the Advanced surfaces answer to their plain names. The palette
   search carries the doors' plain names — secrets→vault, assistants→bots,
   versions→workspace history, helpers→delegation, routing→router.

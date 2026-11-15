@@ -56,8 +56,9 @@ pub struct RunFacts {
     pub stop: Option<String>,
     /// The end record's turn count.
     pub turns: Option<u64>,
-    /// The start record's parent session, when this run was delegated
-    /// (the project-centered workspace plan): the lineage edge's source.
+    /// The start record's parent session, on a delegated child: the
+    /// lineage edge's source, so a child's process hangs off the parent
+    /// goal it serves (the owner's 2026-11-15 ruling).
     pub parent: Option<String>,
 }
 
@@ -167,21 +168,31 @@ pub fn scan_run(path: &Path, budget: u64) -> RunFacts {
 /// The newest sessions, without parsing the whole archive: files by mtime,
 /// then only the ones this read can use.
 ///
-/// The scan classifies each log from its first line before summarizing it
-/// (the findability fix, 2026-11-15): a scheduled run and a verification
-/// probe are system-initiated work — the 2026-10-29 ruling keeps them in
-/// the archive, never on the workspace screen — so the spine walks past
-/// them and summarizes the newest owner runs behind them. Before this the
-/// scan took the newest `limit` files of any kind: on a machine whose
-/// scheduled jobs fire every few minutes those were all `lifecycle-sweep`
-/// and `corpus-refresh` rows, and the workspace's work items were cron.
-/// Delegated children stay: they carry the `delegates_to` lineage the
-/// tissue draws, and they are work the owner's own run started.
-fn recent_sessions(home: &Path, limit: usize) -> Vec<crate::session::SessionSummary> {
+/// A **user-initiated** conversation rides the spine (the owner's
+/// 2026-11-15 ruling: "the spine should only use user initiated sessions,
+/// everything else is internal housekeeping") — and so does a delegated
+/// child **attached to one of them**, because the child's process belongs
+/// to the parent goal it serves (the same ruling's second half: "the
+/// delegation is not user initiated but the processes belong to the
+/// parent's goal"). A child rides as a node under its parent, never as a
+/// work item of its own; a child whose parent is not in the neighborhood
+/// does not ride at all. Scheduled runs, verification probes and peer
+/// channels are housekeeping and are walked past.
+///
+/// Each log is classified from its first line (cheap) before it is
+/// summarized; a candidate's channel and probe marks need the summary, so
+/// they drop it after. Archived owner conversations are walked past too,
+/// so the bound counts the conversations the spine will actually draw.
+fn recent_sessions(
+    home: &Path,
+    limit: usize,
+    archived: &std::collections::HashMap<String, String>,
+) -> Vec<crate::session::SessionSummary> {
     let dir = crate::home::sessions_dir(home);
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
+    let probes = crate::gui::bridge::load_probes(home);
     let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
         .flatten()
         .map(|entry| entry.path())
@@ -192,40 +203,63 @@ fn recent_sessions(home: &Path, limit: usize) -> Vec<crate::session::SessionSumm
         })
         .collect();
     files.sort_by_key(|entry| std::cmp::Reverse(entry.0));
-    files
+    let mut owner: Vec<crate::session::SessionSummary> = Vec::new();
+    // A child's parent is decided against the neighborhood, which is only
+    // known once the scan has the owner's conversations: a child seen
+    // before its parent waits here.
+    let mut children: Vec<(String, crate::session::SessionSummary)> = Vec::new();
+    for (_, path) in files {
+        match crate::session::start_kind(&path).as_deref() {
+            Some(crate::session::SCHEDULED_KIND) | Some(crate::session::PROBE_KIND) => continue,
+            Some(crate::session::SUBAGENT_KIND) => {
+                if let (Some(parent), Some(summary)) = (
+                    crate::session::start_parent(&path),
+                    crate::session::summarize(&path),
+                ) {
+                    children.push((parent, summary));
+                }
+                continue;
+            }
+            _ => {}
+        }
+        let Some(summary) = crate::session::summarize(&path) else {
+            continue;
+        };
+        if summary.channel.is_some()
+            || probes.contains_key(&summary.id)
+            || archived.contains_key(&summary.id)
+        {
+            continue;
+        }
+        owner.push(summary);
+        if owner.len() >= limit {
+            break;
+        }
+    }
+    // The neighborhood is one document: the owner's conversations, then
+    // the processes their goals delegated.
+    let present: std::collections::BTreeSet<&str> =
+        owner.iter().map(|summary| summary.id.as_str()).collect();
+    let kept: Vec<crate::session::SessionSummary> = children
         .into_iter()
-        .filter(|(_, path)| {
-            !matches!(
-                crate::session::start_kind(path).as_deref(),
-                Some(crate::session::SCHEDULED_KIND) | Some(crate::session::PROBE_KIND)
-            )
+        .filter(|(parent, child)| {
+            present.contains(parent.as_str()) && !archived.contains_key(&child.id)
         })
-        .take(limit)
-        .filter_map(|(_, path)| crate::session::summarize(&path))
-        .collect()
+        .map(|(_, child)| child)
+        .collect();
+    owner.extend(kept);
+    owner
 }
 
-/// A scheduled run's plain title: the job's own name, not the bracket
-/// sentence the scheduler writes into the first message.
+/// A conversation's plain title: its first words. (The archive's own
+/// `title_ladder` names the rows the face lists; the spine only needs a
+/// label for the graph.)
 fn plain_title(summary: &crate::session::SessionSummary) -> String {
     let first = summary
         .first_text
         .as_deref()
         .map(|text| text.trim())
         .filter(|text| !text.is_empty());
-    if summary.kind.as_deref() == Some("scheduled") {
-        if let Some(text) = first {
-            if let Some(start) = text.find("job `") {
-                let rest = &text[start + 5..];
-                if let Some(end) = rest.find('`') {
-                    let job = rest[..end].trim();
-                    if !job.is_empty() {
-                        return job.to_string();
-                    }
-                }
-            }
-        }
-    }
     first
         .map(|text| text.to_string())
         .unwrap_or_else(|| summary.id.clone())
@@ -268,16 +302,13 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
         }
     }
 
-    let sessions = recent_sessions(home, MAX_SESSIONS_SCANNED);
     // The owner's archive is the one end a conversation can come to (the
     // archive verb): an archived session leaves the spine — its work item,
     // its thread and the nodes it fed are the surfaces' own history, kept
-    // on disk, out of the workspace's face.
+    // on disk, out of the workspace's face. The scan reads the set so the
+    // bound counts what the spine will actually draw.
     let archived = crate::gui::bridge::load_archived(home);
-    let sessions: Vec<_> = sessions
-        .into_iter()
-        .filter(|summary| !archived.contains_key(&summary.id))
-        .collect();
+    let sessions = recent_sessions(home, MAX_SESSIONS_SCANNED, &archived);
     let mut budget = SCAN_BUDGET;
     let mut run_facts: BTreeMap<String, RunFacts> = BTreeMap::new();
     for summary in &sessions {
@@ -385,13 +416,21 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
     }
 
     // Then the sessions no task claims: the work that happened anyway.
+    //
+    // A delegated child is not a work item (the owner's 2026-11-15
+    // ruling): its process belongs to the parent goal it serves, so it
+    // rides as a node under the parent — the `delegates_to` edge — and
+    // never takes a work slot of its own.
     for summary in &sessions {
-        if work.len() >= MAX_WORK {
-            omitted += 1;
-            continue;
-        }
-        if claimed_session.contains_key(&summary.id) {
-            continue;
+        let delegated = summary.kind.as_deref() == Some(crate::session::SUBAGENT_KIND);
+        if !delegated {
+            if work.len() >= MAX_WORK {
+                omitted += 1;
+                continue;
+            }
+            if claimed_session.contains_key(&summary.id) {
+                continue;
+            }
         }
         let facts = run_facts.get(&summary.id).cloned().unwrap_or_default();
         let status = if !summary.ended {
@@ -406,21 +445,23 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
             .get(&summary.id)
             .cloned()
             .unwrap_or_default();
-        work.push(json!({
-            "id": summary.id,
-            "kind": "session",
-            "title": title,
-            "status": status,
-            "transcript": summary.id,
-            "owner": Value::Null,
-            "machine": Value::Null,
-            "binding": summary.workspace,
-            "artifacts": artifacts,
-            "skills": facts.skills,
-            "facts": facts.facts,
-            "turns": facts.turns,
-            "created": summary.created,
-        }));
+        if !delegated {
+            work.push(json!({
+                "id": summary.id,
+                "kind": "session",
+                "title": title,
+                "status": status,
+                "transcript": summary.id,
+                "owner": Value::Null,
+                "machine": Value::Null,
+                "binding": summary.workspace,
+                "artifacts": artifacts,
+                "skills": facts.skills,
+                "facts": facts.facts,
+                "turns": facts.turns,
+                "created": summary.created,
+            }));
+        }
         add_node(
             &mut nodes,
             &mut omitted,
@@ -466,9 +507,10 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
             );
             push_edge(&mut edges, &summary.id, fact, "wrote_fact");
         }
-        // The delegation lineage (the project-centered workspace plan): a
-        // child run names its parent in the start record; the edge joins
-        // them in the tissue when both are in the neighborhood.
+        // The delegation lineage: a child's process belongs to the parent
+        // goal it serves (the owner's 2026-11-15 ruling), so the edge joins
+        // them in the tissue. The child's own node is the target; the face
+        // skips an edge whose node the read dropped.
         if let Some(parent) = &facts.parent {
             push_edge(&mut edges, parent, &summary.id, "delegates_to");
         }
@@ -666,32 +708,15 @@ mod tests {
     }
 
     #[test]
-    fn a_scheduled_runs_title_is_the_job_not_the_bracket_sentence() {
-        let root = scratch("title");
-        let path = root.join("sessions").join("20260101T000000Z-aaaa.jsonl");
-        std::fs::write(
-            &path,
-            [
-                r#"{"type":"start","v":1,"model":"m","created":"2026-01-01T00:00:00Z","kind":"scheduled","workspace":"/"}"#,
-                r#"{"type":"user","content":"[scheduled run — job `corpus-refresh-sys1` at 2026-01-01T00:00Z]"}"#,
-                r#"{"type":"end","stop_reason":"completed","turns":3}"#,
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-        let summary = crate::session::summarize(&path).expect("summarize");
-        assert_eq!(plain_title(&summary), "corpus-refresh-sys1");
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn the_scan_walks_past_scheduled_runs_to_the_owners_work() {
-        // The findability fix (2026-11-15): on a machine whose scheduled
-        // jobs fire every few minutes the newest files are all runs, and
-        // the spine's work items were cron. The scan classifies each log
-        // from its first line and keeps walking to the owner's own
-        // conversations behind them; a scheduled run never rides the
-        // workspace.
+    fn the_owners_conversations_and_their_delegation_ride_the_spine() {
+        // The owner's 2026-11-15 ruling, both halves: the spine carries
+        // user-initiated conversations, and a delegated child rides with
+        // the parent goal it serves — never as a work item of its own, and
+        // never at all when its parent is not in the neighborhood. A
+        // scheduled run, a verification probe and a peer channel's
+        // conversation are housekeeping and stay out. Every excluded log
+        // is also NEWER than the owner's, so a scan that took the newest
+        // files of any kind would return one of them.
         let root = scratch("recent");
         let owner = root.join("sessions").join("20260101T000001Z-owner.jsonl");
         std::fs::write(
@@ -704,25 +729,50 @@ mod tests {
             .join("\n"),
         )
         .unwrap();
-        let probe = root.join("sessions").join("20260102T000000Z-probe.jsonl");
+        let lesson = root.join("sessions").join("20260101T000002Z-lesson.jsonl");
         std::fs::write(
-            &probe,
+            &lesson,
             [
-                r#"{"type":"start","v":1,"model":"m","created":"2026-01-02T00:00:00Z","kind":"probe","workspace":"/"}"#,
-                r#"{"type":"user","content":"say the single word: ok"}"#,
-                r#"{"type":"end","stop_reason":"completed","turns":1}"#,
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-01T00:00:02Z","kind":"lesson","workspace":"/"}"#,
+                r#"{"type":"user","content":"teach me this"}"#,
+                r#"{"type":"end","stop_reason":"completed","turns":2}"#,
             ]
             .join("\n"),
         )
         .unwrap();
+        // The housekeeping logs, newest last so they lead the mtime sort.
+        let excluded = [
+            (
+                "20260102T000000Z-probe.jsonl",
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-02T00:00:00Z","kind":"probe","workspace":"/"}"#,
+                r#"{"type":"user","content":"say the single word: ok"}"#,
+            ),
+            (
+                "20260103T000000Z-child.jsonl",
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-03T00:00:00Z","kind":"subagent","workspace":"/","parent":"20260101T000001Z-owner"}"#,
+                r#"{"type":"user","content":"a delegated child"}"#,
+            ),
+        ];
+        for (name, start, first) in excluded {
+            std::fs::write(
+                root.join("sessions").join(name),
+                [
+                    start,
+                    first,
+                    r#"{"type":"end","stop_reason":"completed","turns":1}"#,
+                ]
+                .join("\n"),
+            )
+            .unwrap();
+        }
         for index in 0..20 {
             let path = root
                 .join("sessions")
-                .join(format!("20260103T0000{index:02}Z-run.jsonl"));
+                .join(format!("20260104T0000{index:02}Z-run.jsonl"));
             std::fs::write(
                 &path,
                 [
-                    r#"{"type":"start","v":1,"model":"m","created":"2026-01-03T00:00:00Z","kind":"scheduled","workspace":"/"}"#,
+                    r#"{"type":"start","v":1,"model":"m","created":"2026-01-04T00:00:00Z","kind":"scheduled","workspace":"/"}"#,
                     r#"{"type":"user","content":"[scheduled run — job `lifecycle-sweep`]"}"#,
                     r#"{"type":"end","stop_reason":"completed","turns":1}"#,
                 ]
@@ -730,9 +780,50 @@ mod tests {
             )
             .unwrap();
         }
-        let recent = recent_sessions(&root, MAX_SESSIONS_SCANNED);
-        assert_eq!(recent.len(), 1, "{recent:?}");
-        assert_eq!(recent[0].id, "20260101T000001Z-owner");
+        // A peer channel's conversation: kindless, marked by its record.
+        let channel = root.join("sessions").join("20260105T000000Z-peer.jsonl");
+        std::fs::write(
+            &channel,
+            [
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-05T00:00:00Z","kind":null,"workspace":"/"}"#,
+                r#"{"type":"channel","channel":"telegram","peer_id":"42","peer":"owner"}"#,
+                r#"{"type":"user","content":"sent from my phone"}"#,
+                r#"{"type":"end","stop_reason":"completed","turns":1}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        // A delegated child whose parent is not in the neighborhood: no
+        // goal on the spine owns it, so it does not ride.
+        let orphan = root.join("sessions").join("20260106T000000Z-orphan.jsonl");
+        std::fs::write(
+            &orphan,
+            [
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-06T00:00:00Z","kind":"subagent","workspace":"/","parent":"20250101T000000Z-gone"}"#,
+                r#"{"type":"user","content":"a child of a parent nobody drew"}"#,
+                r#"{"type":"end","stop_reason":"completed","turns":1}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let recent = recent_sessions(
+            &root,
+            MAX_SESSIONS_SCANNED,
+            &std::collections::HashMap::new(),
+        );
+        let ids: Vec<&str> = recent.iter().map(|row| row.id.as_str()).collect();
+        // The owner's two conversations, then the child attached to the
+        // owner's goal; the channel row, the probe, the runs and the
+        // orphan child do not ride.
+        assert_eq!(
+            ids,
+            vec![
+                "20260101T000002Z-lesson",
+                "20260101T000001Z-owner",
+                "20260103T000000Z-child",
+            ],
+            "{recent:?}"
+        );
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -755,26 +846,6 @@ mod tests {
         assert_eq!(facts.facts, vec!["a-fact-that-was-written".to_string()]);
         assert_eq!(facts.stop.as_deref(), Some("completed"));
         assert_eq!(facts.turns, Some(7));
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn the_scan_reads_the_delegation_parent() {
-        // The project-centered workspace plan: a delegated child names its
-        // parent in the start record; the spine joins them with an edge.
-        let root = scratch("parent");
-        let path = root.join("sessions").join("20260101T000000Z-dddd.jsonl");
-        std::fs::write(
-            &path,
-            [
-                r#"{"type":"start","v":1,"model":"m","created":"2026-01-01T00:00:00Z","kind":null,"workspace":"/","parent":"20260101T000000Z-parent"}"#,
-                r#"{"type":"end","stop_reason":"completed","turns":2}"#,
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-        let facts = scan_run(&path, 1 << 20);
-        assert_eq!(facts.parent.as_deref(), Some("20260101T000000Z-parent"));
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -834,6 +905,66 @@ mod tests {
         assert!(
             edges.iter().any(|edge| edge["kind"] == "used_skill"),
             "the skill the run invoked is an edge: {edges:?}"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_delegated_child_hangs_off_the_parent_goal_without_a_work_item() {
+        // The owner's 2026-11-15 ruling: the child's process belongs to the
+        // parent goal it serves, so it rides the graph under the parent —
+        // node and `delegates_to` edge — and never takes a work slot. The
+        // work list stays the user-initiated conversation.
+        let root = scratch("delegation");
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join("sessions")).unwrap();
+        std::fs::write(
+            home.join("sessions").join("20260101T000000Z-parent.jsonl"),
+            [
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-01T00:00:00Z","kind":null,"workspace":"/work"}"#,
+                r#"{"type":"user","content":"research the thing"}"#,
+                r#"{"type":"end","stop_reason":"completed","turns":4}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            home.join("sessions").join("20260101T000100Z-child.jsonl"),
+            [
+                r#"{"type":"start","v":1,"model":"m","created":"2026-01-01T00:01:00Z","kind":"subagent","workspace":"/work","parent":"20260101T000000Z-parent"}"#,
+                r#"{"type":"user","content":"[delegated] read the sources"}"#,
+                r#"{"type":"end","stop_reason":"completed","turns":3}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let corpus = root.join("memories");
+        std::fs::create_dir_all(&corpus).unwrap();
+        let spine = read(&home, &corpus, None);
+        let work = spine.get("work").and_then(|v| v.as_array()).expect("work");
+        assert_eq!(work.len(), 1, "one work item, the owner's: {spine}");
+        assert_eq!(work[0]["id"], "20260101T000000Z-parent");
+        let nodes = spine
+            .get("nodes")
+            .and_then(|v| v.as_array())
+            .expect("nodes");
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node["id"] == "20260101T000100Z-child"),
+            "the child is a node under its parent: {nodes:?}"
+        );
+        let edges = spine
+            .get("edges")
+            .and_then(|v| v.as_array())
+            .expect("edges");
+        assert!(
+            edges.iter().any(|edge| {
+                edge["kind"] == "delegates_to"
+                    && edge["from"] == "20260101T000000Z-parent"
+                    && edge["to"] == "20260101T000100Z-child"
+            }),
+            "the parent goal owns the child's process: {edges:?}"
         );
         std::fs::remove_dir_all(root).ok();
     }
