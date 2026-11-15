@@ -307,6 +307,9 @@ import { node, svg, clip } from './core/dom.js';
       ['calibration', 'reviews'],
       // Who is talking to it.
       ['inbox', 'inbox'],
+      // Is the machine well — the second brain, visible at last (the
+      // project-centered workspace plan; U44's Advanced burial reversed).
+      ['second-brain', 'health'],
       // The machines in this fleet (armada on only).
       ['armada', 'fleet']
     ]],
@@ -332,7 +335,6 @@ import { node, svg, clip } from './core/dom.js';
     ['vault', 'Secrets', 'the keys this home holds'],
     ['plugins', 'Plugins', 'surfaces installed on top of fleet'],
     ['design', 'Design', 'the canvas'],
-    ['second-brain', 'Health', 'the machine\u2019s own checks'],
     ['about', 'About', 'the build and the update']
   ];
 
@@ -342,7 +344,6 @@ import { node, svg, clip } from './core/dom.js';
     design: ['settings', 'advanced'],
     router: ['settings', 'advanced'],
     delegation: ['settings', 'advanced'],
-    'second-brain': ['settings', 'advanced'],
     'workspace-history': ['settings', 'advanced'],
     bots: ['settings', 'advanced'],
     vault: ['settings', 'advanced'],
@@ -829,6 +830,8 @@ import { node, svg, clip } from './core/dom.js';
       ['path', { d: 'M5.5 20v-5M10 20V9.5M14.5 20v-8M19 20V5.5' }],
       ['path', { d: 'M3.5 20h17' }]
     ],
+    // the second brain's health mark: a pulse, the machine's own heartbeat
+    'second-brain': [['path', { d: 'M3 12h4l2-5 4 10 2-5h6' }]],
     models: [
       ['rect', { x: 7, y: 7, width: 10, height: 10, rx: 2 }],
       ['path', { d: 'M12 7V3.6M12 20.4V17M7 12H3.6M20.4 12H17' }]
@@ -4992,7 +4995,7 @@ import { node, svg, clip } from './core/dom.js';
           act1('open the job', function () { window.location.hash = '#/settings'; }, true);
           act1('dismiss', function () { inboxDecide(row, 'dismiss'); }, false);
         } else {
-          act1('open doctor', function () { window.location.hash = '#/settings'; }, true);
+          act1('open doctor', function () { window.location.hash = '#/second-brain'; }, true);
           act1('dismiss', function () { inboxDecide(row, 'dismiss'); }, false);
         }
         var more = node('button', 'ib-more', '\u22ef');
@@ -16404,7 +16407,7 @@ import { node, svg, clip } from './core/dom.js';
     body.appendChild(node('b', null, row.project));
     body.appendChild(node('p', null, brainClean(row.what)));
     line.appendChild(body);
-    line.appendChild(node('span', 'attn-ev', brainEvidence(row, klass)));
+    line.appendChild(node('span', 'attn-ev', brainAttentionEvidence(row, klass)));
     var open = function () {
       if (klass === 'conflicts') brainConflictDrawer(row);
       else brainProjectFromName(row.project);
@@ -16419,7 +16422,11 @@ import { node, svg, clip } from './core/dom.js';
     return line;
   }
 
-  function brainEvidence(row, klass) {
+  // The attention row's evidence line. Named apart from the report-feed
+  // brainEvidence(read) below: the two once shared a name, and the card
+  // version shadowed this one, so every attention row's evidence rendered
+  // empty (the project-centered workspace plan).
+  function brainAttentionEvidence(row, klass) {
     if (klass === 'conflicts') {
       var age = brainRel(String(row.when || '').slice(0, 10));
       return row.evidence + (age ? ' \u00b7 ' + age : '');
@@ -16658,9 +16665,89 @@ import { node, svg, clip } from './core/dom.js';
     return Math.round(days / 30) + 'mo';
   }
 
+  // The Health lens's own checks (the project-centered workspace plan):
+  // the lanes' live probe and the doctor's cheap checks, beside the
+  // second-brain atlas. The CLI and TUI owned these; the face reaches
+  // them now.
+  function readLanes(force) {
+    var now = Date.now();
+    if (!force && face.lanesHealth && now - face.lanesAt < 4000) return Promise.resolve();
+    face.lanesAt = now;
+    return fetch('/api/lanes', { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (doc) {
+        face.lanesHealth = doc;
+        if (face.panel === 'second-brain') paintBrain();
+      })
+      .catch(function () { });
+  }
+
+  function readDoctor(force) {
+    var now = Date.now();
+    if (!force && face.doctorChecks && now - face.doctorAt < 4000) return Promise.resolve();
+    face.doctorAt = now;
+    return fetch('/api/doctor', { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (doc) {
+        face.doctorChecks = doc;
+        if (face.panel === 'second-brain') paintBrain();
+      })
+      .catch(function () { });
+  }
+
+  function healthLanesCard() {
+    var doc = face.lanesHealth;
+    var card = boardCard(12, 'the lanes', doc ? (doc.ok + ' ok \u00b7 ' + doc.total + ' lanes') : null,
+      'The services fleet launches, probed live \u2014 the same read as fleet lanes.');
+    if (!doc) {
+      card.appendChild(node('p', 'board-empty', 'The lane probe has not landed yet.'));
+      return card;
+    }
+    if (refusals(doc)) {
+      card.appendChild(node('p', 'board-empty', refusals(doc).join('; ')));
+      return card;
+    }
+    (doc.lanes || []).forEach(function (lane) {
+      var mark = lane.state === 'ok' ? '\u2713' : lane.state === 'error' ? '\u2715' : '\u25cb';
+      var meta = lane.state === 'ok'
+        ? ('v' + (lane.server_version || '?') + ' \u00b7 ' + lane.elapsed_ms + ' ms \u00b7 ' + (lane.tools || []).length + ' tools')
+        : (lane.detail || lane.state);
+      var line = node('p', 'derivation', mark + ' ' + lane.name + ' \u00b7 ' + lane.role + ' \u2014 ' + meta);
+      if (lane.state !== 'ok') line.dataset.tone = 'bad';
+      card.appendChild(line);
+    });
+    return card;
+  }
+
+  function healthDoctorCard() {
+    var doc = face.doctorChecks;
+    var card = boardCard(12, 'the doctor', null,
+      'The cheap checks fleet doctor runs \u2014 every one named, pass or fail.');
+    if (!doc) {
+      card.appendChild(node('p', 'board-empty', 'The doctor read has not landed yet.'));
+      return card;
+    }
+    if (refusals(doc)) {
+      card.appendChild(node('p', 'board-empty', refusals(doc).join('; ')));
+      return card;
+    }
+    (doc.checks || []).forEach(function (check) {
+      var line = node('p', 'derivation', (check.ok ? '\u2713 ' : '! ') + (check.why || check.check));
+      if (!check.ok) line.dataset.tone = 'bad';
+      card.appendChild(line);
+    });
+    return card;
+  }
+
   function paintBrain() {
     var read = face.brain;
     el.brainBoard.textContent = '';
+    // Health is a lens over the workspace too (the project-centered
+    // workspace plan): the spine's count cards ride above the atlas, and
+    // the lanes/doctor checks render whatever the atlas's state.
+    spineCards(el.brainBoard);
+    el.brainBoard.appendChild(healthLanesCard());
+    el.brainBoard.appendChild(healthDoctorCard());
     if (!read) {
       el.brainBoard.appendChild(brainHead({}));
       var waiting = boardCard(12, 'reading', null, null);
@@ -26716,7 +26803,7 @@ import { node, svg, clip } from './core/dom.js';
         paintDesign();
         readDesign(true).then(paintDesign);
       },
-      'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); readPlugin(true); },
+      'second-brain': function () { paintBrain(); readSpine(false).then(paintBrain); readLanes(false).then(paintBrain); readDoctor(false).then(paintBrain); readBrain(true).then(paintBrain); readPlugin(true); },
       'workspace-history': function () {
         paintWorkspaceHistory();
         readWorkspaceHistory(true).then(paintWorkspaceHistory);

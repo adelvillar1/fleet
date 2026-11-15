@@ -5184,8 +5184,8 @@ async function theInboxKeyboardWalks() {
     page.rows('.ib-menu button').length >= 2, String(page.rows('.ib-menu button').length));
   page.fireOn('ib-body', 'keydown', { key: 'Enter', preventDefault() {} });
   await flush(80);
-  check('IBC enter runs the selected row\u2019s verb',
-    page.window.location.hash === '#/settings', page.window.location.hash);
+  check('IBC enter runs the selected row’s verb',
+    page.window.location.hash === '#/second-brain', page.window.location.hash);
 }
 
 
@@ -10871,7 +10871,7 @@ async function theConnectCardSaysWhatHappened() {
     const missing = rail.filter((address) => !(address in hints));
     check('PALETTE the palette covers every rail surface',
       missing.length === 0, 'missing=' + missing.join(','));
-    const folded = ['router', 'vault', 'design', 'huddles', 'plugins', 'second-brain'];
+    const folded = ['router', 'vault', 'design', 'huddles', 'plugins'];
     const absent = folded.filter((address) => !(address in hints));
     check('PALETTE the folded surfaces keep their door',
       absent.length === 0, 'absent=' + absent.join(','));
@@ -11120,15 +11120,16 @@ async function theConnectCardSaysWhatHappened() {
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
     // U44's seven lenses plus the archive door (the owner's 2026-11-14
-    // ruling: the archive is a destination) plus the Settings door.
-    check('ICONS the rail lists the destinations', links.length === 9,
+    // ruling: the archive is a destination), the Health lens (the
+    // project-centered workspace plan) and the Settings door.
+    check('ICONS the rail lists the destinations', links.length === 10,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 9,
+      shapes.every(Boolean) && new Set(shapes).size === 10,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 
@@ -13244,6 +13245,35 @@ async function theDeskReachesDesignDeliverables() {
     page.window.location.hash);
 }
 
+// The project-centered workspace plan (P2): the second brain is a visible
+// Health lens — the rail names it, the palette finds it by "health", and
+// it renders the lanes and doctor checks beside the atlas.
+async function theHealthLensIsVisibleAndFindable() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush();
+  const rail = page.IDS['rail-tree'].find((one) =>
+    String(one.className || '').split(/\s+/).includes('surfaces-link'));
+  const health = rail.find((one) => one.dataset.address === 'second-brain');
+  check('P2 the rail carries the health lens',
+    !!health && /health/.test(health.textContent), health ? health.textContent : 'absent');
+  page.IDS['palette-open'].click();
+  await flush();
+  page.IDS['palette-input'].value = 'health';
+  page.fireOn('palette-input', 'input', {});
+  await flush();
+  const hits = page.IDS['palette-rows'].find((one) =>
+    String(one.className || '').split(/\s+/).includes('palette-row'));
+  check('P2 the palette finds health',
+    hits.some((row) => row.dataset.address === 'second-brain'),
+    hits.map((r) => r.dataset.address).join(','));
+  page.hash('#/second-brain');
+  await flush(120);
+  const board = page.text('brain-board');
+  check('P2 the health lens shows the lanes and the doctor',
+    board.includes('the lanes') && board.includes('the doctor'), board.slice(0, 160));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -13334,6 +13364,7 @@ const cases = [
   ['IBC a dismissed row can come back', aDismissedRowCanComeBack],
   ['PWS the desk is projects, work and a thread', theDeskOrganisesByProjectAndThread],
   ['P1 the desk reaches design deliverables', theDeskReachesDesignDeliverables],
+  ['P2 the health lens is visible and findable', theHealthLensIsVisibleAndFindable],
   ['PWS learning is projects, the lesson and its thread', theLearningOrganisesByProjectAndThread],
   ['IB a seat answers in place', aSeatAnswersInPlace],
   ['IB the empty inbox is the honest absence', theInboxIsEmptyHonestly],

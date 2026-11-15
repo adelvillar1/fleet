@@ -1473,6 +1473,48 @@ impl Bridge {
         }
     }
 
+    /// The lanes' live health (the project-centered workspace plan): the
+    /// same probe the CLI `fleet lanes` and the TUI modal render, exposed
+    /// to the face's Health lens — one source of truth, `health_all()`.
+    pub async fn lanes(&self) -> Value {
+        let health = crate::lanes::health_all().await;
+        let ok = health
+            .iter()
+            .filter(|h| h.state == crate::lanes::LaneState::Ok)
+            .count();
+        let lanes: Vec<Value> = health
+            .iter()
+            .map(|h| {
+                json!({
+                    "name": h.name,
+                    "role": h.role,
+                    "state": h.state.label(),
+                    "server_version": h.server_version,
+                    "tools": h.tools,
+                    "detail": h.detail,
+                    "elapsed_ms": h.elapsed_ms as u64,
+                    "doctor": h.doctor.iter().map(|d| json!({
+                        "lane": d.lane, "available": d.available,
+                        "reason": d.reason, "provider": d.provider,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        json!({ "type": "lanes", "lanes": lanes, "ok": ok, "total": health.len() })
+    }
+
+    /// The Health lens's doctor read (the project-centered workspace
+    /// plan): the cheap checks, every one named. The deep lane probe is
+    /// the lanes read beside this one.
+    pub async fn doctor(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || doctor_read(&home))
+            .await
+            .unwrap_or_else(
+                |_| json!({"type": "doctor", "refused": ["the doctor read did not land"]}),
+            )
+    }
+
     /// Accept one hunk: the inverse of a reject, for a hunk the owner
     /// put back and then wanted after all (gui-revamp C13). The body
     /// carries the *reviewed hunk* — its two blocks and their context —
@@ -9482,6 +9524,40 @@ fn doctor_rows(home: &std::path::Path) -> Vec<Value> {
         }));
     }
     rows
+}
+
+/// The Health lens's doctor read (the project-centered workspace plan):
+/// the cheap evaluators the CLI `fleet doctor` runs, every check named
+/// whether it passes or fails — the inbox keeps only the failures, the
+/// lens shows the whole picture. The deep lane probe is `fleet lanes`
+/// (the /api/lanes read beside this one).
+fn doctor_read(home: &std::path::Path) -> Value {
+    let mut checks: Vec<Value> = Vec::new();
+    let home_outcome = crate::home::ensure_sessions_dir(home)
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    let home_check = crate::doctor::evaluate_home(Some(home), home_outcome);
+    checks.push(json!({
+        "check": "home", "ok": home_check.ok, "why": crate::doctor::render(&home_check),
+    }));
+    let endpoint = crate::doctor::api_endpoint(crate::api::DEFAULT_BASE_URL);
+    let reachable = endpoint
+        .map(|(host, port)| {
+            crate::net::listening(host, port, std::time::Duration::from_millis(1500))
+        })
+        .unwrap_or(false);
+    let api_check = crate::doctor::evaluate_api(endpoint, reachable);
+    checks.push(json!({
+        "check": "api", "ok": api_check.ok, "why": crate::doctor::render(&api_check),
+    }));
+    let dotenv = crate::home::read_dotenv_with_process_vault(home);
+    let key = crate::home::resolve_setting("DEEPSEEK_API_KEY", &dotenv);
+    let credentials_check = crate::doctor::evaluate_credentials(key.as_deref());
+    checks.push(json!({
+        "check": "credentials", "ok": credentials_check.ok,
+        "why": crate::doctor::render(&credentials_check),
+    }));
+    json!({ "type": "doctor", "checks": checks })
 }
 
 fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value {

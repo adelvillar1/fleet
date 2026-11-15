@@ -432,6 +432,10 @@ async fn serve_connection(
             write_reply(&mut stream, api(200, bridge.state(&session))).await
         }
         ("GET", "/api/router") => write_reply(&mut stream, api(200, bridge.router().await)).await,
+        // The Health lens's own checks (the project-centered workspace
+        // plan): the lanes' live probe and the doctor's cheap checks.
+        ("GET", "/api/lanes") => write_reply(&mut stream, api(200, bridge.lanes().await)).await,
+        ("GET", "/api/doctor") => write_reply(&mut stream, api(200, bridge.doctor().await)).await,
         ("GET", "/api/delegation") => {
             let session = asked_session(bridge, &request);
             write_reply(&mut stream, api(200, bridge.delegation(&session).await)).await
