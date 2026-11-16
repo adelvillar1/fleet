@@ -131,6 +131,18 @@ pub const SETTINGS: &[Setting] = &[
         summary: "Where the calibration stream lives. Empty is dev-decisions' own default.",
     },
     Setting {
+        // The deck's semantic clustering (KI-252's remainder): a long
+        // source becomes blocks grouped by meaning over the loopback
+        // embedder. Off by default — the committed measurement scored it
+        // 0.732 against the 0.90 gate, so the plan's rule keeps it
+        // opt-in until a better embedder or grouping clears the gate.
+        key: "deck.clustering",
+        kind: Kind::Toggle,
+        file: File::Config,
+        summary: "Whether the deck tool may cluster a long source into semantic blocks. Off \
+                  until the clustering's measured agreement clears its gate.",
+    },
+    Setting {
         key: "calib.informs_failover",
         kind: Kind::Toggle,
         file: File::Config,

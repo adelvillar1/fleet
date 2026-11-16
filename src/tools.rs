@@ -406,13 +406,13 @@ pub const DECK_TOOL: &str = "deck";
 pub fn deck_spec() -> ToolSpec {
     ToolSpec::function(
         DECK_TOOL,
-        "Build a presentation, infographic or poster from structured content — or, in suggest mode, rank layouts for an intent first. Building: the deck is validated before it renders — every node opens with its conclusion (Pyramid Principle), sub-points must not overlap (MECE), bullets mark their key takeaway with **bold**, and the bounds differ by type (an infographic is one frame, a presentation is paced). A refusal names the node and the rule, so fix that one thing and call again; an overfull layout is auto-fit in place — text compressed to the measured budgets, a roomier layout where compression would cut the content — and the repairs are named beside the render. Suggesting: pass suggest with an intent and the tool ranks the layouts by semantic match against the local embedding model, best first; build with the winner unless the content says otherwise. The result is the rendered deck, or the ranked layouts.",
+        "Build a presentation, infographic or poster, or rank layouts for an intent. Every node opens with its conclusion (Pyramid Principle), sub-points must not overlap (MECE), bullets carry **bold**, and the bounds differ by type (an infographic and a poster are one frame, a presentation is paced). A refusal names the node and the rule; an overfull layout is auto-fit in place and the repairs are named. Suggesting ranks layouts by semantic match against the local embedding model, best first. A long source can be clustered into blocks instead of hand-built nodes (opt-in, deck.clustering).",
         serde_json::json!({
             "type": "object",
             "properties": {
                 "suggest": {
                     "type": "object",
-                    "description": "Suggest mode: rank the layouts for an intent instead of building, and name assets from the library when one is configured. Carries intent — what the owner is trying to show — and an optional project_type for the asset fit. Returns the nearest layouts, best first, with their match scores.",
+                    "description": "Suggest mode: rank the layouts for an intent instead of building; names library assets when one is configured. Returns the nearest layouts, best first, with scores.",
                     "properties": {
                         "intent": { "type": "string", "description": "What the owner is trying to show, in their own words." },
                         "project_type": { "type": "string", "enum": ["presentation", "infographic", "poster"], "description": "The frame the asset fit is graded against; presentation by default." }
@@ -449,6 +449,15 @@ pub fn deck_spec() -> ToolSpec {
                         }
                     },
                     "required": ["project_type", "nodes"]
+                },
+                "source": {
+                    "type": "object",
+                    "description": "Cluster a long document into blocks (needs deck.clustering on); one of path or text.",
+                    "properties": {
+                        "path": { "type": "string", "description": "A text document." },
+                        "text": { "type": "string", "description": "Inline text, split on blank lines." },
+                        "project_type": { "type": "string", "enum": ["presentation", "infographic", "poster"] }
+                    }
                 },
                 "format": {
                     "type": "string",
@@ -497,6 +506,59 @@ pub struct DeckEventData {
     pub fix_actions: Vec<String>,
 }
 
+/// Build a deck from a long source: exactly one of `path` or `text`,
+/// then the clustering over `embedder`. The note names what happened —
+/// how many blocks, how many groups, and any sampling.
+pub fn deck_from_source(
+    embedder: &dyn crate::memory::Embedder,
+    source: &serde_json::Value,
+) -> Result<(crate::deck::Deck, String), String> {
+    let field = |name: &str| {
+        source
+            .get(name)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let (path, text) = (field("path"), field("text"));
+    let body = match (path, text) {
+        (Some(path), None) => std::fs::read_to_string(&path)
+            .map_err(|error| format!("the source at `{path}` could not be read: {error}"))?,
+        (None, Some(text)) => text,
+        (None, None) => {
+            return Err(
+                "the `source` needs one of `path` or `text` — where the long document is"
+                    .to_string(),
+            )
+        }
+        (Some(_), Some(_)) => {
+            return Err(
+                "the `source` carries both `path` and `text` — give exactly one".to_string(),
+            )
+        }
+    };
+    if body.contains('\0') {
+        return Err("the source is a binary file — clustering reads text documents".to_string());
+    }
+    let project_type = match source.get("project_type").and_then(|value| value.as_str()) {
+        Some("infographic") => crate::deck::ProjectType::Infographic,
+        Some("poster") => crate::deck::ProjectType::Poster,
+        _ => crate::deck::ProjectType::Presentation,
+    };
+    let clustered = crate::deck::source_deck(embedder, &body, project_type)?;
+    let mut note = format!(
+        "{} block(s) clustered into {} group(s)",
+        clustered.blocks,
+        clustered.groups.len()
+    );
+    if let Some(sampled) = &clustered.note {
+        note.push_str("; ");
+        note.push_str(sampled);
+    }
+    Ok((clustered.deck, note))
+}
+
 pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
     run_deck_with_event(arguments, None).map(|run| run.outcome)
 }
@@ -505,6 +567,12 @@ pub fn run_deck_with_event(
     arguments: &serde_json::Value,
     session_dir: Option<&std::path::Path>,
 ) -> Result<DeckRun, String> {
+    // The home both the clustering setting and the source mode read.
+    let home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .ok();
     // The suggest mode: the vector half of "choose the layout from the
     // content". An intent in, the index ranked out — the planner builds
     // with the match or disagrees with it on content grounds, and a
@@ -578,6 +646,22 @@ pub fn run_deck_with_event(
                 }
             }
         }
+        // The clustering's own line: the suggest mode is where a planner
+        // looks for "how should this be built", so the source mode's
+        // state and its gate belong here.
+        output.push_str(&format!(
+            "\nclustering: {} — pass a `source` with a long document and the tool builds the deck \
+             from its semantic blocks",
+            if crate::deck::clustering_enabled(home.as_deref()) {
+                "on (deck.clustering)".to_string()
+            } else {
+                format!(
+                    "off (deck.clustering; measured {:.3} against the {:.2} gate)",
+                    crate::deck::CLUSTERING_MEASURED,
+                    crate::deck::CLUSTERING_GATE
+                )
+            }
+        ));
         return Ok(DeckRun {
             outcome: ToolOutcome {
                 output,
@@ -586,12 +670,57 @@ pub fn run_deck_with_event(
             event: None,
         });
     }
-    let value = arguments
-        .get("deck")
-        .cloned()
-        .ok_or_else(|| "the `deck` argument is required: the deck object itself".to_string())?;
-    let deck: crate::deck::Deck = serde_json::from_value(value)
-        .map_err(|error| format!("the deck is not the schema this tool declares: {error}"))?;
+    // The source mode: a long document clustered into blocks instead of
+    // hand-built nodes (the deck clustering plan's C5). Off by default —
+    // the setting is the measurement gate's verdict — and the refusal
+    // names the knob rather than pretending the mode does not exist.
+    let mut clustered_note: Option<String> = None;
+    let deck: crate::deck::Deck = if let Some(source) = arguments.get("source") {
+        if arguments.get("deck").is_some() {
+            return Ok(DeckRun {
+                outcome: ToolOutcome {
+                    output: "error: give either `source` or `deck`, not both — a source is clustered into nodes, a deck already has them".to_string(),
+                    truncated: false,
+                },
+                event: None,
+            });
+        }
+        if !crate::deck::clustering_enabled(home.as_deref()) {
+            return Ok(DeckRun {
+                outcome: ToolOutcome {
+                    output: format!(
+                        "error: the deck's semantic clustering is off (`deck.clustering`) — build the deck from structured nodes, or turn it on with `fleet settings set deck.clustering true` (its measured agreement is {:.3} against the {:.2} gate, so it ships opt-in)",
+                        crate::deck::CLUSTERING_MEASURED,
+                        crate::deck::CLUSTERING_GATE
+                    ),
+                    truncated: false,
+                },
+                event: None,
+            });
+        }
+        match deck_from_source(&*crate::memory::probed_embedder(), source) {
+            Ok((deck, note)) => {
+                clustered_note = Some(note);
+                deck
+            }
+            Err(reason) => {
+                return Ok(DeckRun {
+                    outcome: ToolOutcome {
+                        output: format!("error: {reason}"),
+                        truncated: false,
+                    },
+                    event: None,
+                });
+            }
+        }
+    } else {
+        let value = arguments
+            .get("deck")
+            .cloned()
+            .ok_or_else(|| "the `deck` argument is required: the deck object itself".to_string())?;
+        serde_json::from_value(value)
+            .map_err(|error| format!("the deck is not the schema this tool declares: {error}"))?
+    };
     // The deck as written, kept for the surface's revert: the auto-fit
     // repairs in place, and the owner's own words are the alternative
     // it offers.
@@ -652,6 +781,9 @@ pub fn run_deck_with_event(
         fix_actions: actions.clone(),
     };
     let mut output = crate::deck::review_line(&deck);
+    if let Some(note) = &clustered_note {
+        output.push_str(&format!("\nclustering: {note}"));
+    }
     if !actions.is_empty() {
         output.push_str(&format!("\n{}", actions.join("\n")));
     }
@@ -4345,6 +4477,123 @@ fn run_list_dir(arguments: &serde_json::Value, root: Option<&Path>) -> Result<To
 
 #[cfg(test)]
 mod tests {
+
+    // --- the deck tool's source mode (the deck clustering plan's C5) ------
+
+    /// The scripted backend: a block's first word names its group.
+    struct LeadingStub;
+    impl crate::memory::Embedder for LeadingStub {
+        fn box_clone(&self) -> Box<dyn crate::memory::Embedder> {
+            Box::new(LeadingStub)
+        }
+        fn embed(&self, text: &str) -> Option<Vec<f32>> {
+            let topics = ["solar", "tidal", "battery"];
+            let lead = text
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let index = topics.iter().position(|topic| *topic == lead).unwrap_or(0);
+            let mut vector = vec![0.02f32; topics.len()];
+            vector[index] = 1.0;
+            Some(vector)
+        }
+        fn name(&self) -> &'static str {
+            "scripted"
+        }
+        fn serves_vectors(&self) -> bool {
+            true
+        }
+    }
+
+    fn source_blocks() -> String {
+        let block = |topic: &str, detail: &str| {
+            format!("{topic} generation matters because {detail}, and the grid reads it as capacity in its own planning round.")
+        };
+        [
+            block("solar", "panels produce most of their power at midday"),
+            block("tidal", "the moon's orbit is predictable decades ahead"),
+            block("battery", "cells degrade with heat and with cycles"),
+            block("solar", "rooftop systems avoid transmission losses"),
+            block("tidal", "barrages disturb the estuary sediment"),
+            block("battery", "frequency response pays for milliseconds"),
+            block("solar", "panel efficiency falls as cells heat up"),
+            block("tidal", "stream turbines leave the shoreline alone"),
+        ]
+        .join("\n\n")
+    }
+
+    #[test]
+    fn the_source_mode_names_both_and_neither() {
+        let both = serde_json::json!({"path": "/tmp/a.txt", "text": "some words here"});
+        let error = deck_from_source(&LeadingStub, &both).expect_err("both is a refusal");
+        assert!(error.contains("both `path` and `text`"), "{error}");
+        let neither = serde_json::json!({});
+        let error = deck_from_source(&LeadingStub, &neither).expect_err("neither is a refusal");
+        assert!(error.contains("one of `path` or `text`"), "{error}");
+    }
+
+    #[test]
+    fn the_source_mode_refuses_binary_content() {
+        let source = serde_json::json!({"text": "a paragraph here with enough words to stand alone \0 and a NUL"});
+        let error = deck_from_source(&LeadingStub, &source).expect_err("binary is refused");
+        assert!(error.contains("binary"), "{error}");
+    }
+
+    #[test]
+    fn the_source_mode_clusters_a_path_into_a_certified_deck() {
+        let dir = std::env::temp_dir().join(format!("fleet-deck-source-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("source.txt");
+        std::fs::write(&path, source_blocks()).unwrap();
+        let source = serde_json::json!({
+            "path": path.display().to_string(),
+            "project_type": "presentation"
+        });
+        let (deck, note) = deck_from_source(&LeadingStub, &source).expect("clustered");
+        assert_eq!(deck.nodes.len(), 3, "one node per topic: {note}");
+        assert!(note.contains("8 block(s)"), "{note}");
+        assert!(
+            crate::deck::check(&deck).is_empty(),
+            "{:?}",
+            crate::deck::check(&deck)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_source_mode_is_refused_by_name_when_the_setting_is_off() {
+        let _lock = crate::TEST_ENV_LOCK.lock();
+        let home = std::env::temp_dir().join(format!("fleet-deck-off-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let previous = std::env::var_os("FLEET_HOME");
+        std::env::set_var("FLEET_HOME", &home);
+        let run = run_deck(&serde_json::json!({"source": {"text": source_blocks()}}))
+            .expect("the tool answers");
+        assert!(run.output.starts_with("error:"), "{}", run.output);
+        assert!(run.output.contains("deck.clustering"), "{}", run.output);
+        match previous {
+            Some(value) => std::env::set_var("FLEET_HOME", value),
+            None => std::env::remove_var("FLEET_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_source_and_a_deck_together_are_refused() {
+        let run = run_deck(&serde_json::json!({
+            "source": {"text": source_blocks()},
+            "deck": {"project_type": "presentation", "nodes": []}
+        }))
+        .expect("the tool answers");
+        assert!(
+            run.output.contains("either `source` or `deck`"),
+            "{}",
+            run.output
+        );
+    }
     use super::*;
 
     /// A scratch tree, unique per call, with `src/` under it.

@@ -1958,10 +1958,698 @@ fn crc32(bytes: &[u8]) -> u32 {
     crc ^ 0xffff_ffff
 }
 
+// --- semantic clustering: a long source into blocks by meaning -----------
+//
+// KI-252's last remainder (docs/plans/2026-11-11-deck-semantic-clustering).
+// A long document becomes a deck whose blocks are semantic units, each
+// opening with its conclusion. The grouping is arithmetic over the
+// embedder recall already runs, so it is fixture-testable with no lane;
+// the embedder's absence is a named degradation, never a silent no-op.
+
+/// The most candidate blocks one source is split into. Past it the source
+/// is sampled: every nth block up to the cap, and the note says so.
+pub const CLUSTER_MAX_BLOCKS: usize = 60;
+
+/// A paragraph shorter than this joins the previous one — a heading line
+/// or a caption is not a block of its own.
+const CLUSTER_MIN_WORDS: usize = 12;
+
+/// Where agglomerative merging stops on its own: two blocks this close
+/// are the same point in different words. Chosen by the measurement (a
+/// 0.72–0.85 sweep: 0.72 collapsed six groups into three, 0.78 and above
+/// fractured them into eight; 0.75 recovered all six).
+pub const CLUSTER_FLOOR: f64 = 0.75;
+
+/// The agreement the default needs: the plan's C3 gate.
+pub const CLUSTERING_GATE: f64 = 0.90;
+
+/// The agreement the fixture actually measured on the loopback embedder
+/// (2026-11-16, floor 0.75): six groups recovered, 11 false-positive and
+/// 8 false-negative pairs. The gate is 0.90, so the default is **off** —
+/// the plan's rule: a poor score keeps the feature opt-in. The test pins
+/// this number so a regression below it is caught.
+pub const CLUSTERING_MEASURED: f64 = 0.732;
+
+/// The default for `deck.clustering` when the home says nothing — the
+/// measurement gate's verdict, recorded here (the plan's C3). It was set
+/// from the committed fixture's live measurement; see the test
+/// `the_clustering_measurement` for the score that decided it.
+pub const CLUSTERING_DEFAULT: bool = false;
+
+/// One source, clustered, with the facts a surface reports about it.
+#[derive(Debug, Clone)]
+pub struct Clustered {
+    /// The deck the clusters map to.
+    pub deck: Deck,
+    /// The blocks the source produced before sampling.
+    pub blocks: usize,
+    /// The blocks actually embedded (a sample past the cap).
+    pub sampled: usize,
+    /// The groups as block indexes.
+    pub groups: Vec<usize>,
+    /// The sampling note, when the source was too long to take whole.
+    pub note: Option<String>,
+}
+
+/// Split a source into candidate blocks (paragraph boundaries), merging a
+/// paragraph too short to stand alone into the one before it. Past
+/// [`CLUSTER_MAX_BLOCKS`] the blocks are sampled: every nth, up to the
+/// cap, with a note naming both numbers.
+pub fn split_source(text: &str) -> (Vec<String>, Option<String>) {
+    let mut blocks: Vec<String> = Vec::new();
+    for paragraph in text.split("\n\n") {
+        let trimmed = paragraph.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.split_whitespace().count() < CLUSTER_MIN_WORDS {
+            if let Some(last) = blocks.last_mut() {
+                last.push(' ');
+                last.push_str(trimmed);
+                continue;
+            }
+        }
+        blocks.push(trimmed.to_string());
+    }
+    let total = blocks.len();
+    if total <= CLUSTER_MAX_BLOCKS {
+        return (blocks, None);
+    }
+    // Evenly spaced, not every-nth: `every 3rd` of 130 gives 44, not the
+    // 60 the cap allows. The index map keeps the source's own order and
+    // takes exactly the cap's worth across the whole document.
+    let sampled: Vec<String> = (0..CLUSTER_MAX_BLOCKS)
+        .map(|slot| blocks[slot * total / CLUSTER_MAX_BLOCKS].clone())
+        .collect();
+    let kept = sampled.len();
+    let note = format!(
+        "the source carried {total} blocks; {kept} were sampled evenly across it to stay under the {CLUSTER_MAX_BLOCKS}-block cap"
+    );
+    (sampled, Some(note))
+}
+
+/// Deterministic agglomerative clustering over vectors: merge the closest
+/// pair while the group count is over `max_groups`, or while it is over
+/// `min_groups` and the closest pair is at or above `floor`. The merge
+/// distance is the mean cosine between the two groups' members, so two
+/// broad groups merge only when they are broadly alike.
+pub fn group_vectors(
+    vectors: &[Vec<f32>],
+    max_groups: usize,
+    min_groups: usize,
+    floor: f64,
+) -> Vec<Vec<usize>> {
+    if vectors.is_empty() {
+        return Vec::new();
+    }
+    let max = max_groups.max(1);
+    let min = min_groups.max(1).min(max);
+    let mut groups: Vec<Vec<usize>> = (0..vectors.len()).map(|index| vec![index]).collect();
+    loop {
+        let over_max = groups.len() > max;
+        if !over_max && groups.len() <= min {
+            break;
+        }
+        let Some((left, right, score)) = best_merge(&groups, vectors) else {
+            break;
+        };
+        if !over_max && score < floor {
+            break;
+        }
+        let moved = groups.remove(right);
+        groups[left].extend(moved);
+        groups[left].sort_unstable();
+    }
+    groups
+}
+
+/// The closest pair of groups and their mean cosine; `None` on one group.
+fn best_merge(groups: &[Vec<usize>], vectors: &[Vec<f32>]) -> Option<(usize, usize, f64)> {
+    let mut best: Option<(usize, usize, f64)> = None;
+    for left in 0..groups.len() {
+        for right in (left + 1)..groups.len() {
+            let mut sum = 0.0;
+            for one in &groups[left] {
+                for other in &groups[right] {
+                    sum += crate::memory::cosine(&vectors[*one], &vectors[*other]);
+                }
+            }
+            let score = sum / (groups[left].len() * groups[right].len()) as f64;
+            if best.is_none_or(|(_, _, seen)| score > seen) {
+                best = Some((left, right, score));
+            }
+        }
+    }
+    best
+}
+
+/// The first sentence of `text`, terminator included.
+fn first_sentence(text: &str) -> String {
+    let mut out = String::new();
+    for character in text.chars() {
+        out.push(character);
+        if matches!(character, '.' | '!' | '?') && out.split_whitespace().count() > 2 {
+            break;
+        }
+    }
+    out.trim().to_string()
+}
+
+/// A block's conclusion: its first sentence, bounded to the headline's
+/// words, never a question, and never a bare label — the same rules
+/// [`is_conclusion`] enforces, applied forward so the mapped deck passes.
+fn conclusion_of(text: &str, max_words: usize) -> String {
+    let sentence = first_sentence(text);
+    let mut words: Vec<&str> = sentence.split_whitespace().collect();
+    if words.len() > max_words {
+        words.truncate(max_words);
+    }
+    let mut headline = words.join(" ");
+    if let Some(stripped) = headline.strip_suffix('?') {
+        headline = stripped.trim_end().to_string();
+    }
+    // A one-word or two-word lead ("Yes.") is not a conclusion: borrow the
+    // next words from the block.
+    while headline.split_whitespace().count() < 3 {
+        let extra: Vec<&str> = text.split_whitespace().take(6).collect();
+        if extra.len() < 3 || headline.split_whitespace().count() > 6 {
+            break;
+        }
+        headline = extra.join(" ");
+    }
+    // An all-caps or title-case label has no verb: name what it is.
+    let has_lower = headline.split_whitespace().any(|word| {
+        word.chars()
+            .next()
+            .is_some_and(|first| first.is_lowercase())
+    });
+    if !has_lower {
+        headline = format!("This block covers {headline}");
+    }
+    headline
+}
+
+/// `text` bounded to `cap` words, with a marker when it was cut.
+fn bounded_words(text: &str, cap: usize) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() <= cap {
+        return text.trim().to_string();
+    }
+    format!("{}\u{2026}", words[..cap].join(" "))
+}
+
+/// The member of a group nearest to all the others — its extractive lead,
+/// by summed cosine (the review's named centrality rule).
+fn lead_of(group: &[usize], vectors: &[Vec<f32>]) -> usize {
+    let mut best = group[0];
+    let mut best_score = f64::MIN;
+    for candidate in group {
+        let score: f64 = group
+            .iter()
+            .filter(|other| *other != candidate)
+            .map(|other| crate::memory::cosine(&vectors[*candidate], &vectors[*other]))
+            .sum();
+        if score > best_score {
+            best_score = score;
+            best = *candidate;
+        }
+    }
+    best
+}
+
+/// Build a deck from a long source: split, embed, cluster, and map the
+/// clusters to nodes for the project type (the plan's C6 rule).
+///
+/// A presentation gets one node per cluster (its bounds' node range); an
+/// infographic and a poster are one frame, so their clusters become the
+/// frame's sections (a poster keeps its three-component ceiling). An
+/// absent embedder is a named refusal — the deck falls back to the
+/// agent's structured content, never to a partial cluster set.
+pub fn source_deck(
+    embedder: &dyn crate::memory::Embedder,
+    source: &str,
+    project_type: ProjectType,
+) -> Result<Clustered, String> {
+    let (blocks, note) = split_source(source);
+    if blocks.is_empty() {
+        return Err(
+            "the source carries no blocks: separate its paragraphs with a blank line".to_string(),
+        );
+    }
+    let bounds = Bounds::for_type(project_type);
+    let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(blocks.len());
+    for block in &blocks {
+        let Some(vector) = embedder.embed(block) else {
+            return Err(
+                "the embedding backend did not answer (a busy shared service, or none configured) —                  build the deck from structured content instead"
+                    .to_string(),
+            );
+        };
+        vectors.push(vector);
+    }
+    let (max_groups, min_groups) = match project_type {
+        ProjectType::Presentation => (bounds.max_nodes, bounds.min_nodes),
+        ProjectType::Infographic | ProjectType::Poster => (bounds.max_components, 1),
+    };
+    let groups = group_vectors(&vectors, max_groups, min_groups, CLUSTER_FLOOR);
+    let sampled = blocks.len();
+    let blocks_total = sampled;
+    let deck = match project_type {
+        ProjectType::Presentation => {
+            if groups.len() < bounds.min_nodes {
+                return Err(format!(
+                    "the source produced {} block(s) of distinct meaning — a presentation needs at least {}; \
+                     split the source into more paragraphs or build the deck from structured content",
+                    groups.len(),
+                    bounds.min_nodes
+                ));
+            }
+            let nodes = groups
+                .iter()
+                .enumerate()
+                .map(|(index, group)| {
+                    let lead = lead_of(group, &vectors);
+                    let mut body = String::new();
+                    for member in
+                        std::iter::once(&lead).chain(group.iter().filter(|one| **one != lead))
+                    {
+                        body.push_str(&bounded_words(&blocks[*member], 28));
+                        body.push(' ');
+                    }
+                    Node {
+                        id: format!("block-{}", index + 1),
+                        layout: Layout::SplitTwoColumn,
+                        eyebrow: String::new(),
+                        headline: conclusion_of(&blocks[lead], bounds.max_headline_words),
+                        components: vec![Component::Prose {
+                            text: bounded_words(&body, 90),
+                        }],
+                    }
+                })
+                .collect();
+            Deck {
+                project_type,
+                theme: default_theme(),
+                nodes,
+            }
+        }
+        ProjectType::Infographic | ProjectType::Poster => {
+            let first_lead = lead_of(&groups[0], &vectors);
+            let items: Vec<String> = groups
+                .iter()
+                .take(bounds.max_components)
+                .map(|group| {
+                    let lead = lead_of(group, &vectors);
+                    format!(
+                        "**{}** {}",
+                        conclusion_of(&blocks[lead], bounds.max_headline_words),
+                        bounded_words(&blocks[lead], 24)
+                    )
+                })
+                .collect();
+            Deck {
+                project_type,
+                theme: default_theme(),
+                nodes: vec![Node {
+                    id: "frame".to_string(),
+                    layout: Layout::FullBleed,
+                    eyebrow: String::new(),
+                    headline: conclusion_of(&blocks[first_lead], bounds.max_headline_words),
+                    components: vec![Component::BulletList { items }],
+                }],
+            }
+        }
+    };
+    Ok(Clustered {
+        deck,
+        blocks: blocks_total,
+        sampled,
+        groups: groups.iter().map(Vec::len).collect(),
+        note,
+    })
+}
+
+/// Whether the deck tool may cluster a source: the `deck.clustering`
+/// setting, defaulting to [`CLUSTERING_DEFAULT`] — the measurement gate's
+/// verdict — when the home says nothing.
+pub fn clustering_enabled(home: Option<&std::path::Path>) -> bool {
+    let Some(home) = home else {
+        return CLUSTERING_DEFAULT;
+    };
+    match crate::settings::read_config_leaf(home, "deck.clustering").as_deref() {
+        Some("true") => true,
+        Some("false") => false,
+        _ => CLUSTERING_DEFAULT,
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
-    /// A deterministic embedder for the matcher's test: a small keyword
+    // --- the semantic clustering (KI-252's remainder) --------------------
+
+    /// The committed measurement fixture: six semantic groups of five
+    /// blocks each, written so a block's first word names its group (the
+    /// scripted embedder keys on that) and so its content is *about* that
+    /// group (the live embedder separates it). Every group carries real
+    /// sentences, never a keyword list — the measurement would be a lie.
+    const CLUSTER_FIXTURE: &[(&str, &str)] = &[
+        ("solar", "Solar output peaks at midday, when panels face the clearest sky and the inverter converts the strongest direct current."),
+        ("solar", "Solar installations pair well with batteries because their peak production and the evening demand peak do not coincide."),
+        ("solar", "Solar panel efficiency falls as cell temperature rises, so a cool bright morning can outproduce a hot afternoon."),
+        ("solar", "Solar rooftops avoid transmission losses because the generation sits where the load already is."),
+        ("solar", "Solar costs have fallen faster than any other generator, which changed how utilities plan new capacity."),
+        ("tidal", "Tidal generation is predictable decades ahead because the moon's orbit does not negotiate with the weather."),
+        ("tidal", "Tidal barrages disturb estuaries, and the sediment they trap is the habitat the fish spawn in."),
+        ("tidal", "Tidal stream turbines look like submerged wind turbines and leave the shoreline largely untouched."),
+        ("tidal", "Tidal sites are rare, so the technology supplies a steady niche rather than a national grid."),
+        ("tidal", "Tidal maintenance windows are brutal: salt water and strong current wear every bearing faster than on land."),
+        ("battery", "Battery chemistry decides how a storage fleet behaves at temperature, at depth of discharge, and after ten years."),
+        ("battery", "Battery storage earns its money on frequency response, where milliseconds of response are worth more than megawatt hours."),
+        ("battery", "Battery degradation is a slow accounting of cycles and heat, and a warranty reads like an actuarial table."),
+        ("battery", "Battery fires are rare but they rewrite the fire code for an entire district when they happen."),
+        ("battery", "Battery cells are traded as commodities, so storage economics move with lithium prices rather than with electricity prices."),
+        ("grid", "Grid operators balance generation and demand second by second, and every imbalance becomes a frequency deviation."),
+        ("grid", "Grid inertia is the spinning mass of turbines, and inverter-based generation supplies none of it without extra control."),
+        ("grid", "Grid congestion shows up as a price, so a transmission constraint becomes a regional cost difference."),
+        ("grid", "Grid planning spans decades while the generation mix changes in years, which is the mismatch every operator argues about."),
+        ("grid", "Grid restoration after a black start needs a power source that can run without the grid it is rebuilding."),
+        ("transmission", "Transmission lines carry power from where it is cheap to generate to where it is expensive to serve."),
+        ("transmission", "Transmission permits take a decade, and a line that is needed today is a line that was argued about ten years ago."),
+        ("transmission", "Transmission losses grow with distance and current, which is why high voltage exists at all."),
+        ("transmission", "Transmission corridors cross private land, and the easements outlive the companies that signed them."),
+        ("transmission", "Transmission upgrades are the cheapest way to move renewable power, and the hardest to approve."),
+        ("demand", "Demand response pays a factory to turn off a furnace for an hour, and the grid treats the pause as generation."),
+        ("demand", "Demand response is limited by the process it interrupts: a steel furnace cools, but a server farm can idle."),
+        ("demand", "Demand response needs a control channel the operator trusts, because a call that no one answers is not capacity."),
+        ("demand", "Demand response pays less than new generation but it arrives in months rather than years."),
+        ("demand", "Demand response arbitrage fades as smart thermostats become ordinary appliances rather than a grid service."),
+    ];
+
+    /// The fixture as one source: the groups interleaved, so the blocks of
+    /// a group are scattered through the document.
+    fn fixture_source() -> String {
+        let mut blocks: Vec<String> = Vec::new();
+        for round in 0..5 {
+            for topic in 0..6 {
+                blocks.push(CLUSTER_FIXTURE[topic * 5 + round].1.to_string());
+            }
+        }
+        blocks.join("\n\n")
+    }
+
+    /// The scripted backend: a block's first word names its group, and
+    /// the vector is that group's axis. Unknown first words fall on a
+    /// shared axis, so a block outside the fixture cannot masquerade as
+    /// its own group.
+    #[derive(Clone, Default)]
+    struct GroupStub;
+    impl crate::memory::Embedder for GroupStub {
+        fn box_clone(&self) -> Box<dyn crate::memory::Embedder> {
+            Box::new(GroupStub)
+        }
+        fn embed(&self, text: &str) -> Option<Vec<f32>> {
+            let topics = [
+                "solar",
+                "tidal",
+                "battery",
+                "grid",
+                "transmission",
+                "demand",
+            ];
+            let lead = text
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let index = topics.iter().position(|topic| *topic == lead).unwrap_or(0);
+            let mut vector = vec![0.02f32; topics.len()];
+            vector[index] = 1.0;
+            Some(vector)
+        }
+        fn name(&self) -> &'static str {
+            "scripted"
+        }
+        fn serves_vectors(&self) -> bool {
+            true
+        }
+    }
+
+    /// The backend that cannot answer: the named degradation's cause.
+    struct AbsentStub;
+    impl crate::memory::Embedder for AbsentStub {
+        fn box_clone(&self) -> Box<dyn crate::memory::Embedder> {
+            Box::new(AbsentStub)
+        }
+        fn embed(&self, _text: &str) -> Option<Vec<f32>> {
+            None
+        }
+        fn name(&self) -> &'static str {
+            "absent"
+        }
+        fn serves_vectors(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn the_source_splits_into_paragraphs_and_short_lines_join() {
+        let source = "Solar output peaks at midday when the sky is clear.\n\nA heading\n\n\
+                      Batteries pair with solar because the panels' peak and the evening demand peak never coincide.";
+        let (blocks, note) = split_source(source);
+        assert!(note.is_none());
+        assert_eq!(blocks.len(), 2, "{blocks:?}");
+        assert!(
+            blocks[0].contains("A heading"),
+            "the short line joined: {blocks:?}"
+        );
+        assert!(blocks[1].starts_with("Batteries"), "{blocks:?}");
+    }
+
+    #[test]
+    fn past_the_cap_the_source_is_sampled_and_named() {
+        let blocks: Vec<String> = (0..130)
+            .map(|index| {
+                format!(
+                    "Block number {index} carries enough words to stand as its own paragraph here."
+                )
+            })
+            .collect();
+        let (sampled, note) = split_source(&blocks.join("\n\n"));
+        assert_eq!(sampled.len(), CLUSTER_MAX_BLOCKS, "{}", sampled.len());
+        let note = note.expect("the sampling is named");
+        assert!(note.contains("130"), "{note}");
+        assert!(note.contains("sampled"), "{note}");
+    }
+
+    #[test]
+    fn an_absent_embedder_is_a_named_degradation() {
+        let error = source_deck(&AbsentStub, &fixture_source(), ProjectType::Presentation)
+            .expect_err("no embedder, no clustering");
+        assert!(
+            error.contains("embedding backend did not answer"),
+            "{error}"
+        );
+        assert!(
+            error.contains("structured content"),
+            "the fallback is named: {error}"
+        );
+    }
+
+    #[test]
+    fn the_clusters_recover_the_labeled_groups() {
+        let source = fixture_source();
+        let clustered =
+            source_deck(&GroupStub, &source, ProjectType::Presentation).expect("clustered");
+        assert_eq!(clustered.blocks, 30);
+        assert_eq!(clustered.groups.len(), 6, "{:?}", clustered.groups);
+        for size in &clustered.groups {
+            assert_eq!(*size, 5, "{:?}", clustered.groups);
+        }
+        // The deck is certified by the same grader as any hand-built one.
+        assert!(
+            check(&clustered.deck).is_empty(),
+            "{:?}",
+            check(&clustered.deck)
+        );
+    }
+
+    #[test]
+    fn a_presentation_gets_one_node_per_cluster_and_a_frame_takes_sections() {
+        let source = fixture_source();
+        let presentation =
+            source_deck(&GroupStub, &source, ProjectType::Presentation).expect("clustered");
+        assert_eq!(presentation.deck.nodes.len(), 6);
+        for node in &presentation.deck.nodes {
+            assert!(
+                is_conclusion(&node.headline),
+                "{} is not a conclusion",
+                node.headline
+            );
+            assert!(
+                node.components
+                    .iter()
+                    .any(|component| matches!(component, Component::Prose { .. })),
+                "the block's body rides a prose component"
+            );
+        }
+        let infographic =
+            source_deck(&GroupStub, &source, ProjectType::Infographic).expect("clustered");
+        assert_eq!(infographic.deck.nodes.len(), 1, "one frame");
+        assert_eq!(infographic.deck.nodes[0].layout, Layout::FullBleed);
+        let items = match &infographic.deck.nodes[0].components[0] {
+            Component::BulletList { items } => items.clone(),
+            other => panic!("the frame's sections ride one bullet list: {other:?}"),
+        };
+        assert_eq!(items.len(), 6, "a section per cluster: {items:?}");
+        assert!(items.iter().all(|item| emphasised(item)), "{items:?}");
+        assert!(
+            check(&infographic.deck).is_empty(),
+            "{:?}",
+            check(&infographic.deck)
+        );
+
+        let poster = source_deck(&GroupStub, &source, ProjectType::Poster).expect("clustered");
+        let items = match &poster.deck.nodes[0].components[0] {
+            Component::BulletList { items } => items.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert!(items.len() <= 3, "a poster keeps three sections: {items:?}");
+        assert!(check(&poster.deck).is_empty(), "{:?}", check(&poster.deck));
+    }
+
+    #[test]
+    fn the_clustering_setting_round_trips_and_defaults_to_the_gate_verdict() {
+        let home = std::env::temp_dir().join(format!("fleet-deck-set-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        assert_eq!(
+            clustering_enabled(Some(&home)),
+            CLUSTERING_DEFAULT,
+            "an unset key takes the measured default"
+        );
+        std::fs::write(home.join("config.json"), r#"{"deck":{"clustering":false}}"#).unwrap();
+        assert!(!clustering_enabled(Some(&home)), "an explicit off wins");
+        std::fs::write(home.join("config.json"), r#"{"deck":{"clustering":true}}"#).unwrap();
+        assert!(clustering_enabled(Some(&home)), "an explicit on wins");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The measurement gate (the plan's C3), run on demand:
+    /// `cargo test --lib the_clustering_measurement -- --ignored --nocapture`.
+    /// It grades the clustering against the committed fixture over the
+    /// LIVE loopback embedder and prints the pairwise agreement; the
+    /// default in [`CLUSTERING_DEFAULT`] is this measurement's verdict.
+    #[test]
+    #[ignore = "live: needs the loopback embedding backend"]
+    fn the_clustering_measurement() {
+        let source = fixture_source();
+        // The ready seam, not the fire-and-forget probe: this test needs
+        // the live answer rather than the degradation (the suite's own
+        // live-embed seam, `probed_embedder_ready`).
+        let embedder = crate::memory::probed_embedder_ready(std::time::Duration::from_secs(20));
+        if !embedder.serves_vectors() {
+            println!("clustering measurement: no embedding backend — skipped, nothing claimed");
+            return;
+        }
+        let clustered = source_deck(&*embedder, &source, ProjectType::Infographic)
+            .expect("the live backend answers");
+        // The live-mapped deck must pass the same grader a hand-built one
+        // does, whatever the score says about the grouping.
+        assert!(
+            check(&clustered.deck).is_empty(),
+            "{:?}",
+            check(&clustered.deck)
+        );
+        // The labeled partition: block i belongs to topic (i % 6) because
+        // the fixture interleaves six topics across five rounds.
+        let label = |index: usize| index % 6;
+        // The blocks were embedded in the source's order, so the live
+        // deck's groups (by size only) are not enough: re-run the pure
+        // grouping over the same embeddings to read the indexes.
+        let (blocks, _) = split_source(&source);
+        let mut vectors = Vec::new();
+        for block in &blocks {
+            vectors.push(embedder.embed(block).expect("the live backend answers"));
+        }
+        let groups = group_vectors(&vectors, 8, 1, CLUSTER_FLOOR);
+        let mut predicted = vec![usize::MAX; blocks.len()];
+        for (group, members) in groups.iter().enumerate() {
+            for member in members {
+                predicted[*member] = group;
+            }
+        }
+        // The separation the floor has to sit in: mean cosine within a
+        // labeled group against the mean between groups.
+        let (mut within, mut within_n, mut between, mut between_n) = (0.0, 0usize, 0.0, 0usize);
+        for left in 0..blocks.len() {
+            for right in (left + 1)..blocks.len() {
+                let cosine = crate::memory::cosine(&vectors[left], &vectors[right]);
+                if label(left) == label(right) {
+                    within += cosine;
+                    within_n += 1;
+                } else {
+                    between += cosine;
+                    between_n += 1;
+                }
+            }
+        }
+        println!(
+            "clustering measurement: mean cosine within {:.3} ({} pairs), between {:.3} ({} pairs)",
+            within / within_n.max(1) as f64,
+            within_n,
+            between / between_n.max(1) as f64,
+            between_n
+        );
+        let mut true_positive = 0usize;
+        let mut false_positive = 0usize;
+        let mut false_negative = 0usize;
+        for left in 0..blocks.len() {
+            for right in (left + 1)..blocks.len() {
+                let same_label = label(left) == label(right);
+                let same_group = predicted[left] == predicted[right];
+                match (same_label, same_group) {
+                    (true, true) => true_positive += 1,
+                    (false, true) => false_positive += 1,
+                    (true, false) => false_negative += 1,
+                    (false, false) => {}
+                }
+            }
+        }
+        let denominator = true_positive + false_positive + false_negative;
+        let agreement = if denominator == 0 {
+            1.0
+        } else {
+            true_positive as f64 / denominator as f64
+        };
+        println!(
+            "clustering measurement: pairwise agreement {agreement:.3} over {} groups (tp {true_positive}, fp {false_positive}, fn {false_negative}); gate 0.90",
+            groups.len()
+        );
+        // The gate is reported, the recorded score is pinned: a run that
+        // falls below the measurement this default was decided on is a
+        // regression; a run that clears the gate says the default can be
+        // reconsidered.
+        println!(
+            "clustering gate: {:.2} — {}{}",
+            CLUSTERING_GATE,
+            if agreement >= CLUSTERING_GATE {
+                "pass; "
+            } else {
+                "not met, the feature stays opt-in; "
+            },
+            if agreement + 0.05 < CLUSTERING_MEASURED {
+                "and it fell below the recorded score"
+            } else {
+                "the recorded score stands"
+            }
+        );
+        assert!(
+            agreement + 0.05 >= CLUSTERING_MEASURED,
+            "the clustering's agreement fell to {agreement:.3}, below the recorded {CLUSTERING_MEASURED:.3}"
+        );
+    }
+
     /// space, so a text's vector is its own keyword counts.
     struct KeywordStub;
     impl crate::memory::Embedder for KeywordStub {

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed — built 2026-11-16; the measurement scored 0.732 against the 0.90 gate, so the feature ships opt-in (C3's own rule)
 created: 2026-11-11
 updated: 2026-11-11
 slug: deck-semantic-clustering
@@ -61,36 +61,36 @@ deck tool's suggest mode, gated by a labeled measurement.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the split/embed seam.** A long source becomes bounded
+- [x] **C0 — the split/embed seam.** A long source becomes bounded
       candidate blocks, each embedded through `HttpEmbedder`; an absent
       embedder is a named degradation to today's research path, never a
       silent failure. Pinned by a test driving the seam with a scripted
       embedder and with the embedder absent.
-- [ ] **C1 — deterministic semantic clustering.** The pure cosine grouping
+- [x] **C1 — deterministic semantic clustering.** The pure cosine grouping
       clusters candidates into no more than the deck's node ceiling,
       recovering known semantic groups on a fixture; no foreign runtime.
       Pinned by a fixture with labeled groups asserting the recovered
       partition.
-- [ ] **C2 — clusters become certified blocks.** Each cluster maps to a
+- [x] **C2 — clusters become certified blocks.** Each cluster maps to a
       `Node` opening with its conclusion, and the deck grader (`check` /
       `review` / `auto_fit`) passes the result; a frame-breaking block is
       refused by name. Pinned by a test rendering a clustered deck through
       the grader.
-- [ ] **C3 — the measurement gate.** A committed, `#[ignore]`d measurement
+- [x] **C3 — the measurement gate.** A committed, `#[ignore]`d measurement
       grades the clustering against the labeled fixture and prints the
       recovery score; the default ships only above the named threshold,
       else the feature is opt-in (`deck.clustering`, default off). Pinned by
       the harness's existence and the setting's round-trip.
-- [ ] **C4 — the surface seam + the gate.** The deck tool's suggest mode
+- [x] **C4 — the surface seam + the gate.** The deck tool's suggest mode
       carries the clustering line; `cargo fmt --all --check`, `cargo clippy
       --all-targets -- -D warnings`, `cargo build --release`, `cargo test`
       all exit 0.
-- [ ] **C5 — the source's entry (the review's amendment 1).** The deck tool
+- [x] **C5 — the source's entry (the review's amendment 1).** The deck tool
       accepts the long source as a named argument (a path through the
       document reader, or inline text), bounded and section-sampled past
       its cap; both-given and neither-given are named refusals, not a
       guess.
-- [ ] **C6 — the per-type behavior (the review's amendment 4).** A
+- [x] **C6 — the per-type behavior (the review's amendment 4).** A
       presentation and a poster map clusters to nodes under their ceiling;
       an infographic's single frame takes the clusters as internal
       sections, or clustering is skipped by name — the type's own rule
@@ -137,6 +137,37 @@ open until "the clustering measurement gate is met". If the measurement
 comes back under the threshold, the feature ships **opt-in** and the
 measurement itself is the answer — the row should close on the *measured
 verdict*, not on a passing score, or an honest experiment can never end.
+
+## Built 2026-11-16 — and the measurement's verdict
+
+Every criterion landed, with the measurement's own answer:
+
+- **C0/C5**: `split_source` (paragraphs, a short line joins the one
+  before, even sampling past 60 with both counts named) and the tool's
+  `source` argument (`path` or `text`, exactly one; binary refused). An
+  absent embedder refuses by name and points at structured content.
+- **C1**: `group_vectors` — deterministic agglomerative cosine grouping;
+  the committed fixture (6 groups × 5 blocks, interleaved) recovers 6/6
+  groups with the scripted embedder, and the deck passes the grader.
+- **C2/C6**: a presentation gets one node per cluster; an infographic and
+  a poster take the clusters as one frame's sections (the poster keeps
+  its three). Every mapped deck goes through `check`/`auto_fit`/render.
+- **C3 — the gate said no, and that is the answer.** The live measurement
+  over the loopback embedder: **pairwise agreement 0.732** (within-group
+  mean cosine 0.790, between 0.717) against the **0.90** gate. A 0.72–0.85
+  floor sweep was run first: 0.72 collapsed six groups into three (0.329),
+  0.78+ fractured them into eight (0.620), 0.75 recovered all six with
+  11 false-positive and 8 false-negative pairs. So `CLUSTER_FLOOR` is
+  0.75, `CLUSTERING_DEFAULT` is **false**, and `deck.clustering` ships
+  opt-in — exactly C3's rule. The test prints the gate status and pins
+  the recorded score as a regression bound.
+- **C4**: the suggest mode carries the clustering's state and its gate
+  numbers; `docs/features/deck.md` names the seam, the gate and the
+  setting.
+
+What would clear the gate: a domain-tuned embedder, a reranker over the
+cluster leads, or a two-stage centroid pass — a future slice with this
+measurement as its instrument, not a knob turned until the number moves.
 
 ## Files to be touched
 

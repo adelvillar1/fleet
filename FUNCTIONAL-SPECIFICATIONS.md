@@ -307,6 +307,13 @@ and **its work graph**, the delegation edges among them. An unassigned
 conversation walks `hard`, exactly as before, and the orchestrator's
 chip simply does not appear.
 
+A deck can also be built from a **long document**: its paragraphs are
+clustered by meaning into the deck's blocks, each opening with its
+conclusion, and an infographic or poster takes the clusters as its
+sections. The clustering ships **opt-in** (`deck.clustering`): its
+measured agreement (0.732) has not cleared the 0.90 gate, so the tool
+refuses a source by name until the owner turns it on.
+
 Settings in the console is a rail of eight sections — models,
 specialists, roles, trust, money, schedule, interface, environment —
 where each item is one line (its name, its value, what it costs) and its
