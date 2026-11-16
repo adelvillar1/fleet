@@ -14042,13 +14042,19 @@ import { node, svg, clip } from './core/dom.js';
         'open a conversation first — a bot joins the one you are in');
       return;
     }
-    // The roles are the door's list, and a chat panel has not read them
-    // yet: read the home's settings before painting, never an empty list
-    // that looks like a home with no roles.
-    var ready = (face.settings && face.settings.roles)
-      ? Promise.resolve()
-      : readSettings(false);
-    ready.then(function () { paintInviteDoor(); });
+    // The door opens at once: a press that waits on a read with no
+    // change on screen reads as a dead press. The roles fill in when the
+    // home answers; a chat panel has not read them yet, so that is the
+    // common path rather than the cached one.
+    el.inviteDoor.hidden = false;
+    if (face.settings && face.settings.roles) {
+      paintInviteDoor();
+      return;
+    }
+    el.inviteList.textContent = '';
+    el.inviteList.appendChild(node('p', 'hint', 'reading the home\u2019s roles\u2026'));
+    el.inviteAdd.disabled = true;
+    readSettings(false).then(function () { paintInviteDoor(); });
   }
 
   function paintInviteDoor() {
