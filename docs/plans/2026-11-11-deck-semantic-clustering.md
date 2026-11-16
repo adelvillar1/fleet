@@ -85,6 +85,58 @@ deck tool's suggest mode, gated by a labeled measurement.
       carries the clustering line; `cargo fmt --all --check`, `cargo clippy
       --all-targets -- -D warnings`, `cargo build --release`, `cargo test`
       all exit 0.
+- [ ] **C5 — the source's entry (the review's amendment 1).** The deck tool
+      accepts the long source as a named argument (a path through the
+      document reader, or inline text), bounded and section-sampled past
+      its cap; both-given and neither-given are named refusals, not a
+      guess.
+- [ ] **C6 — the per-type behavior (the review's amendment 4).** A
+      presentation and a poster map clusters to nodes under their ceiling;
+      an infographic's single frame takes the clusters as internal
+      sections, or clustering is skipped by name — the type's own rule
+      stated in a test, never a silent collapse.
+
+## Review 2026-11-16 — verdict: build it, with five amendments
+
+The plan's claims were checked against the tree and all hold: the embedder
+seam exists (`Embedder` + `HttpEmbedder` at `src/memory.rs:1213-1280`,
+default endpoint `127.0.0.1:8901/v1/embeddings`), the deck's node ceiling
+exists (`Bounds::for_type`: 40 for a presentation, 1 for an infographic),
+the graders exist (`check`, `review`, `auto_fit`), and the deck tool's
+suggest mode already embeds an intent (`suggest_layouts_with`). The
+decision-model check is right: clustering is arithmetic, not a judgment,
+and it reuses the loopback lane recall already runs — hard rule 12 holds.
+
+What the plan does not yet say, and a builder would have to invent:
+
+1. **Where the long source enters.** The deck tool takes structured nodes
+   today; clustering needs a source. Name the argument and its shape —
+   `source: { "path": … }` read through the document reader, or
+   `source_text` — and say what happens when both are given.
+2. **The measurement's number.** C3 says "a named threshold" and never
+   names it. Proposal: pairwise cluster agreement (Jaccard over recovered
+   pairs) **≥ 0.90** and every labeled group recovered with at most one
+   false member, on a committed fixture of ≥ 6 groups and ≥ 30 blocks, run
+   against the 768-dim loopback embedder. A gate without its number is an
+   opinion.
+3. **"Highest-centrality" is undefined.** Say which: the summed cosine to
+   the other members of its cluster (proposed), or the distance to the
+   centroid. The test then asserts the named rule, not "a lead".
+4. **The per-type ceiling changes the job.** `Bounds::for_type` gives an
+   infographic **one** node: clustering there collapses to a single block.
+   Say what each type does — presentation/poster: blocks map to nodes;
+   infographic: blocks become the sections *inside* the one frame, or
+   clustering is skipped by name.
+5. **Cost and the absent embedder.** N candidates are N HTTP embed calls:
+   cap N (proposed: 60 candidates, section-sampled past it) and state that
+   an embed returning `None` degrades the whole deck to today's path with
+   one named line — never a partial cluster set presented as complete.
+
+One row change to propose: KI-252's closure condition says the row stays
+open until "the clustering measurement gate is met". If the measurement
+comes back under the threshold, the feature ships **opt-in** and the
+measurement itself is the answer — the row should close on the *measured
+verdict*, not on a passing score, or an honest experiment can never end.
 
 ## Files to be touched
 
