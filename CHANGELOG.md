@@ -12,6 +12,48 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.10 — 2026-11-16
+
+The shell stops showing you things you did not ask for, and the docs catch
+up with the app.
+
+**The drawer opens only when you press it.** Desk and learning forced the
+right drawer open on arrival — the only two lenses that did — and the force
+overwrote your close on the next visit. The drawer is the owner's to open
+(U13, amended): arrivals leave it closed, the lens's context is painted
+into the closed drawer, and one press lands on that context tab (the
+deliverable's or lesson's properties). A press that beats the lens's read
+keeps the ask until the data lands. Pinned by the face harness; the live
+probe on a fresh binary shows the closed arrival and the context press.
+
+**The rail carries no install pill.** The card at the rail's head
+(`fleet / v0.8.9 · 162 runs`) is gone — the version lives on About and at
+`/api/version`, the run count on the archive, and the head mark already
+names the install. Removing it uncovered the spill the card had been
+covering: the rail head was a fixed half-topbar box (29px) around a 40px
+mark, so the mark's second line sat under the first group. The head now
+sizes to its content; the collapsed rail is the glyph and the icons, with
+nothing spilling over the stage.
+
+**The help names every verb.** `fleet cleanup` existed and every cut ran
+it, but `fleet help` never named it — nor eleven other verbs the parser
+dispatched: desk, workspace, plan, demand, hygiene, vault, plugins,
+lifecycle, armada, footprint, recover. Each carries a line and its flags,
+pinned by a test that reds when a dispatched verb is missing (KI-554).
+
+**The docs match the app.** The README was re-read against 0.8.9: six
+lanes (the browser lane was missing), nine lenses, the cache instrument and
+its no-data rule, the orchestrator and the add-a-bot door, decks and their
+opt-in clustering, cleanup on cut/deploy, folds at 85%, and the onboard key
+path. Both archify drawings were re-authored at the release commit — the
+architecture (16 components, 18 connections, two regions, four cards) and
+the turn as the sequence it is (8 participants, 13 messages) — with fresh
+PNGs, and the functional spec gained the cache surface.
+
+Named and not fixed: **KI-555** — the open drawer is anchored at the right
+edge and covers the connections column while it is open, where U13 says the
+persistent panes never hide behind it.
+
 ## v0.8.9 — 2026-11-16
 
 Caching you can see, and the bits that were hiding in plain sight.
