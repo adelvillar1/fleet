@@ -14065,6 +14065,9 @@ import { node, svg, clip } from './core/dom.js';
     // home answers; a chat panel has not read them yet, so that is the
     // common path rather than the cached one.
     el.inviteDoor.hidden = false;
+    // The press says what it will do from the first frame — the list may
+    // still be reading, but the word must not lag the door.
+    el.inviteAdd.textContent = joining ? 'add to the conversation' : 'start the conversation';
     if (face.settings && face.settings.roles) {
       paintInviteDoor();
       return;

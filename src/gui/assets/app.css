@@ -3104,6 +3104,9 @@ body[data-object-card="open"] .dock-object {
 .foot-btn:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
 .foot-btn:active { transform: scale(0.96); }
 .foot-btn.icon { width: var(--ctl-h); padding: 0; }
+/* The bot door's label is one phrase; it keeps one line even when the
+   row is tight (the narrow rules drop it for the icon). */
+.composer .foot-btn.bots { flex: 0 0 auto; white-space: nowrap; }
 .foot-btn.plan[aria-pressed="true"],
 .foot-btn.plan[aria-pressed="true"]:hover {
   background: var(--dsw-alias-accent-wash);
