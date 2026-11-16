@@ -95,6 +95,7 @@ pub mod security;
 pub mod session;
 pub mod session_recall;
 pub mod settings;
+pub mod shellpath;
 pub mod skills;
 pub mod subagents;
 pub mod tool_advisor;

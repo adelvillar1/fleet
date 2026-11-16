@@ -457,7 +457,9 @@ fn docker_probe() -> ServiceHealth {
         ServiceHealth::down(
             "docker",
             format!(
-                "the {} daemon is not answering — the LayerFS worker cannot run",
+                "the container runtime did not answer — the LayerFS worker cannot run \
+                 (`docker info` failed; a sleeping {} daemon or a CLI off the PATH \
+                 both read this way)",
                 runtime.kind.name()
             ),
         )

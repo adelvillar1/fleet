@@ -227,6 +227,14 @@ pub fn user_home() -> PathBuf {
 
 /// Run the shell: the inventory, the first run, the window, the server.
 pub fn run() {
+    // The owner's login-shell PATH, before anything spawns a child: a
+    // dock-launched app carries launchd's four directories, so `docker`,
+    // `npx` and a modern `python3` are invisible and every probe reports a
+    // broken machine instead of a narrow PATH (the 2026-11-15 complaints —
+    // a healthy kiri daemon called dead, three MCP servers ENOENT, blend1
+    // handed 3.9.6).
+    let adopted_path = fleet::shellpath::adopt_login_path();
+
     // The services root, before anything resolves a lane.
     if let Some(root) = services_root() {
         std::env::set_var(SERVICES_ROOT_ENV, &root);
@@ -267,6 +275,14 @@ pub fn run() {
     // The lane wiring, before the bridge spawns any lane.
     for (name, value) in lane_environment(&home) {
         std::env::set_var(&name, &value);
+    }
+
+    match &adopted_path {
+        Some(path) => println!(
+            "  = PATH   the login shell's ({} entries)",
+            std::env::split_paths(path).count()
+        ),
+        None => println!("  = PATH   inherited — the login shell said nothing"),
     }
 
     // The venvs, in the background: the torch stack is minutes and the
