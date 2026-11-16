@@ -12,6 +12,33 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.8 — 2026-11-15
+
+The app sees the machine it runs on, and the work you started is always
+findable.
+
+The desktop app now adopts your login shell's PATH at startup. A
+dock-launched app inherits launchd's four directories, so every tool you
+installed elsewhere was invisible to it: `docker info` could not be
+spawned and the health card called a healthy kiri daemon dead, three MCP
+servers failed with "No such file or directory", and the blend1 lane was
+handed macOS's python 3.9.6. One read of your shell's own PATH fixes all
+three — bounded, silent when it fails, and never asked twice. The card's
+down-message now names the check that failed instead of asserting a
+daemon's state.
+
+Findability: the archive reads the owner's conversations and the
+machine's scheduled runs with separate windows, so a store whose cron
+jobs fire every few minutes can no longer crowd the work you started out
+of the list, the archive toggle or the search — the cold landing carries
+its way back too. And the delegation graph is legible: a conversation's
+delegated children ride under the parent's goal, named, listed, and one
+press from opening.
+
+Smaller: the footprint budget learns a high percentile instead of the
+median, so a release is not refused by its own average; the dmg step
+ejects stale fleet disk images before bundling.
+
 ## v0.8.7 — 2026-11-15
 
 Fleet heals more of itself — the self-healing review, built out.
