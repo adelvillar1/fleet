@@ -153,7 +153,25 @@ window**, not the three fifths it used to take.
   bridge's gauge reads the same number, and no caller re-derives a
   fraction.
 
-### I6 — verified on the live stream
+### I6 — verified on the live stream (measured 2026-11-16)
+
+Two pairs of tiny runs with the new binary, each pair carrying a different
+task, so a cache read could only come from the head:
+
+| runs | head | provider's cache read |
+|---|---|---|
+| 2 × `opencode/deepseek-v4.1-flash` | `690708de9c16144e` / 31,271 bytes both | **0**, then **0** |
+| 2 × `zai-coding-plan/glm-4.5` | same head, both | **0**, then **0** |
+| 2 × `deepseek/deepseek-flash` | same head, both | **0**, then **5,248 of 12,833** (41%) |
+
+The harness side is proven: an identical 31,271-byte head (`head_bytes`,
+≈7.8k tokens of a ~12.8k first call) across different tasks. Direct
+DeepSeek cached it on the second run; **the gateways report zero** — the
+provider-side remainder this plan said to name rather than chase, now
+filed as KI-547. The turn row also carries the cache half for the first
+time (`cache 0` / `cache 5248`), so the panel can read per-run.
+
+### I6 (original text, kept for the record) — verified on the live stream
 
 - Gate green, deployed, a few real sessions run.
 - The cache query shows the move: **fresh-run** cache share from ~0 to
@@ -215,6 +233,7 @@ turns the cache from per-session luck into a standing asset.
   cross-run policy with its own measurement, not a mechanical change.
 - [x] C7: compaction fires at 85% of a declared window (the floor for an
   undeclared one), with the budget tests and the bridge gauge updated.
-- [ ] C6: gate green, deployed, and the live cache document shows the
-  fresh-run and fleet-wide shares move; the provider-side remainder is
-  named if it stays.
+- [x] C6: gate green, deployed, and measured live: an identical head
+  reads 5,248 of 12,833 prompt tokens from cache on direct DeepSeek (a
+  fresh run whose task differed), while opencode and zai report zero —
+  the remainder is named in KI-547, not chased.
