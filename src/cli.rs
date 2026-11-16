@@ -1081,6 +1081,57 @@ usage:
                                 is bootstrapped by name, so a restart cannot
                                 leave the face down (KI-431). --from installs a
                                 built binary first, through a new inode (KI-418)
+  fleet desk [--run <slug>]      the desk's card: the deliverables and where
+                                each stands; --run walks one through the
+                                desk loop
+  fleet workspace                the work-object graph: the tasks, their
+                                edges, and the object-keyed view the
+                                projects rail reads
+  fleet plan <plan.md | slug> [--demote <node> \"<why>\"]
+                                the plan as its graph — the nodes it
+                                declared, the acceptance criteria read off
+                                it, and a demotion when delivered work does
+                                not integrate
+  fleet demand [--days <n>] [--cluster]
+                                the window's failures as a demand board;
+                                --cluster groups them by class and files a
+                                shape proposal for each cluster at or over
+                                the filing threshold
+  fleet hygiene                  the session-close pass: the checkpoints
+                                pruned to their retention, and the report
+                                naming what went and what it freed
+  fleet cleanup                  delete the files a curtailed run wrote
+                                inside its own granted folder — the verb a
+                                release cut and a deployment run
+  fleet vault <init|set|get|remove|list>
+                                the sealed secrets: create the vault and
+                                migrate the plaintext .env, seal one (the
+                                value can ride --value instead of the
+                                argument), open one deliberately, drop one,
+                                or list the names — never the values
+  fleet plugins <list|install|enable|disable|remove|eval>
+                                the installed face bundles as cards, or one
+                                carried in, enabled, disabled, removed, or
+                                run through its deterministic suite
+  fleet lifecycle promote [--sessions <n>] [--min <n>] [--similarity <n>]
+                                the archive clustered: what repetition has
+                                earned, as proposals — the additive mirror
+                                of the sweep
+  fleet armada <roster|status|sync|deploy|dispatch>
+                                the control plane: the roster and each
+                                instance's earned liveness, the corpus sync,
+                                a fresh install, and a dispatch through the
+                                control plane
+  fleet footprint [--json] [--class <name>] [--path <dir>] [--estimate]
+                  [--settle <kib>] [--record]
+                                what this process tree holds right now —
+                                memory, processes, disk — graded against its
+                                ceilings; one work class's admission, its
+                                learned estimate, or a settle
+  fleet recover                  the failsafe: restore every settings file
+                                whose current form is broken from its
+                                last-known-good stamp, then name the health
+                                probes' fresh verdicts
   fleet version                  print the version
   fleet help                     print this help
 
@@ -5528,5 +5579,35 @@ mod tests {
         assert!(HELP.contains("pair-webhook"), "{HELP}");
         assert!(HELP.contains("allow-telegram"), "{HELP}");
         assert!(HELP.contains("fleet channels capability"), "{HELP}");
+    }
+
+    /// KI-554, and the same door `fleet channels` and `fleet reload` each
+    /// found: a verb the parser dispatches but the help omits is a surface
+    /// the owner cannot discover from the terminal. This pins the twelve
+    /// that were missing — the desk, the work-object graph, a plan's graph,
+    /// the demand board, the session-close hygiene, the curtailed-run
+    /// cleanup, the vault, the plugin host, lifecycle promotion, the armada
+    /// control plane, the footprint, and the recovery failsafe.
+    #[test]
+    fn the_help_names_every_dispatched_surface() {
+        for verb in [
+            "desk",
+            "workspace",
+            "plan",
+            "demand",
+            "hygiene",
+            "cleanup",
+            "vault",
+            "plugins",
+            "lifecycle",
+            "armada",
+            "footprint",
+            "recover",
+        ] {
+            assert!(
+                HELP.contains(&format!("fleet {verb}")),
+                "fleet {verb} is not in the help:\n{HELP}"
+            );
+        }
     }
 }
