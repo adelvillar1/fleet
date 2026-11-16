@@ -321,6 +321,15 @@ card opens in the right pane to read and change. Long lists take a
 budget with the count named, and a search at the head of the rail finds
 an item across every section.
 
+Beside settings, the **cache** surface reads the calibration stream per
+model: the share of prompt tokens the provider served from its cache,
+the cached-versus-fresh latency, and a day-by-day trend. A provider that
+reports no cache figures reads as unknown, never as zero — some gateways
+cache internally and send nothing back. Behind the panel, the request
+head carries a fingerprint (`head_sha256`, `head_bytes` on the run's
+start record), so a miss is attributable: the head changed, or the
+provider dropped it.
+
 The terminal surface (`fleet` with no subcommand) is the same agent core,
 keyboard-first and denser: the conversation at the center, a tabbed right
 pane (run, router, brain, tower), the knowledge panels, the checkpoint

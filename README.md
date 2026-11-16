@@ -38,7 +38,7 @@ worst at is carried by components that are reliable beside it.
 
 ### Work you can trust
 
-Five specialized lanes do the grounding, driven over Fleet's own MCP client:
+Six specialized lanes do the grounding, driven over Fleet's own MCP client:
 
 | Lane | What it does | What it returns |
 |---|---|---|
@@ -46,6 +46,7 @@ Five specialized lanes do the grounding, driven over Fleet's own MCP client:
 | **sdm1** — tabular | computes a number from rows | a score with an interval — arithmetic is never generated |
 | **sem1** — embeddings | similarity and recall: which fact, skill, or session means this | vectors in, vectors out — never verdicts |
 | **gen1** — media | renders images to a brief, and judges images against one | pixels, and a verdict on pixels |
+| **browser** — the page | navigates a real page, screenshots it, reads its text | the page's own bytes — what it found, not what the model assumes |
 | **blend1** — composition | grounds one answer over the siblings, the model speaking last | reasoning that stands on computed facts |
 
 Hallucination is controlled by construction: closed output spaces,
@@ -80,7 +81,13 @@ silently, and never beyond your reach:
   The harness cannot reach what it is not granted.
 - **Workflows** are composed and named: the skill chains
   (warmup → plan → build → recap), delegation with a dependency graph, rooms
-  with your bots. Work is structured, not improvised.
+  with your bots, decks that build a presentation, infographic or poster and
+  are refused at their own bounds before they render — a long source
+  clusters into blocks by meaning, opt-in until that clustering's measured
+  agreement clears its gate (0.732 against 0.90 today). A conversation names
+  its orchestrator; each persona carries the workload its runs walk and owns
+  the threads it was given, its work graph read off the record. Work is
+  structured, not improvised.
 - **Loops** are how the harness maintains itself on evidence: calibration
   grades every routing decision against its outcome; self-improvement
   proposes changes that are *measured before they are kept*, reversible, and
@@ -96,21 +103,23 @@ logs. ([docs/features/](docs/features/))
 ### One productive front end
 
 Fleet is not a chat window you visit — it is meant to be the place your work
-lives. The 0.8 shell is one workspace, not twenty panels: seven lenses
-(threads, board, desk, intelligence, learning, reviews, inbox) project one
-work-object spine — a task links to its conversation, its deliverable, the
-bot that did it, and the lesson it taught — one shared focus that a pivot
-re-projects into the lens it names, and the inspector rides beside it as a
-drawer: the run, the receipts of what the conversation made, the files, the
-preview. The landing is one question — *"What do you want to work on?"* —
-over the composer, with the onboard door when the home needs setup; the
-graph, the counts and the archive live on their own surfaces, one pivot
-away. Runs are concurrent: each admitted run drives its own session, a run
-in another conversation changes a row's words, not this composer's. Three
-faces over one agent core — the browser console (`fleet gui`), the terminal
-(`fleet`), and the headless CLI — plus a native desktop shell and a paired
-phone, paired from the app itself: the face mints the code, the phone joins
-through the relay, no terminal command.
+lives. The 0.8 shell is one workspace, not twenty panels: nine lenses
+(threads, archive, board, desk, intelligence, learning, reviews, inbox,
+health) project one work-object spine — a task links to its conversation,
+its deliverable, the bot that did it, and the lesson it taught — one shared
+focus that a pivot re-projects into the lens it names, and the inspector
+rides beside it as a drawer: the run, the receipts of what the conversation
+made, the files, the preview. The landing is one question — *"What do you
+want to work on?"* — over the composer, with the onboard door when the home
+needs setup; the graph and the counts live on their own surfaces, one pivot
+away. A conversation names its orchestrator, and one press on its head adds
+a bot — this home's roles, or a new persona — turning a plain conversation
+into a room. Runs are concurrent: each admitted run drives its own session,
+a run in another conversation changes a row's words, not this composer's.
+Three faces over one agent core — the browser console (`fleet gui`), the
+terminal (`fleet`), and the headless CLI — plus a native desktop shell and a
+paired phone, paired from the app itself: the face mints the code, the phone
+joins through the relay, no terminal command.
 ([docs/architecture/surfaces.md](docs/architecture/surfaces.md),
 [docs/features/workspace.md](docs/features/workspace.md))
 
@@ -132,6 +141,11 @@ numbers in front of you. The numbers derive from the machine's learned
 profile, not constants, and the harness is aware at all times of what it
 holds — disk, memory, its own process tree. A call that keeps the environment
 from crashing is worth its cost; a runaway is curtailed, not rescued.
+Cleanup is part of the posture: a curtailed run queues the files it wrote,
+and `fleet cleanup` — run at every release cut and deployment — deletes only
+what the run itself created inside the folder it was granted. Context is
+budgeted the same way: a conversation folds at 85% of its model's declared
+window, leaving the headroom the fold's own request needs.
 ([docs/features/resource-contract.md](docs/features/resource-contract.md))
 
 ## How it stays trustworthy
@@ -143,8 +157,13 @@ The build is the experiment. The **gate** is the measurement:
 evidence, and architecture gates over the plans, exit codes read directly.
 The **calibration stream** grades the decisions against their outcomes, and
 your agree-or-disagree rides the same append-only row as ground truth. The
-recap is the conclusion. Nothing ships green by assertion; each claim has a
-gate, and the gates grade themselves.
+same rows feed the **cache instrument**: per model, the share of prompt
+tokens the provider served from its cache, the cached-versus-fresh latency,
+and the day-by-day trend — and because the request head carries a
+fingerprint, a miss is attributable instead of guessed at. A provider that
+reports no cache figures is left alone: its zero is no data. The recap is
+the conclusion. Nothing ships green by assertion; each claim has a gate,
+and the gates grade themselves.
 
 That is the whole bet: an agent that gets more capable without getting less
 reliable, because every increase in capability is measured against evidence
@@ -202,17 +221,27 @@ whole project, and the shakeout is the work mode until then.
 
 ## A look
 
-[![Fleet's architecture — one agent core, three faces](docs/images/architecture-fleet.png)](docs/architecture/fleet-architecture.html)
+[![Fleet's architecture — one agent core, every face](docs/images/architecture-fleet.png)](docs/architecture/fleet-architecture.html)
 
-*One Rust binary holds the turn loop, the router, the tool surface, and the
-records; the console, the terminal, and the headless CLI are three faces
-over it. The stores beside the core are files in the home — memory one file
-per fact, the session log every record. The interactive drawing carries the
-shape; the `SRC` badges point at the `file:line` each claim was read from.*
+*One Rust binary holds the turn loop, the router, the tool surface, the
+plugin host, and the records; the console, the native shell, the terminal,
+and a paired phone are faces over it. The stores beside the core are files
+in the home — memory one file per fact, the session log every record, the
+calibration stream every decision — and the machine's layerfs worker, cron,
+health and resource contract sit under it all. The interactive drawing
+carries the shape; the `SRC` badges point at the `file:line` each claim was
+read from.*
+
+[![A Fleet turn, end to end](docs/images/process-turn.png)](docs/architecture/fleet-turn.html)
+
+*One turn: assemble the request with a constant, fingerprinted head; judge
+the task and walk the chain with every call's cache read accounted; gate the
+destructive class at the approval seat; answer, stream, and record — the
+turn's row carries its cache half.*
 
 | | |
 |---|---|
-| ![the landing](docs/images/surface-landing.png) *the landing: one question over the composer — the onboard door when the home needs setup, the seven lenses in the rail* | ![the desk with the drawer](docs/images/surface-desk-drawer.png) *the desk, the inspector as a drawer over the work: the run, the receipts of what the conversation made, the files, the preview* |
+| ![the landing](docs/images/surface-landing.png) *the landing: one question over the composer — the onboard door when the home needs setup, the lenses in the rail* | ![the desk with the drawer](docs/images/surface-desk-drawer.png) *the desk, the inspector as a drawer over the work: the run, the receipts of what the conversation made, the files, the preview* |
 | ![a huddle](docs/images/surface-huddles.jpg) *a room: you and your bots, a deliverable on the shelf, a capability gap named* | ![the terminal](docs/images/tui-conversation.png) *the terminal face: the same core at a keyboard's density* |
 
 ## Install
@@ -237,8 +266,10 @@ cargo tauri build        # the native shell, bundled as a dmg
 ```
 
 The first launch creates the home (`~/.fleet`), builds the lane venvs in the
-background, and opens the face. Credentials are never written by the app:
-set `DEEPSEEK_API_KEY` in the environment or `~/.fleet/.env`.
+background, and opens the face. The onboard door takes the first key: it is
+sealed into the vault when a passphrase is set, and written to
+`~/.fleet/.env` otherwise; setting `DEEPSEEK_API_KEY` in the environment
+yourself works just the same.
 
 **Provision the home.** `fleet install` lays out `~/.fleet` — config,
 sessions, memory, the doctor gate — idempotently; the vendored lanes are an
