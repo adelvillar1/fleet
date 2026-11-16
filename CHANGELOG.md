@@ -12,6 +12,51 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.9 — 2026-11-16
+
+Caching you can see, and the bits that were hiding in plain sight.
+
+The router's prompt cache is now measured and made use of. A new **cache**
+instrument (Settings → cache) shows, per model, the share of prompt tokens
+served from the provider's cache, the cached-versus-fresh latency, and a
+day-by-day trend. The reason the number was low turned out to be two
+things: the tool declarations were re-ordered per workload, which rewrote
+the bytes every provider's prefix cache keys on; and most traffic landed
+on gateways that report zero cache reads even for a byte-identical head.
+The declarations now keep one order, the head carries a fingerprint so a
+miss is attributable, and the workload chains lead providers measured to
+cache — a second run on the new head reads 99% of its prompt from cache
+where the old head read none. Conversations also fold later: at 85% of a
+declared model window instead of three fifths.
+
+**Adding a bot to a conversation** finally has a door: an "add a bot"
+press on the conversation head and a matching chip in a room's member
+row. Both open one picker — this home's roles, one press to join, and
+"create a new persona" for a gap the catalog does not cover. The first bot
+added turns a plain conversation into a room.
+
+The **orchestrator** is legible: a route row now records the chain that
+actually walked beside the workload the router judged, each role's card
+draws its **work graph** — the threads it owns, arranged by the delegation
+edges among them — and a conversation names its orchestrator.
+
+The **deck** can build from a long document: its paragraphs are clustered
+by meaning into blocks, each opening with its conclusion, with a
+presentation getting a node per cluster and an infographic or poster
+taking them as its sections. It ships **opt-in** (`deck.clustering`),
+because the clustering's measured agreement (0.732) has not cleared its
+0.90 gate — the measurement, not a hope, decides.
+
+Cleanup is part of shipping: a run the resource contract curtailed queues
+the files it wrote, and `fleet cleanup` — run by a release cut and by a
+deployment — deletes them inside their own folder only. A cut also sweeps
+fleet's own `/tmp` debris past a day's grace.
+
+Smaller: `/api/settings` answers in 18 ms warm instead of 1.9 s (the
+lifecycle scan is cached and the board no longer walks every session log);
+the known-issues ledger is at zero open, and its plan statuses speak one
+word with a staleness check so nothing sits active for no reason.
+
 ## v0.8.8 — 2026-11-15
 
 The app sees the machine it runs on, and the work you started is always
