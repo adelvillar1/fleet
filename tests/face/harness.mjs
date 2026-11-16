@@ -5443,6 +5443,60 @@ async function theLearningOrganisesByProjectAndThread() {
     JSON.stringify(started.map((c) => c.body).slice(0, 1)));
 }
 
+// The owner's 2026-11-16 report: opening desk or learning made a side
+// panel appear that read as neither the drawer nor part of the lens. The
+// drawer is the owner's to open (U13) — arriving at either lens leaves it
+// closed, and the press that opens it lands on the lens's own context.
+async function theDrawerWaitsForTheOwnerOnDeskAndLearning() {
+  const learning = boot({
+    hash: '#/learning',
+    documents: {
+      learning: learningDoc(),
+      projects: projectsDoc(),
+      state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  learning.open();
+  await flush(160);
+  check('U13 learning arrives with the drawer closed',
+    learning.IDS['pane'].hidden === true,
+    'pane hidden: ' + learning.IDS['pane'].hidden + ' / body data-pane: ' + learning.body.dataset.pane);
+  check('U13 learning does not claim the drawer open',
+    learning.body.dataset.pane !== 'open', String(learning.body.dataset.pane));
+
+  const desk = boot({
+    hash: '#/desk',
+    documents: {
+      desk: { projects: [Object.assign(deskProject(), { session: 'desk-s1' })] },
+      projects: projectsDoc(),
+      branch: { type: 'replay', cards: [] },
+      state: (asked) => emptyState(asked),
+    },
+  });
+  await flush();
+  desk.open();
+  await flush(160);
+  check('U13 desk arrives with the drawer closed',
+    desk.IDS['pane'].hidden === true, 'pane hidden: ' + desk.IDS['pane'].hidden);
+
+  // Opening a deliverable fills the drawer's context without opening the
+  // drawer: the same press law as the arrival, one step in.
+  desk.rows('#work-list .work-row')[0].click();
+  await flush(160);
+  check('U13 opening a deliverable keeps the drawer closed',
+    desk.IDS['pane'].hidden === true, 'pane hidden: ' + desk.IDS['pane'].hidden);
+
+  desk.rows('#pane-open')[0].click();
+  await flush(160);
+  check('U13 the owner\u2019s press opens the drawer',
+    desk.IDS['pane'].hidden === false, String(desk.IDS['pane'].hidden));
+  check('U13 the press lands on the desk context',
+    desk.rows('#pane-context .facts').length >= 1,
+    String(desk.rows('#pane-context .facts').length));
+}
+
 // IB (the owner-inbox plan): one queue of everything waiting on the
 // owner — seats answerable in place, the onboarding ladder, huddle
 // questions, cron failures, doctor findings — fed by one read, badged
@@ -13883,6 +13937,7 @@ const cases = [
   ['S4 the inbox row wears the principal chip', theInboxRowWearsThePrincipalChip],
   ['S6 the spine feeds the lenses and the pivot stays in place', theSpineFeedsTheLensesAndThePivotStaysInPlace],
   ['S6 the connections column collapses from its own door', theConnectionsColumnCollapsesFromItsOwnDoor],
+  ['U13 the drawer waits for the owner on desk and learning', theDrawerWaitsForTheOwnerOnDeskAndLearning],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

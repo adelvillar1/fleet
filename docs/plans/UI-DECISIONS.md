@@ -128,6 +128,11 @@ Rules (the D-ledger's, applied to design):
   every object, kind-typed. Toasts land bottom-center, carry an icon, and a
   destructive action's toast carries **Undo**. *Constrains:* the overlay
   layer, keyboard handling (⌘K toggle, Escape closes).
+  *Amended 2026-11-16:* the drawer opens **only by the owner's press** — no
+  lens arrival opens it. Desk and learning paint their artifact's properties
+  into the closed drawer, so the press that opens it lands on the context
+  tab (the owner's report: a side panel appeared on opening desk or learning
+  and read as neither the drawer nor part of the lens).
 
 ## Components
 

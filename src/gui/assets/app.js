@@ -8371,7 +8371,9 @@ import { node, svg, clip } from './core/dom.js';
     readProjects(false);
     if (face.panel === 'learning') paintWork();
     if (session) readThread(session, false);
-    if (!el.pane.hidden && paneContextAvailable()) paintPaneContext();
+    // Painted whether the drawer is open or closed: the first press on the
+    // drawer's door shows this lens's context, not a stale one.
+    if (paneContextAvailable()) paintPaneContext();
   }
 
   /// The lesson's thread under its work in the centre: the session's own
@@ -12192,7 +12194,9 @@ import { node, svg, clip } from './core/dom.js';
     placeComposer(el.deskDock);
     readProjects(false);
     if (face.panel === 'desk') paintWork();
-    if (!el.pane.hidden && paneContextAvailable()) paintPaneContext();
+    // Painted whether the drawer is open or closed: the first press on the
+    // drawer's door shows this lens's context, not a stale one.
+    if (paneContextAvailable()) paintPaneContext();
   }
 
   /// The desk with nothing open: the welcome, in the centre where the
@@ -26911,6 +26915,10 @@ import { node, svg, clip } from './core/dom.js';
     var withList = work || address === 'desk' || address === 'learning';
     closeDrawer();
     face.panel = address;
+    // The drawer's context intent belongs to the lens being arrived at:
+    // only desk and learning ask for it again below, and a lens that does
+    // not must not inherit a stale ask.
+    face.wantContext = false;
     usageRecord('panels', address, 'opens');
     // P3 / U47: one shared focus. When the address carries no explicit id,
     // the route focus derives from the single tissue focus (face.focusObject)
@@ -26966,9 +26974,10 @@ import { node, svg, clip } from './core/dom.js';
         readWorkflows(true);
       },
       learning: function () {
-        // The right column is the app's pane, the same one the other
-        // work surfaces carry; it stays the owner's to close.
-        if (el.pane.hidden) openPane();
+        // The drawer is the owner's to open (U13): arriving here never
+        // opens it. The ask below only picks its tab — the paint fills
+        // the context whether the drawer is open or closed, so the first
+        // press carries the lesson's properties.
         face.wantContext = true;
         paintLearning();
         readSpine(false).then(paintLearning);
@@ -26990,9 +26999,10 @@ import { node, svg, clip } from './core/dom.js';
         // `#/desk/<slug>` opens that deliverable; a slug the store does
         // not carry names itself (the room rule: a stale address is a
         // named refusal, never a blank surface).
-        // The right column is the app's pane, the same one the other
-        // work surfaces carry; it stays the owner's to close.
-        if (el.pane.hidden) openPane();
+        // The drawer is the owner's to open (U13): arriving here never
+        // opens it. The ask below only picks its tab — the paint fills
+        // the context whether the drawer is open or closed, so the first
+        // press carries the deliverable's properties.
         face.wantContext = true;
         var asked = face.focus && face.focus.id ? face.focus.id : '';
         paintDesk();
@@ -28381,7 +28391,13 @@ import { node, svg, clip } from './core/dom.js';
     el.pane.hidden = false;
     document.body.dataset.pane = 'open';
     try { window.localStorage.setItem('fleet-pane', 'open'); } catch (error) { }
-    showPaneTab(face.paneTab || 'run');
+    // The tab the lens asked for (desk and learning keep their properties
+    // in the context tab), then the last one the owner used. A press that
+    // lands before the lens's read keeps that ask: the paint takes it when
+    // the data arrives.
+    var wanted = face.wantContext && paneContextAvailable();
+    if (wanted) face.wantContext = false;
+    showPaneTab(wanted ? 'context' : (face.paneTab || 'run'));
     if (!face.tree) readTree('', true);
   }
 
