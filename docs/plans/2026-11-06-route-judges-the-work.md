@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed — closed 2026-11-16: the router's workload judgment is live (it feeds the prompt's `## Order of reach` line and the declarations' profile)
 created: 2026-11-06
 updated: 2026-11-06
 slug: route-judges-the-work

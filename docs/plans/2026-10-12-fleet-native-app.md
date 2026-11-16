@@ -1,6 +1,6 @@
 # Fleet — a fully native Rust agent app
 
-Status: active — slice 1 complete; the live-API task completion (C3) is
+Status: completed — slice 1 landed and C3's blocker (the API account's balance) was resolved; live runs complete. Closed in the owner's plan sweep, 2026-11-16
 blocked by account balance, not by code. The crate moved to its own
 repository on 2026-10-13; see "Fleet left this repository" below. Plan-gate:
 this document.

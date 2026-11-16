@@ -1,5 +1,5 @@
 ---
-status: draft
+status: cancelled — no mandate since October 2026; the owner cancelled it in the 2026-11-16 plan sweep
 created: 2026-10-23
 updated: 2026-10-23
 slug: capability-pitch

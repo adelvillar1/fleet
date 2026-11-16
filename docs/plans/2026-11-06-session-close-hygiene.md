@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed — closed 2026-11-16 with one residual moved to KI-549 (C4: the pass does not retire tmp or sweep the build cache)
 created: 2026-11-06
 updated: 2026-11-06
 slug: session-close-hygiene
@@ -59,11 +59,20 @@ High-level steps:
 - [x] C2 — the pass prunes the checkpoints to the retention (the last 20
       turns per session, the 5 G cap, oldest first).
 - [x] C3 — the pass runs one memory consolidation pass.
-- [ ] C4 — the pass retires the tmp and sweeps the build cache.
 - [x] C5 — the pass sweeps the stale processes (the Chrome, the lanes, the
       background) from the closed session.
 - [x] C6 — the recap step runs the pass.
 - [x] C7 — the pins and the gate.
+
+## Closed with a residual
+
+C4 ("the pass retires the tmp and sweeps the build cache") was **not
+built**: the GoalDone pass prunes checkpoints (`src/gui/bridge.rs`), and
+`fleet hygiene` adds one memory consolidation (`src/main.rs`) — neither
+touches `/tmp` or the gate's build lane, and the only cache sweep today
+is the disk-full self-heal (`src/health.rs`). The residual lives in
+**KI-549** so it is tracked as work rather than as a plan box, and the
+plan closes on the criteria it met.
 
 ## Files to be touched
 
