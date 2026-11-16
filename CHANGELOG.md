@@ -16,18 +16,19 @@ answers `GET /api/version` so the owner asks the face what it is.
 
 Caching you can see, and the bits that were hiding in plain sight.
 
-The router's prompt cache is now measured and made use of. A new **cache**
-instrument (Settings → cache) shows, per model, the share of prompt tokens
-served from the provider's cache, the cached-versus-fresh latency, and a
-day-by-day trend. The reason the number was low turned out to be two
-things: the tool declarations were re-ordered per workload, which rewrote
-the bytes every provider's prefix cache keys on; and most traffic landed
-on gateways that report zero cache reads even for a byte-identical head.
-The declarations now keep one order, the head carries a fingerprint so a
-miss is attributable, and the workload chains lead providers measured to
-cache — a second run on the new head reads 99% of its prompt from cache
-where the old head read none. Conversations also fold later: at 85% of a
-declared model window instead of three fifths.
+The router's prompt cache is now measured. A new **cache** instrument
+(Settings → cache) shows, per model, the share of prompt tokens served
+from the provider's cache, the cached-versus-fresh latency, and a
+day-by-day trend. The reason the share read low was the request head: the
+tool declarations were re-ordered per workload, which rewrote the bytes
+every provider's prefix cache keys on. The declarations now keep one
+order, and the head carries a fingerprint so a miss is attributable — on
+direct DeepSeek a second run with an identical head read 5,248 of 12,833
+prompt tokens from cache. A provider that reports no cache figures is
+left alone: the older gateways cache internally and send nothing back, so
+their zero is no data, never a reason to re-rank the chain. Conversations
+also fold later: at 85% of a declared model window instead of three
+fifths.
 
 **Adding a bot to a conversation** finally has a door: an "add a bot"
 press on the conversation head and a matching chip in a room's member

@@ -919,9 +919,9 @@
       lines.push('<span><b>' + (num(totals.models) - num(totals.reporting_models)) + '</b> of ' +
         num(totals.models) + ' models never report cache figures — their rate is unknown, not zero.</span>');
     }
-    lines.push('<span><b>a provider that reports zero on every call</b> is more often a gateway that does not ' +
-      'cache the prefix than a model that always misses — the head is fingerprinted per run, so the ' +
-      'difference is checkable.</span>');
+    lines.push('<span><b>a provider that reports zero on every call</b> may simply not report cache reads at ' +
+      'all — some gateways cache internally and send nothing back, so treat their rate as unknown, not as ' +
+      'zero, and never rank providers on a figure they do not report.</span>');
     lines.push('<span><b>no dollars</b> — fleet holds no price table, so this is volume and rate, not spend.</span>');
     el.caveats.innerHTML = lines.join('');
   }
