@@ -29236,6 +29236,23 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
+  // The goal's own processes: the work item a conversation rides as, and
+  // the delegated child runs that goal spawned (the owner's 2026-11-15
+  // ruling: "the owner should be able to see the delegation graph"). The
+  // connections ring draws the shape; these helpers give the card and the
+  // drawer the same fact in words.
+  function spineWorkItem(id) {
+    var work = face.spine && Array.isArray(face.spine.work) ? face.spine.work : [];
+    return work.filter(function (item) {
+      return item.id === id || item.transcript === id;
+    })[0] || null;
+  }
+
+  function delegatedProcesses(id) {
+    var item = spineWorkItem(id);
+    return item && Array.isArray(item.delegates) ? item.delegates : [];
+  }
+
   function paintTissueFocus(focus) {
     if (!el.tissueFocus) return;
     el.tissueFocus.textContent = '';
@@ -29250,6 +29267,19 @@ import { node, svg, clip } from './core/dom.js';
     var meta = node('div', 'tissue-focus-meta');
     if (focus.status) meta.appendChild(node('span', null, 'status \u00b7 ' + focus.status));
     if (focus.meta) meta.appendChild(node('span', null, focus.meta));
+    // The delegation, named beside the graph: a goal says how many
+    // processes it handed out, so the ring's smaller nodes read as its
+    // own work rather than as unrelated threads. The count comes from the
+    // graph's own edges — the tissue document is the source, not a second
+    // read.
+    var edges = face.tissue && Array.isArray(face.tissue.edges) ? face.tissue.edges : [];
+    var processes = edges.filter(function (edge) {
+      return edge.kind === 'delegates_to' && edge.from === focus.id;
+    });
+    if (processes.length) {
+      meta.appendChild(node('span', null, processes.length +
+        (processes.length === 1 ? ' delegated process' : ' delegated processes')));
+    }
     if (meta.childNodes.length) el.tissueFocus.appendChild(meta);
     if (kind && kind.lens) {
       var actions = node('div', 'tissue-focus-actions');
@@ -29284,6 +29314,17 @@ import { node, svg, clip } from './core/dom.js';
 
   function threadPaneRows() {
     var rows = [];
+    // The goal's delegated processes first: what this conversation handed
+    // to child runs, each one a press away from its own transcript (the
+    // owner's 2026-11-15 ruling: the owner should be able to see the
+    // delegation graph).
+    delegatedProcesses(face.session).forEach(function (child) {
+      rows.push({
+        kind: 'thread', id: child.id, label: child.title || child.id,
+        mark: child.status || '',
+        pivot: '#/sessions/' + encodeURIComponent(child.id)
+      });
+    });
     (face.roomFiles || []).forEach(function (file) {
       var name = String(file.path || '').split('/').filter(Boolean).pop() || file.path;
       rows.push({
@@ -29315,12 +29356,24 @@ import { node, svg, clip } from './core/dom.js';
 
   var THREAD_KIND_HUES = {
     deliverable: 'var(--green)', fact: 'var(--teal)', task: 'var(--amber)',
-    grade: 'var(--gold)', lesson: 'var(--gold)', instance: 'var(--blue)'
+    grade: 'var(--gold)', lesson: 'var(--gold)', instance: 'var(--blue)',
+    thread: 'var(--cyan)'
   };
 
   function paintThreadPane() {
     if (!el.threadPaneList) return;
     var rows = threadPaneRows();
+    // The delegation rows read the spine's work item, so a cold spine is
+    // asked for once — and the pane repaints only when the answer adds
+    // processes to show (a bare repaint would eat the fresh marks the
+    // first paint just landed).
+    if (!face.spine && !face.paneSpineAsked) {
+      face.paneSpineAsked = true;
+      readSpine(false).then(function () {
+        face.paneSpineAsked = false;
+        if (delegatedProcesses(face.session).length) paintThreadPane();
+      });
+    }
     if (threadPaneSeen === null) threadPaneSeen = new Set();
     el.threadPaneList.textContent = '';
     if (el.threadPaneEmpty) {

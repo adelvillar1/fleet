@@ -60,6 +60,11 @@ pub struct RunFacts {
     /// lineage edge's source, so a child's process hangs off the parent
     /// goal it serves (the owner's 2026-11-15 ruling).
     pub parent: Option<String>,
+    /// The task the run was given — its first message's first line that
+    /// is not a frame marker. A delegated child's opener is a
+    /// `--- TASK ---` frame over the task, and the summary keeps only the
+    /// marker; this is what names the process on the graph and the row.
+    pub task: Option<String>,
 }
 
 /// Read at most `budget` bytes of a file — the whole file when it fits, its
@@ -158,6 +163,33 @@ pub fn scan_run(path: &Path, budget: u64) -> RunFacts {
                     .get("parent")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+            }
+            // The task the run was given: the first line of its first
+            // message that is not a frame marker. A delegated child's
+            // opener is `--- TASK ---` over the task itself, and the
+            // summary's `first_text` only keeps the marker — so the child
+            // would be labelled "--- TASK ---" on every surface that names
+            // the goal's processes (the owner's 2026-11-15 ruling: the
+            // delegation graph has to be readable).
+            Some("user") if facts.task.is_none() => {
+                facts.task = record
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .and_then(|content| {
+                        content.lines().map(str::trim).find(|line| {
+                            !line.is_empty() && !(line.starts_with("---") && line.ends_with("---"))
+                        })
+                    })
+                    // A task is written in markdown: the label carries
+                    // its words, never the emphasis syntax around them
+                    // (a path's underscores stay — they are part of it).
+                    .map(|line| {
+                        line.replace("**", "")
+                            .replace('`', "")
+                            .chars()
+                            .take(120)
+                            .collect::<String>()
+                    });
             }
             _ => {}
         }
@@ -323,6 +355,38 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
         run_facts.insert(summary.id.clone(), scan_run(&path, size.max(1)));
     }
 
+    // The processes a goal delegated (the owner's 2026-11-15 ruling: "the
+    // owner should be able to see the delegation graph"): each work item
+    // names the child runs it spawned, so the row, the focus card and the
+    // drawer can show the goal's own processes instead of leaving them to
+    // hover labels on the connections ring. Derived once, from the same
+    // summaries and run facts the loop below walks.
+    let mut delegation: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for summary in &sessions {
+        if summary.kind.as_deref() != Some(crate::session::SUBAGENT_KIND) {
+            continue;
+        }
+        let facts = run_facts.get(&summary.id);
+        let Some(parent) = facts.and_then(|facts| facts.parent.clone()) else {
+            continue;
+        };
+        let status = if !summary.ended {
+            "working"
+        } else if facts.and_then(|facts| facts.stop.as_deref()) == Some("completed") {
+            "done"
+        } else {
+            "blocked"
+        };
+        let title = facts
+            .and_then(|facts| facts.task.clone())
+            .unwrap_or_else(|| plain_title(summary));
+        delegation.entry(parent).or_default().push(json!({
+            "id": summary.id,
+            "title": title,
+            "status": status,
+        }));
+    }
+
     // ---- work items -------------------------------------------------------
     let mut work: Vec<Value> = Vec::new();
     let mut nodes: Vec<Value> = Vec::new();
@@ -440,7 +504,11 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
         } else {
             "blocked"
         };
-        let title = plain_title(summary);
+        let title = if delegated {
+            facts.task.clone().unwrap_or_else(|| plain_title(summary))
+        } else {
+            plain_title(summary)
+        };
         let artifacts = desks_by_session
             .get(&summary.id)
             .cloned()
@@ -460,6 +528,9 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
                 "facts": facts.facts,
                 "turns": facts.turns,
                 "created": summary.created,
+                // The processes this goal delegated: the graph's edges are
+                // the shape; this is the same fact in the row's own words.
+                "delegates": delegation.get(&summary.id).cloned().unwrap_or_default(),
             }));
         }
         add_node(
@@ -470,7 +541,11 @@ pub fn read(home: &Path, memories: &Path, driving: Option<&str>) -> Value {
             &title,
             Some(status),
             driving == Some(summary.id.as_str()),
-            None,
+            if delegated {
+                Some("delegated process".to_string())
+            } else {
+                None
+            },
         );
         // The edges this run actually proves.
         for artifact in &artifacts {
@@ -932,7 +1007,7 @@ mod tests {
             home.join("sessions").join("20260101T000100Z-child.jsonl"),
             [
                 r#"{"type":"start","v":1,"model":"m","created":"2026-01-01T00:01:00Z","kind":"subagent","workspace":"/work","parent":"20260101T000000Z-parent"}"#,
-                r#"{"type":"user","content":"[delegated] read the sources"}"#,
+                r#"{"type":"user","content":"--- TASK ---\nResearch the cruise group mechanics"}"#,
                 r#"{"type":"end","stop_reason":"completed","turns":3}"#,
             ]
             .join("\n"),
@@ -944,15 +1019,28 @@ mod tests {
         let work = spine.get("work").and_then(|v| v.as_array()).expect("work");
         assert_eq!(work.len(), 1, "one work item, the owner's: {spine}");
         assert_eq!(work[0]["id"], "20260101T000000Z-parent");
+        // The row names the processes its goal spawned (the owner's
+        // 2026-11-15 ruling: "the owner should be able to see the
+        // delegation graph" — the edges are the shape, this is the words).
+        let delegates = work[0]["delegates"].as_array().expect("delegates");
+        assert_eq!(delegates.len(), 1, "{spine}");
+        assert_eq!(delegates[0]["id"], "20260101T000100Z-child");
+        assert_eq!(delegates[0]["status"], "done");
+        // The process is named by the task it was given, not by the
+        // `--- TASK ---` frame the delegating run wrote.
+        assert_eq!(delegates[0]["title"], "Research the cruise group mechanics");
         let nodes = spine
             .get("nodes")
             .and_then(|v| v.as_array())
             .expect("nodes");
-        assert!(
-            nodes
-                .iter()
-                .any(|node| node["id"] == "20260101T000100Z-child"),
-            "the child is a node under its parent: {nodes:?}"
+        let child = nodes
+            .iter()
+            .find(|node| node["id"] == "20260101T000100Z-child")
+            .expect("the child is a node under its parent");
+        assert_eq!(child["meta"], "delegated process", "{child}");
+        assert_eq!(
+            child["label"], "Research the cruise group mechanics",
+            "{child}"
         );
         let edges = spine
             .get("edges")

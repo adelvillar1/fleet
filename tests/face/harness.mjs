@@ -12641,8 +12641,65 @@ const receiptState = (asked) => ({
   deliverables: [{ path: '/repo/the-notes.md', size: 12, note: '', from: 'archivist' }],
   feedback: { 3: 'held' },
 });
-async function theThreadPaneCarriesTheReceipts() {
+// U51: the delegation graph is legible. A goal names the processes it
+// handed out beside the graph, and the receipts tab lists each process —
+// its status, and a press that opens the child's own run.
+async function theDelegationGraphIsNamedAndListed() {
   const page = boot({
+    documents: {
+      state: receiptState,
+      tissue: {
+        type: 'tissue',
+        nodes: [
+          { id: 'goal-1', kind: 'thread', label: 'the groupworks build', status: 'working', live: true },
+          { id: 'child-1', kind: 'thread', label: 'research the sources', status: 'done', meta: 'delegated process' },
+          { id: 'child-2', kind: 'thread', label: 'draft the summary', status: 'working', meta: 'delegated process' },
+        ],
+        edges: [
+          { from: 'goal-1', to: 'child-1', kind: 'delegates_to' },
+          { from: 'goal-1', to: 'child-2', kind: 'delegates_to' },
+        ],
+      },
+      workspace: {
+        type: 'workspace',
+        work: [{
+          id: 'goal-1', kind: 'session', title: 'the groupworks build', status: 'working',
+          transcript: 'goal-1',
+          delegates: [
+            { id: 'child-1', title: 'research the sources', status: 'done' },
+            { id: 'child-2', title: 'draft the summary', status: 'working' },
+          ],
+        }],
+        tasks: [], deliverables: [], threads: [], instances: [],
+        intelligence: { tools: 0, workflows: 0 },
+      },
+    },
+    hash: '#/sessions/goal-1',
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'receipts' },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+  const card = page.IDS['tissue-focus'].textContent;
+  check('DELEG the goal card names its processes',
+    card.includes('2 delegated processes'), card);
+  const list = page.IDS['thread-pane-list'];
+  const text = list.textContent;
+  check('DELEG the receipts list every process with its status',
+    text.includes('research the sources') && text.includes('draft the summary') &&
+      text.includes('done') && text.includes('working'),
+    text.slice(0, 160));
+  const rows = list.querySelectorAll('.thread-row');
+  const child = Array.from(rows).find((one) => one.textContent.includes('research the sources'));
+  check('DELEG a process row exists', !!child, 'rows=' + rows.length);
+  if (child) child.click();
+  await flush(80);
+  check('DELEG a process row opens its own run',
+    page.window.location.hash === '#/sessions/child-1',
+    page.window.location.hash);
+}
+
+async function theThreadPaneCarriesTheReceipts() {  const page = boot({
     documents: { state: receiptState }, hash: '#/chat',
     storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'receipts' },
   });
@@ -13609,6 +13666,7 @@ const cases = [
   ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],
   ['INTEL the workflows segment carries the declared chains', theWorkflowsSegmentCarriesTheDeclaredChains],
   ['INTEL the mcp toggle writes the registry', theMcpToggleWritesTheRegistry],
+  ['DELEG the delegation graph is named and listed', theDelegationGraphIsNamedAndListed],
   ['THREAD the pane carries the receipts', theThreadPaneCarriesTheReceipts],
   ['THREAD the pane collapses and persists', theThreadPaneCollapsesAndPersists],
   ['CAL the judged rows carry the meter and the word', theJudgedRowsCarryTheMeterAndTheWord],

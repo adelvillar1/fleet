@@ -452,9 +452,16 @@ real work lands in sessions that are not objects.
   "the delegation is not user initiated but the processes belong to the
   parent's goal"): the child rides as a node under its parent and the
   `delegates_to` edge joins them — and a child whose parent is not in the
-  neighborhood does not ride at all. *Constrains:* `spine::recent_sessions`
-  (start-line kind + parent, channel and probe marks, archived set), the
-  work loop's delegated branch, `RunFacts.parent`.
+  neighborhood does not ride at all. **The graph is legible, not just
+  drawn** (the same ruling: "the owner should be able to see the delegation
+  graph"): the goal's work item carries its `delegates`, the focus card
+  says "N delegated processes" beside the graph, the receipts tab lists
+  each process with its status and opens it, and every process is named by
+  the task it was given — never by the `--- TASK ---` frame the delegating
+  run writes. *Constrains:* `spine::recent_sessions` (start-line kind +
+  parent, channel and probe marks, archived set), `spine`'s delegation map
+  and the delegated branch of the work loop, `RunFacts.parent`/`task`,
+  paintTissueFocus's count line, `threadPaneRows`' process rows.
 
 ---
 
