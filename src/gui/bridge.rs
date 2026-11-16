@@ -1558,6 +1558,7 @@ impl Bridge {
             "sessions" => Ok(self.sessions("", "", None).await),
             "huddles" => Ok(self.huddles("").await),
             "usage" => Ok(self.usage()),
+            "cache" => Ok(self.cache()),
             "related" => Ok(self.related("", "", 20).await),
             "tree" => Ok(self.tree("").await),
             "workspace-history" => Ok(self.related("workspace-history", "", 20).await),
@@ -4595,6 +4596,18 @@ impl Bridge {
     /// look at any text the owner wrote.
     pub fn usage(&self) -> Value {
         self.usage.document(crate::gui::usage::adapt(&self.home))
+    }
+
+    /// The cache instrument's document: what each model's prompt cache
+    /// actually saved across the window, read from the route rows' own
+    /// accounting. A file read over the stream's newest day-files — the
+    /// same window the demotion's streak reads, from the same rows — so
+    /// it is a plain read rather than a probe.
+    pub fn cache(&self) -> Value {
+        let home = self.home.clone();
+        let user_home = std::env::var("HOME").ok();
+        let root = crate::calib::resolve_root(&home, user_home.as_deref());
+        crate::cache_report::read_document(&root, crate::cache_report::WINDOW_DAYS)
     }
 
     /// Record one counter and answer with the whole document, so the

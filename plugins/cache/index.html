@@ -1,0 +1,947 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fleet cache</title>
+<style>
+  /* The cache instrument's own vocabulary: a near-black field, a mono
+     numeral voice, and one accent per model. Cache is about what came
+     back from memory, so every fill is a gradient of light rising from
+     the baseline — the only colour that moves is the colour of a save. */
+  :root {
+    --bg: #060709;
+    --field: #0a0c11;
+    --card: #0c0f15;
+    --line: #1b2230;
+    --line-soft: #131a25;
+    --ink: #eef3fb;
+    --dim: #94a3b8;
+    --faint: #5d6b80;
+    --teal: #6fe3c9;
+    --blue: #7fb2ff;
+    --amber: #f2b566;
+    --violet: #c79cff;
+    --coral: #ff8f8f;
+    --green: #8fe38f;
+    --red: #ef6f66;
+    --mono: ui-monospace, Menlo, "SF Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; }
+  body {
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(1100px 520px at 12% -8%, rgba(111, 227, 201, 0.09), transparent 60%),
+      radial-gradient(900px 480px at 92% 0%, rgba(127, 178, 255, 0.07), transparent 62%);
+    background-attachment: fixed;
+    color: var(--ink);
+    font: 13px/1.45 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+    padding: 26px clamp(16px, 3vw, 40px) 40px;
+  }
+  h1, h2, p { margin: 0; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  /* ------------------------------------------------------------ the mast */
+  .mast {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.9fr) minmax(0, 2.2fr);
+    align-items: end;
+    gap: 18px 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  .ident h1 {
+    font-size: clamp(38px, 5vw, 58px);
+    font-weight: 300;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    margin: 6px 0 8px;
+    background: linear-gradient(100deg, var(--ink) 20%, var(--teal) 88%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .sub { color: var(--dim); font-size: 12.5px; max-width: 42ch; }
+  .heroes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: 12px;
+    align-items: end;
+  }
+  .hero {
+    border-left: 1px solid var(--line);
+    padding-left: 14px;
+    min-width: 0;
+  }
+  .hero b {
+    display: block;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .hero.big b {
+    font-size: clamp(44px, 6vw, 68px);
+    line-height: 0.95;
+    background: linear-gradient(170deg, var(--ink), var(--teal) 92%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero i {
+    display: block;
+    margin-top: 5px;
+    font-size: 12px;
+    font-style: normal;
+    color: var(--faint);
+    letter-spacing: 0.02em;
+  }
+  .stamp {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .stamp b { color: var(--dim); font-weight: 500; }
+
+  /* ----------------------------------------------------------- the river */
+  .river-wrap { margin-top: 26px; }
+  .river-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+  }
+  .river-head h2 {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-weight: 500;
+  }
+  .river-head p { font-size: 12px; color: var(--faint); }
+  .river {
+    display: flex;
+    height: 46px;
+    gap: 3px;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .seg {
+    position: relative;
+    min-width: 8px;
+    overflow: hidden;
+    background:
+      repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.045) 0 6px, transparent 6px 12px),
+      var(--line-soft);
+    cursor: pointer;
+    transition: filter 160ms ease;
+  }
+  .seg:hover { filter: brightness(1.25); }
+  .seg .fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 52%, transparent), var(--accent));
+    box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 45%, transparent);
+    transition: width 900ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .seg .tag {
+    position: absolute;
+    inset: 6px auto auto 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink);
+    background: rgba(6, 7, 9, 0.66);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 5px;
+    white-space: nowrap;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend i {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  .legend b { color: var(--dim); font-weight: 500; }
+
+  /* ----------------------------------------------------------- the cards */
+  .cards {
+    margin-top: 26px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background:
+      radial-gradient(540px 180px at 0% 0%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%),
+      var(--card);
+    padding: 16px 18px 14px;
+    overflow: hidden;
+    transition: border-color 160ms ease, transform 160ms ease;
+  }
+  .card:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); transform: translateY(-1px); }
+  .card::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent 70%);
+    opacity: 0.8;
+  }
+  .card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .card-head b {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .card-head .who {
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .delta {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--faint);
+    white-space: nowrap;
+  }
+  .delta.up { color: var(--teal); border-color: color-mix(in srgb, var(--teal) 40%, var(--line)); }
+  .delta.down { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, var(--line)); }
+
+  .figure {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 12px 0 2px;
+    min-height: 56px;
+  }
+  .figure b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(38px, 4.4vw, 52px);
+    line-height: 1;
+    font-weight: 500;
+    letter-spacing: -0.035em;
+    background: linear-gradient(165deg, var(--ink) 30%, var(--accent));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .figure b.none {
+    font-size: 22px;
+    background: none;
+    color: var(--faint);
+    letter-spacing: 0;
+  }
+  .figure i { font-style: normal; font-size: 12px; color: var(--faint); max-width: 18ch; }
+
+  .ribbon {
+    position: relative;
+    height: 7px;
+    margin: 10px 0 14px;
+    border-radius: 999px;
+    background: var(--line-soft);
+    overflow: hidden;
+  }
+  .ribbon .saved {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 45%, transparent), var(--accent));
+    box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 50%, transparent);
+    transition: width 900ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .charts {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 12px;
+    align-items: stretch;
+  }
+  .chart {
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: 9px 10px 7px;
+    min-width: 0;
+  }
+  .chart .cap {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 4px;
+  }
+  .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .chart .spark-path {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.6;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 55%, transparent));
+  }
+  .chart .spark-area { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: none; }
+  .chart .spark-dot { fill: var(--accent); }
+  .chart .spark-dot.zero { fill: var(--red); }
+  .chart .hair { stroke: var(--line-soft); stroke-width: 1; }
+  .chart .tick {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    fill: var(--faint);
+    letter-spacing: 0.04em;
+  }
+  .chart .rail { stroke: var(--line); stroke-width: 2; stroke-linecap: round; }
+  .chart .link { stroke: var(--dim); stroke-width: 1.4; stroke-linecap: round; opacity: 0.65; }
+  .chart .dot-cached { fill: var(--accent); filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 60%, transparent)); }
+  .chart .dot-fresh { fill: var(--dim); }
+  .chart .value {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    fill: var(--dim);
+  }
+  .chart .quiet {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    fill: var(--faint);
+  }
+  .card-foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--faint);
+  }
+  .card-foot b { color: var(--dim); font-weight: 500; }
+
+  /* ------------------------------------------------------- the empty + foot */
+  .empty {
+    margin-top: 26px;
+    border: 1px dashed var(--line);
+    border-radius: 14px;
+    padding: 30px 24px;
+    text-align: center;
+  }
+  .empty h2 { font-size: 17px; font-weight: 500; margin-bottom: 6px; }
+  .empty p { color: var(--dim); max-width: 62ch; margin: 0 auto; font-size: 13px; }
+
+  .caveats {
+    margin-top: 26px;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+    display: grid;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--faint);
+    max-width: 96ch;
+  }
+  .caveats b { color: var(--dim); font-weight: 500; }
+
+  /* -------------------------------------------------------- the entrance */
+  @media (prefers-reduced-motion: no-preference) {
+    .seg .fill, .ribbon .saved { transition: width 900ms cubic-bezier(0.16, 1, 0.3, 1); }
+    .spark-path { animation: draw 1100ms ease-out both; }
+    .spark-area { animation: rise 900ms ease-out both; }
+    .card { animation: lift 520ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+    .card:nth-child(2) { animation-delay: 60ms; }
+    .card:nth-child(3) { animation-delay: 120ms; }
+    .card:nth-child(4) { animation-delay: 180ms; }
+    .card:nth-child(n+5) { animation-delay: 240ms; }
+  }
+  @keyframes draw { from { stroke-dashoffset: 640; } to { stroke-dashoffset: 0; } }
+  @keyframes rise { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes lift { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <header class="mast">
+    <div class="ident">
+      <p class="eyebrow">prompt cache · by model</p>
+      <h1>cache</h1>
+      <p class="sub" id="sub">reading the route rows…</p>
+    </div>
+    <div class="heroes">
+      <div class="hero big"><b id="share">—</b><i>served from cache</i></div>
+      <div class="hero"><b id="from">—</b><i>tokens from cache</i></div>
+      <div class="hero"><b id="fresh">—</b><i>fresh prompt tokens</i></div>
+      <div class="hero"><b id="calls">—</b><i>route calls</i></div>
+    </div>
+    <div class="stamp" id="stamp"></div>
+  </header>
+
+  <section class="river-wrap" id="river-wrap" hidden>
+    <div class="river-head">
+      <h2>the reservoir · by prompt volume</h2>
+      <p id="river-note"></p>
+    </div>
+    <div class="river" id="river"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="cards" id="cards"></section>
+
+  <section class="empty" id="empty" hidden>
+    <h2 id="empty-title">no route rows yet</h2>
+    <p id="empty-note"></p>
+  </section>
+
+  <footer class="caveats" id="caveats"></footer>
+
+<script>
+(function () {
+  'use strict';
+
+  // ------------------------------------------------------------- the wire
+  // The host's whole data path: one declared query, asked of the face
+  // through postMessage and answered from the bridge's plugin-query route.
+  // No fetch, no other channel — the manifest's set is the boundary.
+  var NAME = 'cache';
+  var QUERY = 'cache';
+  var BUDGET = 20000;
+  var seq = 0;
+
+  function ask(query) {
+    return new Promise(function (resolve) {
+      if (window.parent === window) {
+        resolve({ ok: false, refused: ['no host — this page answers only through the face\u2019s plugin host'] });
+        return;
+      }
+      var mine = ++seq;
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        window.removeEventListener('message', onMessage);
+        resolve({ ok: false, refused: ['the face did not answer `' + query + '` within ' + (BUDGET / 1000) + ' s'] });
+      }, BUDGET);
+      function onMessage(event) {
+        var data = event.data || {};
+        if (data.fleetPlugin !== NAME || data.query !== query) return;
+        if (data.seq != null && data.seq !== mine) return;
+        done = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve({ ok: !!data.ok, answer: data.answer || null, refused: data.refused || null });
+      }
+      window.addEventListener('message', onMessage);
+      try {
+        parent.postMessage({ fleetPlugin: NAME, query: query, seq: mine }, '*');
+      } catch (error) {
+        done = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve({ ok: false, refused: ['the host refused the message: ' + error] });
+      }
+    });
+  }
+
+  // ------------------------------------------------------------ the tools
+  function num(value, fallback) {
+    return typeof value === 'number' && isFinite(value) ? value : (fallback === undefined ? 0 : fallback);
+  }
+  function arr(value) { return Array.isArray(value) ? value : []; }
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character];
+    });
+  }
+  // Tokens read in the unit a person says them in: 2.7M is a volume,
+  // 2717107 is a number that hides its own size.
+  function vol(value) {
+    var n = Math.max(0, Math.round(num(value)));
+    if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M';
+    if (n >= 1e4) return (n / 1e3).toFixed(0) + 'k';
+    if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+    return String(n);
+  }
+  function count(value) {
+    return Math.max(0, Math.round(num(value))).toLocaleString('en-US');
+  }
+  function pct(value, digits) {
+    if (typeof value !== 'number' || !isFinite(value)) return null;
+    return (value * 100).toFixed(digits == null ? 1 : digits) + '%';
+  }
+  function ms(value) {
+    var n = Math.max(0, Math.round(num(value)));
+    if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 's';
+    return n + 'ms';
+  }
+  function clockOf(date) {
+    return String(date.getHours()).padStart(2, '0') + ':' +
+      String(date.getMinutes()).padStart(2, '0') + ':' +
+      String(date.getSeconds()).padStart(2, '0');
+  }
+  var ACCENTS = ['#6fe3c9', '#7fb2ff', '#f2b566', '#c79cff', '#ff8f8f', '#8fe38f', '#7fd8e3'];
+
+  var el = {
+    sub: document.getElementById('sub'),
+    share: document.getElementById('share'),
+    from: document.getElementById('from'),
+    fresh: document.getElementById('fresh'),
+    calls: document.getElementById('calls'),
+    stamp: document.getElementById('stamp'),
+    riverWrap: document.getElementById('river-wrap'),
+    river: document.getElementById('river'),
+    riverNote: document.getElementById('river-note'),
+    legend: document.getElementById('legend'),
+    cards: document.getElementById('cards'),
+    empty: document.getElementById('empty'),
+    emptyTitle: document.getElementById('empty-title'),
+    emptyNote: document.getElementById('empty-note'),
+    caveats: document.getElementById('caveats')
+  };
+
+  // ------------------------------------------------------- the count-up
+  // A figure that lands by counting is read; one that appears is merely
+  // there. Reduced motion gets the final value at once.
+  var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function countUp(node, target, render) {
+    if (typeof target !== 'number' || !isFinite(target)) { node.textContent = '—'; return; }
+    if (still) { node.textContent = render(target); return; }
+    var start = performance.now();
+    var span = 760;
+    function frame(now) {
+      var t = Math.min(1, (now - start) / span);
+      var eased = 1 - Math.pow(1 - t, 3);
+      node.textContent = render(target * eased);
+      if (t < 1) requestAnimationFrame(frame);
+      else node.textContent = render(target);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // ---------------------------------------------------------------- paint
+  function paint(doc) {
+    var models = arr(doc.models);
+    var totals = doc.totals || {};
+    var windowDays = num(doc.window_days, 14);
+    var readAt = doc.read_at ? new Date(doc.read_at) : new Date();
+
+    el.sub.textContent = models.length
+      ? 'what each model’s prompt cache gave back — the provider’s own accounting, read from the route rows.'
+      : 'the router writes a route row as it serves; this panel fills as it runs.';
+
+    // The heroes
+    var share = typeof totals.share === 'number' ? totals.share : null;
+    if (share == null) el.share.textContent = '—';
+    else countUp(el.share, share * 100, function (value) { return value.toFixed(1) + '%'; });
+    countUp(el.from, num(totals.cache_read), vol);
+    countUp(el.fresh, num(totals.fresh), vol);
+    countUp(el.calls, num(totals.calls), count);
+
+    el.stamp.innerHTML =
+      '<span>window <b>' + windowDays + ' days</b></span>' +
+      '<span>models <b>' + num(totals.reporting_models) + ' of ' + num(totals.models) + '</b> report cache</span>' +
+      '<span>read <b>' + clockOf(isNaN(readAt.getTime()) ? new Date() : readAt) + '</b></span>';
+
+    if (!models.length) {
+      el.riverWrap.hidden = true;
+      el.empty.hidden = false;
+      el.emptyTitle.textContent = 'no route rows carry cache accounting yet';
+      el.emptyNote.textContent = 'The router writes a row per served call, and the provider’s cache figures ride it. '
+        + 'A run from the face, a task, or a delegate fills this page the moment the first row lands.';
+      paintCaveats(doc);
+      return;
+    }
+
+    el.empty.hidden = true;
+    paintRiver(models);
+    paintCards(models, windowDays);
+    paintCaveats(doc);
+  }
+
+  // The river: one segment per model, its width the model's share of the
+  // window's prompt volume, its fill the share of that volume the cache
+  // served. Volume and rate in one shape, ordered as the document is.
+  function paintRiver(models) {
+    var total = models.reduce(function (all, one) { return all + num(one.prompt); }, 0);
+    if (total <= 0) { el.riverWrap.hidden = true; return; }
+    el.riverWrap.hidden = false;
+    el.river.textContent = '';
+    el.legend.textContent = '';
+    el.riverNote.textContent = vol(total) + ' prompt tokens across ' + models.length +
+      (models.length === 1 ? ' model' : ' models');
+
+    models.forEach(function (one, index) {
+      var weight = num(one.prompt) / total;
+      var accent = ACCENTS[index % ACCENTS.length];
+      var seg = document.createElement('div');
+      seg.className = 'seg';
+      seg.style.flexGrow = String(weight);
+      seg.style.setProperty('--accent', accent);
+      seg.tabIndex = 0;
+      seg.setAttribute('role', 'img');
+      var read = pct(one.share);
+      seg.setAttribute('aria-label', one.model + ': ' + (read || 'no cache reported') +
+        ' of ' + vol(one.prompt) + ' prompt tokens');
+      seg.title = one.model + ' · ' + (read || 'no cache reported') + ' of ' + vol(one.prompt);
+      var fill = document.createElement('div');
+      fill.className = 'fill';
+      fill.style.width = '0%';
+      seg.appendChild(fill);
+      // A segment wide enough for the words says them: the rate alone on
+      // a middling one, the rate and the name on a wide one, nothing on a
+      // sliver (its hover title carries the whole sentence).
+      var words = read || 'not reported';
+      if (weight >= 0.22) words += ' · ' + one.model;
+      else if (weight < 0.06) words = '';
+      if (words) {
+        var tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = words;
+        seg.appendChild(tag);
+      }
+      el.river.appendChild(seg);
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          fill.style.width = ((typeof one.share === 'number' ? one.share : 0) * 100).toFixed(2) + '%';
+        });
+      });
+
+      var li = document.createElement('span');
+      li.innerHTML = '<i></i><b>' + esc(one.model) + '</b> ' + vol(one.prompt) +
+        ' · ' + (read || 'not reported');
+      li.style.setProperty('--accent', accent);
+      el.legend.appendChild(li);
+    });
+  }
+
+  function paintCards(models, windowDays) {
+    el.cards.textContent = '';
+    models.forEach(function (one, index) {
+      var accent = ACCENTS[index % ACCENTS.length];
+      var card = document.createElement('article');
+      card.className = 'card';
+      card.style.setProperty('--accent', accent);
+
+      var head = document.createElement('div');
+      head.className = 'card-head';
+      head.innerHTML = '<b>' + esc(one.model) + '</b><span class="who">' + esc(one.provider) + '</span>';
+      var delta = document.createElement('span');
+      delta.className = 'delta';
+      var early = (one.halves || {}).early;
+      var late = (one.halves || {}).late;
+      if (typeof early === 'number' && typeof late === 'number') {
+        var points = (late - early) * 100;
+        delta.textContent = Math.abs(points) < 1
+          ? 'steady'
+          : (points > 0 ? '+' : '−') + Math.abs(points).toFixed(0) + ' pts';
+        if (points >= 1) delta.classList.add('up');
+        else if (points <= -1) delta.classList.add('down');
+        delta.title = 'share over the window’s first half vs its second: ' +
+          pct(early) + ' → ' + pct(late);
+      } else {
+        delta.textContent = 'no trend';
+      }
+      head.appendChild(delta);
+      card.appendChild(head);
+
+      var figure = document.createElement('div');
+      figure.className = 'figure';
+      var shown = pct(one.share);
+      var big = document.createElement('b');
+      if (shown) {
+        countUp(big, (one.share || 0) * 100, function (value) { return value.toFixed(1) + '%'; });
+      } else {
+        big.className = 'none';
+        big.textContent = 'not reported';
+      }
+      figure.appendChild(big);
+      var note = document.createElement('i');
+      note.textContent = shown
+        ? 'of ' + vol(one.reporting_prompt) + ' prompt tokens it reported'
+        : 'this provider sends no cache figures';
+      figure.appendChild(note);
+      card.appendChild(figure);
+
+      var ribbon = document.createElement('div');
+      ribbon.className = 'ribbon';
+      var saved = document.createElement('div');
+      saved.className = 'saved';
+      saved.style.width = '0%';
+      ribbon.appendChild(saved);
+      card.appendChild(ribbon);
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          saved.style.width = ((typeof one.share === 'number' ? one.share : 0) * 100).toFixed(2) + '%';
+        });
+      });
+
+      var charts = document.createElement('div');
+      charts.className = 'charts';
+      charts.appendChild(sparkChart(one, windowDays));
+      charts.appendChild(latencyChart(one));
+      card.appendChild(charts);
+
+      var foot = document.createElement('div');
+      foot.className = 'card-foot';
+      foot.innerHTML =
+        '<span><b>' + count(one.calls) + '</b> calls</span>' +
+        '<span><b>' + count(one.shared_calls) + '</b> read cache</span>' +
+        '<span><b>' + vol(one.cache_read) + '</b> from cache</span>' +
+        '<span><b>' + vol(one.fresh) + '</b> fresh</span>';
+      card.appendChild(foot);
+      el.cards.appendChild(card);
+    });
+  }
+
+  // The day spark: share per UTC day, one dot per day the model served.
+  // A dot at zero is drawn red — a cache that collapsed is the one thing
+  // this chart exists to make visible without reading the axis.
+  function sparkChart(one, windowDays) {
+    var box = document.createElement('div');
+    box.className = 'chart';
+    var series = arr(one.series);
+    var cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.innerHTML = '<span>share by day</span><span>' + windowDays + 'd</span>';
+    box.appendChild(cap);
+
+    var W = 220, H = 96, PAD = 7, FLOOR = 20;
+    var top = PAD, base = H - FLOOR;
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', one.model + ' daily cache share');
+
+    function text(x, y, words, anchor, klass) {
+      var node = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      node.setAttribute('x', x); node.setAttribute('y', y);
+      if (anchor) node.setAttribute('text-anchor', anchor);
+      node.setAttribute('class', klass || 'tick');
+      node.textContent = words;
+      svg.appendChild(node);
+      return node;
+    }
+    function hair(y) {
+      var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', PAD); line.setAttribute('x2', W - PAD);
+      line.setAttribute('y1', y); line.setAttribute('y2', y);
+      line.setAttribute('class', 'hair');
+      svg.appendChild(line);
+    }
+    hair(top);
+    hair((top + base) / 2);
+    hair(base);
+
+    // A model whose provider never sends cache figures has no share to
+    // draw: a flat zero line would read as a collapse that never happened.
+    if (!one.reported) {
+      text(W / 2, (top + base) / 2 + 3, 'no cache accounting', 'middle', 'quiet');
+      box.appendChild(svg);
+      return box;
+    }
+    if (!series.length) {
+      text(W / 2, (top + base) / 2 + 3, 'no days on record', 'middle', 'quiet');
+      box.appendChild(svg);
+      return box;
+    }
+
+    var step = series.length > 1 ? (W - PAD * 2) / (series.length - 1) : 0;
+    function x(index) { return series.length > 1 ? PAD + index * step : W / 2; }
+    function y(value) { return base - Math.max(0, Math.min(1, value)) * (base - top); }
+
+    var points = series.map(function (point, index) {
+      var share = typeof point.share === 'number' ? point.share : 0;
+      return { x: x(index), y: y(share), value: point.share, day: point.day, calls: point.calls };
+    });
+    var line = points.map(function (point, index) {
+      return (index ? 'L' : 'M') + point.x.toFixed(1) + ' ' + point.y.toFixed(1);
+    }).join(' ');
+    // One day is a dot, not a path: a single point has no trend to draw.
+    if (points.length > 1) {
+      var area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      area.setAttribute('d', line + ' L' + points[points.length - 1].x.toFixed(1) + ' ' + base +
+        ' L' + points[0].x.toFixed(1) + ' ' + base + ' Z');
+      area.setAttribute('class', 'spark-area');
+      svg.appendChild(area);
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', line);
+      path.setAttribute('class', 'spark-path');
+      path.setAttribute('pathLength', '640');
+      svg.appendChild(path);
+    }
+    points.forEach(function (point) {
+      var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', point.x); dot.setAttribute('cy', point.y);
+      dot.setAttribute('r', points.length > 1 ? 2.4 : 3.4);
+      dot.setAttribute('class', 'spark-dot' + (point.value === 0 ? ' zero' : ''));
+      var title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = point.day + ' \u00b7 ' + (pct(point.value) || 'no cache') +
+        ' \u00b7 ' + (point.calls || 0) + ' calls';
+      dot.appendChild(title);
+      svg.appendChild(dot);
+    });
+    // The dates sit inside the box, under the baseline: a label outside
+    // the viewBox is a label nobody reads.
+    text(PAD, H - 5, String(series[0].day || '').slice(5), null);
+    if (series.length > 1) {
+      text(W - PAD, H - 5, String(series[series.length - 1].day || '').slice(5), 'end');
+    }
+    box.appendChild(svg);
+    return box;
+  }
+
+  // The dumbbell: the route latency a cache-served call paid against a
+  // fresh one. Both ends must carry enough rows to mean anything, so a
+  // card that cannot show one says so instead of drawing a guess.
+  function latencyChart(one) {
+    var box = document.createElement('div');
+    box.className = 'chart';
+    var latency = one.latency || {};
+    var cached = latency.cached || {};
+    var fresh = latency.fresh || {};
+    var cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.innerHTML = '<span>latency</span><span>cached / fresh</span>';
+    box.appendChild(cap);
+
+    var W = 200, H = 84, MID = 40, PAD = 10;
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', one.model + ' cached and fresh latency');
+
+    if (cached.p50 == null || fresh.p50 == null) {
+      var quiet = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      quiet.setAttribute('x', W / 2); quiet.setAttribute('y', H / 2);
+      quiet.setAttribute('text-anchor', 'middle');
+      quiet.setAttribute('class', 'quiet');
+      quiet.textContent = 'not enough rows on both sides';
+      svg.appendChild(quiet);
+      box.appendChild(svg);
+      return box;
+    }
+
+    var far = Math.max(num(cached.p90, cached.p50), num(fresh.p90, fresh.p50), 1);
+    function x(value) { return PAD + (Math.max(0, Math.min(far, value)) / far) * (W - PAD * 2); }
+    var rail = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    rail.setAttribute('x1', PAD); rail.setAttribute('x2', W - PAD);
+    rail.setAttribute('y1', MID); rail.setAttribute('y2', MID);
+    rail.setAttribute('class', 'rail');
+    svg.appendChild(rail);
+    var link = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    link.setAttribute('x1', x(cached.p50)); link.setAttribute('x2', x(fresh.p50));
+    link.setAttribute('y1', MID); link.setAttribute('y2', MID);
+    link.setAttribute('class', 'link');
+    svg.appendChild(link);
+    [[cached.p50, 'dot-cached', 'cached'], [fresh.p50, 'dot-fresh', 'fresh']].forEach(function (one) {
+      var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', x(one[0])); dot.setAttribute('cy', MID);
+      dot.setAttribute('r', 4);
+      dot.setAttribute('class', one[1]);
+      var title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = one[2] + ' p50 ' + ms(one[0]);
+      dot.appendChild(title);
+      svg.appendChild(dot);
+    });
+    var left = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    left.setAttribute('x', x(cached.p50)); left.setAttribute('y', MID - 12);
+    left.setAttribute('text-anchor', 'middle');
+    left.setAttribute('class', 'value');
+    left.textContent = ms(cached.p50);
+    svg.appendChild(left);
+    var right = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    right.setAttribute('x', x(fresh.p50)); right.setAttribute('y', MID + 22);
+    right.setAttribute('text-anchor', 'middle');
+    right.setAttribute('class', 'value');
+    right.textContent = ms(fresh.p50);
+    svg.appendChild(right);
+    box.appendChild(svg);
+    return box;
+  }
+
+  // What the panel cannot see, said plainly: the caveats are part of the
+  // instrument, not a footnote.
+  function paintCaveats(doc) {
+    var totals = doc.totals || {};
+    var lines = [];
+    lines.push('<span><b>share</b> = tokens the provider served from its prompt cache ÷ the prompt tokens ' +
+      'on the rows that report it — the provider’s own accounting. Cache reads are a subset of prompt, ' +
+      'never extra.</span>');
+    if (num(totals.unaccounted) > 0) {
+      lines.push('<span><b>' + count(totals.unaccounted) + '</b> route calls carried no usage block — ' +
+        'counted in calls, absent from the token arithmetic.</span>');
+    }
+    if (num(totals.models) > num(totals.reporting_models)) {
+      lines.push('<span><b>' + (num(totals.models) - num(totals.reporting_models)) + '</b> of ' +
+        num(totals.models) + ' models never report cache figures — their rate is unknown, not zero.</span>');
+    }
+    lines.push('<span><b>no dollars</b> — fleet holds no price table, so this is volume and rate, not spend.</span>');
+    el.caveats.innerHTML = lines.join('');
+  }
+
+  function refused(words) {
+    el.sub.textContent = 'the cache read was refused';
+    el.empty.hidden = false;
+    el.emptyTitle.textContent = 'the read did not land';
+    el.emptyNote.textContent = (words && words[0]) || 'the face did not answer the query';
+    el.caveats.innerHTML = '';
+  }
+
+  // ---------------------------------------------------------------- boot
+  ask(QUERY).then(function (reply) {
+    if (!reply.ok || !reply.answer) {
+      refused((reply.refused || []).concat(reply.ok ? [] : []));
+      return;
+    }
+    paint(reply.answer);
+  }).catch(function (error) {
+    refused([String(error)]);
+  });
+})();
+</script>
+</body>
+</html>

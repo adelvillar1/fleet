@@ -1,0 +1,8 @@
+{
+  "name": "cache",
+  "tier": "untrusted",
+  "version": "1.0.0",
+  "entry": { "group": "system", "label": "cache" },
+  "queries": ["cache"],
+  "provenance": "creator:fleet repo · plugins/cache"
+}

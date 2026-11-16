@@ -20,7 +20,7 @@ pub const REGISTRY_FILE: &str = "plugins.json";
 /// The read-only query names an untrusted plugin may declare. Each
 /// names a GET route the bridge already serves read-only; the eval
 /// suite drives them, and the bridge enforces the manifest's set.
-pub const READ_ONLY_QUERIES: [&str; 12] = [
+pub const READ_ONLY_QUERIES: [&str; 13] = [
     "state",
     "router",
     "delegation",
@@ -29,6 +29,7 @@ pub const READ_ONLY_QUERIES: [&str; 12] = [
     "sessions",
     "huddles",
     "usage",
+    "cache",
     "workspace-history",
     "tree",
     "related",

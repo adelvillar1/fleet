@@ -2676,12 +2676,13 @@ pub fn demotions(root: &Path, day: &str, candidates: &[&str]) -> Vec<String> {
 /// recovered last week is not still paying for it.
 pub const DEMOTION_WINDOW_DAYS: usize = 3;
 
-/// The route rows of the newest `days` day-files under `root`, oldest
-/// first. The day directories are `<root>/<YYYY>/<MM>/<DD>/events.jsonl`,
-/// whose path order IS chronological order, so the read is a sorted
-/// listing rather than date arithmetic — and a day that does not
-/// exist is simply not in the list.
-pub(crate) fn read_days_recent(root: &Path, day: &str, days: usize) -> Vec<ReadRow> {
+/// The newest `days` day-files under `root`, oldest first. The day
+/// directories are `<root>/<YYYY>/<MM>/<DD>/events.jsonl`, whose path
+/// order IS chronological order, so the walk is a sorted listing rather
+/// than date arithmetic — and a day that does not exist is simply not in
+/// the list. The one derivation both the capped reader below and any
+/// whole-window stream share.
+pub(crate) fn day_files_recent(root: &Path, days: usize) -> Vec<std::path::PathBuf> {
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(years) = std::fs::read_dir(root) {
         for year in years.flatten() {
@@ -2702,6 +2703,14 @@ pub(crate) fn read_days_recent(root: &Path, day: &str, days: usize) -> Vec<ReadR
         }
     }
     files.sort();
+    files.into_iter().rev().take(days).rev().collect()
+}
+
+/// The route rows of the newest `days` day-files under `root`, oldest
+/// first, each day read to its recent [`READ_CAP`] rows. The demotion
+/// reader's shape: a bounded tail per day is what keeps "recent" honest.
+pub(crate) fn read_days_recent(root: &Path, day: &str, days: usize) -> Vec<ReadRow> {
+    let files = day_files_recent(root, usize::MAX);
     let window = files.iter().rev().take(days).rev();
     let mut rows: Vec<ReadRow> = Vec::new();
     for file in window {
