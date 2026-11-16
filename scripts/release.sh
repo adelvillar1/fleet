@@ -552,6 +552,16 @@ else
     >/dev/null 2>&1 || true
   echo "== the cut is done: the gate lane released (${lane_before:-0} MiB freed; the next cut builds cold)"
 fi
+# The cleanup a cut owes (the owner's 2026-11-16 ruling on KI-549/KI-553):
+# the queue of files curtailed runs wrote is deleted inside their own
+# folders, and fleet's own /tmp debris past the grace is retired. Both are
+# named by their own verbs — nothing here sweeps a wildcard.
+echo "== cleanup: curtailed runs' files, and fleet's /tmp debris =="
+if [ -x "$REPO_ROOT/target/release/fleet" ]; then
+  "$REPO_ROOT/target/release/fleet" cleanup || true
+fi
+sh "$REPO_ROOT/scripts/cache-sweep.sh" --fleet-tmp || true
+
 # The gate's own logs are the diagnosis of a red run and nothing else; a green
 # run's are history. The sweep keeps the newest, the maintenance prunes the
 # rest by age.

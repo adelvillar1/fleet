@@ -4056,6 +4056,63 @@ impl<'a> Agent<'a> {
         }
     }
 
+    /// The files a run wrote through `write_file`, resolved against its
+    /// folder — the transcript scan lives in [`crate::cleanup`] so it is
+    /// testable without an Agent.
+    fn written_files(&self, folder: &std::path::Path) -> Vec<std::path::PathBuf> {
+        crate::cleanup::written_files(&self.messages, folder)
+    }
+
+    /// Queue a curtailed run's written files for the cleanup that runs at
+    /// the next release cut or deployment (the owner's 2026-11-16 ruling):
+    /// one JSON line under `<home>/cleanup/pending.jsonl`, appended under
+    /// the ledger's own sibling lock. Nothing is deleted while the run is
+    /// stopped — the diagnosis window keeps its evidence (KI-553).
+    fn queue_cleanup(&mut self, folder: &std::path::Path) {
+        let files = self.written_files(folder);
+        if files.is_empty() {
+            return;
+        }
+        let Some(home) = self.options.improve_home.as_deref() else {
+            let _ = writeln!(
+                self.progress,
+                "\u{2192} the run wrote {} file(s) and this home cannot record them for cleanup",
+                files.len()
+            );
+            return;
+        };
+        let dir = home.join("cleanup");
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let path = dir.join("pending.jsonl");
+        let entry = serde_json::json!({
+            "at": crate::calib::stamp(),
+            "session": self.options.session_id.clone(),
+            "folder": folder.display().to_string(),
+            "files": files
+                .iter()
+                .map(|file| file.display().to_string())
+                .collect::<Vec<_>>(),
+            "why": "curtailed by the resource contract",
+        });
+        let guard = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(&path));
+        let mut line = entry.to_string();
+        line.push('\n');
+        let written = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()));
+        drop(guard);
+        let _ = writeln!(
+            self.progress,
+            "\u{2192} {} file(s) written by this run are queued for cleanup at the next cut or deployment",
+            files.len()
+        );
+        let _ = written;
+    }
+
     /// End the run because of the contract, with the numbers recorded and the
     /// owner's stopped-run shape (the same `Stopped` error an owner's stop
     /// takes, so every surface that already handles it handles this).
@@ -4069,6 +4126,18 @@ impl<'a> Agent<'a> {
     ) -> Result<(), AgentError> {
         let _ = writeln!(self.progress, "\u{2192} {clause}");
         let _ = self.progress.flush();
+        // A curtailed run's written files are queued for the next cut or
+        // deployment — never deleted here, where the diagnosis window is
+        // still open (the owner's 2026-11-16 ruling, KI-553).
+        if why == "curtailed" {
+            if let Some(folder) = self
+                .oversight
+                .as_ref()
+                .and_then(|oversight| oversight.work.folder.clone())
+            {
+                self.queue_cleanup(&folder);
+            }
+        }
         if let Some(oversight) = self.oversight.as_ref() {
             self.record(&Record::ContractStop {
                 class: oversight.work.class.clone(),

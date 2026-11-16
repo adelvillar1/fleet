@@ -37,6 +37,15 @@
 #                                          (/tmp/fleet-gate-target) and the
 #                                          cut's own logs — debris once the
 #                                          cut is complete (KI-514)
+#   scripts/cache-sweep.sh --fleet-tmp     fleet's own /tmp debris past the
+#                                          grace (FLEET_TMP_GRACE_HOURS,
+#                                          default 24): fleet-*, cut-*,
+#                                          release-*, gate-* logs and the
+#                                          release worktree. Only names
+#                                          fleet mints — other projects'
+#                                          /tmp files are never touched
+#                                          (the owner's 2026-11-16 ruling
+#                                          for KI-549)
 #
 # Prints one line per target directory and one total, in the terms that
 # matter: the volume's free space before and after.
@@ -62,6 +71,7 @@ KEEP_ARTIFACTS="${FLEET_KEEP_ARTIFACTS:-2}"
 DRY=0
 ALL=0
 GATE_LANE=0
+FLEET_TMP=0
 ONLY=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -69,6 +79,7 @@ while [ $# -gt 0 ]; do
         --all) ALL=1 ;;
         --target) shift; ONLY="${1:-}"; [ -z "$ONLY" ] && { echo "cache-sweep: --target needs a path" >&2; exit 2; } ;;
         --gate-lane) GATE_LANE=1 ;;
+        --fleet-tmp) FLEET_TMP=1 ;;
         -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "cache-sweep: unknown option $1" >&2; exit 2 ;;
     esac
@@ -110,9 +121,13 @@ dedupe_deps() {
             older=$(printf '%s\n' "$all" | tail -n +$((KEEP_ARTIFACTS + 1)))
             kept=$(printf '%s\n' "$all" | head -"$KEEP_ARTIFACTS" | tr '\n' ' ')
             bytes=$(printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 du -ck 2>/dev/null | tail -1 | awk '{print $1}')
-            echo "  $(basename "$kept"): dropping $(printf '%s\n' "$older" | wc -l | tr -d ' ') older ($(human "${bytes:-0}"))"
-            [ "$DRY" -eq 1 ] || printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 rm -f
-            dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+            if [ "$DRY" -eq 1 ]; then
+                echo "  $(basename "$kept"): would drop $(printf '%s\n' "$older" | wc -l | tr -d ' ') older ($(human "${bytes:-0}"))"
+            else
+                echo "  $(basename "$kept"): dropping $(printf '%s\n' "$older" | wc -l | tr -d ' ') older ($(human "${bytes:-0}"))"
+                printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 rm -f
+                dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+            fi
         done
     done
 }
@@ -157,8 +172,12 @@ prune_build_dirs() {
         [ "$(printf '%s\n' "$all" | wc -l | tr -d ' ')" -gt "$KEEP_ARTIFACTS" ] || continue
         older=$(printf '%s\n' "$all" | tail -n +$((KEEP_ARTIFACTS + 1)))
         bytes=$(printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 du -ck 2>/dev/null | tail -1 | awk '{print $1}')
-        [ "$DRY" -eq 1 ] || printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 rm -rf
-        dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+        if [ "$DRY" -eq 1 ]; then
+            echo "  $(basename "$dir"): would drop $(printf '%s\n' "$older" | wc -l | tr -d ' ') older ($(human "${bytes:-0}"))"
+        else
+            printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 rm -rf
+            dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+        fi
     done
 }
 
@@ -172,9 +191,13 @@ prune_bundles() {
     staging=$(find "$dir" -maxdepth 1 -name 'rw.*.fleet_*.dmg' -mmin +60 2>/dev/null)
     if [ -n "$staging" ]; then
         bytes=$(printf '%s\n' "$staging" | tr '\n' '\0' | xargs -0 du -ck 2>/dev/null | tail -1 | awk '{print $1}')
-        echo "  bundles: dropping $(printf '%s\n' "$staging" | wc -l | tr -d ' ') abandoned staging dmg(s) ($(human "${bytes:-0}"))"
-        [ "$DRY" -eq 1 ] || printf '%s\n' "$staging" | tr '\n' '\0' | xargs -0 rm -f
-        dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+        if [ "$DRY" -eq 1 ]; then
+            echo "  bundles: would drop $(printf '%s\n' "$staging" | wc -l | tr -d ' ') abandoned staging dmg(s) ($(human "${bytes:-0}"))"
+        else
+            echo "  bundles: dropping $(printf '%s\n' "$staging" | wc -l | tr -d ' ') abandoned staging dmg(s) ($(human "${bytes:-0}"))"
+            printf '%s\n' "$staging" | tr '\n' '\0' | xargs -0 rm -f
+            dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+        fi
     fi
     # Keep the newest two finished dmgs: the current cut and its predecessor,
     # which is what a re-cut or a rollback needs.
@@ -182,9 +205,13 @@ prune_bundles() {
     [ "$(printf '%s\n' "$all" | wc -l | tr -d ' ')" -gt 2 ] || return 0
     older=$(printf '%s\n' "$all" | tail -n +3)
     bytes=$(printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 du -ck 2>/dev/null | tail -1 | awk '{print $1}')
-    echo "  bundles: dropping $(printf '%s\n' "$older" | wc -l | tr -d ' ') older dmg(s) ($(human "${bytes:-0}"))"
-    [ "$DRY" -eq 1 ] || printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 rm -f
-    dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+    if [ "$DRY" -eq 1 ]; then
+        echo "  bundles: would drop $(printf '%s\n' "$older" | wc -l | tr -d ' ') older dmg(s) ($(human "${bytes:-0}"))"
+    else
+        echo "  bundles: dropping $(printf '%s\n' "$older" | wc -l | tr -d ' ') older dmg(s) ($(human "${bytes:-0}"))"
+        printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 rm -f
+        dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+    fi
 }
 
 free_kb() { df -k "$1" | awk 'NR==2 {print $4}'; }
@@ -311,6 +338,40 @@ for target in $targets; do
     clean_failed "$target"
     swept_any=1
 done
+
+if [ "$FLEET_TMP" = "1" ]; then
+    # Fleet's own /tmp debris, past the grace. The names are the ones
+    # fleet's own scripts and tests mint — never a wildcard over /tmp.
+    grace_h="${FLEET_TMP_GRACE_HOURS:-24}"
+    tmp_before_kb=$(df -k /tmp 2>/dev/null | awk 'NR==2 {print $4}')
+    freed=0
+    for pattern in \
+        /tmp/fleet-* /tmp/cut-*.log /tmp/cut*.log /tmp/release-*.log \
+        /tmp/gate-*.log /tmp/gate-*.exit /tmp/latest-readback.json \
+        /tmp/fleet-release-gate /tmp/cut*-assets.log; do
+        [ -e "$pattern" ] || continue
+        # shellcheck disable=SC2086
+        for one in $pattern; do
+            [ -e "$one" ] || continue
+            if [ "$DRY" = "1" ]; then
+                echo "would retire $one (past ${grace_h}h)"
+                continue
+            fi
+            if [ -n "$(find "$one" -maxdepth 0 -mmin +"$((grace_h * 60))" 2>/dev/null)" ]; then
+                size_kb=$(du -sk "$one" 2>/dev/null | awk '{print $1}')
+                [ -z "$size_kb" ] && size_kb=0
+                rm -rf "$one"
+                freed=$((freed + size_kb))
+            fi
+        done
+    done
+    if [ "$DRY" = "1" ]; then
+        echo "fleet /tmp debris: dry run — nothing deleted (past ${grace_h}h grace)"
+    else
+        echo "fleet /tmp debris retired: $(human "$freed") past ${grace_h}h grace"
+    fi
+    [ -n "$tmp_before_kb" ] && echo "free space on /tmp's volume: $(human "$tmp_before_kb") → $(human "$(df -k /tmp 2>/dev/null | awk 'NR==2 {print $4}')")" || true
+fi
 
 if [ "$swept_any" -eq 1 ] && [ -n "$free_start" ]; then
     echo "free space on the volume: $(human "$free_start") → $(human "$(free_kb "$volume")") (release binaries and bundles untouched)"

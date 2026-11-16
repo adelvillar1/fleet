@@ -173,6 +173,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Journal) => journal_command(),
         Ok(Command::Grants) => grants_command(),
         Ok(Command::Hygiene) => hygiene_command(),
+        Ok(Command::Cleanup) => cleanup_command(),
         Ok(Command::Workspace) => workspace_command(),
         Ok(Command::Armada(action)) => armada_command(action),
         Ok(Command::Calib(options)) => calib_command(&options),
@@ -4254,6 +4255,22 @@ fn armada_command(action: fleet::cli::ArmadaAction) -> ExitCode {
 /// log carries, plus the object-keyed view the face's projects rail reads.
 /// A read, never a write — the graph is mutated by the run loop and the
 /// hand, not by this card.
+/// `fleet cleanup`: the deletion a release cut or a deployment runs
+/// (the owner's 2026-11-16 ruling, KI-553). The queue and its bounds live
+/// in [`fleet::cleanup`]; this verb prints what it did.
+fn cleanup_command() -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let report = fleet::cleanup::run(&home);
+    for path in &report.deleted_paths {
+        println!("cleanup: deleted {path}");
+    }
+    println!("{}", report.summary());
+    ExitCode::SUCCESS
+}
+
 fn workspace_command() -> ExitCode {
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");

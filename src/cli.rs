@@ -37,6 +37,11 @@ pub enum Command {
     /// retention — the last 20 turns per session under a 5 GiB store
     /// cap — and the report naming what went and what it freed.
     Hygiene,
+    /// The cleanup a release cut or a deployment runs: the files a
+    /// curtailed run wrote (`<home>/cleanup/pending.jsonl`) are deleted
+    /// inside their own granted folder, and each run is named (the
+    /// owner's 2026-11-16 ruling, KI-553).
+    Cleanup,
     /// The work-object graph (armada L7): the tasks, their edges, and the
     /// object-keyed view the face's projects rail reads.
     Workspace,
@@ -1136,6 +1141,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "desk" => parse_desk(rest),
         "compact" => parse_compact(rest),
         "hygiene" => no_flags(rest, Command::Hygiene),
+        "cleanup" => no_flags(rest, Command::Cleanup),
         "workspace" => no_flags(rest, Command::Workspace),
         "settings" => parse_settings(rest),
         "lanes" => no_flags(rest, Command::Lanes),
