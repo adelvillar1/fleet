@@ -174,6 +174,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Grants) => grants_command(),
         Ok(Command::Hygiene) => hygiene_command(),
         Ok(Command::Cleanup) => cleanup_command(),
+        Ok(Command::Dictate(options)) => dictate_command(&options),
         Ok(Command::Workspace) => workspace_command(),
         Ok(Command::Armada(action)) => armada_command(action),
         Ok(Command::Calib(options)) => calib_command(&options),
@@ -4269,6 +4270,76 @@ fn cleanup_command() -> ExitCode {
     }
     println!("{}", report.summary());
     ExitCode::SUCCESS
+}
+
+/// `fleet dictate`: the microphone, transcribed locally by hex. A file or
+/// a recording; the transcript is the model's own, printed raw.
+fn dictate_command(options: &cli::DictateOptions) -> ExitCode {
+    let model = options
+        .model
+        .clone()
+        .unwrap_or_else(|| fleet::dictate::DEFAULT_MODEL.to_string());
+    let mut device: Option<String> = None;
+    let wav = match &options.file {
+        Some(path) => match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprintln!("fleet: the file `{path}` could not be read: {error}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => {
+            let seconds = options.seconds.unwrap_or(5);
+            eprintln!("recording {seconds}s from the default input…");
+            match fleet::dictate::record(seconds as f64) {
+                Ok(recording) => {
+                    eprintln!(
+                        "recorded {:.1}s from `{}` ({} samples)",
+                        recording.seconds, recording.device, recording.samples
+                    );
+                    device = Some(recording.device);
+                    recording.wav
+                }
+                Err(error) => {
+                    eprintln!("fleet: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+    };
+    let service = match fleet::dictate::Service::start() {
+        Ok(service) => service,
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match service.transcribe(&wav, &model) {
+        Ok(clip) => {
+            if options.json {
+                let mut reply = serde_json::json!({
+                    "type": "dictation",
+                    "model": model,
+                    "duration_ms": clip.duration_ms,
+                    "transcript": clip.text,
+                });
+                if let Some(path) = &options.file {
+                    reply["file"] = serde_json::Value::String(path.clone());
+                }
+                if let Some(device) = device {
+                    reply["device"] = serde_json::Value::String(device);
+                }
+                println!("{reply}");
+            } else {
+                println!("{}", clip.text);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn workspace_command() -> ExitCode {

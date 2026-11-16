@@ -32,6 +32,7 @@ pub mod deck;
 pub mod delegate;
 pub mod demand;
 pub mod desk;
+pub mod dictate;
 pub mod doctor;
 pub mod documents;
 pub mod dream;

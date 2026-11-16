@@ -42,6 +42,9 @@ pub enum Command {
     /// inside their own granted folder, and each run is named (the
     /// owner's 2026-11-16 ruling, KI-553).
     Cleanup,
+    /// The microphone, transcribed locally by hex: a WAV file or N
+    /// seconds from the default input, printed as the transcript.
+    Dictate(DictateOptions),
     /// The work-object graph (armada L7): the tasks, their edges, and the
     /// object-keyed view the face's projects rail reads.
     Workspace,
@@ -288,6 +291,20 @@ pub struct DemandOptions {
     /// file a shape proposal for each cluster at or over the filing
     /// threshold.
     pub cluster: bool,
+}
+
+/// Options for `fleet dictate`: the microphone, transcribed locally by
+/// hex. A file or a duration; the default model is hex's English one.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DictateOptions {
+    /// A WAV file to transcribe instead of recording.
+    pub file: Option<String>,
+    /// Seconds to record from the default input; absent is five.
+    pub seconds: Option<u64>,
+    /// A hex model id; absent is [`crate::dictate::DEFAULT_MODEL`].
+    pub model: Option<String>,
+    /// Print the reply as one JSON document.
+    pub json: bool,
 }
 
 /// Options for `fleet calib`.
@@ -1103,6 +1120,11 @@ usage:
   fleet cleanup                  delete the files a curtailed run wrote
                                 inside its own granted folder — the verb a
                                 release cut and a deployment run
+  fleet dictate [--file <wav>] [--seconds <n>] [--model <id>] [--json]
+                                the microphone, transcribed locally by hex:
+                                a WAV file, or N seconds from the default
+                                input (five by default); --json prints the
+                                reply
   fleet vault <init|set|get|remove|list>
                                 the sealed secrets: create the vault and
                                 migrate the plaintext .env, seal one (the
@@ -1193,6 +1215,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "compact" => parse_compact(rest),
         "hygiene" => no_flags(rest, Command::Hygiene),
         "cleanup" => no_flags(rest, Command::Cleanup),
+        "dictate" => parse_dictate(rest),
         "workspace" => no_flags(rest, Command::Workspace),
         "settings" => parse_settings(rest),
         "lanes" => no_flags(rest, Command::Lanes),
@@ -1414,6 +1437,57 @@ fn parse_desk(rest: &[String]) -> Result<Command, String> {
         index += 1;
     }
     Ok(Command::DeskRun(run))
+}
+
+/// `fleet dictate [--file <wav>] [--seconds <n>] [--model <id>] [--json]`:
+/// the microphone, transcribed locally by hex. A `--file` is read and sent
+/// as it stands; no file records the default input for the named seconds.
+fn parse_dictate(args: &[String]) -> Result<Command, String> {
+    let mut options = DictateOptions {
+        file: None,
+        seconds: None,
+        model: None,
+        json: false,
+    };
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--json" => options.json = true,
+            "--file" | "-f" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--file names a WAV path".to_string())?;
+                options.file = Some(value.clone());
+            }
+            "--seconds" | "-s" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--seconds names a number".to_string())?;
+                let seconds: u64 = value
+                    .parse()
+                    .map_err(|_| format!("`{value}` is not a number of seconds"))?;
+                options.seconds = Some(seconds);
+            }
+            "--model" | "-m" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--model names a hex model id".to_string())?;
+                options.model = Some(value.clone());
+            }
+            other => {
+                return Err(format!(
+                    "`fleet dictate` takes no positional arguments and knows --file, --seconds, --model and --json, not `{other}`"
+                ))
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Dictate(options))
 }
 
 /// `fleet compact [<session>]`: fold one session's stored context on
