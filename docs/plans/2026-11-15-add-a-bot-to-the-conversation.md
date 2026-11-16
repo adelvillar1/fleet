@@ -1,7 +1,7 @@
 ---
 title: add a bot to the conversation — the door where the work happens
 date: 2026-11-15
-status: in progress
+status: completed
 ---
 
 # Add a bot to the conversation
@@ -53,19 +53,19 @@ rather than offering an empty list.
 
 ## Acceptance criteria
 
-- [ ] C1: `#conv-add-bot` in the conversation head opens `#invite-door`;
+- [x] C1: `#conv-add-bot` in the conversation head opens `#invite-door`;
   visible only with a session open; hidden on the landing and in the
   huddles surface (the room's own chip covers rooms).
-- [ ] C2: `#room-members` carries a trailing `+ add a bot` chip (not a
+- [x] C2: `#room-members` carries a trailing `+ add a bot` chip (not a
   `.member`, so the member count stays honest) that opens the same door.
-- [ ] C3: the door lists this home's roles (`face.settings.roles.entries`,
+- [x] C3: the door lists this home's roles (`face.settings.roles.entries`,
   unbroken ones) as toggles, joins every picked role with one press
   through `POST /api/session/join`, closes, and reloads; a home with no
   roles says so and still offers `create a new persona`.
-- [ ] C4: a failed join names the failure in a notice and leaves the door
+- [x] C4: a failed join names the failure in a notice and leaves the door
   open; nothing is silently dropped.
-- [ ] C5: the face harness pins the door opening, the role list, the exact
+- [x] C5: the face harness pins the door opening, the role list, the exact
   join body, and the room row's chip; the whole suite stays green.
-- [ ] C6: gate green (`cargo fmt --all --check`,
+- [x] C6: gate green (`cargo fmt --all --check`,
   `cargo clippy --all-targets -- -D warnings`, `cargo build --release`,
   `cargo test`), deployed locally, and verified live on the running face.
