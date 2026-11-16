@@ -297,6 +297,16 @@ its turn back with the message it ended on), and a conversation opens in
 the right pane with its details, the decisions it recorded, and its whole
 history.
 
+A conversation's **orchestrator** is the lead persona working it: the
+role carries a workload, the conversation's runs walk that workload's
+chain while sys1 still judges every task, and the route row records both
+words — the judged label and the chain that walked. The role also owns
+every thread assigned to it, end-to-end, including threads whose logs
+have since been archived or disposed; the role's card shows those threads
+and **its work graph**, the delegation edges among them. An unassigned
+conversation walks `hard`, exactly as before, and the orchestrator's
+chip simply does not appear.
+
 Settings in the console is a rail of eight sections — models,
 specialists, roles, trust, money, schedule, interface, environment —
 where each item is one line (its name, its value, what it costs) and its

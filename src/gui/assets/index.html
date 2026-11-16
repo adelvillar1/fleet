@@ -366,6 +366,10 @@
           <span class="conv-caret" aria-hidden="true">&#9662;</span>
         </button>
         <span class="conv-state" id="conv-state" data-state="idle" hidden></span>
+        <!-- Whose workload orchestrates this conversation: the lead
+             persona the log's start record names. Hidden on an
+             unassigned conversation, whose walk is `hard` unchanged. -->
+        <span class="conv-orch" id="conv-orch" hidden></span>
         <button class="conv-act" id="conv-rename" type="button" title="rename this conversation"
                 aria-label="rename this conversation">&#9998;</button>
         <!-- The archive: the one end a conversation can come to. The

@@ -1374,6 +1374,11 @@ impl Bridge {
             // The room's members, when it is a room: an empty list on
             // an ordinary conversation keeps the head from rendering.
             "members": session_members(&self.home, &key),
+            // The conversation's orchestrator: the lead persona the log's
+            // start record names, so the head can say whose workload
+            // orchestrates this conversation (the owner's orchestrator
+            // ruling). None on an unassigned conversation.
+            "orchestrator": session_orchestrator(&self.home, &key),
             // The room's phases, for its head (C9).
             "phases": session_children(&self.home, &key, &live),
             // The room's knowledge: what it recalled and what it wrote (C15).
@@ -1430,6 +1435,11 @@ impl Bridge {
             // The room's members, when it is a room: an empty list on
             // an ordinary conversation keeps the head from rendering.
             "members": session_members(&self.home, &key),
+            // The conversation's orchestrator: the lead persona the log's
+            // start record names, so the head can say whose workload
+            // orchestrates this conversation (the owner's orchestrator
+            // ruling). None on an unassigned conversation.
+            "orchestrator": session_orchestrator(&self.home, &key),
             // The room's phases, for its head (C9).
             "phases": session_children(&self.home, &key, &live),
             // The room's knowledge: what it recalled and what it wrote (C15).
@@ -7501,7 +7511,28 @@ fn release_temporal(home: &std::path::Path, session: &str) -> Result<(), String>
 /// convoked without the face loading every role itself. An ordinary
 /// conversation yields an empty list, which is what keeps the head from
 /// rendering where there is no room.
-pub fn session_members(home: &std::path::Path, session: &str) -> Vec<Value> {
+/// The conversation's orchestrator: the lead persona the log's `start`
+/// record names (the first of the set), or `None` on an unassigned
+/// conversation — the byte-identical `hard` walk every unassigned route
+/// has always taken.
+fn session_orchestrator(home: &std::path::Path, session: &str) -> Value {
+    match crate::session::start_personas(home, session) {
+        Some(personas) => personas
+            .into_iter()
+            .next()
+            .map(Value::from)
+            .unwrap_or(Value::Null),
+        None => Value::Null,
+    }
+}
+
+/// One room's members as the head reads them — `(name, voice)` in join
+/// order, the lead first (the huddles plan's C8). The voice is the role's
+/// own one-line contract, resolved at read time so a room can say who it
+/// convoked without the face loading every role itself. An ordinary
+/// conversation yields an empty list, which is what keeps the head from
+/// rendering where there is no room.
+fn session_members(home: &std::path::Path, session: &str) -> Vec<Value> {
     let personas = session::summarize(&session::session_path(home, session))
         .map(|summary| summary.personas)
         .unwrap_or_default();
@@ -11071,7 +11102,8 @@ fn roles_document(home: &std::path::Path) -> Value {
                 // record, so disposed and archived threads stay listed
                 // beside the live ones. Titles ride the archive's own
                 // title map.
-                let owned = crate::roles::owned_sessions(home, &role.name);
+                let graph = crate::roles::work_graph(home, &role.name);
+                let owned = &graph.threads;
                 let titles = load_titles(home);
                 let owned_rows: Vec<Value> = owned
                     .iter()
@@ -11092,6 +11124,14 @@ fn roles_document(home: &std::path::Path) -> Value {
                     "shapes": role.shapes,
                     "workload": role.workload,
                     "owned": owned_rows,
+                    // The role's work graph, structurally: the delegation
+                    // edges among its owned threads (the nodes are the
+                    // owned rows above, which carry titles and marks).
+                    "edges": graph
+                        .edges
+                        .iter()
+                        .map(|(from, to)| json!({"from": from, "to": to}))
+                        .collect::<Vec<_>>(),
                     "overlay": role.overlay,
                     // An owner-supplied image beside the role file (C11);
                     // null when the derived initial stands.
@@ -11110,6 +11150,7 @@ fn roles_document(home: &std::path::Path) -> Value {
                 "shapes": [],
                 "workload": Value::Null,
                 "owned": [],
+                "edges": [],
                 "overlay": "",
                 "avatar": Value::Null,
                 "path": "",

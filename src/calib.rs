@@ -69,6 +69,13 @@ pub struct RouteRow {
     pub how: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workload: Option<String>,
+    /// The workload that actually walked, when it differs from the judged
+    /// `workload` — a role-carrying route walks its named chain while the
+    /// judgment records its own label (the orchestrator ruling,
+    /// 2026-11-13). Absent on a row whose walk was the judged one, and on
+    /// rows written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub walked_as: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
     /// The execution head when the lane judged it (plan
@@ -4405,6 +4412,7 @@ mod tests {
                 .unwrap_or_default(),
             how: "fallback".to_string(),
             workload: None,
+            walked_as: None,
             verdict: None,
             execution: None,
             reason: "test".to_string(),

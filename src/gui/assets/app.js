@@ -991,6 +991,7 @@ import { node, svg, clip } from './core/dom.js';
     convTitle: document.getElementById('conv-title'),
     convName: document.getElementById('conv-name'),
     convState: document.getElementById('conv-state'),
+    convOrch: document.getElementById('conv-orch'),
     convNew: document.getElementById('conv-new'),
     convRename: document.getElementById('conv-rename'),
     convArchive: document.getElementById('conv-archive'),
@@ -9774,6 +9775,9 @@ import { node, svg, clip } from './core/dom.js';
       : [];
     paintGpCard();
     face.members = state.members || [];
+    // Whose workload orchestrates this conversation (the owner's
+    // orchestrator ruling): the lead persona the log's start names.
+    face.orchestrator = state.orchestrator || null;
     // The room's phases and knowledge, for its head (C9/C15).
     face.phases = state.phases || [];
     face.knowledge = state.knowledge || { recalled: [], wrote: [] };
@@ -13601,11 +13605,19 @@ import { node, svg, clip } from './core/dom.js';
     var writing = face.running && face.driving === face.session && face.roomSpeaker;
     el.roomMembers.appendChild(memberChip('you', 'the owner', null,
       face.lastSpeaker === 'you', false));
-    members.forEach(function (member) {
-      el.roomMembers.appendChild(memberChip(
+    members.forEach(function (member, index) {
+      var chip = memberChip(
         member.name, member.voice, member.avatar,
         face.lastSpeaker === member.name || (!face.lastSpeaker && member.name === (members[0] || {}).name),
-        writing === member.name));
+        writing === member.name);
+      // The lead is the room's orchestrator (the owner's ruling: the
+      // first bot named leads, and its role carries the workload).
+      if (index === 0) {
+        var role = node('span', 'member-role', 'orchestrator');
+        role.title = 'leads this room \u2014 its role\u2019s workload walks the route';
+        chip.appendChild(role);
+      }
+      el.roomMembers.appendChild(chip);
     });
     // The door beside the members: adding a bot to the room the owner is
     // already in (the owner's 2026-11-15 report). Deliberately not a
@@ -14734,6 +14746,18 @@ import { node, svg, clip } from './core/dom.js';
       el.convState.dataset.state = row.state || '';
     } else {
       el.convState.hidden = true;
+    }
+    // The orchestrator, named where the conversation's identity is read:
+    // the lead persona's role carries the workload its runs walk. An
+    // unassigned conversation shows nothing — the walk is `hard`, as it
+    // has always been.
+    if (el.convOrch) {
+      el.convOrch.hidden = !face.orchestrator;
+      if (face.orchestrator) {
+        el.convOrch.textContent = 'orchestrator \u00b7 ' + face.orchestrator;
+        el.convOrch.title = face.orchestrator +
+          ' leads this conversation \u2014 its role\u2019s workload walks the route';
+      }
     }
   }
 
@@ -22273,6 +22297,63 @@ import { node, svg, clip } from './core/dom.js';
     ];
   }
 
+  // The role's work graph: its owned threads as nodes, the delegation
+  // edges among them as nesting. The ownership index is the record (it
+  // outlives every thread's lifecycle), so a disposed or archived thread
+  // keeps its place; a cycle guard keeps a malformed index from looping.
+  function roleGraph(role) {
+    var owned = role.owned || [];
+    if (!owned.length) return null;
+    var byId = {};
+    owned.forEach(function (row) { byId[row.session] = row; });
+    var parentOf = {};
+    (role.edges || []).forEach(function (edge) {
+      if (edge && byId[edge.from] && byId[edge.to] && edge.from !== edge.to) {
+        parentOf[edge.to] = edge.from;
+      }
+    });
+    var children = {};
+    owned.forEach(function (row) {
+      var parent = parentOf[row.session];
+      if (parent) (children[parent] = children[parent] || []).push(row);
+    });
+    var roots = owned.filter(function (row) { return !parentOf[row.session]; });
+    var wrap = node('div', 'role-graph');
+    var head = node('div', 'role-graph-head');
+    head.appendChild(node('span', 'role-graph-root', role.name));
+    var count = owned.length + (owned.length === 1 ? ' thread' : ' threads');
+    var edges = Object.keys(parentOf).length;
+    if (edges) {
+      count += ' \u00b7 ' + edges + (edges === 1 ? ' delegation edge' : ' delegation edges');
+    }
+    head.appendChild(node('span', 'role-graph-count', count));
+    wrap.appendChild(head);
+    var seen = {};
+    function threadRow(row, depth) {
+      if (seen[row.session]) return;
+      seen[row.session] = true;
+      var press = node('button', 'role-graph-node');
+      press.type = 'button';
+      press.dataset.depth = String(depth);
+      press.title = row.session;
+      press.appendChild(node('span', 'role-graph-mark', depth ? '\u2514' : '\u2022'));
+      press.appendChild(node('span', 'role-graph-title', row.title || row.session));
+      if (row.archived) press.appendChild(node('span', 'owned-thread-flag', 'archived'));
+      press.addEventListener('click', function () {
+        window.location.hash = '#/sessions/' + encodeURIComponent(row.session);
+      });
+      wrap.appendChild(press);
+      (children[row.session] || []).forEach(function (child) {
+        threadRow(child, Math.min(depth + 1, 2));
+      });
+    }
+    roots.forEach(function (row) { threadRow(row, 0); });
+    // A malformed index (every node naming a parent) still shows its
+    // threads rather than an empty graph.
+    owned.forEach(function (row) { threadRow(row, 0); });
+    return wrap;
+  }
+
   function roleSections(read, role) {
     // The role's owned threads, end-to-end (the orchestrator ruling):
     // every thread assigned to it — live, ended, archived — opens on
@@ -22297,6 +22378,11 @@ import { node, svg, clip } from './core/dom.js';
       // The role's own mark (the huddles plan's C11): the owner-supplied
       // image where it keeps one, the derived initial otherwise.
       ['its mark', huddleMark(role.name, 'md', role.avatar)],
+      // The role's work graph: the threads it owns, arranged by the
+      // delegation edges among them — the spine's shape scoped to the
+      // role (the owner's fourth orchestrator ruling).
+      ['its work graph', roleGraph(role) || node('p', 'derivation',
+        'no threads yet \u2014 every dispatch under this role lands here, end-to-end')],
       ['the role', node('p', 'derivation', role.description || '(no description)')],
       ['its workload', node('p', 'derivation',
         role.workload

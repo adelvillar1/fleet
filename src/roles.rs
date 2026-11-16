@@ -520,6 +520,41 @@ pub fn owned_sessions(home: &Path, role: &str) -> Vec<String> {
         .collect()
 }
 
+/// One role's work graph, structurally (the owner's fourth orchestrator
+/// ruling, 2026-11-13): the threads it owns and the delegation edges among
+/// them.
+///
+/// The index is the ownership record and outlives every lifecycle; a
+/// child's own `start` record names its parent, so an edge exists exactly
+/// where both ends are threads this role owns. Ids only — the surface
+/// joins the titles and archived marks it already reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkGraph {
+    /// The owned threads, in the index's own order.
+    pub threads: Vec<String>,
+    /// `(parent, child)` where the child's start record names a parent
+    /// that this role also owns.
+    pub edges: Vec<(String, String)>,
+}
+
+/// The role's work graph, read from the ownership index and each owned
+/// thread's own first record — never from the spine's scans, which are
+/// budget-capped and recency-filtered, and would lose exactly the
+/// disposed threads this graph exists to keep.
+pub fn work_graph(home: &Path, role: &str) -> WorkGraph {
+    let threads = owned_sessions(home, role);
+    let owned: std::collections::BTreeSet<&String> = threads.iter().collect();
+    let edges = threads
+        .iter()
+        .filter_map(|child| {
+            let path = crate::session::session_path(home, child);
+            let parent = crate::session::start_parent(&path)?;
+            owned.contains(&parent).then(|| (parent, child.clone()))
+        })
+        .collect();
+    WorkGraph { threads, edges }
+}
+
 // --- the small shared helpers ----------------------------------------------
 
 /// Strip one layer of matching surrounding quotes.
@@ -597,6 +632,52 @@ mod tests {
 
     fn write_role(home: &Path, name: &str, text: &str) {
         std::fs::write(home.join(ROLES_DIR).join(format!("{name}.md")), text).unwrap();
+    }
+
+    /// The role's work graph (the owner's fourth orchestrator ruling):
+    /// the threads the index assigns to it, and the delegation edges
+    /// among them read from each child's own start record. A parent this
+    /// role does not own leaves no edge; a disposed thread still appears,
+    /// because the index is the record and the logs are never scanned by
+    /// recency here.
+    #[test]
+    fn the_work_graph_is_the_index_and_the_childrens_own_start_records() {
+        let home = home("work-graph");
+        let sessions = crate::home::sessions_dir(&home);
+        std::fs::create_dir_all(&sessions).unwrap();
+        let log = |name: &str, parent: Option<&str>| {
+            let mut line = String::from(
+                "{\"type\":\"start\",\"v\":1,\"model\":\"m\",\"created\":\"2026-11-13T00:00:00Z\"",
+            );
+            if let Some(parent) = parent {
+                line.push_str(&format!(",\"parent\":\"{parent}\""));
+            }
+            line.push('}');
+            std::fs::write(sessions.join(format!("{name}.jsonl")), format!("{line}\n")).unwrap();
+        };
+        log("root-1", None);
+        log("child-1", Some("root-1"));
+        // A child whose parent belongs to another role's work.
+        log("child-2", Some("elsewhere"));
+        record_session_role(&home, "root-1", "designer");
+        record_session_role(&home, "child-1", "designer");
+        record_session_role(&home, "child-2", "designer");
+        let graph = work_graph(&home, "designer");
+        assert_eq!(
+            graph.threads,
+            vec![
+                "child-1".to_string(),
+                "child-2".to_string(),
+                "root-1".to_string()
+            ]
+        );
+        assert_eq!(
+            graph.edges,
+            vec![("root-1".to_string(), "child-1".to_string())]
+        );
+        // Another role's graph is its own, not a superset.
+        assert!(work_graph(&home, "scholar").threads.is_empty());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The orchestrator ruling's closed set (2026-11-13): the role's

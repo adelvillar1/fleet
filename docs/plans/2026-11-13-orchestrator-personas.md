@@ -1,7 +1,7 @@
 ---
 title: the orchestrator — personas carry workloads, own their threads end-to-end, and carry their own work graphs
 date: 2026-11-13
-status: active
+status: completed — verified against the shipped code and closed 2026-11-16; C7's deploy done locally
 ---
 
 # The orchestrator: personas carry workloads, own their threads end-to-end, conversations carry orchestrators
@@ -36,35 +36,74 @@ conversation with no assignment walks `hard` exactly as today.
 
 ## Acceptance criteria
 
-- [ ] C1: `Role.workload: Option<String>` — flat frontmatter, parsed with
+- [x] C1: `Role.workload: Option<String>` — flat frontmatter, parsed with
   the known keys, validated against `route::JUDGED_WORKLOADS` at parse time
   (unknown = named refusal); `write` preserves it; `fleet roles` cards
   render it.
-- [ ] C2: the route's named-workload walk arm — the walked workload is the
+- [x] C2: the route's named-workload walk arm — the walked workload is the
   named one when the chain resolves, else the judged workload (named
   degradation, never a mid-run refusal); the judgment always runs; the
   decision row records the judged label AND the walked workload
   (`walked_as`).
-- [ ] C3: the ownership index (`sessions-roles.json`, written at every
+- [x] C3: the ownership index (`sessions-roles.json`, written at every
   dispatch under a role — subagent, room members, the orchestrator
   assignment) + the role's view reading it end-to-end (live, ended,
   archived alike) + **the role's work graph** — the spine's shape scoped to
   what the role owns, derived from the index and the workspace graph's
   edges, rendered beside the owned threads in the persona section and the
   role card.
-- [ ] C4: the conversation's orchestrator assignment — the Start record
+- [x] C4: the conversation's orchestrator assignment — the Start record
   carries the orchestrator persona; `drive_run` resolves the lead persona's
   workload → the named walk; no assignment → `Walk::Leader` → `hard`,
   byte-identical to today; the orchestrator writes its own ownership entry.
-- [ ] C5: the face — the roles document carries workload + owned-thread
+- [x] C5: the face — the roles document carries workload + owned-thread
   count + the work graph section; the settings role card and the persona
   authoring door (a workload picker) show it; the conversation's identity
   surface names its orchestrator.
-- [ ] C6: the docs name the orchestrator's duties (delegating to role bots,
+- [x] C6: the docs name the orchestrator's duties (delegating to role bots,
   convening rooms, authoring + convening personas — existing machinery,
   re-homed under the orchestrator identity).
-- [ ] C7: the gate; commits on master, push; local deploy (rm-then-cp →
+- [x] C7: the gate; commits on master, push; local deploy (rm-then-cp →
   face relaunch); no release steps.
+
+## Closed 2026-11-16 — the verification, as measured
+
+The plan's seven criteria stood open with the work shipped (`8ae2065`); a
+sweep verified each against the tree and closed the two real gaps:
+
+- **C2's row half** was missing: `RouteDecision.walked` existed but the
+  calib row did not carry it. `RouteRow.walked_as` now rides beside the
+  judged `workload` (absent when they agree), pinned in
+  `the_decision_row_carries_the_devdec_vocabulary`. **Live proof:** the
+  probe dispatch's parent row reads `workload quick · walked_as hard` with
+  the reason "the orchestrator walks `hard`'s chain", and the child's row
+  (the role's workload) reads `quick` with no `walked_as` — the two halves
+  of the pair, in one run.
+- **C3's graph half** was missing: the ownership index and the owned-thread
+  list existed, there was no graph. `roles::work_graph` now derives the
+  nodes from the index and the delegation edges from each child's own
+  `start` parent (`the_work_graph_is_the_index_and_the_childrens_own_start_records`),
+  and the role card renders it (root, nodes, nesting; `its work graph`).
+- **C6's docs** were missing: `docs/features/orchestrator.md` names the
+  duties and the records; `FUNCTIONAL-SPECIFICATIONS.md` carries the
+  paragraph.
+- C5's orchestrator on the identity surface: `state.orchestrator` (the
+  lead persona off the log's `start`) drives a `orchestrator · <name>` chip
+  on the conversation head, and a room's lead chip carries the word
+  (`theOrchestratorIsNamedOnTheConversation`).
+
+**Live run, 2026-11-16 13:07-13:08:** a probe role with `workload: quick`
+was authored, the owner's task dispatched a `subagent` under it — the
+child's log names ROLE: probe, the ownership index gained the thread, the
+roles document read `probe · workload quick · owned 1`, and the role card
+rendered its work graph with the thread as its node. The probe role and
+its index entry were then retired.
+
+Found while verifying, filed not fixed: **KI-552** — the settings detail
+pane and the connections column paint over each other at 1440 width with a
+role card open (text over text), measured in the screenshot of the live
+face; the open-state stacking needs a real-browser reproduction before a
+fix is chosen.
 
 ## Verification
 

@@ -3562,6 +3562,7 @@ impl Router {
             provider,
             how: self.decision.how.label().to_string(),
             workload: self.decision.workload.clone(),
+            walked_as: self.decision.walked.clone(),
             verdict: self.decision.verdict.clone(),
             execution: self.decision.execution.clone(),
             reason,
@@ -6535,7 +6536,9 @@ mod tests {
             verdict: Some("pass".to_string()),
             execution: None,
             reason: "sys1 judged `hard`".to_string(),
-            walked: None,
+            // A role-carrying route looks like this: the judgment records
+            // `hard`, the named chain walked — the row has to say both.
+            walked: Some("prose".to_string()),
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![
@@ -6569,6 +6572,7 @@ mod tests {
         assert_eq!(value["provider"], "zai-coding-plan");
         assert_eq!(value["how"], "judged");
         assert_eq!(value["workload"], "hard");
+        assert_eq!(value["walked_as"], "prose");
         assert_eq!(value["verdict"], "pass");
         assert_eq!(value["model"], "GLM-5.3-Flash");
         assert_eq!(value["latency_ms"], 812);

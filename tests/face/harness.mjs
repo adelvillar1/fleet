@@ -7566,6 +7566,121 @@ async function theStrategyStepShowsItsPreview() {
         page.rows('.pmark img').map((one) => one.src)));
   }
 
+  // The role card carries its work graph (the owner's fourth orchestrator
+  // ruling): the threads the role owns, arranged by the delegation edges
+  // among them — the spine's shape scoped to the role, read from the
+  // ownership index so a disposed thread keeps its place.
+  async function theRoleCardCarriesItsWorkGraph() {
+    const page = boot({
+      width: 1440,
+      hash: '#/settings/roles',
+      documents: {
+        settings: {
+          type: 'settings', read_at: 'now',
+          scalars: [], lists: [], rules: [], env: [], cron: [],
+          soul: { present: false, text: '' },
+          router: { pin: '', judged: ['frontend'],
+            tiers: [{ workload: 'frontend', candidates: ['a/one'], resolved: 'a/one', reverts: false }],
+            min_confidence: 0.5, default_workload: 'frontend', allow_api_models: false, roster: [] },
+          catalog: { models: [], providers: [] },
+          lanes: { document: {}, lanes: [], refused: [] },
+          servers: { servers: [], refused: [] },
+          tools: { calls_per_turn: 0, definition_tokens: 0, disabled: [], last_sweep: '', window: 0 },
+          vault: { names: [], exists: true, passphrase: false, plaintext: [] },
+          roles: { dir: '/tmp', entries: [
+            { name: 'designer', description: 'makes pages', tools: [], skills: [], shapes: [],
+              overlay: 'voice', avatar: null, workload: 'frontend',
+              owned: [
+                { session: 's1', title: 'the landing page', archived: false },
+                { session: 's2', title: 'a delegated child', archived: true }
+              ],
+              edges: [{ from: 's1', to: 's2' }] }
+          ] }
+        },
+        state: (asked) => emptyState(asked)
+      }
+    });
+    await flush();
+    page.open();
+    await flush(80);
+    const row = page.rows('.cfg-item').find((one) =>
+      one.dataset && one.dataset.item === 'role:designer');
+    check('C3 the role’s row is on the roles board', !!row,
+      String(page.rows('.cfg-item').length));
+    if (!row) return;
+    row.click();
+    await flush(60);
+    const lines = page.rows('.derivation').map((one) => String(one.textContent)).join(' | ');
+    check('C5 the card names the role’s workload',
+      lines.indexOf('frontend') !== -1, lines.slice(0, 160));
+    const root = page.rows('.role-graph-root');
+    check('C3 the work graph names the role at its root',
+      root.length === 1 && String(root[0].textContent).indexOf('designer') !== -1,
+      JSON.stringify(root.map((one) => String(one.textContent))));
+    const nodes = page.rows('.role-graph-node');
+    check('C3 the graph carries every owned thread, archived included',
+      nodes.length === 2, String(nodes.length));
+    check('C3 the delegation edge nests the child under its parent',
+      nodes.length === 2 && nodes[0].dataset.depth === '0' && nodes[1].dataset.depth === '1',
+      JSON.stringify(nodes.map((one) => one.dataset.depth)));
+  }
+
+  // The orchestrator is named where the conversation is (the owner's
+  // second orchestrator ruling): the chip on the conversation head, and
+  // the room's lead chip. An unassigned conversation shows neither.
+  async function theOrchestratorIsNamedOnTheConversation() {
+    const rows = (id) => ({
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 1 },
+      sessions: [row(id, 'working', { title: 'the ledger writer' })]
+    });
+    const page = boot({
+      hash: '#/sessions/orch-1',
+      documents: {
+        sessions: rows('orch-1'),
+        state: (asked) => ({ ...emptyState(asked), session: asked, orchestrator: 'scholar' })
+      }
+    });
+    await flush();
+    page.open();
+    await flush(40);
+    const chip = page.IDS['conv-orch'];
+    check('C5 the conversation names its orchestrator',
+      chip.hidden === false && String(chip.textContent).indexOf('scholar') !== -1,
+      chip.hidden ? 'hidden' : String(chip.textContent));
+
+    const plain = boot({
+      hash: '#/sessions/plain-1',
+      documents: {
+        sessions: rows('plain-1'),
+        state: (asked) => ({ ...emptyState(asked), session: asked })
+      }
+    });
+    await flush();
+    plain.open();
+    await flush(40);
+    check('C4 an unassigned conversation shows no orchestrator',
+      plain.IDS['conv-orch'].hidden === true, 'chip shown');
+
+    const room = boot({
+      hash: '#/sessions/room-1',
+      documents: {
+        sessions: rows('room-1'),
+        state: (asked) => ({
+          ...emptyState(asked), session: asked, orchestrator: 'designer',
+          members: [{ name: 'designer', voice: 'makes pages' }]
+        })
+      }
+    });
+    await flush();
+    room.open();
+    await flush(40);
+    const tag = room.IDS['room-members'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('member-role'));
+    check('C5 a room names its lead as the orchestrator',
+      tag.length === 1, 'found=' + tag.length);
+  }
+
   // sys1's verdict rides the seat as data (the huddles plan's C10): the
   // reason before the buttons, and which judgment produced it — a seat
   // with no verdict shows no line rather than implying one.
@@ -13609,6 +13724,8 @@ const cases = [
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],
   ['ARCH ending a room moves it to the rail', endingARoomMovesItToTheRail],
   ['C11 the persona card shows the owner’s image', thePersonaCardShowsTheOwnersImage],
+  ['C3 the role card carries its work graph', theRoleCardCarriesItsWorkGraph],
+  ['C5 the orchestrator is named on the conversation', theOrchestratorIsNamedOnTheConversation],
   ['C10 the seat carries sys1’s verdict', theSeatCarriesSys1sVerdict],
   ['C5 a gap offers to hire a persona', aGapOffersToHireAPersona],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],

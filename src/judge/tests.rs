@@ -287,6 +287,7 @@ fn route_row_value(row: ReadRow) -> Row {
         provider: row.provider,
         how: row.how,
         workload: (!row.workload.is_empty()).then_some(row.workload),
+        walked_as: None,
         verdict: (!row.verdict.is_empty()).then_some(row.verdict),
         execution: None,
         reason: row.reason,
