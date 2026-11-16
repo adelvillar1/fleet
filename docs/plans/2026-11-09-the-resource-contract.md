@@ -1,5 +1,5 @@
 ---
-status: in progress
+status: completed — verified against the tree and closed 2026-11-16; C6's cleanup half moved to KI-553
 created: 2026-11-09
 updated: 2026-11-11
 slug: the-resource-contract
@@ -161,9 +161,14 @@ declared, because the environment has already been telling us.
       settled delta, the reserve at admission, the verdict and the sys1 words,
       so the demand map can cluster the runaways and the estimate can be
       derived from them.
-- [x] C6 — A forced-runaway test: a scratch folder filled until the run's budget
-      trips, asserting the run is curtailed, its transcript names the numbers,
-      and the files it created are cleaned after the diagnosis window.
+- [x] C6 — The curtailment half: the contract's slide tests drive the
+      overage, the reserve breach stops the run, and the end-to-end verdict
+      is reached through the reading and the ask, with the stop clause
+      naming the numbers (`contract.rs:491-560`, `:608`, `:625`), and the
+      run's own clause lands in its transcript (`agent.rs:4040-4055`).
+      **Split 2026-11-16:** the cleanup half ("the files it created are
+      cleaned after the diagnosis window") has no code behind it — see
+      "Closed with a residual" and KI-553.
 - [x] C7 — Docs: `docs/features/` gains the contract's own page; `fleet doctor`
       and `fleet footprint` name the same declared numbers.
 
@@ -225,6 +230,36 @@ declared, because the environment has already been telling us.
       (a `runaway` on work that then completed cleanly counts against it; an
       `expected` before a breach counts against it), and that grading is
       readable by the fit rule.
+
+## Closed 2026-11-16 — what was verified, and the one residual
+
+Every criterion was checked against the tree, not the boxes:
+
+| criterion | where it lives |
+|---|---|
+| C1 | `footprint::admit` / `settle` (`src/footprint.rs:415`, `:434`), pinned by the six core tests |
+| C2 | `scripts/release.sh` reads the contract's reserve (`:73-122`) and its settle names a runaway with the diagnosis window (`:174`) |
+| C3 | `contract::Work::for_run` + `Oversight` (`src/contract.rs:40-306`), admitted and measured in the run loop (`src/agent.rs:3796-4050`) |
+| C4 | `Judgment` / `OverageAsk` / `Oversight::measure` with the ask-once-per-reading tests (`contract.rs:625-720`) |
+| C5 | `calib::FootprintRow` + `OP_FOOTPRINT` + `record_footprint` (`src/calib.rs:857-976`) |
+| C6 | the slide/breach/curtail tests + the agent's stop clause; **cleanup unbuilt → KI-553** |
+| C7 | `docs/features/resource-contract.md`; doctor and footprint read the same numbers |
+| C8 | the estimate reader in `calib` (percentile of the class's settles, prior until three) |
+| C9 | `calib::grade_judgments` (`src/calib.rs:1079-1201`) |
+| C10/C11/C12 | `footprint_history::profile` / `declared`, `Reading::environment_clause`, `Appetite::tighter` |
+
+The false tick worth naming: **C6's cleanup clause was ticked without
+code**. The contract stops a curtailed run and records the numbers; nothing
+tracks what the run wrote, and the only diagnosis-window handling is the
+release lane's artifacts. Deleting files a run created is a destructive
+act, so the decision — delete within the granted folder after the grace,
+or retire the clause by ruling — is the owner's, and it is KI-553.
+
+Also true and worth keeping in view: the criterion's letter ("a scratch
+folder filled until the run's budget trips") is impractical as written for
+a 2 GiB budget; the contract-level slide tests are the honest equivalent,
+and any future test of the whole path should inject readings rather than
+write gigabytes.
 
 ## Notes on the closing increment (2026-11-11)
 
