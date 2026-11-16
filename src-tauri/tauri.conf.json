@@ -36,7 +36,10 @@
     "resources": {
       "../services": "services"
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "infoPlist": "Info.plist"
+    }
   },
   "plugins": {
     "updater": {

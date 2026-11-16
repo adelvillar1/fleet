@@ -1046,6 +1046,8 @@ import { node, svg, clip } from './core/dom.js';
     personaMatches: document.getElementById('persona-matches'),
     personaTemporal: document.getElementById('persona-temporal'),
     composerAddBot: document.getElementById('composer-add-bot'),
+    composerDictate: document.getElementById('composer-dictate'),
+    composerDictateLabel: document.getElementById('composer-dictate-label'),
     inviteDoor: document.getElementById('invite-door'),
     inviteTitle: document.getElementById('invite-title'),
     inviteSub: document.getElementById('invite-sub'),
@@ -11312,6 +11314,7 @@ import { node, svg, clip } from './core/dom.js';
   if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
   if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
   if (el.composerAddBot) el.composerAddBot.addEventListener('click', openInviteDoor);
+  if (el.composerDictate) el.composerDictate.addEventListener('click', toggleDictation);
   if (el.inviteAdd) el.inviteAdd.addEventListener('click', addInvitedBots);
   if (el.inviteCancel) el.inviteCancel.addEventListener('click', closeInviteDoor);
   if (el.inviteNew) {
@@ -14043,6 +14046,85 @@ import { node, svg, clip } from './core/dom.js';
       ? [...el.huddleConvenor.querySelectorAll('.pick.on')]
       : []).map((one) => one.dataset.name);
     createRoom(goal, personas, el.huddleCreate);
+  }
+
+  // The composer's microphone (the dictation plan). The SERVER records,
+  // not this page: the same cpal path on every Tauri platform, and a
+  // phone's browser can never open this machine's mic. One press starts;
+  // the second stops and transcribes through hex, and the words land at
+  // the caret.
+  function dictateButton(state, label) {
+    if (!el.composerDictate) return;
+    el.composerDictate.classList.toggle('listening', state === 'listening');
+    el.composerDictate.classList.toggle('working', state === 'working');
+    el.composerDictate.setAttribute('aria-pressed', state === 'listening' ? 'true' : 'false');
+    if (el.composerDictateLabel) el.composerDictateLabel.textContent = label;
+  }
+
+  function toggleDictation() {
+    if (face.dictating) stopDictation();
+    else startDictation();
+  }
+
+  function startDictation() {
+    if (face.dictating) return;
+    face.dictating = true;
+    dictateButton('listening', 'Stop');
+    post('/api/dictate/start', {})
+      .then(function (reply) {
+        if (reply.status === 200) return;
+        face.dictating = false;
+        dictateButton('idle', 'Dictate');
+        notice('dictation did not start',
+          (reply.body && reply.body.error) || 'the face said no');
+      })
+      .catch(function () {
+        face.dictating = false;
+        dictateButton('idle', 'Dictate');
+        notice('dictation did not start', 'the server did not answer — is fleet back?');
+      });
+  }
+
+  function stopDictation() {
+    if (!face.dictating) return;
+    face.dictating = false;
+    dictateButton('working', 'Transcribing\u2026');
+    post('/api/dictate/stop', {})
+      .then(function (reply) {
+        dictateButton('idle', 'Dictate');
+        if (reply.status !== 200) {
+          notice('the dictation was not transcribed',
+            (reply.body && reply.body.error) || 'the face said no');
+          return;
+        }
+        var text = String((reply.body && reply.body.transcript) || '').trim();
+        if (!text) {
+          notice('no speech was heard', 'the clip carried no words to transcribe');
+          return;
+        }
+        insertDictation(text);
+      })
+      .catch(function () {
+        dictateButton('idle', 'Dictate');
+        notice('the dictation was not transcribed',
+          'the server did not answer — is fleet back?');
+      });
+  }
+
+  function insertDictation(text) {
+    if (!el.task) return;
+    var box = el.task;
+    var start = typeof box.selectionStart === 'number' ? box.selectionStart : box.value.length;
+    var end = typeof box.selectionEnd === 'number' ? box.selectionEnd : start;
+    var before = box.value.slice(0, start);
+    var after = box.value.slice(end);
+    var glue = before && !/\s$/.test(before) ? ' ' : '';
+    var tail = after && !/^\s/.test(after) ? ' ' : '';
+    box.value = before + glue + text + tail + after;
+    var caret = (before + glue + text).length;
+    try { box.selectionStart = caret; box.selectionEnd = caret; } catch (error) { }
+    box.focus();
+    grow();
   }
 
   // Adding a bot from the composer (the owner's 2026-11-16 point: the

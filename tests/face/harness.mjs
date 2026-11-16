@@ -5497,6 +5497,42 @@ async function theDrawerWaitsForTheOwnerOnDeskAndLearning() {
     String(desk.rows('#pane-context .facts').length));
 }
 
+// The composer's microphone (the dictation plan): one press starts a
+// recording on the server, the second stops it, and the transcript lands
+// where the caret was. The server records — a page never opens the mic.
+async function theComposerDictatesIntoTheBox() {
+  const page = boot({
+    documents: { state: (asked) => emptyState(asked) },
+    reply: { transcript: 'hello from the mic', duration_ms: 1234 },
+  });
+  await flush();
+  page.open();
+  await flush(40);
+  const trigger = page.IDS['composer-dictate'];
+  check('MIC the composer carries the dictation door',
+    !!trigger && trigger.hidden === false, 'hidden=' + (trigger || {}).hidden);
+  trigger.click();
+  await flush();
+  check('MIC the press starts a recording',
+    page.calls.some((c) => c.method === 'POST' && c.url === '/api/dictate/start'),
+    JSON.stringify(page.calls.map((c) => c.url)));
+  check('MIC the button reads listening while it records',
+    trigger.classList.contains('listening') &&
+      page.text('composer-dictate-label') === 'Stop',
+    page.text('composer-dictate-label'));
+  trigger.click();
+  await flush(40);
+  check('MIC the second press stops and transcribes',
+    page.calls.some((c) => c.method === 'POST' && c.url === '/api/dictate/stop'),
+    JSON.stringify(page.calls.map((c) => c.url)));
+  check('MIC the words land in the composer',
+    page.IDS.task.value.indexOf('hello from the mic') !== -1,
+    page.IDS.task.value);
+  check('MIC the button returns to its idle word',
+    page.text('composer-dictate-label') === 'Dictate',
+    page.text('composer-dictate-label'));
+}
+
 // The owner's 2026-11-16 point: the door belongs in the composer, and the
 // landing is where a conversation starts — so the same door there starts
 // one with its bots instead of refusing for the lack of a session.
@@ -13811,6 +13847,7 @@ const cases = [
   ['C2 the new-room door creates and opens', theNewRoomDoorCreatesAndOpens],
   ['C1 the conversation adds a bot in place', theConversationAddsABotInPlace],
   ['C1 the composer starts a conversation with bots', theComposerStartsWithBots],
+  ['MIC the composer dictates into the box', theComposerDictatesIntoTheBox],
   ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
   ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],

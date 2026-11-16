@@ -1490,6 +1490,18 @@ async fn serve_connection(
         // 409 with the plan's named refusal. Loopback only: the remote
         // listener's allowlist does not gain this route — the machine's
         // repair verb stays on the machine.
+        // The composer's microphone (the dictation plan): a start captures
+        // until the stop, and the transcript is hex's raw text. Loopback
+        // only — the remote allowlist does not gain these routes, so a
+        // paired phone cannot open this machine's microphone.
+        ("POST", "/api/dictate/start") => match bridge.dictate_start().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
+        ("POST", "/api/dictate/stop") => match bridge.dictate_stop().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
         ("POST", "/api/repair/layerfs") => match bridge.repair_layerfs().await {
             Ok(document) => write_reply(&mut stream, api(200, document)).await,
             Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,

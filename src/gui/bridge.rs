@@ -313,6 +313,15 @@ pub struct Sources {
 
 /// The browser face's end of the agent core: the thread, the ordered
 /// log, the remembered rules, and the seat.
+/// The composer's dictation state: one recording at a time, and the hex
+/// service kept warm across clips (spawning it costs ~30 ms; its model
+/// prewarms in ~1.4 s, while a warm clip is ~0.11 s).
+#[derive(Default)]
+struct DictateState {
+    recorder: Option<crate::dictate::Recorder>,
+    service: Option<crate::dictate::Service>,
+}
+
 pub struct Bridge {
     home: PathBuf,
     model: String,
@@ -343,6 +352,10 @@ pub struct Bridge {
     /// sessions. Shared rather than moved because its warm pass and its
     /// reads run on blocking workers.
     related: Arc<crate::gui::related::RelatedIndex>,
+    /// The composer's microphone (the dictation plan): the live recorder
+    /// and the warm hex service, behind one lock so a second start is
+    /// refused and a clip never races another.
+    dictate: Arc<std::sync::Mutex<DictateState>>,
     /// The browser's own usage counters: what it accepts, opens, and
     /// uses. Counters only; the adaptation reads them and the settings
     /// knob switches it off.
@@ -493,6 +506,7 @@ impl Bridge {
             )),
             related,
             usage,
+            dictate: Arc::new(std::sync::Mutex::new(DictateState::default())),
             commands: None,
             _agent: None,
         };
@@ -4080,6 +4094,73 @@ impl Bridge {
     /// without waiting for the health loop's next pass. A refusal is the
     /// plan's own sentence — "start Docker Desktop", a missing bundle —
     /// never a CLI word.
+    /// Start a dictation: the default input opens and keeps capturing
+    /// until [`Bridge::dictate_stop`] (or the recorder's own cap). One
+    /// recording at a time; a second start is refused by name.
+    pub async fn dictate_start(&self) -> Result<Value, String> {
+        let state = Arc::clone(&self.dictate);
+        tokio::task::spawn_blocking(move || {
+            let mut held = state
+                .lock()
+                .map_err(|_| "the dictation state is poisoned".to_string())?;
+            if held.recorder.is_some() {
+                return Err("a dictation is already recording — stop it first".to_string());
+            }
+            let recorder = crate::dictate::Recorder::start()?;
+            let answer = json!({
+                "type": "dictation",
+                "recording": true,
+                "device": recorder.device(),
+            });
+            held.recorder = Some(recorder);
+            Ok(answer)
+        })
+        .await
+        .map_err(|error| format!("the recording worker did not answer: {error}"))?
+    }
+
+    /// Stop the dictation and transcribe it through the warm hex service.
+    /// The transcript is hex's raw text; a refusal (a missing model
+    /// included) comes back as hex's own words. The warm service goes back
+    /// only when it answered — a dead child is respawned, never reused.
+    pub async fn dictate_stop(&self) -> Result<Value, String> {
+        let state = Arc::clone(&self.dictate);
+        tokio::task::spawn_blocking(move || {
+            let (recorder, service) = {
+                let mut held = state
+                    .lock()
+                    .map_err(|_| "the dictation state is poisoned".to_string())?;
+                let recorder = held
+                    .recorder
+                    .take()
+                    .ok_or_else(|| "no dictation is recording".to_string())?;
+                (recorder, held.service.take())
+            };
+            let recording = recorder.stop()?;
+            let service = match service {
+                Some(service) => service,
+                None => crate::dictate::Service::start()?,
+            };
+            let clip = service.transcribe(&recording.wav, crate::dictate::DEFAULT_MODEL);
+            if clip.is_ok() {
+                if let Ok(mut held) = state.lock() {
+                    held.service = Some(service);
+                }
+            }
+            let clip = clip?;
+            Ok(json!({
+                "type": "dictation",
+                "transcript": clip.text,
+                "duration_ms": clip.duration_ms,
+                "seconds": recording.seconds,
+                "device": recording.device,
+                "samples": recording.samples,
+            }))
+        })
+        .await
+        .map_err(|error| format!("the transcription worker did not answer: {error}"))?
+    }
+
     pub async fn repair_layerfs(self: &std::sync::Arc<Self>) -> Result<Value, String> {
         let _guard = self.repair_in_flight.lock().await;
         let home = self.home.clone();
@@ -16093,6 +16174,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The composer's dictation: a stop with no recording is refused by
+    /// name, and nothing spawns — the state machine, not the microphone,
+    /// is what this pins (an actually-open mic is the live check's job).
+    #[tokio::test]
+    async fn a_dictation_stop_with_no_recording_is_refused_by_name() {
+        let home = scratch("dictate-stop");
+        let (bridge, _sources) = Bridge::detached(home.clone(), "m".to_string(), None);
+        let error = bridge.dictate_stop().await.unwrap_err();
+        assert!(error.contains("no dictation is recording"), "{error}");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The content match pass (D9): a query drives the rows from the

@@ -3107,6 +3107,29 @@ body[data-object-card="open"] .dock-object {
 /* The bot door's label is one phrase; it keeps one line even when the
    row is tight (the narrow rules drop it for the icon). */
 .composer .foot-btn.bots { flex: 0 0 auto; white-space: nowrap; }
+/* The composer's microphone (the dictation plan): listening is the red the
+   seats use, with a pulsing dot; transcribing keeps the button quiet until
+   the words land. */
+.composer .foot-btn.dictate { flex: 0 0 auto; white-space: nowrap; }
+.composer .foot-btn.dictate.listening { color: var(--dsw-alias-down); }
+.composer .foot-btn.dictate.listening .foot-label::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: dictate-pulse 1.2s ease-in-out infinite;
+}
+@keyframes dictate-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+body[data-motion="off"] .composer .foot-btn.dictate.listening .foot-label::before {
+  animation: none;
+}
+.composer .foot-btn.dictate.working { opacity: 0.7; }
 .foot-btn.plan[aria-pressed="true"],
 .foot-btn.plan[aria-pressed="true"]:hover {
   background: var(--dsw-alias-accent-wash);
@@ -3171,9 +3194,11 @@ body[data-object-card="open"] .dock-object {
     opacity: 0;
   }
   .composer .foot-btn.plan,
-  .composer .foot-btn.bots { width: var(--ctl-h); padding: 0; }
+  .composer .foot-btn.bots,
+  .composer .foot-btn.dictate { width: var(--ctl-h); padding: 0; }
   .composer .foot-btn.plan .foot-label,
-  .composer .foot-btn.bots .foot-label { display: none; }
+  .composer .foot-btn.bots .foot-label,
+  .composer .foot-btn.dictate .foot-label { display: none; }
 }
 
 /* Below the width where three labeled fields and the send actions fit
@@ -3214,9 +3239,11 @@ body[data-object-card="open"] .dock-object {
     opacity: 0;
   }
   .composer .foot-btn.plan,
-  .composer .foot-btn.bots { width: var(--ctl-h); padding: 0; }
+  .composer .foot-btn.bots,
+  .composer .foot-btn.dictate { width: var(--ctl-h); padding: 0; }
   .composer .foot-btn.plan .foot-label,
-  .composer .foot-btn.bots .foot-label { display: none; }
+  .composer .foot-btn.bots .foot-label,
+  .composer .foot-btn.dictate .foot-label { display: none; }
   /* The folder picker goes full-bleed on a phone, its actions stacked;
      the suggestion rows stay one line each. */
   .folder-pop { left: 6px; right: 6px; max-width: none; }

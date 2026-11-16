@@ -666,6 +666,21 @@
                 <circle cx="12" cy="13.5" r="1.2"></circle>
               </svg>
             </button>
+            <!-- The microphone (the dictation plan): the server records —
+                 the same cpal path on every platform — and hex transcribes
+                 on this machine. Loopback only: a paired phone cannot open
+                 this mic. -->
+            <button type="button" class="foot-btn dictate" id="composer-dictate"
+                    aria-pressed="false"
+                    title="dictate — the microphone, transcribed locally by hex">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+                <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"></path>
+                <path d="M12 18v3"></path>
+              </svg>
+              <span class="foot-label" id="composer-dictate-label">Dictate</span>
+            </button>
             <button type="button" class="foot-btn bots" id="composer-add-bot"
                     aria-haspopup="dialog" aria-controls="invite-door"
                     title="add a bot — it joins this conversation, or starts one from the landing">

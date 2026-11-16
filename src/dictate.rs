@@ -320,89 +320,185 @@ pub fn wav_bytes(samples: &[i16], channels: u16, rate: u32) -> Vec<u8> {
     out
 }
 
-/// Record the default input for `seconds` and return the WAV. The device's
-/// own configuration is kept (rate and channels); no device is a refusal
-/// by name.
-pub fn record(seconds: f64) -> Result<Recording, String> {
+/// The longest clip a recorder takes; a dictation the owner forgets to
+/// stop ends by itself here.
+pub const MAX_SECONDS: f64 = 120.0;
+
+/// A recording in progress: the capture thread holds the input stream, and
+/// stopping it joins the thread and hands back the WAV.
+pub struct Recorder {
+    stop: mpsc::Sender<()>,
+    done: std::thread::JoinHandle<Result<Recording, String>>,
+    device: String,
+    started: std::time::Instant,
+}
+
+impl Recorder {
+    /// Open the default input and begin capturing. The device's own
+    /// configuration is kept, and no device — or a sample format fleet
+    /// cannot read — is a refusal by name before `start` returns.
+    pub fn start() -> Result<Recorder, String> {
+        let (stop, stopped) = mpsc::channel::<()>();
+        let (ready, opened) = mpsc::channel::<Result<String, String>>();
+        let done = std::thread::spawn(move || capture(stopped, ready));
+        let device = match opened.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(device)) => device,
+            Ok(Err(error)) => {
+                let _ = stop.send(());
+                let _ = done.join();
+                return Err(error);
+            }
+            Err(_) => {
+                let _ = stop.send(());
+                let _ = done.join();
+                return Err("the microphone did not open within 5s".to_string());
+            }
+        };
+        Ok(Recorder {
+            stop,
+            done,
+            device,
+            started: std::time::Instant::now(),
+        })
+    }
+
+    /// The device the clip is coming from.
+    pub fn device(&self) -> &str {
+        &self.device
+    }
+
+    /// Seconds since the capture began.
+    pub fn elapsed(&self) -> f64 {
+        self.started.elapsed().as_secs_f64()
+    }
+
+    /// Stop capturing and hand back the clip.
+    pub fn stop(self) -> Result<Recording, String> {
+        let _ = self.stop.send(());
+        match self.done.join() {
+            Ok(result) => result,
+            Err(_) => Err("the recording thread panicked".to_string()),
+        }
+    }
+}
+
+/// The capture thread: open the device, announce it, collect until the stop
+/// signal or [`MAX_SECONDS`], then build the WAV.
+fn capture(
+    stopped: mpsc::Receiver<()>,
+    ready: mpsc::Sender<Result<String, String>>,
+) -> Result<Recording, String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    if !(0.2..=600.0).contains(&seconds) {
-        return Err(format!(
-            "{seconds}s is not a recording length fleet will take (0.2 to 600)"
-        ));
+    let opened = (|| -> Result<(cpal::Stream, String, u16, u32, Sink), String> {
+        let host = cpal::default_host();
+        let device = host
+            .default_input_device()
+            .ok_or_else(|| "no input device is available to record from".to_string())?;
+        let name = device
+            .description()
+            .map(|described| described.name().to_string())
+            .unwrap_or_else(|_| "the default input".to_string());
+        let supported = device
+            .default_input_config()
+            .map_err(|error| format!("`{name}` has no input configuration: {error}"))?;
+        let sample_format = supported.sample_format();
+        let channels = supported.channels();
+        let rate = supported.sample_rate();
+        let config = supported.config();
+        let sink: Sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::<i16>::new()));
+        let on_error = |_error| {};
+        let stream = match sample_format {
+            cpal::SampleFormat::F32 => {
+                let sink = sink.clone();
+                device.build_input_stream(
+                    config,
+                    move |data: &[f32], _| pump(&sink, data.iter().copied()),
+                    on_error,
+                    None,
+                )
+            }
+            cpal::SampleFormat::I16 => {
+                let sink = sink.clone();
+                device.build_input_stream(
+                    config,
+                    move |data: &[i16], _| {
+                        if let Ok(mut held) = sink.lock() {
+                            held.extend_from_slice(data);
+                        }
+                    },
+                    on_error,
+                    None,
+                )
+            }
+            cpal::SampleFormat::U16 => {
+                let sink = sink.clone();
+                device.build_input_stream(
+                    config,
+                    move |data: &[u16], _| {
+                        pump(&sink, data.iter().map(|one| *one as f32 - 32768.0))
+                    },
+                    on_error,
+                    None,
+                )
+            }
+            other => {
+                return Err(format!(
+                    "`{name}` speaks {other:?} samples, which fleet cannot record yet"
+                ))
+            }
+        }
+        .map_err(|error| format!("`{name}` would not open for recording: {error}"))?;
+        stream
+            .play()
+            .map_err(|error| format!("`{name}` would not start recording: {error}"))?;
+        Ok((stream, name, channels, rate, sink))
+    })();
+    let (stream, name, channels, rate, sink) = match opened {
+        Ok(parts) => parts,
+        Err(error) => {
+            let _ = ready.send(Err(error.clone()));
+            return Err(error);
+        }
+    };
+    let _ = ready.send(Ok(name.clone()));
+    let started = std::time::Instant::now();
+    loop {
+        if stopped.try_recv().is_ok() {
+            break;
+        }
+        if started.elapsed().as_secs_f64() >= MAX_SECONDS {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "no input device is available to record from".to_string())?;
-    let name = device
-        .description()
-        .map(|described| described.name().to_string())
-        .unwrap_or_else(|_| "the default input".to_string());
-    let supported = device
-        .default_input_config()
-        .map_err(|error| format!("`{name}` has no input configuration: {error}"))?;
-    let sample_format = supported.sample_format();
-    let channels = supported.channels();
-    let rate = supported.sample_rate();
-    let config = supported.config();
-    let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::<i16>::new()));
-    let on_error = |_error| {};
-    let stream = match sample_format {
-        cpal::SampleFormat::F32 => {
-            let sink = sink.clone();
-            device.build_input_stream(
-                config,
-                move |data: &[f32], _| pump(&sink, data.iter().copied()),
-                on_error,
-                None,
-            )
-        }
-        cpal::SampleFormat::I16 => {
-            let sink = sink.clone();
-            device.build_input_stream(
-                config,
-                move |data: &[i16], _| {
-                    if let Ok(mut held) = sink.lock() {
-                        held.extend_from_slice(data);
-                    }
-                },
-                on_error,
-                None,
-            )
-        }
-        cpal::SampleFormat::U16 => {
-            let sink = sink.clone();
-            device.build_input_stream(
-                config,
-                move |data: &[u16], _| pump(&sink, data.iter().map(|one| *one as f32 - 32768.0)),
-                on_error,
-                None,
-            )
-        }
-        other => {
-            return Err(format!(
-                "`{name}` speaks {other:?} samples, which fleet cannot record yet"
-            ))
-        }
-    }
-    .map_err(|error| format!("`{name}` would not open for recording: {error}"))?;
-    stream
-        .play()
-        .map_err(|error| format!("`{name}` would not start recording: {error}"))?;
-    std::thread::sleep(Duration::from_secs_f64(seconds));
     drop(stream);
     let samples = sink.lock().map(|held| held.clone()).unwrap_or_default();
     Ok(Recording {
         wav: wav_bytes(&samples, channels, rate),
         device: name,
-        seconds,
+        seconds: started.elapsed().as_secs_f64().min(MAX_SECONDS),
         samples: samples.len(),
     })
 }
 
+/// Record the default input for `seconds` and return the WAV.
+pub fn record(seconds: f64) -> Result<Recording, String> {
+    if !(0.2..=MAX_SECONDS).contains(&seconds) {
+        return Err(format!(
+            "{seconds}s is not a recording length fleet will take (0.2 to {MAX_SECONDS})"
+        ));
+    }
+    let recorder = Recorder::start()?;
+    std::thread::sleep(Duration::from_secs_f64(seconds));
+    recorder.stop()
+}
+
+/// The capture buffer the input callback writes into.
+type Sink = std::sync::Arc<std::sync::Mutex<Vec<i16>>>;
+
 /// Collect F32-range samples as i16 (the WAV's shape).
-fn pump(sink: &std::sync::Arc<std::sync::Mutex<Vec<i16>>>, samples: impl Iterator<Item = f32>) {
+fn pump(sink: &Sink, samples: impl Iterator<Item = f32>) {
     if let Ok(mut held) = sink.lock() {
         held.extend(samples.map(|sample| (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16));
     }
