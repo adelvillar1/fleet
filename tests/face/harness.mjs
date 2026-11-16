@@ -7235,6 +7235,89 @@ async function theStrategyStepShowsItsPreview() {
       page.window.location.hash);
   }
 
+  // Adding a bot to the conversation it is in (the owner's 2026-11-15
+  // report): the conversation head carries the door, the home's roles are
+  // the list, and one press joins exactly the picked roles through the
+  // verb join has always used. A room's members row carries the same door.
+  async function theConversationAddsABotInPlace() {
+    const roles = {
+      dir: '/tmp',
+      entries: [
+        { name: 'designer', description: 'makes pages', tools: [], skills: [], shapes: [], overlay: 'voice' },
+        { name: 'scholar', description: 'grounds every claim', tools: [], skills: [], shapes: [], overlay: 'voice' }
+      ]
+    };
+    const page = boot({
+      hash: '#/sessions/open-1',
+      documents: {
+        settings: { roles },
+        sessions: {
+          type: 'sessions', read_at: 'now', current: '',
+          counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 1 },
+          sessions: [row('open-1', 'completed', { title: 'the ledger writer' })]
+        },
+        state: (asked) => ({ ...emptyState(asked), session: asked })
+      }
+    });
+    await flush();
+    page.open();
+    await flush(40);
+    const trigger = page.IDS['conv-add-bot'];
+    check('C1 an open conversation carries the bot door',
+      !!trigger && trigger.hidden === false, 'hidden=' + (trigger || {}).hidden);
+    if (!trigger) return;
+    trigger.click();
+    await flush();
+    check('C1 the door opens with this home’s roles',
+      page.IDS['invite-door'].hidden === false &&
+        page.IDS['invite-list'].find(
+          (one) => String(one.className || '').split(/\s+/).includes('pick')).length === 2,
+      'hidden=' + page.IDS['invite-door'].hidden);
+    const chips = page.IDS['invite-list'].find(
+      (one) => String(one.className || '').split(/\s+/).includes('pick'));
+    if (chips.length !== 2) return;
+    chips[0].click();
+    page.IDS['invite-add'].click();
+    await flush(40);
+    const joins = page.calls.filter((c) =>
+      c.method === 'POST' && c.url === '/api/session/join');
+    const body = joins.length ? String(joins[0].body) : '';
+    check('C1 the press joins exactly the picked role to this conversation',
+      joins.length === 1 &&
+        body.indexOf('"session":"open-1"') !== -1 &&
+        body.indexOf('"persona":"designer"') !== -1,
+      body || 'no join');
+    check('C1 the door closes once the join lands',
+      page.IDS['invite-door'].hidden === true, 'still open');
+
+    const room = boot({
+      hash: '#/sessions/room-1',
+      documents: {
+        sessions: {
+          type: 'sessions', read_at: 'now', current: '',
+          counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 1 },
+          sessions: [row('room-1', 'working', { title: 'the room' })]
+        },
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          members: [{ name: 'designer', voice: 'makes pages' }]
+        })
+      }
+    });
+    await flush();
+    room.open();
+    await flush(40);
+    const chip = room.IDS['room-members'].find(
+      (one) => String(one.className || '').split(/\s+/).includes('member-add'));
+    check('C2 a room’s members row carries the same door',
+      chip.length === 1, 'found=' + chip.length);
+    check('C2 the door is not counted as a member',
+      room.IDS['room-members'].find(
+        (one) => String(one.className || '').split(/\s+/).includes('member')).length === 2,
+      'members=' + room.IDS['room-members'].find(
+        (one) => String(one.className || '').split(/\s+/).includes('member')).length);
+  }
+
   // The address's two surfaces (the huddles plan's C8): `@name` stands out
   // inside the prose that carried it, and the routing fact becomes a row
   // of its own — a review request reading differently from a directive.
@@ -13520,6 +13603,7 @@ const cases = [
   ['C11 an owner-supplied avatar replaces the initial', anOwnerSuppliedAvatarReplacesTheInitial],
   ['C5 a recommendation renders one convene press', aRecommendationRendersOneConvenePress],
   ['C2 the new-room door creates and opens', theNewRoomDoorCreatesAndOpens],
+  ['C1 the conversation adds a bot in place', theConversationAddsABotInPlace],
   ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
   ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],

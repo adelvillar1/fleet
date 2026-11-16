@@ -375,6 +375,13 @@
                 aria-label="archive or restore this conversation">&#128230;</button>
         <button class="conv-act conv-new" id="conv-new" type="button"
                 title="new conversation" aria-label="new conversation">+</button>
+        <!-- Adding a bot to the conversation it is in (the owner's
+             2026-11-15 report: the door existed in huddles and nowhere
+             here). It joins the home's roles to this session through the
+             one verb join has always used, so the first bot added turns a
+             plain conversation into a room. -->
+        <button class="conv-act conv-bot" id="conv-add-bot" type="button"
+                title="add a bot to this conversation" aria-label="add a bot to this conversation">add a bot</button>
         <!-- The conversation's text size: the one reading surface the
              owner sets. A multiplier, so a reply, its headings and its
              code grow together and the chrome around them does not. -->
@@ -1034,6 +1041,27 @@
       <div class="acts">
         <button class="press primary" id="persona-create" type="button">create &amp; convene</button>
         <button class="press quiet" id="persona-cancel" type="button">cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add a bot to the conversation it is in (the owner's 2026-11-15
+       report). The home's roles are toggles; one press joins every picked
+       role to the open session through the verb the gap card already
+       uses. Nothing is authored here — "create a new persona" opens the
+       door above, which joins after the write. -->
+  <div class="door" id="invite-door" hidden>
+    <div class="form">
+      <h2>Add a bot</h2>
+      <p class="sub">A bot joins this conversation and sees every message; a mention hands it the turn. The first one added makes it a room.</p>
+      <div class="field">
+        <label>this home's roles</label>
+        <div class="convener" id="invite-list"></div>
+      </div>
+      <div class="acts">
+        <button class="press primary" id="invite-add" type="button">add to the conversation</button>
+        <button class="press quiet" id="invite-new" type="button">create a new persona</button>
+        <button class="press quiet" id="invite-cancel" type="button">cancel</button>
       </div>
     </div>
   </div>

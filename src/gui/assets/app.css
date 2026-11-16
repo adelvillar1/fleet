@@ -7646,6 +7646,14 @@ body[data-work="collapsed"] .work-list { display: none; }
 
 .conv-act:hover { border-color: var(--dsw-alias-hairline); color: var(--dsw-alias-ink); }
 .conv-act.conv-new { margin-left: 0; }
+/* The bot door says what it does in words — the one conv-act that is a
+   phrase, so it takes the head's height and its own width. */
+.conv-act.conv-bot {
+  width: auto;
+  padding: 0 9px;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
 
 /* A rendered reply keeps the transcript's measure but not its
    preformatted whitespace. Every size here carries the owner's
@@ -8858,6 +8866,26 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .member-name { font-size: 12px; font-weight: 600; }
 .member-voice { font-size: 12px; color: var(--dsw-alias-ink-tertiary); }
 .member.speaking .member-name { color: var(--dsw-alias-accent); }
+/* The door beside the members: a dashed chip, deliberately not a
+   `.member`, so the row counts the members it has and not the way to
+   more of them. */
+.member-add {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 18px;
+  padding: 4px 10px;
+  border: 1px dashed var(--dsw-alias-hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.member-add:hover {
+  border-color: var(--dsw-alias-accent);
+  color: var(--dsw-alias-ink);
+}
 .member-pulse {
   font-family: var(--font-mono);
   font-size: 12px;

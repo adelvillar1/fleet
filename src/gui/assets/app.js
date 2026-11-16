@@ -1047,6 +1047,12 @@ import { node, svg, clip } from './core/dom.js';
     personaCancel: document.getElementById('persona-cancel'),
     personaMatches: document.getElementById('persona-matches'),
     personaTemporal: document.getElementById('persona-temporal'),
+    convAddBot: document.getElementById('conv-add-bot'),
+    inviteDoor: document.getElementById('invite-door'),
+    inviteList: document.getElementById('invite-list'),
+    inviteAdd: document.getElementById('invite-add'),
+    inviteNew: document.getElementById('invite-new'),
+    inviteCancel: document.getElementById('invite-cancel'),
     panelDesign: document.getElementById('panel-design'),
     designRail: document.getElementById('design-rail'),
     designWorld: document.getElementById('design-world'),
@@ -11300,6 +11306,15 @@ import { node, svg, clip } from './core/dom.js';
   el.scrim.addEventListener('click', closeDrawer);
   if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
   if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
+  if (el.convAddBot) el.convAddBot.addEventListener('click', openInviteDoor);
+  if (el.inviteAdd) el.inviteAdd.addEventListener('click', addInvitedBots);
+  if (el.inviteCancel) el.inviteCancel.addEventListener('click', closeInviteDoor);
+  if (el.inviteNew) {
+    el.inviteNew.addEventListener('click', function () {
+      closeInviteDoor();
+      openPersonaDoor(null);
+    });
+  }
   if (el.roomBreakout) el.roomBreakout.addEventListener('click', breakOutPhase);
   if (el.roomDistil) el.roomDistil.addEventListener('click', distilRoom);
   if (el.roomArchive) el.roomArchive.addEventListener('click', function () { archiveRoom(face.session); });
@@ -13592,6 +13607,14 @@ import { node, svg, clip } from './core/dom.js';
         face.lastSpeaker === member.name || (!face.lastSpeaker && member.name === (members[0] || {}).name),
         writing === member.name));
     });
+    // The door beside the members: adding a bot to the room the owner is
+    // already in (the owner's 2026-11-15 report). Deliberately not a
+    // `.member` — the row counts the members it has, not the door.
+    var addMember = node('button', 'member-add', '+ add a bot');
+    addMember.type = 'button';
+    addMember.title = 'add a bot to this room';
+    addMember.addEventListener('click', function () { openInviteDoor(); });
+    el.roomMembers.appendChild(addMember);
 
     var phases = face.phases || [];
     el.roomPhases.hidden = !phases.length;
@@ -14005,6 +14028,101 @@ import { node, svg, clip } from './core/dom.js';
       ? [...el.huddleConvenor.querySelectorAll('.pick.on')]
       : []).map((one) => one.dataset.name);
     createRoom(goal, personas, el.huddleCreate);
+  }
+
+  // Adding a bot to the conversation it is in (the owner's 2026-11-15
+  // report): the room head's chip and the conversation head's press open
+  // the same door. The home's roles are the list; joining is the one verb
+  // join has always used, so the first bot added turns a plain
+  // conversation into a room on the next state read.
+  function openInviteDoor() {
+    if (!el.inviteDoor) return;
+    if (!face.session) {
+      notice('no conversation is open',
+        'open a conversation first — a bot joins the one you are in');
+      return;
+    }
+    // The roles are the door's list, and a chat panel has not read them
+    // yet: read the home's settings before painting, never an empty list
+    // that looks like a home with no roles.
+    var ready = (face.settings && face.settings.roles)
+      ? Promise.resolve()
+      : readSettings(false);
+    ready.then(function () { paintInviteDoor(); });
+  }
+
+  function paintInviteDoor() {
+    if (!el.inviteDoor) return;
+    var entries = ((face.settings && face.settings.roles) || {}).entries || [];
+    var usable = entries.filter(function (one) { return one && !one.broken; });
+    el.inviteList.textContent = '';
+    usable.forEach(function (one) {
+      var chip = node('button', 'pick');
+      chip.type = 'button';
+      chip.dataset.name = one.name;
+      chip.appendChild(huddleMark(one.name, 'sm', one.avatar));
+      var text = node('span');
+      text.appendChild(node('span', 'pick-name', one.name));
+      if (one.description) text.appendChild(node('span', 'pick-voice', one.description));
+      chip.appendChild(text);
+      chip.addEventListener('click', function () { chip.classList.toggle('on'); });
+      el.inviteList.appendChild(chip);
+    });
+    if (!usable.length) {
+      el.inviteList.appendChild(node('p', 'hint',
+        face.settings && face.settings.roles
+          ? 'this home declares no roles yet — create one, it joins as it lands'
+          : 'the home\u2019s roles could not be read — create one and it joins as it lands'));
+    }
+    el.inviteAdd.disabled = false;
+    el.inviteAdd.textContent = 'add to the conversation';
+    el.inviteDoor.hidden = false;
+    var first = el.inviteList.querySelector('.pick');
+    if (first) first.focus();
+  }
+
+  function closeInviteDoor() {
+    if (el.inviteDoor) el.inviteDoor.hidden = true;
+  }
+
+  // Join every picked role, one after the other so a refusal names the
+  // role that failed and nothing is silently dropped (the panel's habit:
+  // a press says what it did).
+  function addInvitedBots() {
+    if (!el.inviteDoor || el.inviteDoor.hidden) return;
+    var picked = [...el.inviteList.querySelectorAll('.pick.on')]
+      .map(function (one) { return one.dataset.name; });
+    if (!picked.length) {
+      notice('no bot was added', 'pick a role first');
+      return;
+    }
+    var press = el.inviteAdd;
+    press.disabled = true;
+    press.textContent = 'adding\u2026';
+    var chain = Promise.resolve();
+    picked.forEach(function (name) {
+      chain = chain
+        .then(function () { return post('/api/session/join', { session: face.session, persona: name }); })
+        .then(function (reply) {
+          if (reply.status === 401) throw new Error('the token was refused');
+          if (reply.status !== 200) {
+            throw new Error((reply.body && reply.body.error) || (name + ' could not join'));
+          }
+        });
+    });
+    chain
+      .then(function () {
+        press.disabled = false;
+        press.textContent = 'add to the conversation';
+        closeInviteDoor();
+        notice('the room grew', picked.join(', ') + ' joined this conversation');
+        load();
+      })
+      .catch(function (error) {
+        press.disabled = false;
+        press.textContent = 'add to the conversation';
+        notice('the bot was not added', String((error && error.message) || error));
+      });
   }
 
   // A shell is a log with no words and no kind — a New the owner
@@ -14592,6 +14710,8 @@ import { node, svg, clip } from './core/dom.js';
     // The huddles surface has its own head: the conversation's is for a
     // chat, not for a room.
     el.convHead.hidden = !face.session || face.panel === 'huddles';
+    // The bot door needs a conversation to join: a landing has none.
+    if (el.convAddBot) el.convAddBot.hidden = !face.session;
     paintRoomHead();
     if (!face.session) return;
     el.convName.textContent = (row && row.title) || sessionLabel(face.session);
