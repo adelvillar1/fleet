@@ -12,6 +12,49 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.11 — 2026-11-16
+
+Speak into the composer, and the day's three fixes.
+
+**Voice dictation.** hex joins as the local transcriber — Rust, MIT, and
+binaries for macOS, Linux and Windows, which is what makes the upcoming
+Tauri ports platform-agnostic. The fleet process owns the microphone and
+hex owns the models: the composer's new **Dictate** button records on the
+server (cpal, one code path everywhere), spawns `hex service --embedded`
+(ready in ~30 ms; a warm clip transcribes in ~0.11 s), and the words land
+at the caret, ready to edit. One press starts, the same press stops; a
+pulsing red dot is the listening state. `fleet dictate` is the same seam
+from the terminal, and `--file` transcribes a WAV without a microphone.
+Nothing is written to disk, a paired phone can never reach this machine's
+microphone (the routes are loopback only), and a missing model is refused
+in hex's own words (`hex model install <id>`). The native shell carries
+the microphone usage description and prompts under its own identity.
+
+**The collapsed rail narrows.** Collapsing the rail used to hide the
+labels and leave the column at full width — the connections-column rules
+re-declare the shell grid later in the stylesheet and out-specified the
+icons rule. One live width token (`--rail-actual`) now feeds every grid
+rule: the base, the narrow query, the tissue-on column and the reveal
+strip, so the rail is 66px with the connections column on or off.
+
+**The bot door is in the composer.** The add-a-bot door hung off the
+conversation head, so it was absent on the landing, where a conversation
+starts. It now lives with the ask: on an open conversation it joins the
+picked roles; from the landing the same press **starts** the conversation
+with them (the huddle creation path, no goal yet). The conversation head
+no longer carries it; a room's members chip still does.
+
+**Record keeping.** KI-547 corrected with the measurement that z.ai's PaaS
+endpoint does report cache reads — a live run cached 10,176 of 20,519
+prompt tokens (49.6%) — so the earlier zeros were head churn and
+single-request runs, not a missing report; opencode's zero remains no
+data. KI-554 closed (the help names every dispatched verb); KI-556 filed
+(the updater signature is not version-bound).
+
+Named and not fixed: **KI-555** — the open drawer is still anchored at
+the right edge and covers the connections column, where U13 says the
+persistent panes never hide behind it.
+
 ## v0.8.10 — 2026-11-16
 
 The shell stops showing you things you did not ask for, and the docs catch
