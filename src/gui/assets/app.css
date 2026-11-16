@@ -179,6 +179,10 @@
   --console-height: 40px;
   --rail-width: 236px;
   --rail-width-icons: 66px;
+  /* The rail's live width: the grid rules read this one, so a collapsed
+     rail narrows the column whatever else the shell carries (the tissue,
+     the reveal strip, the narrow media query). */
+  --rail-actual: var(--rail-width);
   --aside-width: 320px;
   --pane-width: 440px;
   --drawer-width: 440px;
@@ -450,7 +454,7 @@ button, input, textarea, select { font: inherit; }
   display: grid;
   /* The pane is the one right surface: two columns closed, three open,
      the pane's width the owner's own (P1's grip writes --pane-width). */
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  grid-template-columns: var(--rail-actual) minmax(0, 1fr);
   grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr) var(--console-height);
   height: 100dvh;
   overflow: hidden;
@@ -789,10 +793,9 @@ button, input, textarea, select { font: inherit; }
 
 .surfaces-name { min-width: 0; }
 
-/* The compact rail: the map loses its words, not its places. */
-body[data-rail="icons"] .face {
-  grid-template-columns: var(--rail-width-icons) minmax(0, 1fr);
-}
+/* The compact rail: the map loses its words, not its places — and the
+   column narrows with it. */
+body[data-rail="icons"] { --rail-actual: var(--rail-width-icons); }
 
 /* U13: the pane is a fixed drawer in every rail mode — it never adds a
    grid track, so the stage is never squeezed. */
@@ -6995,9 +6998,8 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
 }
 
 @media (max-width: 1180px) {
-  .face { grid-template-columns: var(--rail-width) minmax(0, 1fr); }
+  .face { grid-template-columns: var(--rail-actual) minmax(0, 1fr); }
   body[data-rail="icons"] .face {
-    grid-template-columns: var(--rail-width-icons) minmax(0, 1fr);
   }
   .topbar, .meter { grid-column: 2; }
   .stage { grid-template-columns: minmax(0, 1fr); }
@@ -10905,7 +10907,7 @@ body[data-labels="off"] .tissue-hover-title { display: none; }
    tissue keeps its place — the tissue is permanent, the pane is not. */
 @media (min-width: 1081px) {
   body[data-tissue="on"] .face {
-    grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--tissue-width);
+    grid-template-columns: var(--rail-actual) minmax(0, 1fr) var(--tissue-width);
   }
   body[data-tissue="on"] .tissue { display: flex; }
   /* The pane is an overlay (U13); the tissue keeps its column. */
@@ -10961,7 +10963,7 @@ body[data-tissue="off"] .tissue-collapse::after { content: "\2039"; } /* ‹ */
 @media (min-width: 1081px) {
   body[data-tissue="off"] #tissue-reveal { display: grid; }
   body[data-tissue="off"] .face {
-    grid-template-columns: var(--rail-width) minmax(0, 1fr) 30px;
+    grid-template-columns: var(--rail-actual) minmax(0, 1fr) 30px;
   }
   /* U13: the drawer overlays here too — no fourth track with the pane open. */
   body[data-tissue="off"] .tissue {
