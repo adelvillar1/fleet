@@ -1,7 +1,7 @@
 ---
 title: the prefix stays still — keeping the request head cacheable
 date: 2026-11-16
-status: draft
+status: completed
 ---
 
 # The prefix stays still
@@ -77,7 +77,7 @@ Delivered instead, same intent:
 the profile still steers (test), and the head's fingerprint records what
 first request carried (I0).
 
-### I2 — the volatile brief rides the tail (deferred, with its reason)
+### I2 — the volatile brief rides the tail (dropped — see "Dropped")
 
 The cache stops at the first differing byte, not at the first differing
 message: what the provider can hold across runs is the **leading
@@ -87,8 +87,8 @@ the tail would lengthen the cacheable span only by the *sections between*
 the constant and the first varying one — which is nothing, because the
 goal section is the first varying section. So the tail move buys no
 prefix the current order does not already have, while it does change what
-the model weighs (recency) on every run. Deferred until I6's numbers say
-the constant head alone did not move the share.
+the model weighs (recency) on every run. Dropped after I6: the constant head alone moved the share, and the move
+would not have added a byte.
 
 ### I2 (original text, kept for the record) — the volatile brief rides the tail
 
@@ -104,7 +104,7 @@ the constant head alone did not move the share.
   text is present in the request's messages, and the existing prompt
   assertions (`prompt.starts_with(SYSTEM_PROMPT)` and friends) stay green.
 
-### I3 — a speaker switch costs the tail (deferred with I2)
+### I3 — a speaker switch costs the tail (dropped — see "Dropped")
 
 The overlay lives in the variable section, *after* the constant head, so
 a mention switch changes bytes the cache was never going to hold across
@@ -116,7 +116,7 @@ runs anyway. It costs nothing the ordering does not already cost.
 - *Met when:* a mention switch leaves the head hash unchanged and the
   overlay still reaches that turn's request.
 
-### I4 — the session's model is sticky (deferred, different problem than the plan named)
+### I4 — the session's model is sticky (dropped here — now KI-548)
 
 Routing is prepared **once per run** (`route::prepare_with_pin` at run
 start; a mid-run pin is the only re-route), so a run cannot change models
@@ -182,6 +182,32 @@ time (`cache 0` / `cache 5248`), so the panel can read per-run.
   zero, the remainder is provider/gateway behaviour (`opencode`,
   `ollama-cloud`) — filed in the ledger by name, not chased.
 
+## Dropped (not deferred)
+
+The owner's ruling (2026-11-16): a plan does not stay active for no
+reason. Three criteria were removed rather than parked, because nothing
+pending can decide them:
+
+- **C3 — the brief rides the tail.** Dropped: the provider's prefix cache
+  stops at the first differing byte. The constant head leads and the first
+  varying section (`## This request` / `## Goal`) follows it immediately,
+  so the tail move lengthens the cacheable span by zero bytes — while it
+  changes what the model weighs on every run. I6 measured the head
+  identical across runs and direct DeepSeek cached 5,248 of 12,833 tokens
+  from it, which is the whole prize.
+- **C4 — a speaker switch costs the tail.** Dropped for the same reason:
+  the overlay already sits after the constant head, so a mention switch
+  never touches the cacheable prefix. There is nothing to pay.
+- **C5 — sticky cross-run routing.** Dropped from this plan and filed as
+  **KI-548**: routing is prepared once per run, so this is a cross-run
+  policy with its own measurement and its own risks — it does not belong
+  to a cache plan, and the ledger is where it is tracked.
+
+What would reopen the cache plan: a provider whose cache key includes the
+messages (none fleet speaks to does), or a measured regression in the
+head after a declarations change — both are the instrument's job to
+report, not this plan's to predict.
+
 ## The shape of the win
 
 The constant head is the system prompt, the reporting contract, the
@@ -223,14 +249,6 @@ turns the cache from per-session luck into a standing asset.
 - [x] C2: the declarations are byte-identical whatever workload the
   router judged — the per-workload reorder is gone and its steering
   rides the brief's words; pinned by a test.
-- [ ] C3 — **deferred** with I2: moving the brief to the tail buys no
-  prefix the current order lacks (the first varying section follows the
-  constant immediately), and it changes what the model weighs; held for
-  I6's numbers.
-- [ ] C4 — **deferred** with I2: the overlay already sits after the
-  constant head, so a speaker switch never touches the cacheable prefix.
-- [ ] C5 — **deferred**: routing is prepared once per run, so this is a
-  cross-run policy with its own measurement, not a mechanical change.
 - [x] C7: compaction fires at 85% of a declared window (the floor for an
   undeclared one), with the budget tests and the bridge gauge updated.
 - [x] C6: gate green, deployed, and measured live: an identical head
