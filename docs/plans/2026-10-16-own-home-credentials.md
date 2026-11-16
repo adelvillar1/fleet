@@ -1,6 +1,6 @@
 # Fleet reads its own home only — the harness credential leg removed
 
-Status: complete — landed 2026-10-16
+Status: completed — landed 2026-10-16
 Date: 2026-10-16
 
 ## Why

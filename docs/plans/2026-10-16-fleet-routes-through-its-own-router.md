@@ -1,6 +1,6 @@
 # Fleet routes through its own router — the kit is the precursor, not a dependency
 
-Status: complete — landed 2026-10-16. The owner's five corrections during
+Status: completed — landed 2026-10-16. The owner's five corrections during
 the diagnosis reshaped this plan twice; the shape below is the one that
 landed, and the superseded design is recorded at the end so the record is
 honest about what changed and why.

@@ -1,5 +1,7 @@
 # Closing the seams: what the import carries, where the work lands, what a new machine needs
 
+
+Status: completed — the steps landed; the plan's own criteria carry no open box (stamped 2026-11-16, plan sweep)
 > **Status: COMPLETE** — C0–C3 landed 2026-10-26 (`beafd6f` C0,
 > `76a58f1` C1+C2, this commit C3). The live proofs and the substrate
 > findings are in the Status section below.

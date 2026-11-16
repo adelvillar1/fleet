@@ -1,5 +1,5 @@
 ---
-status: done
+status: completed
 created: 2026-10-13
 updated: 2026-10-13
 slug: fleet-slice-4-mcp-lanes

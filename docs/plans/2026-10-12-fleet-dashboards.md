@@ -10,7 +10,7 @@ resolution: |
 
 # Fleet dashboard plugins — router board and second-brain board
 
-Status: complete — both boards shipped and mounted in the fleet profile; acceptance criteria met. Plan-gate: this document.
+Status: completed — both boards shipped and mounted in the fleet profile; acceptance criteria met. Plan-gate: this document.
 
 ## Goal
 

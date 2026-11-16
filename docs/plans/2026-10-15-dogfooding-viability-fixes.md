@@ -1,6 +1,6 @@
 # The dogfooding viability fixes — the second dive's five, plus the toolchain that makes the gate whole
 
-Status: complete — implemented 2026-10-15/16; every criterion graded in
+Status: completed — implemented 2026-10-15/16; every criterion graded in
 the Convergence section below.
 Date: 2026-10-15
 

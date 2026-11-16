@@ -1,6 +1,6 @@
 # Memory and cache: the fixes, and whether n-grams or a graph would help
 
-Status: complete
+Status: completed
 Date: 2026-10-18
 Landed: 2026-10-18
 

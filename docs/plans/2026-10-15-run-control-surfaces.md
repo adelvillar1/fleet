@@ -1,6 +1,6 @@
 # Run control: the persistent yes, and compact on demand
 
-Status: complete
+Status: completed
 Date: 2026-10-15
 
 ## Why

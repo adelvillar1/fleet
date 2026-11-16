@@ -1,5 +1,5 @@
 ---
-status: complete
+status: completed
 created: 2026-10-31
 updated: 2026-10-31
 slug: design-canvas-complete

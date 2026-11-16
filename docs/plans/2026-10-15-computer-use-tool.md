@@ -1,6 +1,6 @@
 # The computer-use tool
 
-Status: complete
+Status: completed
 Date: 2026-10-15
 
 ## Why

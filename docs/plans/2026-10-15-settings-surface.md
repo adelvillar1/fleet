@@ -1,6 +1,6 @@
 # Every configurable surface, reachable from the TUI
 
-Status: complete
+Status: completed
 Date: 2026-10-15
 
 ## Why

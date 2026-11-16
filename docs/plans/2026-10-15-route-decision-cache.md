@@ -1,6 +1,6 @@
 # The route-decision cache
 
-Status: complete
+Status: completed
 Date: 2026-10-15
 
 ## Why

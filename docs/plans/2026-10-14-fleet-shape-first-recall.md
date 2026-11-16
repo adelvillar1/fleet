@@ -1,6 +1,6 @@
 # Slice 19 — shape-first recall: the shape drives, the words corroborate (2026-10-14)
 
-status: landed-pending-review (2026-10-14; 243e76e the shape-first recall, e3ea0e2 the review round's fixes — the rebalanced weights, the third vector, the outcome axis)
+status: completed — (2026-10-14; 243e76e the shape-first recall, e3ea0e2 the review round's fixes — the rebalanced weights, the third vector, the outcome axis)
 
 ## Goal
 

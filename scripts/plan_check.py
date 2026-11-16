@@ -18,7 +18,16 @@ criteria, so treating them as unknown costs nothing.
 
 Exit 0 with every completed plan clean; exit 1 naming the plans that are
 not, with the count and the first open criterion's own words.
+
+**The staleness sweep** (the owner, 2026-11-16: *"I don't like plans sitting
+active for no reason"*): a second pass names every plan whose declared state
+is neither completed nor cancelled and whose date is older than
+STALE_DAYS. It is a warning, never a gate failure — an active plan may be
+waiting on the owner, and the point is visibility, not pressure. The state
+is read from the frontmatter's `status:` or an older plan's body `Status:`
+line, and a multi-word state (`in progress`) reads as its whole phrase.
 """
+import datetime
 import pathlib
 import re
 import sys
@@ -29,6 +38,61 @@ DONE = {"completed", "complete", "done", "landed-pushed", "landed-pending-review
 def status_of(text):
     match = re.search(r"^status:\s*(\S+)", text, re.M)
     return match.group(1) if match else "?"
+
+
+def declared_status(text):
+    """The plan's own state, frontmatter first then the older body line.
+
+    A multi-word state keeps its phrase (`in progress`), because the word
+    alone reads as `in` and hides what the plan says.
+    """
+    for pattern in (r"^status:\s*([^\n]+)", r"^Status:\s*([^\n]+)"):
+        match = re.search(pattern, text, re.M)
+        if not match:
+            continue
+        phrase = match.group(1).strip()
+        word = re.split(r"[\s\u2014-]+", phrase)[0].lower()
+        return word, phrase
+    return "?", ""
+
+
+TERMINAL = DONE | {"cancelled"}
+STALE_DAYS = 21
+
+
+def plan_date(text, path):
+    """The latest date the plan declares — `created:`, `date:` or
+    `updated:` — else the file's mtime. A plan created in October and
+    edited yesterday is not stale, so the newest stamp is the clock."""
+    stamps = []
+    for pattern in (
+        r"^created:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})",
+        r"^date:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})",
+        r"^updated:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})",
+    ):
+        stamps.extend(re.findall(pattern, text, re.M))
+    if stamps:
+        return max(stamps)
+    return datetime.date.fromtimestamp(path.stat().st_mtime).isoformat()
+
+
+def stale_plans(root):
+    """Every plan still declaring work and untouched past the window."""
+    today = datetime.date.today()
+    stale = []
+    for plan in sorted(root.glob("*.md")):
+        text = plan.read_text(encoding="utf-8")
+        word, phrase = declared_status(text)
+        if word in TERMINAL:
+            continue
+        when = plan_date(text, plan)
+        try:
+            age = (today - datetime.date.fromisoformat(when)).days
+        except ValueError:
+            continue
+        if age >= STALE_DAYS:
+            stale.append((plan.name, phrase or word, when, age))
+    return stale
 
 
 # A criterion box at column 0 or nested under a sub-bullet (`  - [ ]`), with any
@@ -79,6 +143,14 @@ def main(plans_dir):
             # that predate the frontmatter rule carry zero open boxes, so this
             # costs nothing on the existing corpus.
             unstated.append((plan.name, open_boxes))
+    stale = stale_plans(root)
+    if stale:
+        print(f"stale: {len(stale)} plan(s) declared open and untouched for {STALE_DAYS}+ days "
+              f"(a warning — close, resume, or cancel):")
+        for name, phrase, when, age in stale:
+            label = phrase if len(phrase) <= 48 else phrase[:45].rstrip() + "\u2026"
+            print(f"  {name}: \u201c{label}\u201d since {when} ({age} days)")
+        print()
     if not offenders and not unstated:
         print("every completed plan's acceptance criteria are ticked")
         return 0

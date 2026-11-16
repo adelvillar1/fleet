@@ -1,5 +1,7 @@
 # The live fork base: the child sees the host as it stands
 
+
+Status: completed — the steps landed; the plan's own criteria carry no open box (stamped 2026-11-16, plan sweep)
 > **Status: COMPLETE** — C0–C3 landed 2026-10-26 (this commit). The
 > residue is retired: the child's fork base is the host as it stands.
 

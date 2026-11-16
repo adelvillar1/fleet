@@ -1,6 +1,6 @@
 # Slice 18 — the calibration loop closes: fleet's routes are judged (2026-10-14)
 
-status: landed-pending-review (2026-10-14; ebcfa48 + f55be4c, the third vector riding its own commit; 294eeae the round-two review fixes; the eval fit leg's fix pending)
+status: completed — (2026-10-14; ebcfa48 + f55be4c, the third vector riding its own commit; 294eeae the round-two review fixes; the eval fit leg's fix pending)
 
 ## Goal
 
