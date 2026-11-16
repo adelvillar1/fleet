@@ -12657,32 +12657,13 @@ async function theMotionSwitchOverridesTheOsDefaultOnPress() {
     'console=' + page.IDS['ctl-motion'].getAttribute('aria-pressed'));
 }
 
-// U10: the Mission card paints this install — the version and the run
-// count once the reads land, the honest dash until they do.
-async function theMissionCardPaintsTheInstall() {
-  const page = boot({ documents: {} });
-  page.open();
-  await flush();
-  const meta = page.IDS['mission-meta'];
-  check('RESKIN the Mission card opens on the honest dash',
-    page.IDS['mission-name'].textContent === 'fleet' && meta.textContent.includes('\u2014'),
-    'name=' + page.IDS['mission-name'].textContent + ' meta=' + meta.textContent);
-  const fed = boot({
-    documents: {
-      version: { name: 'fleet', version: '0.7.1' },
-      sessions: { type: 'sessions', counts: { needs: 0, working: 0, total: 5 } },
-      state: { workspace: '/Users/owner/Projects/fleet' },
-    },
-  });
-  fed.open();
-  await flush();
-  check('RESKIN the reads land the version and the run count',
-    fed.IDS['mission-meta'].textContent.includes('0.7.1') &&
-      fed.IDS['mission-meta'].textContent.includes('5 runs'),
-    'meta=' + fed.IDS['mission-meta'].textContent);
-  check('RESKIN the card names the workspace, not a path',
-    fed.IDS['mission-name'].textContent === 'fleet',
-    'name=' + fed.IDS['mission-name'].textContent);
+// The owner's 2026-11-16 ruling: the rail carries no install pill. The
+// version lives on the About card and at /api/version; the run count on
+// the archive. The rail's head mark already names the install.
+async function theRailCarriesNoInstallPill() {
+  check('RAIL the rail has no version pill',
+    !/id="mission"/.test(HTML) && !/mission-meta/.test(HTML), 'mission markup');
+  check('RAIL the code paints no mission card', !/paintMission/.test(SRC), 'paintMission');
 }
 
 // U10: Saved views capture and restore a lens, and the wrap stays hidden
@@ -13913,7 +13894,7 @@ const cases = [
   ['HEAL the substrate heals itself and offers kiri', theSubstrateHealsItselfAndOffersKiri],
   ['HEAL the owner-approved actions are on the cards', theOwnerApprovedActionsAreOnTheCards],
   ['HEALTH another down service keeps its words', anotherDownServiceKeepsItsWords],
-  ['RESKIN the Mission card paints the install', theMissionCardPaintsTheInstall],
+  ['RAIL the rail carries no install pill', theRailCarriesNoInstallPill],
   ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],
   ['RESKIN the tissue paints the graph and pivots', theTissuePaintsTheGraphAndPivots],
   ['RESKIN an empty tissue names what fills it', anEmptyTissueNamesWhatFillsIt],

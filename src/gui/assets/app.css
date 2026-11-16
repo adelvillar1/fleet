@@ -493,7 +493,11 @@ button, input, textarea, select { font: inherit; }
   display: flex;
   align-items: center;
   gap: 6px;
-  height: calc(var(--topbar-height) / 2);
+  /* The head wraps the mark (40px plus its 6px margin). It used to be a
+     fixed half-topbar box, and the mark spilled out of it — invisible
+     while the Mission card's block covered the spill, a collision once
+     the card left the rail (2026-11-16). */
+  min-height: calc(var(--topbar-height) / 2);
 }
 
 .mark {
@@ -10493,53 +10497,7 @@ body[data-motion="off"] .amb { display: none; }
   .amb { display: none; }
 }
 
-/* --- U10: the rail's Mission card, Saved views, tissue explainer -- */
-
-.mission {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin: 4px 0 12px;
-  padding: 9px 10px;
-  border-radius: 10px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-}
-
-.mission-mark {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  color: var(--ink);
-  background: conic-gradient(from 210deg, var(--teal), var(--green), var(--cyan), var(--teal));
-}
-
-.mission-mark svg { width: 15px; height: 15px; }
-
-.mission-text { display: grid; gap: 1px; min-width: 0; }
-
-.mission-name {
-  font-family: var(--disp);
-  font-size: 13.5px;
-  font-weight: 600;
-  line-height: 1.1;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mission-meta {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* --- U10: Saved views, tissue explainer ----------------------------- */
 
 .rail-label {
   padding: 0 8px;

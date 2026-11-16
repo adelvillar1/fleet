@@ -102,6 +102,11 @@ Rules (the D-ledger's, applied to design):
   live count; active state = 2px cyan inset bar) → Saved views (one click
   restores `{lens, filters, query}`; save captures the current view) → a
   short tissue explainer. *Constrains:* the rail renderer.
+  *Amended 2026-11-16:* the Mission card leaves the rail (the owner's
+  report: the version pill, and its overflow over the stage when the rail
+  is collapsed). The version lives on the About card and at `/api/version`;
+  the run count on the archive. The rail's head mark already names the
+  install.
 - **U11 — The tissue pane is the connective tissue, rendered.** Radial SVG
   graph of the focused object's neighborhood: center node (ring 2, unlabeled —
   the focus card names it), typed colored nodes with wash fills, edges to

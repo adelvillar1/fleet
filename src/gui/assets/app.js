@@ -961,9 +961,6 @@ import { node, svg, clip } from './core/dom.js';
     themeToggle: document.getElementById('theme-toggle'),
     themes: document.getElementById('themes'),
     motionToggle: document.getElementById('motion-toggle'),
-    mission: document.getElementById('mission'),
-    missionName: document.getElementById('mission-name'),
-    missionMeta: document.getElementById('mission-meta'),
     viewsWrap: document.getElementById('views-wrap'),
     views: document.getElementById('views'),
     viewSave: document.getElementById('view-save'),
@@ -27111,10 +27108,8 @@ import { node, svg, clip } from './core/dom.js';
     };
     if (arrive[address]) arrive[address]();
     syncPaneContext();
-    // The shell follows the owner (U10): every arrival repaints the
-    // Mission card from whatever reads have landed and refreshes the
+    // The shell follows the owner (U10): every arrival refreshes the
     // tissue from its cache — the graph is never a private surface's.
-    paintMission();
     readTissue();
     // The home is a place, not the absence of a conversation: arriving
     // here detaches from the one being read — the pointer clears, the
@@ -28638,9 +28633,6 @@ import { node, svg, clip } from './core/dom.js';
       span.textContent = held ? String(held) : '';
       span.title = held ? held + (held === 1 ? ' waiting here' : ' waiting here') : '';
     });
-    // The Mission card reads the same counts document — one repaint, so
-    // the card's run count lands when the archive's read does.
-    paintMission();
   }
 
   function markRail() {
@@ -28993,35 +28985,6 @@ import { node, svg, clip } from './core/dom.js';
   }
 
   paintMotion();
-
-  // --- the Mission card (U10) -----------------------------------------
-  // This install: the workspace's name, the version, the run count. The
-  // honest dash until both reads land; never a guess.
-  function paintMission() {
-    if (!el.missionName || !el.missionMeta) return;
-    var workspace = face.state && face.state.workspace
-      ? String(face.state.workspace).split('/').filter(Boolean).pop() : '';
-    el.missionName.textContent = workspace || 'fleet';
-    var version = face.version ? 'v' + face.version : '\u2014';
-    var counts = face.sessions && face.sessions.counts;
-    var runs = counts && typeof counts.total === 'number' ? counts.total : null;
-    el.missionMeta.textContent = version + (runs != null ? ' \u00b7 ' + runs + ' runs' : '');
-  }
-
-  function readVersion() {
-    if (face.versionAt && Date.now() - face.versionAt < 60000) {
-      paintMission();
-      return;
-    }
-    fetch('/api/version', { headers: { accept: 'application/json' } })
-      .then(function (reply) { return reply.status === 200 ? reply.json() : null; })
-      .then(function (doc) {
-        if (doc && (doc.version || doc.fleet)) face.version = doc.version || doc.fleet;
-        face.versionAt = Date.now();
-        paintMission();
-      })
-      .catch(function () { face.versionAt = Date.now(); paintMission(); });
-  }
 
   // --- Saved views (U10) ----------------------------------------------
   // One press captures where you are; one press restores it; the drop
@@ -29868,7 +29831,6 @@ import { node, svg, clip } from './core/dom.js';
   // The shell's own boot paints (U10): the Mission card's version and
   // run count, the saved views, and the tissue's first read — the graph
   // is on every wide surface from the first arrival, not after one.
-  readVersion();
   paintViews();
   readTissue(true);  el.railToggle.addEventListener('click', function () {
     setRail(railCollapsed() ? 'full' : 'icons');
