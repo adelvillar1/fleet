@@ -249,7 +249,13 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   size by turns read the fold count from the log, a conversation that
   never folded says so, and no turn count faces the user at all — the
   context-health read (the working line and the meter) is the one
-  degradation signal on the surface. The rail renders the
+  degradation signal on the surface. The recent rows come from the
+  archive read, which the home asks for itself — a cold landing carries
+  its way back instead of waiting for another lens to load it. The
+  archive's window is **per class**: the owner's conversations keep their
+  own bound and the system's runs keep a small one, so a machine whose
+  scheduled jobs fire every few minutes cannot crowd the owner's own work
+  out of the list, the toggle or the search. The rail renders the
   owner's work only: system-initiated sessions — scheduled jobs,
   delegated children, peer channels — live in the log (`fleet cron`,
   `fleet sessions`), never on the user screen, and a log with no words
@@ -291,6 +297,18 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   reload (`localStorage["fleet-work"]`), and the column's left edge
   follows the navigation, so folding the rail onto its icons leaves no
   gutter between the two.
+- **The connections column** draws the workspace spine: one focused
+  object, its neighborhood, and the archive's remaining nodes collapsed
+  behind one quiet mark (U3/U11). The spine's work items are
+  user-initiated conversations and nothing else — the rail's omission
+  rule one step further. A delegated child is not user-initiated, but its
+  process belongs to the parent goal it serves, so it rides as a node
+  under its parent with a `delegates_to` edge — never as a work item, and
+  never at all when its parent is not in the neighborhood. The graph is
+  legible, not merely drawn: the goal's focus card names how many
+  processes it delegated, the receipts tab lists each one with its status
+  and opens its run, and every process is named by the task it was given,
+  never by the `--- TASK ---` frame the delegating run writes.
 - **The conversation's head** carries the way back to the work list, the
   title (press for the switcher, the pencil to rename), the state in
   words, and **New** — which writes a real session (`POST

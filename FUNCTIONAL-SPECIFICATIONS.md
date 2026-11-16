@@ -551,9 +551,11 @@ owner's recent conversations, titled, with an untitled one reading as
 "a conversation · <when>". The machine's own sessions — scheduled runs,
 delegated children, unclassed shells — are the rail's omission rule
 applied at the door: the recent list carries `class == "yours"` and
-nothing else. The left rail's collapse sits at the rail's head, level
-with the topbar's pane expand icon; the surface instruments' actions
-wrap as whole buttons and the card grows with them.
+nothing else, and the archive read bounds the owner's conversations
+separately from the system's runs, so no amount of background activity
+can push them out of the list. The left rail's collapse sits at the
+rail's head, level with the topbar's pane expand icon; the surface
+instruments' actions wrap as whole buttons and the card grows with them.
 
 ## Conversation names
 
