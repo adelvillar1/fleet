@@ -694,6 +694,8 @@ mod tests {
                 names: vec!["grep".to_string()],
                 tier: "core".to_string(),
                 withheld: Vec::new(),
+                head_sha256: String::new(),
+                head_bytes: 0,
             })
             .unwrap();
         write_session(&home, "recorded", session);
@@ -715,6 +717,8 @@ mod tests {
                     names: vec!["bash".to_string(), "deck".to_string()],
                     tier: "core".to_string(),
                     withheld: Vec::new(),
+                    head_sha256: String::new(),
+                    head_bytes: 0,
                 })
                 .unwrap();
             write_session(&home, &format!("s{index}"), session);

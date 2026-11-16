@@ -196,6 +196,12 @@ pub struct TaskItem {
     pub status: String,
 }
 
+/// The serde `skip_serializing_if` predicate for the counts whose zero
+/// means "this log was written before the field existed".
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
 /// One line of a session log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -315,6 +321,20 @@ pub enum Record {
         /// did. Absent on logs written before the field existed.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         withheld: Vec<String>,
+        /// The head's fingerprint: the 16 hex characters of a SHA-256
+        /// over the run's system-message bytes and its serialized
+        /// declaration block, in that order. Two runs with the same
+        /// fingerprint presented the provider the same prefix, so a
+        /// cache miss between them is the provider's to explain — and a
+        /// changed fingerprint is the harness's, nameable without
+        /// logging the prompt itself (hard rule 5). Absent on logs
+        /// written before the field existed.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        head_sha256: String,
+        /// How many bytes that head was, so a share can be read against
+        /// it without reconstructing the prompt.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        head_bytes: usize,
     },
     /// A lane that did not join at run start, or one that died after
     /// joining. The run-start shape is bookkeeping only — the model saw

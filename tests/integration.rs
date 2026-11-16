@@ -1497,6 +1497,8 @@ async fn the_lifecycle_sweep_disables_only_what_the_gate_names() {
                 names: vec!["bash".to_string(), "deck".to_string()],
                 tier: "core".to_string(),
                 withheld: Vec::new(),
+                head_sha256: String::new(),
+                head_bytes: 0,
             })
             .unwrap();
         age_session(&home, session, &format!("s{index}"));

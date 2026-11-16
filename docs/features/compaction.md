@@ -28,11 +28,15 @@ request is built. The measure is, in order:
    request), so this is the ordinary case;
 2. the chars/4 estimate of the assembled messages, when it did not.
 
-The threshold is the named constant `COMPACTION_TOKEN_BUDGET = 100_000`.
-DeepSeek's window is 128k, so the fold fires at roughly 80% of it — early
-enough that the request crossing it still fits, late enough that a run
-which never approaches the window pays one integer comparison per turn
-and nothing else.
+The threshold follows the serving model's declared window: **85% of it**
+(the owner's 2026-11-16 ruling — the window is spent before it is
+summarized, since every fold is a lossy rewrite and a full-prefix cache
+miss, and the 15% left holds the request that crosses the line plus the
+fold's own summary request). A model whose window is not declared keeps
+the floor, `COMPACTION_TOKEN_BUDGET = 100_000` — roughly 80% of
+DeepSeek's 128k, the behaviour every run had before windows were
+declared. Either way a run that never approaches the threshold pays one
+integer comparison per turn and nothing else.
 
 **One compaction per crossing.** After a fold a latch holds until a
 measurement comes in under the budget. The second half matters: a

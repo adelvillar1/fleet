@@ -17584,9 +17584,9 @@ mod tests {
         assert_eq!(state["running"], false, "the run ended");
         // The gauge's denominator follows the model the log names: the
         // fixture's `deepseek-flash` declares a 1M window, so the
-        // budget is three fifths of it, not the floor — the floor is
-        // gone from this surface (the context-health plan's C0, the
-        // owner's steer).
+        // budget is 85% of it, not the floor — the floor is gone from
+        // this surface (the context-health plan's C0, the owner's
+        // steer; the 85% is the owner's 2026-11-16 ruling).
         let expected =
             crate::route::declared_window_for_model(Some(&bridge.home), "deepseek-flash")
                 .map(|window| crate::compaction::budget_for(Some(window)))
@@ -17620,8 +17620,8 @@ mod tests {
             .unwrap();
         drop(session);
         let state = bridge.state(&id);
-        // Three fifths of 262,144, held under the window's edge.
-        assert_eq!(state["budget"], 157_286, "{}", state["budget"]);
+        // 85% of 262,144 — the owner's fold ruling (2026-11-16).
+        assert_eq!(state["budget"], 222_822, "{}", state["budget"]);
         assert_eq!(state["budget_model"], "step-3.7-flash");
         assert_eq!(state["budget_declared"], true);
     }

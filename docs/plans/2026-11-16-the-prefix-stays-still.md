@@ -53,22 +53,44 @@ byte-identical when a miss happened.
   cache half; the prefix record is written once per run, hashes
   deterministically, and is reconstructable (hard rule 5).
 
-### I1 — the declaration set is frozen per run
+### I1 — the declaration set is frozen per run (delivered, re-scoped by measurement)
 
-- The set is computed **once at run start** and never mutated: the
-  scope-filtered built-ins, `use_skill` when the run carries skills, the
-  capability specs, and **every lane's tools** (the union), in a
-  deterministic order. A lane that joins later changes nothing the model
-  sees; `lane_tools` records what it *used*, never what it saw.
-- *Budget guard:* the serialized union is measured; a test asserts it
-  under a cap. If the union is too large, the fallback is a stable generic
-  lane entry point with one-line per-lane docs — decided by the
-  measurement, recorded on this plan, not assumed.
-- *Met when:* the declaration set is byte-identical across every turn of a
-  run, including the turn after a lane join; the run-start record lists
-  the union; the join path has no mutation left in it.
+The plan guessed the churn came from lane joins. The logs say otherwise:
+**535 declaration records, 0 with a withheld tool** — `pre_join` already
+declares every reachable lane before the first request, and the tier
+never withholds. So the set was never short; the **order** moved:
+`profile_order` re-sorted the native declarations by the workload the
+router judged, and a workload change rewrote the bytes ahead of the
+messages — the head, from the cache's point of view.
 
-### I2 — the volatile brief rides the tail
+Delivered instead, same intent:
+
+- the declarations keep the compiled order, always
+  (`src/agent.rs`, `declarations`); `profile_order` is gone;
+- the profile's steering rides the brief as words — `workload_line`
+  names the three tools the workload reaches for first, and every
+  declared tool stays available (`## Order of reach`);
+- a test pins that the declarations are identical whatever the workload,
+  and that the line still names the workload.
+
+*Met when:* the declarations are byte-identical across workloads (test),
+the profile still steers (test), and the head's fingerprint records what
+first request carried (I0).
+
+### I2 — the volatile brief rides the tail (deferred, with its reason)
+
+The cache stops at the first differing byte, not at the first differing
+message: what the provider can hold across runs is the **leading
+constant**, and `head_prompt()` now produces exactly those bytes first
+(`default_prompt()` + nothing else). Moving goal/memory/skills/overlay to
+the tail would lengthen the cacheable span only by the *sections between*
+the constant and the first varying one — which is nothing, because the
+goal section is the first varying section. So the tail move buys no
+prefix the current order does not already have, while it does change what
+the model weighs (recency) on every run. Deferred until I6's numbers say
+the constant head alone did not move the share.
+
+### I2 (original text, kept for the record) — the volatile brief rides the tail
 
 - The system message becomes `SYSTEM_PROMPT + REPORTING_CONTRACT + catalog`
   and nothing else. Goal, skills, memory block, plan mode, execution line,
@@ -82,7 +104,11 @@ byte-identical when a miss happened.
   text is present in the request's messages, and the existing prompt
   assertions (`prompt.starts_with(SYSTEM_PROMPT)` and friends) stay green.
 
-### I3 — a speaker switch costs the tail
+### I3 — a speaker switch costs the tail (deferred with I2)
+
+The overlay lives in the variable section, *after* the constant head, so
+a mention switch changes bytes the cache was never going to hold across
+runs anyway. It costs nothing the ordering does not already cost.
 
 - `turn_system_prompt` stays byte-stable; a mention that switches the
   speaker carries their overlay in the brief note for that turn instead of
@@ -90,7 +116,14 @@ byte-identical when a miss happened.
 - *Met when:* a mention switch leaves the head hash unchanged and the
   overlay still reaches that turn's request.
 
-### I4 — the session's model is sticky
+### I4 — the session's model is sticky (deferred, different problem than the plan named)
+
+Routing is prepared **once per run** (`route::prepare_with_pin` at run
+start; a mid-run pin is the only re-route), so a run cannot change models
+between turns — the cold-cache-by-provider-switch case is *between the
+runs of one session*, and making that sticky changes routing policy. That
+needs its own measurement (how many sessions re-judge to a different
+model) and its own slice, not a mechanical edit inside this one.
 
 - Routing prefers the session's last serving model when it is viable
   (healthy, not demoted, no explicit pin elsewhere) and walks the chain
@@ -100,7 +133,27 @@ byte-identical when a miss happened.
   demotes and the walk proceeds; the per-session model-switch count is
   measured before and after.
 
-### I5 — verified on the live stream
+### I5 — the fold fires later (85%)
+
+The owner's addition (2026-11-16): compaction at **85% of the context
+window**, not the three fifths it used to take.
+
+- `compaction::budget_for` returns `window × 85%` for a declared window;
+  a window nobody declared keeps the floor (`COMPACTION_TOKEN_BUDGET =
+  100_000`, ~80% of DeepSeek's 128k). The old `window − 32k` reserve is
+  gone with the fraction it existed to protect — at 85% it would have
+  capped every window under ~213k *below* the ruling (128k would fold at
+  96k, i.e. 75%).
+- The 15% left is the headroom: the request that crosses the line, the
+  fold's own summary request and its answer.
+- Named behaviour change: a *declared small* window now folds at its own
+  85% instead of being dragged down to the floor (65,536 → 55,705, was
+  33,536). The floor is the undeclared-window policy, not a ceiling.
+- *Met when:* the budget tests pin 85% across the roster's windows, the
+  bridge's gauge reads the same number, and no caller re-derives a
+  fraction.
+
+### I6 — verified on the live stream
 
 - Gate green, deployed, a few real sessions run.
 - The cache query shows the move: **fresh-run** cache share from ~0 to
@@ -125,8 +178,9 @@ turns the cache from per-session luck into a standing asset.
 - Prices: fleet holds no table; the measure stays rate and volume.
 - Gateway retention and sharding: not ours to fix — separated by the
   prefix fingerprint in I0.
-- Fold policy: a fold rewrites the head by design. One named miss per
-  fold, accepted.
+- Fold *policy beyond I5*: a fold still rewrites the head by design —
+  one named miss per fold. I6 reduces how many folds happen; it does not
+  make a fold cheap.
 - The cache panel's layout: shipped, unchanged.
 
 ## Risks
@@ -141,15 +195,26 @@ turns the cache from per-session luck into a standing asset.
 
 ## Acceptance criteria
 
-- [ ] C1: turn rows carry `cache_read`/`prompt`; `prefix` records name the
-  head's hash and bytes per run; tests pin both.
-- [ ] C2: the declaration set is byte-identical across a run, join or no
-  join; the union is recorded and under its size cap.
-- [ ] C3: two different runs assemble identical system bytes; the brief
-  note carries the volatile half and is logged.
-- [ ] C4: a mention switch leaves the head unchanged.
-- [ ] C5: a session re-uses its last serving model unless it failed; the
-  switch count drops.
+- [x] C1: the run's usage sums `cache_read_tokens` (both accumulator
+  sites, Option-aware, pinned by a test), so the turn row carries the
+  run's cache read; the `Declarations` record carries the head's
+  fingerprint — `head_sha256` (16 hex) and `head_bytes` over the
+  constant head plus the serialized declarations — pinned by a test.
+  (The plan said "a `prefix` record"; the fingerprint rides the existing
+  record instead of a new log type, one write, one place.)
+- [x] C2: the declarations are byte-identical whatever workload the
+  router judged — the per-workload reorder is gone and its steering
+  rides the brief's words; pinned by a test.
+- [ ] C3 — **deferred** with I2: moving the brief to the tail buys no
+  prefix the current order lacks (the first varying section follows the
+  constant immediately), and it changes what the model weighs; held for
+  I6's numbers.
+- [ ] C4 — **deferred** with I2: the overlay already sits after the
+  constant head, so a speaker switch never touches the cacheable prefix.
+- [ ] C5 — **deferred**: routing is prepared once per run, so this is a
+  cross-run policy with its own measurement, not a mechanical change.
+- [x] C7: compaction fires at 85% of a declared window (the floor for an
+  undeclared one), with the budget tests and the bridge gauge updated.
 - [ ] C6: gate green, deployed, and the live cache document shows the
   fresh-run and fleet-wide shares move; the provider-side remainder is
   named if it stays.

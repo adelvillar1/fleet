@@ -575,6 +575,21 @@ impl Usage {
         self.prompt_tokens.saturating_add(self.completion_tokens)
     }
 
+    /// Fold one turn's accounting into a run's total. The token counts
+    /// add; the cache half folds as an `Option`, because a provider that
+    /// reports nothing about a turn must not erase what an earlier turn
+    /// did report — absence is not zero (the usage plan's C0).
+    pub fn accumulate(&mut self, turn: &Usage) {
+        self.prompt_tokens = self.prompt_tokens.saturating_add(turn.prompt_tokens);
+        self.completion_tokens = self
+            .completion_tokens
+            .saturating_add(turn.completion_tokens);
+        if let Some(cache) = turn.cache_read_tokens {
+            self.cache_read_tokens =
+                Some(self.cache_read_tokens.unwrap_or(0).saturating_add(cache));
+        }
+    }
+
     /// Fold OpenAI's nested cached count into the flat field, leaving
     /// the details capture empty. A direct field (Anthropic's,
     /// DeepSeek's) wins when present: the details object is only the
@@ -1452,6 +1467,35 @@ fn excerpt(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_run_total_folds_the_cache_half_and_absence_is_not_zero() {
+        use super::Usage;
+        let mut total = Usage::default();
+        total.accumulate(&Usage {
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            cache_read_tokens: Some(40),
+            ..Usage::default()
+        });
+        // A turn that reported nothing must not erase what an earlier one
+        // did report.
+        total.accumulate(&Usage {
+            prompt_tokens: 200,
+            completion_tokens: 20,
+            cache_read_tokens: None,
+            ..Usage::default()
+        });
+        total.accumulate(&Usage {
+            prompt_tokens: 300,
+            completion_tokens: 30,
+            cache_read_tokens: Some(60),
+            ..Usage::default()
+        });
+        assert_eq!(total.prompt_tokens, 600);
+        assert_eq!(total.completion_tokens, 60);
+        assert_eq!(total.cache_read_tokens, Some(100));
+    }
+
     use super::*;
     use std::io::{Read, Write};
     use std::sync::Mutex;

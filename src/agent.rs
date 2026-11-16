@@ -82,8 +82,18 @@ pub const REPORTING_CONTRACT: &str = "## Closing every turn\n\nTool output is no
 /// voice and the reporting contract, in that order. One function, so
 /// the composition has one spelling for the run and for its tests.
 pub fn default_prompt() -> String {
+    head_prompt(None)
+}
+
+/// The byte-stable head of a request: the identity (or the compiled-in
+/// `SYSTEM_PROMPT`), the reporting contract and the component catalog.
+/// Nothing a run varies lives here — a provider's prefix cache keys on
+/// these bytes, so a section that changes per run belongs after them
+/// (the owner's cache ruling, 2026-11-16).
+pub fn head_prompt(identity: Option<&str>) -> String {
+    let base = identity.unwrap_or(SYSTEM_PROMPT);
     format!(
-        "{SYSTEM_PROMPT}\n\n{REPORTING_CONTRACT}\n\n{}",
+        "{base}\n\n{REPORTING_CONTRACT}\n\n{}",
         crate::catalog::prompt_text()
     )
 }
@@ -2109,7 +2119,7 @@ impl<'a> Agent<'a> {
             .client
             .route_decision()
             .and_then(|decision| decision.execution.clone());
-        Self::composed_prompt(
+        let mut prompt = Self::composed_prompt(
             self.options.identity.as_deref(),
             &refs,
             memory_block,
@@ -2119,7 +2129,18 @@ impl<'a> Agent<'a> {
             &self.options.file_access,
             execution.as_ref(),
             self.options.plan_mode,
-        )
+        );
+        // The profile's steering, as words in the volatile tail: the
+        // order of the declarations is the cache's and never moves.
+        if let Some(workload) = self
+            .client
+            .route_decision()
+            .and_then(|decision| decision.workload.clone())
+        {
+            prompt.push_str("\n\n");
+            prompt.push_str(&workload_line(&workload));
+        }
+        prompt
     }
 
     /// The surface line a huddle's prompt carries: the face's own line,
@@ -2222,7 +2243,6 @@ impl<'a> Agent<'a> {
         execution: Option<&crate::route::ExecutionHead>,
         plan_mode: bool,
     ) -> String {
-        let base = identity.unwrap_or(SYSTEM_PROMPT);
         let execution_line = execution.and_then(Self::execution_prompt_line);
         if identity.is_none()
             && skills.is_empty()
@@ -2236,14 +2256,10 @@ impl<'a> Agent<'a> {
         {
             return default_prompt();
         }
-        let mut prompt = String::from(base);
-        prompt.push_str("\n\n");
-        prompt.push_str(REPORTING_CONTRACT);
-        // The component catalog — the closed vocabulary for `ui` specs.
-        // It rides the prompt the way the tool descriptions do, so the model
-        // builds inside the set rather than inventing components.
-        prompt.push_str("\n\n");
-        prompt.push_str(&crate::catalog::prompt_text());
+        // The constant head first, byte for byte: everything this run
+        // varies is appended after it, so the provider's prefix cache
+        // keeps the part that never changes.
+        let mut prompt = head_prompt(identity);
         // C0: the boundary the model reads before it reaches it.
         if plan_mode {
             prompt.push_str("\n\n");
@@ -2467,6 +2483,21 @@ impl<'a> Agent<'a> {
 
     fn declarations(&self) -> Vec<crate::api::ToolSpec> {
         self.declaration_set().0
+    }
+
+    /// The head a provider's prefix cache sees: the system message's
+    /// bytes and the serialized declaration block, hashed together. The
+    /// fingerprint is what makes a cache miss attributable — the log can
+    /// say whether the head changed without logging the prompt (hard
+    /// rule 5).
+    fn head_fingerprint(system: &str, specs: &[crate::api::ToolSpec]) -> (String, usize) {
+        let tools = serde_json::to_string(specs).unwrap_or_default();
+        let bytes = system.len() + tools.len();
+        let mut joined = String::with_capacity(bytes + 1);
+        joined.push_str(system);
+        joined.push('\u{1f}');
+        joined.push_str(&tools);
+        (crate::calib::hash16(&joined), bytes)
     }
 
     /// The declarations beside the core tools the tier withheld, when
@@ -2698,11 +2729,13 @@ impl<'a> Agent<'a> {
             specs = specs_tiered;
             withheld = core_withheld;
         }
-        // The verdict the run already holds orders the native tools. A
-        // profile reorders; it never removes an ability.
-        if let Some(decision) = self.client.route_decision() {
-            profile_order(&mut specs, decision.workload.as_deref());
-        }
+        // The order is the compiled one, always: a provider's prefix
+        // cache keys on the bytes ahead of the messages, and a per-run
+        // reorder of the native tools rewrote exactly those bytes for
+        // every workload change (the owner's cache ruling, 2026-11-16).
+        // The profile's steering rides the brief as words instead —
+        // `workload_line` — so attention is guided without moving the
+        // head.
         // The per-principal declaration filter (armada L3, D16): the owner's
         // wildcard admits every tool (lane 1, unchanged); a non-owner
         // principal sees only the tools it is granted — an ungranted tool is
@@ -3310,20 +3343,6 @@ impl<'a> Agent<'a> {
                 reason: reason.clone(),
             })?;
         }
-        // The denominator of every usage rate: what this run's first
-        // request declared, recorded once, before that request. The
-        // list is computed from the same declarations() the request
-        // reads, so the log and the wire cannot disagree.
-        {
-            let (names, withheld, tier) = self.declaration_snapshot();
-            self.declared_names = names.clone();
-            self.record(&Record::Declarations {
-                names,
-                tier: tier.to_string(),
-                withheld,
-            })?;
-        }
-        let _ = self.progress.flush();
         // The assembled memory block, recorded the same way: the block
         // is dynamic — it depends on the corpus and the instruction —
         // so the `memory` record is what keeps the prompt the model saw
@@ -3331,6 +3350,28 @@ impl<'a> Agent<'a> {
         // nothing, and the prompt stays the compiled-in constant.
         let memory_block = self.prepare_memory(task)?;
         let system_prompt = self.system_prompt(memory_block.as_deref());
+        // The denominator of every usage rate: what this run's first
+        // request declared, recorded once, before that request. The
+        // list is computed from the same declarations() the request
+        // reads, so the log and the wire cannot disagree — and the
+        // head's fingerprint rides beside it, so a cache miss later has
+        // a cause that can be checked (the owner's cache ruling).
+        {
+            let (names, withheld, tier) = self.declaration_snapshot();
+            self.declared_names = names.clone();
+            let (head_sha256, head_bytes) = Self::head_fingerprint(
+                &crate::agent::head_prompt(self.options.identity.as_deref()),
+                &self.declarations(),
+            );
+            self.record(&Record::Declarations {
+                names,
+                tier: tier.to_string(),
+                withheld,
+                head_sha256,
+                head_bytes,
+            })?;
+        }
+        let _ = self.progress.flush();
         // The turn's images ride this message and no other. They are the
         // owner's screenshot, read once: the log keeps the task's words
         // (which name each image), so a replay rebuilds the words and
@@ -3503,8 +3544,7 @@ impl<'a> Agent<'a> {
             if let Some((text, seconds)) = thinking.closed() {
                 self.record(&Record::Reasoning { text, seconds })?;
             }
-            self.usage.prompt_tokens += response.usage.prompt_tokens;
-            self.usage.completion_tokens += response.usage.completion_tokens;
+            self.usage.accumulate(&response.usage);
             // The API's own count of this request's prompt, when it
             // reported one. A provider that reports nothing leaves this
             // `None`, and the window check falls back to the estimate.
@@ -4505,8 +4545,7 @@ impl<'a> Agent<'a> {
                     return Ok(());
                 }
             };
-            self.usage.prompt_tokens += response.usage.prompt_tokens;
-            self.usage.completion_tokens += response.usage.completion_tokens;
+            self.usage.accumulate(&response.usage);
             summary = response
                 .choices
                 .into_iter()
@@ -7198,6 +7237,13 @@ impl<'a> Agent<'a> {
                 names,
                 tier: tier.to_string(),
                 withheld,
+                // The run-start fingerprint stands: a speaker switch
+                // narrows the declarations but not the system head
+                // (the overlay rides the brief, not the head — the
+                // owner's cache ruling), so re-hashing here would name
+                // a head this request does not present.
+                head_sha256: String::new(),
+                head_bytes: 0,
             })?;
         }
         Ok(())
@@ -8892,19 +8938,24 @@ fn profile_rank(workload: &str, name: &str) -> usize {
 /// Reorder the native declarations by the run's workload. Only the
 /// native head is touched; the specials and lane tools keep their
 /// order, so the prompt prefix stays stable for everything else.
-fn profile_order(specs: &mut [crate::api::ToolSpec], workload: Option<&str>) {
-    let Some(workload) = workload else {
-        return;
-    };
-    let count = tools::ALL_TOOLS.len().min(specs.len());
-    if !specs[..count]
+/// The profile's steering, in words: the tools the workload reaches for
+/// first, named in the brief rather than reordered into the head — the
+/// order is the cache's, the advice is the model's.
+fn workload_line(workload: &str) -> String {
+    let mut ranked: Vec<&str> = crate::tools::ALL_TOOLS
         .iter()
-        .all(|spec| tools::Tool::from_name(spec.name()).is_some())
-    {
-        return;
-    }
-    specs[..count]
-        .sort_by_key(|spec| (profile_rank(workload, spec.name()), spec.name().to_string()));
+        .map(|tool| tool.name())
+        .collect();
+    ranked.sort_by_key(|name| (profile_rank(workload, name), name.to_string()));
+    let lead: Vec<String> = ranked
+        .iter()
+        .take(3)
+        .map(|name| format!("`{name}`"))
+        .collect();
+    format!(
+        "## Order of reach\n\nThis request was judged **{workload}**. Start with {}; every declared tool remains available.",
+        lead.join(", ")
+    )
 }
 
 /// The tokens one declaration list costs, estimated the way the
@@ -10828,6 +10879,26 @@ mod reserve_pause_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_head_fingerprint_names_the_system_and_the_declarations() {
+        use super::Agent;
+        let spec = crate::api::ToolSpec::function(
+            "t",
+            "d",
+            serde_json::json!({"type": "object", "properties": {}}),
+        );
+        let specs = vec![spec.clone()];
+        let (a, bytes) = Agent::head_fingerprint("sys", &specs);
+        let (b, again) = Agent::head_fingerprint("sys", &specs);
+        let (c, _) = Agent::head_fingerprint("sys two", &specs);
+        // The same head hashes the same; a byte of system text moves it.
+        assert_eq!(a, b);
+        assert_eq!(bytes, again);
+        assert_ne!(a, c);
+        assert_eq!(a.len(), 16, "{a}");
+        assert!(bytes > 3, "{bytes}");
+    }
+
     #[test]
     fn a_reasoning_block_closes_once_and_keeps_its_reading() {
         let mut block = ReasoningBlock::default();
@@ -14103,9 +14174,19 @@ mod tests {
         let swarm = agent_over_decision(decision_with(Some("swarm")));
         assert!(swarm.system_prompt(None).contains("swarm"));
         let single = agent_over_decision(decision_with(Some("single")));
-        assert_eq!(single.system_prompt(None), default_prompt());
+        let single_prompt = single.system_prompt(None);
+        assert!(single_prompt.starts_with(&default_prompt()));
+        assert!(
+            !single_prompt.contains("## This request"),
+            "{single_prompt}"
+        );
         let absent = agent_over_decision(decision_with(None));
-        assert_eq!(absent.system_prompt(None), default_prompt());
+        let absent_prompt = absent.system_prompt(None);
+        assert!(absent_prompt.starts_with(&default_prompt()));
+        assert!(
+            !absent_prompt.contains("## This request"),
+            "{absent_prompt}"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -14325,6 +14406,57 @@ mod tests {
             "only the named tool is disabled: {names:?}"
         );
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn every_prompt_keeps_the_constant_head_byte_identical() {
+        // The cacheable head: the compiled identity, the reporting
+        // contract and the component catalog, byte for byte, before any
+        // section a run varies (the owner's cache ruling, 2026-11-16).
+        let head = default_prompt();
+        let cases = [
+            Agent::composed_prompt(
+                None,
+                &[],
+                None,
+                None,
+                None,
+                None,
+                &FileAccess::Unrestricted,
+                None,
+                false,
+            ),
+            Agent::composed_prompt(
+                None,
+                &[],
+                Some("- [user confirmed-by] a fact"),
+                None,
+                None,
+                Some("the goal"),
+                &FileAccess::Unrestricted,
+                None,
+                false,
+            ),
+            Agent::composed_prompt(
+                None,
+                &[],
+                Some("- [user confirmed-by] a fact"),
+                Some("a voice"),
+                Some("a surface line"),
+                Some("the goal"),
+                &FileAccess::Unrestricted,
+                None,
+                true,
+            ),
+        ];
+        assert_eq!(cases[0], head, "the empty run is the constant itself");
+        for (index, prompt) in cases.iter().enumerate() {
+            assert!(
+                prompt.starts_with(&head),
+                "case {index} lost the constant head: {} bytes",
+                head.len()
+            );
+        }
     }
 
     #[test]
@@ -16215,7 +16347,7 @@ You are auditing a change. Read the diff before you judge it.
         assert_eq!(agent.serving_window(), Some(1_024_000));
         assert_eq!(
             crate::compaction::budget_for(agent.serving_window()),
-            614_400
+            870_400
         );
 
         // 300k tokens: over the floor, well under the window's budget.
@@ -18429,13 +18561,11 @@ mod tier_tests {
 
     #[test]
     fn the_workload_profile_records_why_it_selected() {
-        // Tool-surface C11: the workload is read from the route decision at
-        // run start, not re-asked - and the record of WHICH profile ran is
-        // the tier's own rank order, which the routed event names. The
-        // absent-verdict case selects the default and the record says so.
-        // The decision's only field the profile reads is `workload` -
-        // the route decides it once and the profile follows, never
-        // re-asking.
+        // Tool-surface C11: the workload is read from the route decision
+        // at run start, not re-asked. Since the owner's cache ruling the
+        // profile steers through the brief's words, so the record of
+        // WHICH profile ran is the line itself — and the rank it names is
+        // a pure function of the workload, so the wording is reproducible.
         let decision = crate::route::RouteDecision {
             provider: "x".into(),
             model: "m".into(),
@@ -18449,69 +18579,34 @@ mod tier_tests {
             start_index: 0,
             order: Vec::new(),
         };
-        assert!(decision.workload.as_deref() == Some("standard_code"));
-        // The profile's rank is a pure function of the workload - the
-        // same decision on two runs orders identically, so the record is
-        // reproducible.
-        let first: Vec<String> = {
-            let mut specs: Vec<_> = crate::tools::ALL_TOOLS
-                .iter()
-                .map(|tool| tool.spec())
-                .collect();
-            profile_order(&mut specs, decision.workload.as_deref());
-            specs.iter().map(|spec| spec.name().to_string()).collect()
-        };
-        let second: Vec<String> = {
-            let mut specs: Vec<_> = crate::tools::ALL_TOOLS
-                .iter()
-                .map(|tool| tool.spec())
-                .collect();
-            profile_order(&mut specs, decision.workload.as_deref());
-            specs.iter().map(|spec| spec.name().to_string()).collect()
-        };
-        assert_eq!(first, second);
-        // An absent verdict selects the default order (the compiled
-        // declaration order) rather than a guess.
-        let mut default: Vec<_> = crate::tools::ALL_TOOLS
-            .iter()
-            .map(|tool| tool.spec())
-            .collect();
-        let declared: Vec<String> = default.iter().map(|spec| spec.name().to_string()).collect();
-        profile_order(&mut default, None);
-        assert_eq!(
-            default
-                .iter()
-                .map(|spec| spec.name().to_string())
-                .collect::<Vec<_>>(),
-            declared,
-            "an absent verdict keeps the compiled order"
-        );
+        let workload = decision.workload.as_deref().unwrap_or("none");
+        assert_eq!(workload_line(workload), workload_line("standard_code"));
+        assert!(workload_line(workload).contains("standard_code"));
     }
 
     #[test]
-    fn the_workload_profile_orders_the_native_tools() {
-        let mut specs: Vec<_> = crate::tools::ALL_TOOLS
+    fn the_workload_profile_speaks_and_never_moves_the_head() {
+        // The declarations are byte-identical whatever the workload: the
+        // head is what a provider's prefix cache keys on.
+        let base: Vec<String> = crate::tools::ALL_TOOLS
             .iter()
-            .map(|tool| tool.spec())
+            .map(|tool| tool.spec().name().to_string())
             .collect();
-        profile_order(&mut specs, Some("standard_code"));
-        assert_eq!(specs[0].name(), "read_file");
-        assert_eq!(specs[1].name(), "edit");
-        let mut prose: Vec<_> = crate::tools::ALL_TOOLS
-            .iter()
-            .map(|tool| tool.spec())
-            .collect();
-        profile_order(&mut prose, Some("prose"));
-        assert_eq!(prose[0].name(), "read_file");
-        assert_eq!(prose[1].name(), "write_file");
-        let mut none: Vec<_> = crate::tools::ALL_TOOLS
-            .iter()
-            .map(|tool| tool.spec())
-            .collect();
-        let before: Vec<String> = none.iter().map(|spec| spec.name().to_string()).collect();
-        profile_order(&mut none, None);
-        let after: Vec<String> = none.iter().map(|spec| spec.name().to_string()).collect();
-        assert_eq!(before, after);
+        for workload in ["quick", "standard_code", "prose", "hard"] {
+            let line = workload_line(workload);
+            assert!(line.contains(workload), "{line}");
+            assert!(line.contains("`read_file`"), "{line}");
+            // Reading the profile never reorders or removes a tool.
+            let same: Vec<String> = crate::tools::ALL_TOOLS
+                .iter()
+                .map(|tool| tool.spec().name().to_string())
+                .collect();
+            assert_eq!(base, same);
+        }
+        // An unranked workload still names a lead rather than nothing: the
+        // compiled order is the fallback.
+        let line = workload_line("unjudged");
+        assert!(line.starts_with("## Order of reach"), "{line}");
     }
 
     #[test]

@@ -802,6 +802,8 @@ mod tests {
                 ],
                 tier: "core".into(),
                 withheld: Vec::new(),
+                head_sha256: String::new(),
+                head_bytes: 0,
             })
             .unwrap();
         session
