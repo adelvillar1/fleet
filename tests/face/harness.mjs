@@ -5497,6 +5497,61 @@ async function theDrawerWaitsForTheOwnerOnDeskAndLearning() {
     String(desk.rows('#pane-context .facts').length));
 }
 
+// The owner's 2026-11-16 point: the door belongs in the composer, and the
+// landing is where a conversation starts — so the same door there starts
+// one with its bots instead of refusing for the lack of a session.
+async function theComposerStartsWithBots() {
+  const roles = {
+    dir: '/tmp',
+    entries: [
+      { name: 'designer', description: 'makes pages', tools: [], skills: [], shapes: [], overlay: 'voice' },
+      { name: 'scholar', description: 'grounds every claim', tools: [], skills: [], shapes: [], overlay: 'voice' }
+    ]
+  };
+  const page = boot({
+    hash: '#/chat',
+    documents: {
+      settings: { roles },
+      state: (asked) => emptyState(asked),
+    },
+    reply: { id: 'room-new' },
+  });
+  await flush();
+  page.open();
+  await flush(40);
+  const trigger = page.IDS['composer-add-bot'];
+  check('C1 the landing carries the bot door in the composer',
+    !!trigger && trigger.hidden === false, 'hidden=' + (trigger || {}).hidden);
+  check('C1 the landing opens as no session', !page.window.location.hash.includes('/sessions/'),
+    page.window.location.hash);
+  trigger.click();
+  await flush();
+  check('C1 the landing door says what it will do',
+    page.IDS['invite-door'].hidden === false &&
+      page.IDS['invite-add'].textContent === 'start the conversation',
+    'door=' + page.IDS['invite-door'].hidden + ' press=' + page.IDS['invite-add'].textContent);
+  const chips = page.IDS['invite-list'].find(
+    (one) => String(one.className || '').split(/\s+/).includes('pick'));
+  check('C1 the landing door lists the roles', chips.length === 2, String(chips.length));
+  if (chips.length !== 2) return;
+  chips[0].click();
+  page.IDS['invite-add'].click();
+  await flush(40);
+  const made = page.calls.filter((c) => c.method === 'POST' && c.url === '/api/huddles');
+  const body = made.length ? String(made[0].body) : '';
+  check('C1 the press starts the conversation with the picked bot',
+    made.length === 1 && body.indexOf('"personas":["designer"]') !== -1 &&
+      body.indexOf('"goal":null') !== -1,
+    body || 'no create');
+  const joins = page.calls.filter((c) => c.method === 'POST' && c.url === '/api/session/join');
+  check('C1 the landing does not join a session that does not exist yet', joins.length === 0,
+    String(joins.length));
+  check('C1 the door closes once the conversation starts',
+    page.IDS['invite-door'].hidden === true, 'still open');
+  check('C1 the new conversation opens in the work list',
+    page.window.location.hash === '#/sessions/room-new', page.window.location.hash);
+}
+
 // IB (the owner-inbox plan): one queue of everything waiting on the
 // owner — seats answerable in place, the onboarding ladder, huddle
 // questions, cron failures, doctor findings — fed by one read, badged
@@ -7290,9 +7345,10 @@ async function theStrategyStepShowsItsPreview() {
   }
 
   // Adding a bot to the conversation it is in (the owner's 2026-11-15
-  // report): the conversation head carries the door, the home's roles are
-  // the list, and one press joins exactly the picked roles through the
-  // verb join has always used. A room's members row carries the same door.
+  // report, moved 2026-11-16): the composer carries the door — the ask is
+  // where a conversation starts — the home's roles are the list, and one
+  // press joins exactly the picked roles through the verb join has always
+  // used. A room's members row carries the same door.
   async function theConversationAddsABotInPlace() {
     const roles = {
       dir: '/tmp',
@@ -7316,8 +7372,8 @@ async function theStrategyStepShowsItsPreview() {
     await flush();
     page.open();
     await flush(40);
-    const trigger = page.IDS['conv-add-bot'];
-    check('C1 an open conversation carries the bot door',
+    const trigger = page.IDS['composer-add-bot'];
+    check('C1 the composer carries the bot door on an open conversation',
       !!trigger && trigger.hidden === false, 'hidden=' + (trigger || {}).hidden);
     if (!trigger) return;
     trigger.click();
@@ -13754,6 +13810,7 @@ const cases = [
   ['C5 a recommendation renders one convene press', aRecommendationRendersOneConvenePress],
   ['C2 the new-room door creates and opens', theNewRoomDoorCreatesAndOpens],
   ['C1 the conversation adds a bot in place', theConversationAddsABotInPlace],
+  ['C1 the composer starts a conversation with bots', theComposerStartsWithBots],
   ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
   ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],

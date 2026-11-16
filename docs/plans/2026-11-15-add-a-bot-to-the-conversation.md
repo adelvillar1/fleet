@@ -56,6 +56,13 @@ rather than offering an empty list.
 - [x] C1: `#conv-add-bot` in the conversation head opens `#invite-door`;
   visible only with a session open; hidden on the landing and in the
   huddles surface (the room's own chip covers rooms).
+
+  *Amended 2026-11-16 (the owner's point):* the door moved to the composer
+  (`#composer-add-bot`) — the ask is where a conversation starts — and the
+  landing is no longer excluded: a press there starts the conversation with
+  the picked bots (the huddle creation path), where an open conversation
+  receives them through the join verb. The conv head no longer carries it;
+  a room's members chip still does.
 - [x] C2: `#room-members` carries a trailing `+ add a bot` chip (not a
   `.member`, so the member count stays honest) that opens the same door.
 - [x] C3: the door lists this home's roles (`face.settings.roles.entries`,

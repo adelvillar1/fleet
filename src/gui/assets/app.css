@@ -3167,8 +3167,10 @@ body[data-object-card="open"] .dock-object {
     height: 100%;
     opacity: 0;
   }
-  .composer .foot-btn.plan { width: var(--ctl-h); padding: 0; }
-  .composer .foot-btn.plan .foot-label { display: none; }
+  .composer .foot-btn.plan,
+  .composer .foot-btn.bots { width: var(--ctl-h); padding: 0; }
+  .composer .foot-btn.plan .foot-label,
+  .composer .foot-btn.bots .foot-label { display: none; }
 }
 
 /* Below the width where three labeled fields and the send actions fit
@@ -3208,8 +3210,10 @@ body[data-object-card="open"] .dock-object {
     height: 100%;
     opacity: 0;
   }
-  .composer .foot-btn.plan { width: var(--ctl-h); padding: 0; }
-  .composer .foot-btn.plan .foot-label { display: none; }
+  .composer .foot-btn.plan,
+  .composer .foot-btn.bots { width: var(--ctl-h); padding: 0; }
+  .composer .foot-btn.plan .foot-label,
+  .composer .foot-btn.bots .foot-label { display: none; }
   /* The folder picker goes full-bleed on a phone, its actions stacked;
      the suggestion rows stay one line each. */
   .folder-pop { left: 6px; right: 6px; max-width: none; }
@@ -7680,15 +7684,6 @@ body[data-work="collapsed"] .work-list { display: none; }
 
 .conv-act:hover { border-color: var(--dsw-alias-hairline); color: var(--dsw-alias-ink); }
 .conv-act.conv-new { margin-left: 0; }
-/* The bot door says what it does in words — the one conv-act that is a
-   phrase, so it takes the head's height and its own width. */
-.conv-act.conv-bot {
-  width: auto;
-  padding: 0 9px;
-  font-size: 12px;
-  letter-spacing: 0.01em;
-}
-
 /* A rendered reply keeps the transcript's measure but not its
    preformatted whitespace. Every size here carries the owner's
    multiplier, so the reply's prose, its headings and its code keep their

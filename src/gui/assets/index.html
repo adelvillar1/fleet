@@ -364,13 +364,9 @@
                 aria-label="archive or restore this conversation">&#128230;</button>
         <button class="conv-act conv-new" id="conv-new" type="button"
                 title="new conversation" aria-label="new conversation">+</button>
-        <!-- Adding a bot to the conversation it is in (the owner's
-             2026-11-15 report: the door existed in huddles and nowhere
-             here). It joins the home's roles to this session through the
-             one verb join has always used, so the first bot added turns a
-             plain conversation into a room. -->
-        <button class="conv-act conv-bot" id="conv-add-bot" type="button"
-                title="add a bot to this conversation" aria-label="add a bot to this conversation">add a bot</button>
+        <!-- The bot door lives in the composer (the owner's 2026-11-16
+             point): the ask is where a conversation starts, so a bot can
+             join one before its first message instead of growing it after. -->
         <!-- The conversation's text size: the one reading surface the
              owner sets. A multiplier, so a reply, its headings and its
              code grow together and the chrome around them does not. -->
@@ -669,6 +665,17 @@
                 <path d="M12 13.5l6.5-9"></path>
                 <circle cx="12" cy="13.5" r="1.2"></circle>
               </svg>
+            </button>
+            <button type="button" class="foot-btn bots" id="composer-add-bot"
+                    aria-haspopup="dialog" aria-controls="invite-door"
+                    title="add a bot — it joins this conversation, or starts one from the landing">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="8.5" r="3.5"></circle>
+                <path d="M5 20c0-3.6 3.1-5.5 7-5.5s7 1.9 7 5.5"></path>
+                <path d="M18.5 6.5h3"></path>
+              </svg>
+              <span class="foot-label">Add bot</span>
             </button>
             <button type="button" class="foot-btn plan" id="plan" aria-pressed="false"
                     title="plan the work before running it — applies to the next run">
@@ -1041,8 +1048,8 @@
        door above, which joins after the write. -->
   <div class="door" id="invite-door" hidden>
     <div class="form">
-      <h2>Add a bot</h2>
-      <p class="sub">A bot joins this conversation and sees every message; a mention hands it the turn. The first one added makes it a room.</p>
+      <h2 id="invite-title">Add a bot</h2>
+      <p class="sub" id="invite-sub">A bot joins this conversation and sees every message; a mention hands it the turn. The first one added makes it a room.</p>
       <div class="field">
         <label>this home's roles</label>
         <div class="convener" id="invite-list"></div>

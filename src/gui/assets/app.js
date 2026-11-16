@@ -1045,8 +1045,10 @@ import { node, svg, clip } from './core/dom.js';
     personaCancel: document.getElementById('persona-cancel'),
     personaMatches: document.getElementById('persona-matches'),
     personaTemporal: document.getElementById('persona-temporal'),
-    convAddBot: document.getElementById('conv-add-bot'),
+    composerAddBot: document.getElementById('composer-add-bot'),
     inviteDoor: document.getElementById('invite-door'),
+    inviteTitle: document.getElementById('invite-title'),
+    inviteSub: document.getElementById('invite-sub'),
     inviteList: document.getElementById('invite-list'),
     inviteAdd: document.getElementById('invite-add'),
     inviteNew: document.getElementById('invite-new'),
@@ -11309,7 +11311,7 @@ import { node, svg, clip } from './core/dom.js';
   el.scrim.addEventListener('click', closeDrawer);
   if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
   if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
-  if (el.convAddBot) el.convAddBot.addEventListener('click', openInviteDoor);
+  if (el.composerAddBot) el.composerAddBot.addEventListener('click', openInviteDoor);
   if (el.inviteAdd) el.inviteAdd.addEventListener('click', addInvitedBots);
   if (el.inviteCancel) el.inviteCancel.addEventListener('click', closeInviteDoor);
   if (el.inviteNew) {
@@ -14043,17 +14045,20 @@ import { node, svg, clip } from './core/dom.js';
     createRoom(goal, personas, el.huddleCreate);
   }
 
-  // Adding a bot to the conversation it is in (the owner's 2026-11-15
-  // report): the room head's chip and the conversation head's press open
-  // the same door. The home's roles are the list; joining is the one verb
-  // join has always used, so the first bot added turns a plain
-  // conversation into a room on the next state read.
+  // Adding a bot from the composer (the owner's 2026-11-16 point: the
+  // door belongs where the ask is made). On an open conversation the
+  // picked roles join it through the one verb join has always used; on
+  // the landing they start the conversation instead — a room with no
+  // goal yet — so a bot can be there from its first message. A room's
+  // members row carries the same door.
   function openInviteDoor() {
     if (!el.inviteDoor) return;
-    if (!face.session) {
-      notice('no conversation is open',
-        'open a conversation first — a bot joins the one you are in');
-      return;
+    var joining = Boolean(face.session);
+    if (el.inviteTitle) el.inviteTitle.textContent = joining ? 'Add a bot' : 'Start with a bot';
+    if (el.inviteSub) {
+      el.inviteSub.textContent = joining
+        ? 'A bot joins this conversation and sees every message; a mention hands it the turn. The first one added makes it a room.'
+        : 'These bots start a new conversation with you — the first one added makes it a room, and its first message is yours to send.';
     }
     // The door opens at once: a press that waits on a read with no
     // change on screen reads as a dead press. The roles fill in when the
@@ -14094,7 +14099,7 @@ import { node, svg, clip } from './core/dom.js';
           : 'the home\u2019s roles could not be read — create one and it joins as it lands'));
     }
     el.inviteAdd.disabled = false;
-    el.inviteAdd.textContent = 'add to the conversation';
+    el.inviteAdd.textContent = face.session ? 'add to the conversation' : 'start the conversation';
     el.inviteDoor.hidden = false;
     var first = el.inviteList.querySelector('.pick');
     if (first) first.focus();
@@ -14116,8 +14121,33 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
     var press = el.inviteAdd;
+    var label = face.session ? 'add to the conversation' : 'start the conversation';
     press.disabled = true;
     press.textContent = 'adding\u2026';
+    if (!face.session) {
+      // The landing's door starts the conversation: the huddle verb is the
+      // one creation path a room has ever used (a session carrying its
+      // personas), and the first named role leads it.
+      post('/api/huddles', { goal: null, personas: picked })
+        .then(function (reply) {
+          if (reply.status !== 200) {
+            throw new Error((reply.body && reply.body.error) || 'the home refused it');
+          }
+          var id = reply.body && reply.body.id;
+          press.disabled = false;
+          press.textContent = label;
+          closeInviteDoor();
+          face.huddles = null;
+          notice('the conversation started', picked.join(', ') + ' joined it');
+          if (id) return openWork(id);
+        })
+        .catch(function (error) {
+          press.disabled = false;
+          press.textContent = label;
+          notice('the conversation was not started', String((error && error.message) || error));
+        });
+      return;
+    }
     var chain = Promise.resolve();
     picked.forEach(function (name) {
       chain = chain
@@ -14132,14 +14162,14 @@ import { node, svg, clip } from './core/dom.js';
     chain
       .then(function () {
         press.disabled = false;
-        press.textContent = 'add to the conversation';
+        press.textContent = label;
         closeInviteDoor();
         notice('the room grew', picked.join(', ') + ' joined this conversation');
         load();
       })
       .catch(function (error) {
         press.disabled = false;
-        press.textContent = 'add to the conversation';
+        press.textContent = label;
         notice('the bot was not added', String((error && error.message) || error));
       });
   }
@@ -14730,7 +14760,6 @@ import { node, svg, clip } from './core/dom.js';
     // chat, not for a room.
     el.convHead.hidden = !face.session || face.panel === 'huddles';
     // The bot door needs a conversation to join: a landing has none.
-    if (el.convAddBot) el.convAddBot.hidden = !face.session;
     paintRoomHead();
     if (!face.session) return;
     el.convName.textContent = (row && row.title) || sessionLabel(face.session);
