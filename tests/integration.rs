@@ -13015,11 +13015,37 @@ use base64::Engine as _;
 
 /// The full remote path with the real reference relay running as a child
 /// process: the device joins, the phone's half of the X25519 exchange
+/// One request against a freshly spawned reference relay, bounded and
+/// retried on *transport* failures only: the relay prints its banner
+/// before its accept loop has certainly taken the socket, and under a
+/// loaded suite the first connection can be reset (KI-546). A *status*
+/// is never retried — a refusal is the relay's answer, not a race.
+// The error type is ureq's, and a test helper does not get to reshape it:
+// boxing it here would force every call site to dereference (KI-546's fix).
+#[allow(clippy::result_large_err)]
+fn relay_retry<T>(mut call: impl FnMut() -> Result<T, ureq::Error>) -> Result<T, ureq::Error> {
+    let mut last: Option<ureq::Error> = None;
+    for attempt in 0..12u64 {
+        match call() {
+            Ok(value) => return Ok(value),
+            Err(ureq::Error::Status(code, response)) => {
+                return Err(ureq::Error::Status(code, response))
+            }
+            Err(error) => {
+                last = Some(error);
+                std::thread::sleep(std::time::Duration::from_millis(25 * (attempt + 1)));
+            }
+        }
+    }
+    Err(last.expect("an attempt ran"))
+}
+
 /// runs through the relay's root, a sealed task crosses it, the answer
 /// comes back sealed, and an unsealed content-bearing frame is refused by
 /// name. The wire assertions are the point: the bytes on the phone's
 /// side of the relay carry no plaintext. Skipped with a loud note when
 /// `python3` is absent.
+#[allow(clippy::result_large_err)] // ureq's error, matched at the call sites
 #[tokio::test(flavor = "multi_thread")]
 async fn the_reference_relay_carries_sealed_frames() {
     if std::process::Command::new("python3")
@@ -13090,8 +13116,10 @@ async fn the_reference_relay_carries_sealed_frames() {
     // KI-367's pin, against the real relay: a join with no session
     // proof is refused by name — session identity is not
     // self-asserted — and only the proof-carrying client lands.
-    let squat = ureq::post(&format!("{base}/join"))
-        .send_json(serde_json::json!({"sid": "squat-0000", "hash": "x"}));
+    let squat = relay_retry(|| {
+        ureq::post(&format!("{base}/join"))
+            .send_json(serde_json::json!({"sid": "squat-0000", "hash": "x"}))
+    });
     match squat {
         Err(ureq::Error::Status(code, response)) => {
             let body: serde_json::Value = response.into_json().expect("the refusal body is json");
@@ -13127,13 +13155,15 @@ async fn the_reference_relay_carries_sealed_frames() {
     // the session id the handshake names. The sealer comes back alive
     // because the answer has to be opened with it.
     let (phone, sealed_task) = {
-        let doc: serde_json::Value = ureq::get(&format!("{base}/api/relay/handshake"))
-            .set("x-fleet-relay", secret)
-            .timeout(std::time::Duration::from_secs(10))
-            .call()
-            .expect("the handshake answers")
-            .into_json()
-            .expect("the handshake's document");
+        let doc: serde_json::Value = relay_retry(|| {
+            ureq::get(&format!("{base}/api/relay/handshake"))
+                .set("x-fleet-relay", secret)
+                .timeout(std::time::Duration::from_secs(10))
+                .call()
+        })
+        .expect("the handshake answers")
+        .into_json()
+        .expect("the handshake's document");
         assert_eq!(doc["sid"], *session, "the phone learns the salt it needs");
         let device_public: [u8; 32] = base64::engine::general_purpose::STANDARD
             .decode(doc["public"].as_str().expect("the public is base64"))
@@ -13150,12 +13180,14 @@ async fn the_reference_relay_carries_sealed_frames() {
             "public": base64::engine::general_purpose::STANDARD
                 .encode(x25519_dalek::PublicKey::from(&peer).as_bytes()),
         });
-        let posted = ureq::post(&format!("{base}/api/relay/handshake"))
-            .set("x-fleet-relay", secret)
-            .set("content-type", "application/json")
-            .timeout(std::time::Duration::from_secs(10))
-            .send_string(&announce.to_string())
-            .expect("the announcement lands");
+        let posted = relay_retry(|| {
+            ureq::post(&format!("{base}/api/relay/handshake"))
+                .set("x-fleet-relay", secret)
+                .set("content-type", "application/json")
+                .timeout(std::time::Duration::from_secs(10))
+                .send_string(&announce.to_string())
+        })
+        .expect("the announcement lands");
         assert_eq!(
             posted.status(),
             200,
@@ -13174,21 +13206,25 @@ async fn the_reference_relay_carries_sealed_frames() {
     };
 
     // A missing secret is refused before the frame exists.
-    let refused = ureq::post(&format!("{base}/api/run"))
-        .timeout(std::time::Duration::from_secs(10))
-        .send_string("{}");
+    let refused = relay_retry(|| {
+        ureq::post(&format!("{base}/api/run"))
+            .timeout(std::time::Duration::from_secs(10))
+            .send_string("{}")
+    });
     assert!(refused.is_err(), "a headerless run must not become a frame");
 
     // The sealed task crosses the relay: what goes on the wire is
     // ciphertext, what comes back is ciphertext, and what opens at the
     // ends is the task's answer under the frame's own binding.
-    let reply = ureq::post(&format!("{base}/api/session/new"))
-        .set("x-fleet-relay", secret)
-        .set("x-fleet-enc", "1")
-        .set("content-type", "application/json")
-        .timeout(std::time::Duration::from_secs(15))
-        .send_string(&sealed_task)
-        .expect("the sealed run lands");
+    let reply = relay_retry(|| {
+        ureq::post(&format!("{base}/api/session/new"))
+            .set("x-fleet-relay", secret)
+            .set("x-fleet-enc", "1")
+            .set("content-type", "application/json")
+            .timeout(std::time::Duration::from_secs(15))
+            .send_string(&sealed_task)
+    })
+    .expect("the sealed run lands");
     assert_eq!(reply.status(), 200, "the detached bridge accepts the run");
     let frame_id = reply
         .header("x-fleet-frame")
@@ -13214,12 +13250,13 @@ async fn the_reference_relay_carries_sealed_frames() {
 
     // An unsealed content-bearing frame is refused by name at the device.
     // A 4xx comes back as ureq's Status error, which carries the reply.
-    let plaintext = match ureq::post(&format!("{base}/api/session/new"))
-        .set("x-fleet-relay", secret)
-        .set("content-type", "application/json")
-        .timeout(std::time::Duration::from_secs(15))
-        .send_string(&serde_json::json!({"task": task}).to_string())
-    {
+    let plaintext = match relay_retry(|| {
+        ureq::post(&format!("{base}/api/session/new"))
+            .set("x-fleet-relay", secret)
+            .set("content-type", "application/json")
+            .timeout(std::time::Duration::from_secs(15))
+            .send_string(&serde_json::json!({"task": task}).to_string())
+    }) {
         Err(ureq::Error::Status(code, response)) => (code, response),
         other => panic!("a plaintext run must be refused, got {other:?}"),
     };
@@ -13234,10 +13271,12 @@ async fn the_reference_relay_carries_sealed_frames() {
     );
 
     // The shell's install set rides open, as a browser navigation must.
-    let shell = ureq::get(&format!("{base}/app.js"))
-        .timeout(std::time::Duration::from_secs(10))
-        .call()
-        .expect("the shell lands");
+    let shell = relay_retry(|| {
+        ureq::get(&format!("{base}/app.js"))
+            .timeout(std::time::Duration::from_secs(10))
+            .call()
+    })
+    .expect("the shell lands");
     assert_eq!(shell.status(), 200, "the install set needs no secret");
 
     let _ = shutdown.send(true);

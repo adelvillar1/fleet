@@ -499,7 +499,19 @@ while [ "$attempt" -le 18 ]; do
   sleep 5
   attempt=$((attempt + 1))
 done
-[ "$attempt" -le 18 ] || die "the published feed does not name $VERSION after 90s — the release is not published"
+# The feed lagging is not the release failing (KI-526's trap, twice over):
+# the upload is the source of truth and the read-back is the confirmation,
+# so an expired window asks GitHub's own release state before it calls
+# anything a failure. Published + the asset present + a lagging redirect is
+# a named warning and a green exit; nothing else is.
+if [ "$attempt" -gt 18 ]; then
+  if gh release view "$TAG" --repo adelvillar1/fleet --json isDraft,assets 2>/dev/null |
+    python3 -c "import json,sys;d=json.load(sys.stdin);names=[a.get('name') for a in d.get('assets') or []];sys.exit(0 if (not d.get('isDraft')) and 'latest.json' in names else 1)"; then
+    echo "release.sh: the feed's latest redirect has not caught up after 90s — GitHub reports $TAG published with latest.json uploaded; the publication stands, the redirect lags (KI-526)" >&2
+  else
+    die "the published feed does not name $VERSION after 90s, and GitHub does not report $TAG published with latest.json — the publication did not land"
+  fi
+fi
 python3 - "$READBACK" "$RAW" <<'PYEOF'
 import hashlib, json, sys, urllib.request
 feed_path, raw = sys.argv[1], sys.argv[2]

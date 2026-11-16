@@ -1388,6 +1388,31 @@ pub(crate) fn start_parent(path: &Path) -> Option<String> {
 /// List every log in `sessions_dir(home)`, oldest first; logs that fail to
 /// parse are reported as entries with an `unreadable` model rather than
 /// hiding them.
+/// The newest session log's summary, without walking every log.
+///
+/// The settings board asks for "the last session's audit" and used to call
+/// [`list`] — a head-and-tail read per log, which on this home's 872 logs
+/// was most of `/api/settings`' latency (KI-545's second hotspot). The
+/// newest log is a directory listing and one mtime comparison.
+pub fn newest(home: &Path) -> Option<SessionSummary> {
+    let dir = crate::home::sessions_dir(home);
+    let entries = fs::read_dir(&dir).ok()?;
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(at, _)| modified > *at) {
+            best = Some((modified, path));
+        }
+    }
+    summarize(&best?.1)
+}
+
 pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
     let dir = crate::home::sessions_dir(home);
     let mut entries: Vec<SessionSummary> = Vec::new();

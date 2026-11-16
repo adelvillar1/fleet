@@ -2134,9 +2134,12 @@ pub fn read_brain(home: &Path, bounds: &Bounds) -> Result<BrainSnapshot, String>
             home.display()
         ));
     }
-    let deadline = Instant::now() + bounds.brain_budget;
+    // A budget no instant can hold says "no deadline" rather than
+    // panicking: a config value is data, and data does not get to abort a
+    // read (KI-551 — the overflow was the panic source a test relied on).
+    let deadline = Instant::now().checked_add(bounds.brain_budget);
     let read = |name: &str| -> Section<Value> {
-        if Instant::now() >= deadline {
+        if past(deadline) {
             return Section::Refused(format!(
                 "{name}.json was not read — the read budget was spent"
             ));
@@ -3059,14 +3062,16 @@ pub fn read_tower(root: &Path, bounds: &Bounds) -> Result<TowerSnapshot, String>
     // The aggregate deadline, checked between projects and before every
     // `git` call: a hung git on one repository costs the budget, not the
     // cadence behind the scan.
-    let deadline = Instant::now() + bounds.scan_budget;
+    // The same rule as the brain leg: an unrepresentable budget is no
+    // deadline, not an abort (KI-551).
+    let deadline = Instant::now().checked_add(bounds.scan_budget);
 
     let found = names.len();
     let mut projects = Vec::new();
     let mut skipped = Vec::new();
     let mut unread = 0;
     for (index, name) in names.into_iter().enumerate() {
-        if Instant::now() >= deadline {
+        if past(deadline) {
             unread = found - index;
             break;
         }
@@ -3097,15 +3102,27 @@ pub fn read_tower(root: &Path, bounds: &Bounds) -> Result<TowerSnapshot, String>
 }
 
 /// One project's git facts, each call bounded and each failure named.
+/// Whether a read's deadline has passed. `None` is no deadline — a budget
+/// no instant can hold, which is data saying "unbounded", never a reason
+/// to abort the read (KI-551).
+fn past(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|deadline| Instant::now() >= deadline)
+}
+
 /// The scan's aggregate deadline is checked before each call as well as
 /// between projects: a project whose every call spends its full bound
 /// would otherwise cost five bounds on its own, and the budget is what
 /// stops the scan rather than what merely bounds it.
-fn project_facts(path: &Path, name: &str, bounds: &Bounds, deadline: Instant) -> ProjectFacts {
+fn project_facts(
+    path: &Path,
+    name: &str,
+    bounds: &Bounds,
+    deadline: Option<Instant>,
+) -> ProjectFacts {
     let mut notes = Vec::new();
     let mut spent = false;
     let mut call = |args: &[&str]| {
-        if Instant::now() >= deadline {
+        if past(deadline) {
             spent = true;
             return None;
         }
@@ -5908,40 +5925,46 @@ mod tests {
     }
 
     #[test]
-    fn the_refresher_survives_a_read_that_panics_and_keeps_reading() {
+    fn the_refresher_survives_a_read_that_dies_and_keeps_reading() {
         let scratch = Scratch::new("refresher-panic");
         let brain = scratch.path().join("brain");
         std::fs::create_dir_all(&brain).expect("the brain home");
         write_state(&brain, "gates_state", GATES_FIXTURE);
         scratch_repo(scratch.path(), "alpha");
-        // A scan budget no instant can hold makes the tower read's own
-        // deadline computation panic: the stand-in for any read that dies
-        // on the blocking pool, which is what the JoinError guard exists
-        // for. The crate's hard-won CatchUnwind lesson from cron/eval,
-        // pinned here rather than assumed.
+        // A tower root that is a file, not a home: the read dies with a
+        // named error inside the blocking pool, and the refresher must
+        // name it and keep reading — the promise the JoinError guard
+        // exists for. (The guard's *panicking* arm has no injection seam
+        // since KI-551 made an unrepresentable budget mean "no deadline"
+        // instead of an abort; this test proves the failure arm, and the
+        // row records the residual.)
+        let file_not_home = scratch.path().join("not-a-home");
+        std::fs::write(&file_not_home, b"\n").expect("the file");
         let sources = Sources {
             router: state(&scratch),
             brain_home: Some(brain),
-            tower_root: scratch.path().to_path_buf(),
+            tower_root: file_not_home,
             fleet_home: scratch.path().to_path_buf(),
-            bounds: Bounds {
-                scan_budget: Duration::MAX,
-                ..Bounds::default()
-            },
+            bounds: Bounds::default(),
         };
         let (tx, rx) = spawn_refresher(sources);
         let bridged = bridge(rx);
 
+        // A generous total and a bounded per-receive wait: a dead channel
+        // fails fast, a loaded machine still gets its room.
+        let total = Duration::from_secs(60);
+        let started = std::time::Instant::now();
         let mut landed = Vec::new();
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while landed.len() < 4 && std::time::Instant::now() < deadline {
-            let Ok(update) = bridged.recv() else { break };
+        while landed.len() < 4 && started.elapsed() < total {
+            let Ok(update) = bridged.recv_timeout(Duration::from_secs(15)) else {
+                break;
+            };
             match update.outcome {
                 Ok(_) => landed.push(update.kind),
                 Err(reason) => {
-                    // The panicking read is named, never swallowed.
+                    // The failed read is named, never swallowed.
                     assert_eq!(update.kind, BoardKind::Tower, "{reason}");
-                    assert!(reason.contains("the tower read could not run"), "{reason}");
+                    assert!(reason.contains("the tower could not list"), "{reason}");
                     landed.push(update.kind);
                 }
             }
@@ -5954,9 +5977,11 @@ mod tests {
         // now reads again instead of the loop being dead.
         let _ = tx.send(BoardCommand::Refresh);
         let mut again = Vec::new();
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while again.len() < 4 && std::time::Instant::now() < deadline {
-            let Ok(update) = bridged.recv() else { break };
+        let started = std::time::Instant::now();
+        while again.len() < 4 && started.elapsed() < total {
+            let Ok(update) = bridged.recv_timeout(Duration::from_secs(15)) else {
+                break;
+            };
             again.push(update.kind);
         }
         assert_eq!(again.len(), 4, "the refresher kept reading: {again:?}");

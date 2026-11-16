@@ -10971,28 +10971,27 @@ fn settings_read(home: &std::path::Path) -> Value {
         crate::settings::secret_state(home, "FLEET_TELEGRAM_BOT_TOKEN");
     // The tool surface as the settings board reads it: the native
     // tools, the tier bounds, and the last session's measured calls.
-    let last_audit = crate::session::list(home)
-        .ok()
-        .and_then(|mut list| list.pop())
-        .and_then(|summary| {
-            crate::tool_audit::audit(&summary.path).ok().map(|audit| {
-                json!({
-                    "session": summary.id,
-                    "calls": audit.calls,
-                    "errors": audit.errors,
-                    "truncated": audit.truncated,
-                    "redundant": audit.redundant,
-                    "p95_bytes": audit.p95_bytes,
-                    "methods": audit.methods,
-                })
+    // The newest log, not the whole listing: the board wants one audit,
+    // and the listing is a head-and-tail read per log (KI-545).
+    let last_audit = crate::session::newest(home).and_then(|summary| {
+        crate::tool_audit::audit(&summary.path).ok().map(|audit| {
+            json!({
+                "session": summary.id,
+                "calls": audit.calls,
+                "errors": audit.errors,
+                "truncated": audit.truncated,
+                "redundant": audit.redundant,
+                "p95_bytes": audit.p95_bytes,
+                "methods": audit.methods,
             })
-        });
+        })
+    });
     // The lifecycle column: every native tool's state, the disabled
     // names, and the last applied sweep \u{2014} the card's "what is on
     // and what the evidence says about it".
     let thresholds = crate::settings::lifecycle_thresholds(home);
     let disabled_tools = crate::settings::tools_disabled(home);
-    let lifecycle_scan = crate::tool_advisor::scan(home, thresholds.window);
+    let lifecycle_scan = cached_lifecycle_scan(home, thresholds.window);
     let lifecycle_metrics = crate::tool_advisor::lifecycle_metrics(&lifecycle_scan);
     let states: std::collections::BTreeMap<String, String> = lifecycle_metrics
         .iter()
@@ -12223,6 +12222,49 @@ fn servers_document(home: &std::path::Path) -> Value {
         })
         .collect::<Vec<_>>();
     json!({ "servers": rows })
+}
+
+/// How long the lifecycle scan's answer is reused. The scan replays every
+/// session log in its window — seconds of parsing — and the settings board
+/// reads the whole document on every press, which made `/api/settings`
+/// cost ~2 s for a card whose state moves over days (KI-545).
+const LIFECYCLE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The cached lifecycle scan: keyed by the home and the window, reused for
+/// a minute. A tool disabled or promoted inside the minute shows on the
+/// next read; nothing in the contract depends on a fresher answer.
+static LIFECYCLE_CACHE: std::sync::Mutex<
+    Option<(
+        std::path::PathBuf,
+        usize,
+        std::time::Instant,
+        crate::tool_advisor::ToolScan,
+    )>,
+> = std::sync::Mutex::new(None);
+
+fn cached_lifecycle_scan(home: &std::path::Path, window: usize) -> crate::tool_advisor::ToolScan {
+    {
+        let guard = LIFECYCLE_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((cached_home, cached_window, at, scan)) = guard.as_ref() {
+            if cached_home == home && *cached_window == window && at.elapsed() < LIFECYCLE_CACHE_TTL
+            {
+                return scan.clone();
+            }
+        }
+    }
+    let scan = crate::tool_advisor::scan(home, window);
+    let mut guard = LIFECYCLE_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *guard = Some((
+        home.to_path_buf(),
+        window,
+        std::time::Instant::now(),
+        scan.clone(),
+    ));
+    scan
 }
 
 fn lanes_document(home: &std::path::Path) -> Value {
@@ -16146,6 +16188,26 @@ mod tests {
     /// empty, with the command door held open by the test: the run is
     /// accepted and stays in flight, which is what a face waiting on an
     /// agent thread looks like.
+    /// The lifecycle scan's cache (KI-545): the answer is keyed by the
+    /// home and the window, so a different window is a different read and
+    /// the same pair is reused. A timing assertion would be a flake; the
+    /// keying is the contract.
+    #[test]
+    fn the_lifecycle_scan_is_cached_by_home_and_window() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-lifecycle-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let first = cached_lifecycle_scan(&home, 7);
+        assert_eq!(first.window, 7);
+        let again = cached_lifecycle_scan(&home, 7);
+        assert_eq!(again.window, 7);
+        assert_eq!(first.sessions, again.sessions);
+        let other = cached_lifecycle_scan(&home, 8);
+        assert_eq!(other.window, 8, "a different window is a different read");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// A bridge over a temp home of its own. The home is unique per call
     /// rather than per process: tests in this binary run concurrently, and
     /// a shared home lets one test's `remove_dir_all` delete the directory
