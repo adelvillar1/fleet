@@ -764,6 +764,16 @@ import { node, svg, clip } from './core/dom.js';
     platforms: [
       ['path', { d: 'M7 18a4.2 4.2 0 0 1 .4-8.4 5.2 5.2 0 0 1 10 1.4A3.6 3.6 0 0 1 17 18z' }]
     ],
+    // The shared memory, synced from its remote. Three stacked layers: it is
+    // a pile rather than a database (`data`'s cylinder), a file (`documents`)
+    // or a book (`memory`), and every one of those is already taken on this
+    // rail — the discipline's rule is one meaning per mark. Drawn for 17px:
+    // three full-width bands, no sub-pixel detail.
+    corpus: [
+      ['path', { d: 'M4.5 6.5L12 3 19.5 6.5 12 10Z' }],
+      ['path', { d: 'M4.5 12L12 15.5 19.5 12' }],
+      ['path', { d: 'M4.5 17.5L12 21 19.5 17.5' }]
+    ],
     // A wrench, as the icons plan specified. It had been a chevron plus a
     // rule — `M5 7l5 5-5 5` is a "next" arrow — which at 17px read as the
     // rail's own collapse control sitting inside a row's mark. Legibility
@@ -1129,6 +1139,9 @@ import { node, svg, clip } from './core/dom.js';
     calibrationBoard: document.getElementById('calibration-board'),
     calibrationRail: document.getElementById('calibration-rail'),
     brainBoard: document.getElementById('brain-board'),
+    brainRail: document.getElementById('brain-rail'),
+    inboxRail: document.getElementById('inbox-rail'),
+    boardRail: document.getElementById('board-rail'),
     workspaceHistoryBoard: document.getElementById('workspace-history-board'),
     workspaceHistoryRail: document.getElementById('workspace-history-rail'),
     armadaBoard: document.getElementById('armada-board'),
@@ -4925,8 +4938,108 @@ import { node, svg, clip } from './core/dom.js';
     return verbs;
   }
 
+  // The inbox wears the second rail (the owner's 2026-11-17 ruling). Its
+  // categories were already computed — waiting or archived, then which of
+  // the five classes — but they lived as a chip strip INSIDE the board, so
+  // the page read as a list rather than a place. The rail is not project
+  // scope: inbox rows have no project in their data, and inventing one would
+  // be a lie the surface tells.
+  var INBOX_SECTION_ICONS = {
+    seats: 'pending', onboarding: 'gate', asks: 'question',
+    cron: 'schedule', doctor: 'verify'
+  };
+
+  function inboxSections() {
+    var doc = face.inbox;
+    var out = [{
+      id: 'waiting', name: 'waiting', header: null,
+      badge: doc ? inboxTotal(doc) : 0, paint: null
+    }];
+    if (!doc) return out;
+    INBOX_CLASSES.forEach(function (kind) {
+      var rows = doc[kind.doc] || [];
+      if (!rows.length) return;
+      out.push({
+        id: kind.doc, name: kind.chip, group: kind.group,
+        badge: rows.length, badgeTitle: kind.group
+      });
+    });
+    var archived = doc.archived || [];
+    out.push({
+      id: 'archived', name: 'archived', group: 'kept, not dismissed',
+      badge: archived.length
+    });
+    return out;
+  }
+
+  function inboxSectionId() {
+    var parts = parseAddress().parts;
+    var held = ['waiting', 'archived'].concat(INBOX_CLASSES.map(function (c) { return c.doc; }));
+    if (parts[0] === 'inbox' && parts[1]) {
+      var said = decodeURIComponent(parts[1]);
+      if (held.indexOf(said) !== -1) return said;
+    }
+    try {
+      var stored = window.localStorage.getItem('fleet-inbox-section');
+      if (stored && held.indexOf(stored) !== -1) return stored;
+    } catch (error) { }
+    return 'waiting';
+  }
+
+  function rememberInboxSection(id) {
+    try { window.localStorage.setItem('fleet-inbox-section', id); } catch (error) { }
+  }
+
+  function paintInboxRail() {
+    if (!el.inboxRail) return;
+    var current = inboxSectionId();
+    var declaration = [];
+    inboxSections().forEach(function (section) {
+      if (section.id === 'archived' && current !== 'archived') {
+        // The archived row closes the rail as its own group.
+        declaration.push({ header: 'kept' });
+      }
+      declaration.push({
+        id: section.id,
+        icon: INBOX_SECTION_ICONS[section.id] || (section.id === 'waiting' ? 'inbox' : 'archive'),
+        name: section.name,
+        badge: section.badge || null,
+        badgeTitle: section.badgeTitle || null
+      });
+    });
+    sectionRail(el.inboxRail, declaration, {
+      current: current,
+      folded: !!face.inboxRailFolded,
+      store: 'fleet-inbox-rail',
+      onPick: function (id) {
+        rememberInboxSection(id);
+        window.location.hash = '#/inbox/' + encodeURIComponent(id);
+        // The rail IS the tab and the filter: one state, two doors.
+        face.inboxTab = id === 'archived' ? 'archived' : 'waiting';
+        face.inboxFilter = (id === 'archived' || id === 'waiting') ? '' : id;
+        face.inboxAt = 0;
+        face.inboxOpen = null;
+        // No re-read here. `inboxDecide` already sets `face.inbox` to the
+        // reply, so switching sections is a paint over a document the face
+        // holds — and a read on every section press would both cost a round
+        // trip and, mid-flight, repaint an empty section over a filled one.
+        // The address change still runs the inbox arrival; `showRoute`
+        // skips its read when the section changed under it (see `lastLens`).
+        paintInbox();
+      },
+      onFold: function (folded) {
+        face.inboxRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-inbox-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintInboxRail();
+      }
+    });
+  }
+
   function paintInbox() {
     paintRailCounts();
+    paintInboxRail();
     if (!el.inboxBody) return;
     var doc = face.inbox;
     el.inboxBody.textContent = '';
@@ -4939,7 +5052,16 @@ import { node, svg, clip } from './core/dom.js';
     var hiddenByAct = function (key) { return !!acting && acting.key === key; };
     var waiting = inboxTotal(doc);
     var archived = doc.archived || [];
-    var tab = face.inboxTab === 'archived' ? 'archived' : 'waiting';
+    // The SECTION is the source of truth, not a parallel `face.inboxTab`:
+    // the address `#/inbox/archived` and a press on the rail must reach the
+    // same place, and two stored flags drift the moment one is set without
+    // the other. `face.inboxFilter` still names the class inside waiting.
+    var section = inboxSectionId();
+    var tab = section === 'archived' ? 'archived' : 'waiting';
+    face.inboxTab = tab;
+    if (section !== 'archived' && section !== 'waiting') {
+      face.inboxFilter = section;
+    }
     if (el.inboxTotal) {
       el.inboxTotal.textContent = waiting + ' waiting';
       el.inboxTotal.hidden = waiting === 0;
@@ -4950,47 +5072,15 @@ import { node, svg, clip } from './core/dom.js';
       el.inboxBody.appendChild(refusal);
     }
 
-    // The head's controls: the two segments, then the class filters.
+    // The questions this strip used to ask — waiting or archived, then
+    // which class — are the second rail's rows now. What stays here is the
+    // keyboard hint and the dismissals' way back, which have no home in a
+    // section rail.
     var tools = node('div', 'ib-tools');
-    var seg = node('div', 'ib-seg');
-    seg.setAttribute('role', 'tablist');
-    [['waiting', 'Waiting \u00b7 ' + waiting], ['archived', 'Archived \u00b7 ' + archived.length]]
-      .forEach(function (pair) {
-        var button = node('button', null, pair[1]);
-        button.type = 'button';
-        button.setAttribute('role', 'tab');
-        button.setAttribute('aria-selected', String(tab === pair[0]));
-        button.addEventListener('click', function () {
-          face.inboxTab = pair[0];
-          face.inboxAt = 0;
-          face.inboxOpen = null;
-          paintInbox();
-        });
-        seg.appendChild(button);
-      });
-    tools.appendChild(seg);
-    if (tab === 'waiting' && waiting > 0) {
-      var filters = [{ cls: '', label: 'all', n: waiting }].concat(
-        INBOX_CLASSES.map(function (c) {
-          return { cls: c.cls, label: c.chip, n: (doc[c.doc] || []).length };
-        }).filter(function (f) { return f.n > 0; }));
-      filters.forEach(function (f) {
-        var chip = node('button', 'ib-chip', f.label + ' \u00b7 ' + f.n);
-        chip.type = 'button';
-        chip.setAttribute('aria-pressed', String((face.inboxFilter || '') === f.cls));
-        chip.addEventListener('click', function () {
-          face.inboxFilter = f.cls;
-          face.inboxAt = 0;
-          face.inboxOpen = null;
-          paintInbox();
-        });
-        tools.appendChild(chip);
-      });
-      var hint = node('span', 'ib-hint',
-        acting ? 'working \u2014 ' + acting.op + 'ing' : 'j / k moves \u00b7 enter opens \u00b7 d dismisses');
-      hint.style.marginLeft = 'auto';
-      tools.appendChild(hint);
-    }
+    var hint = node('span', 'ib-hint',
+      acting ? 'working \u2014 ' + acting.op + 'ing' : 'j / k moves \u00b7 enter opens \u00b7 d dismisses');
+    hint.style.marginLeft = 'auto';
+    tools.appendChild(hint);
     // The dismissals' own toggle rides the tools in every waiting
     // state — an inbox emptied by dismissals must still offer the way
     // back (the counts row is where the eye is).
@@ -7222,8 +7312,12 @@ import { node, svg, clip } from './core/dom.js';
     'project': 'repo', 'reference': 'memory', 'episodic': 'events',
     'everything-else': 'other', 'retired': 'retired', 'archive': 'archive',
     'today': 'today',
-    // The three Intelligence segments (U40's fold).
-    'skills': 'skills', 'tools': 'tools', 'workflows': 'workflows'
+    // The three Intelligence capability segments (U40's fold), and the two
+    // knowledge sections that joined them when the second brain moved out of
+    // health (the owner's 2026-11-17 ruling). Each names its own drawing:
+    // `corpus` is the stacked layers, `second-brain` the project grid.
+    'skills': 'skills', 'tools': 'tools', 'workflows': 'workflows',
+    'corpus': 'corpus', 'second-brain': 'second-brain'
   };
 
   /// The type sections the read actually holds, in the substrate's own
@@ -7309,6 +7403,26 @@ import { node, svg, clip } from './core/dom.js';
         badge: intelligenceWorkflowCount(),
         badgeTitle: 'declared chains',
         paint: intelligenceWorkflowsCard
+      },
+      // The corpus is knowledge, so it belongs here rather than on health
+      // (the owner's 2026-11-17 ruling: the second brain is a category of
+      // intelligence). It had been a card at the foot of the health page,
+      // which sorted "is the machine well" together with "what does it
+      // know" — two questions, one stack.
+      {
+        id: 'corpus', name: 'corpus',
+        badge: null,
+        badgeTitle: 'the shared memory, synced from its remote',
+        paint: function () { return [healthCorpusCard()]; }
+      },
+      // And the second brain's own landscape, for the same reason: the
+      // projects and the decisions that need a person are what the corpus
+      // is for, so they sit beside it.
+      {
+        id: 'second-brain', name: 'second brain',
+        badge: (face.brain && (face.brain.projects || []).length) || null,
+        badgeTitle: 'projects in the landscape',
+        paint: function () { return brainSections(); }
       }
     );
     return sections;
@@ -8942,12 +9056,91 @@ import { node, svg, clip } from './core/dom.js';
     return face.boardSel;
   }
 
+  // The board is scoped by PROJECT (the owner's 2026-11-17 ruling). Tasks
+  // carry their project (`boards.rs`'s rows do), so the rail is an
+  // `all tasks` row and then one row per project the work belongs to — the
+  // same second rail every split page wears, with the work's project as its
+  // axis. `all tasks` is the board's old behaviour, kept as one row rather
+  // than replaced, so nothing is reachable only by a filter.
+  function boardSections() {
+    var read = face.tasksRead;
+    var tasks = (read && read.tasks) || [];
+    var counts = {};
+    tasks.forEach(function (task) {
+      var project = String(task.project || '').trim() || 'unassigned';
+      counts[project] = (counts[project] || 0) + 1;
+    });
+    var out = [{ id: 'all', name: 'all tasks', badge: tasks.length,
+      badgeTitle: tasks.length + ' tasks across every project' }];
+    Object.keys(counts).sort().forEach(function (project) {
+      out.push({
+        id: project, name: project, badge: counts[project],
+        badgeTitle: counts[project] + (counts[project] === 1 ? ' task' : ' tasks')
+      });
+    });
+    return out;
+  }
+
+  function boardProjectId() {
+    var parts = parseAddress().parts;
+    if (parts[0] === 'board' && parts[1]) return decodeURIComponent(parts[1]);
+    try {
+      var stored = window.localStorage.getItem('fleet-board-project');
+      if (stored) return stored;
+    } catch (error) { }
+    return 'all';
+  }
+
+  function rememberBoardProject(id) {
+    try { window.localStorage.setItem('fleet-board-project', id); } catch (error) { }
+  }
+
+  function paintBoardRail() {
+    if (!el.boardRail) return;
+    var sections = boardSections();
+    sectionRail(el.boardRail, sections.map(function (section) {
+      return {
+        // A project is not a mark: the rail's own folder says "work", and a
+        // per-project drawing would be thirty invented icons. The all-tasks
+        // row wears the board's mark; projects wear the folder.
+        id: section.id,
+        icon: section.id === 'all' ? 'board' : 'repo',
+        name: section.name, badge: section.badge || null,
+        badgeTitle: section.badgeTitle || null
+      };
+    }), {
+      current: boardProjectId(),
+      folded: !!face.boardRailFolded,
+      store: 'fleet-board-rail',
+      onPick: function (id) {
+        rememberBoardProject(id);
+        window.location.hash = id === 'all' ? '#/board' : '#/board/' + encodeURIComponent(id);
+        paintBoard();
+      },
+      onFold: function (folded) {
+        face.boardRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-board-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintBoardRail();
+      }
+    });
+  }
+
   function paintBoard() {
     if (!el.boardBoard) return;
+    paintBoardRail();
     var read = face.tasksRead;
+    // Read the scope BEFORE the head: it names the scope, and a `var` used
+    // above its declaration hoists as undefined — the head would say
+    // "The board · undefined" and look like a missing project.
+    var scope = boardProjectId();
     el.boardBoard.textContent = '';
-    el.boardBoard.appendChild(pageHead('Work', 'The board',
-      'the work as it stands — drag a card between columns to move it; the move settles against the record.', null));
+    el.boardBoard.appendChild(pageHead('Work',
+      scope === 'all' ? 'The board' : 'The board \u00b7 ' + scope,
+      scope === 'all'
+        ? 'the work as it stands — drag a card between columns to move it; the move settles against the record.'
+        : 'one project\u2019s work \u2014 drag a card between columns to move it; the move settles against the record.', null));
     if (!read) {
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty', 'The tasks read has not landed yet.'));
@@ -8955,6 +9148,13 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
     var tasks = read.tasks || [];
+    // The rail's scope: one project, or every task. A filter, not a re-read
+    // — the document already carries the project on each task.
+    if (scope !== 'all') {
+      tasks = tasks.filter(function (task) {
+        return (String(task.project || '').trim() || 'unassigned') === scope;
+      });
+    }
     var sel = boardSelected();
     var selectedCount = Object.keys(sel).filter(function (id) { return sel[id]; }).length;
 
@@ -16366,6 +16566,24 @@ import { node, svg, clip } from './core/dom.js';
 
   // -------------------------------------------------- the second-brain panel
 
+  // Where the second-brain section renders. It moved to Intelligence (the
+  // owner's 2026-11-17 ruling), so a repaint guard keyed on the old panel
+  // would paint a surface the section no longer lives on.
+  function onSecondBrain() {
+    if (face.panel === 'second-brain') return true;
+    return face.panel === 'memory' && memorySectionId() === 'second-brain';
+  }
+
+  // Repaint whichever surface currently holds the second brain. The health
+  // page no longer shows it (it moved to Intelligence on the owner's
+  // 2026-11-17 ruling), so a read landing while the owner sits on health
+  // must NOT paint the Intelligence board and vice versa — that is how two
+  // section-body elements ended up mounted at once.
+  function repaintSecondBrain() {
+    if (face.panel === 'second-brain') { paintBrain(); return; }
+    if (face.panel === 'memory') { paintMemory(); }
+  }
+
   function readBrain(force) {
     var now = Date.now();
     if (!force && face.brain && now - face.brainAt < 4000) return Promise.resolve();
@@ -16385,7 +16603,7 @@ import { node, svg, clip } from './core/dom.js';
         } else {
           face.brain = doc;
         }
-        if (face.panel === 'second-brain') paintBrain();
+        if (onSecondBrain()) repaintSecondBrain();
       })
       .catch(function () { });
   }
@@ -16409,10 +16627,10 @@ import { node, svg, clip } from './core/dom.js';
         face.plugin = doc;
         var running = !!(doc.pipeline && doc.pipeline.running);
         face.pluginWasRunning = running;
-        if (face.panel === 'second-brain') paintBrain();
-        if (running && face.panel === 'second-brain') {
+        if (onSecondBrain()) repaintSecondBrain();
+        if (running && onSecondBrain()) {
           window.setTimeout(function () {
-            if (face.panel === 'second-brain') readPlugin(true);
+            if (onSecondBrain()) readPlugin(true);
           }, 1000);
         } else if (was) {
           // The job finished under the panel: the derived state it
@@ -17015,7 +17233,7 @@ import { node, svg, clip } from './core/dom.js';
       .then(function (reply) { return reply.json(); })
       .then(function (doc) {
         face.lanesHealth = doc;
-        if (face.panel === 'second-brain') paintBrain();
+        if (onSecondBrain()) repaintSecondBrain();
       })
       .catch(function () { });
   }
@@ -17028,7 +17246,7 @@ import { node, svg, clip } from './core/dom.js';
       .then(function (reply) { return reply.json(); })
       .then(function (doc) {
         face.doctorChecks = doc;
-        if (face.panel === 'second-brain') paintBrain();
+        if (onSecondBrain()) repaintSecondBrain();
       })
       .catch(function () { });
   }
@@ -17135,45 +17353,140 @@ import { node, svg, clip } from './core/dom.js';
     return card;
   }
 
+  // The health surface: is the machine well. Its sections are the checks
+  // themselves (the owner's 2026-11-17 ruling), on the same second rail the
+  // other split pages wear — NOT scoped by project, because these checks are
+  // about the machine, not about anyone's work. The corpus and the second
+  // brain moved to Intelligence, where knowledge belongs.
+  // Every key here must be one ICONS actually draws — a made-up key falls
+  // through `|| 'dot'` and the discipline's own pin only catches the map it
+  // knows about. `build` is the version-and-recovery card, so it wears the
+  // update mark; the lanes are the processes fleet launches.
+  var HEALTH_SECTION_ICONS = {
+    lanes: 'platforms', doctor: 'verify', build: 'update'
+  };
+
+  function healthSections() {
+    return [
+      {
+        id: 'lanes', name: 'the lanes',
+        badge: face.lanesHealth ? (face.lanesHealth.ok || 0) : null,
+        badgeTitle: 'lanes answering',
+        paint: function () { return [healthLanesCard()]; }
+      },
+      {
+        id: 'doctor', name: 'the doctor',
+        badge: null,
+        badgeTitle: 'the checks the doctor runs',
+        paint: function () { return [healthDoctorCard()]; }
+      },
+      {
+        id: 'build', name: 'the build',
+        badge: null,
+        badgeTitle: 'this build and its recovery',
+        paint: function () { return [healthBuildCard()]; }
+      }
+    ];
+  }
+
+  function healthSectionId() {
+    var parts = parseAddress().parts;
+    var held = ['lanes', 'doctor', 'build'];
+    if (parts[0] === 'second-brain' && parts[1]) {
+      var said = decodeURIComponent(parts[1]);
+      if (held.indexOf(said) !== -1) return said;
+    }
+    try {
+      var stored = window.localStorage.getItem('fleet-health-section');
+      if (stored && held.indexOf(stored) !== -1) return stored;
+    } catch (error) { }
+    return 'lanes';
+  }
+
+  function rememberHealthSection(id) {
+    try { window.localStorage.setItem('fleet-health-section', id); } catch (error) { }
+  }
+
+  function paintHealthRail() {
+    if (!el.brainRail) return;
+    sectionRail(el.brainRail, healthSections().map(function (section) {
+      return {
+        id: section.id, icon: HEALTH_SECTION_ICONS[section.id] || 'dot',
+        name: section.name, badge: section.badge, badgeTitle: section.badgeTitle
+      };
+    }), {
+      current: healthSectionId(),
+      folded: !!face.healthRailFolded,
+      store: 'fleet-health-rail',
+      onPick: function (id) {
+        rememberHealthSection(id);
+        window.location.hash = '#/second-brain/' + encodeURIComponent(id);
+        paintBrain();
+      },
+      onFold: function (folded) {
+        face.healthRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-health-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintHealthRail();
+      }
+    });
+  }
+
   function paintBrain() {
-    var read = face.brain;
+    paintHealthRail();
     el.brainBoard.textContent = '';
-    // Health is a lens over the workspace too (the project-centered
-    // workspace plan): the spine's count cards ride above the atlas, and
-    // the lanes/doctor checks render whatever the atlas's state.
+    // Health is a lens over the machine: the spine's count cards ride above
+    // the section, and the chosen check renders beneath them.
     spineCards(el.brainBoard);
-    el.brainBoard.appendChild(healthLanesCard());
-    el.brainBoard.appendChild(healthDoctorCard());
-    el.brainBoard.appendChild(healthCorpusCard());
-    el.brainBoard.appendChild(healthBuildCard());
+    var sections = healthSections();
+    var picked = sections.filter(function (one) {
+      return one.id === healthSectionId();
+    })[0] || sections[0];
+    var body = node('div', 'section-body');
+    body.dataset.section = picked.id;
+    picked.paint().forEach(function (card) { body.appendChild(card); });
+    el.brainBoard.appendChild(body);
+  }
+
+  /// The second brain's landscape as cards, for the Intelligence rail's
+  /// `second brain` section (it lived on the health page until the owner's
+  /// 2026-11-17 ruling made it a category of intelligence). The cards are
+  /// the same ones — this function is the move, not a rewrite.
+  function brainSections() {
+    var read = face.brain;
+    // Arriving at the section IS the read. It used to be the health panel's
+    // own arrival that fetched these; the section moving to Intelligence
+    // means the fetch has to follow the section, or the cards paint empty
+    // and stay that way.
+    if (!read) readBrain(false);
+    if (!face.plugin) readPlugin(false);
+    var out = [];
     if (!read) {
-      el.brainBoard.appendChild(brainHead({}));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The derived-state read has not landed yet. It reads the six state files under the ' +
-        'second-brain home, which is this machine\u2019s own.'));
-      el.brainBoard.appendChild(waiting);
-      return;
+        'second-brain home, which is this machine\u2019s own. Open the health surface to ask ' +
+        'it again, or press the section again once it has.'));
+      return [waiting];
     }
-    if (read.refused && read.refused.length) {
-      el.brainBoard.appendChild(refusedCard(read.refused));
-    }
-    el.brainBoard.appendChild(brainHead(read));
-    el.brainBoard.appendChild(brainStrip(read));
+    if (read.refused && read.refused.length) out.push(refusedCard(read.refused));
+    out.push(brainHead(read));
+    out.push(brainStrip(read));
     if (!read.projects) {
       var empty = boardCard(12, 'the atlas', null, null);
       empty.appendChild(node('p', 'board-empty',
         'The tower data has not landed, so the atlas has no projects to place. The reason ' +
         'is beside the sections that did land.'));
-      el.brainBoard.appendChild(empty);
-      return;
+      return out.concat([empty]);
     }
-    el.brainBoard.appendChild(brainAtlas(read));
-    el.brainBoard.appendChild(brainAttention(read));
-    if ((read.commits || []).length) el.brainBoard.appendChild(brainRibbon(read));
+    out.push(brainAtlas(read));
+    out.push(brainAttention(read));
+    if ((read.commits || []).length) out.push(brainRibbon(read));
     var evidence = brainEvidence(read);
-    if (evidence) el.brainBoard.appendChild(evidence);
-    el.brainBoard.appendChild(brainMethod(read));
+    if (evidence) out.push(evidence);
+    out.push(brainMethod(read));
+    return out;
   }
 
   // ------------------------------------------------- the workspace-history panel
@@ -27395,9 +27708,18 @@ import { node, svg, clip } from './core/dom.js';
         }
       },
       inbox: function () {
+        // A section press changes only the ADDRESS's second segment; it must
+        // not trigger a re-read, or the document `inboxDecide` just handed
+        // the face is replaced by a fresh one that has not been told what
+        // happened. Arriving at the lens (a different lens before this one)
+        // is the moment to read.
+        var sameLens = face.lastLens === 'inbox';
+        face.lastLens = 'inbox';
         paintInbox();
-        readInbox(true).then(paintInbox);
-        readSpine(false).then(paintInbox);
+        if (!sameLens) {
+          readInbox(true).then(paintInbox);
+          readSpine(false).then(paintInbox);
+        }
       },
       sessions: function () {
         paintWork();

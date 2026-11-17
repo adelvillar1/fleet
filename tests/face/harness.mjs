@@ -5240,13 +5240,16 @@ async function anArchivedRowLivesInItsSegment() {
   check('IBC the archive posts its op',
     posts.length === 1 && String(posts[0].body).includes('"op":"archive"'),
     JSON.stringify(posts.map((c) => c.body)));
-  // The archived segment holds it, with the day and the restore.
-  const archivedTab = page.rows('.ib-seg button').find((b) => /^Archived/.test(b.textContent));
-  check('IBC the archived segment counts the row',
-    Boolean(archivedTab) && archivedTab.textContent.includes('1'),
-    archivedTab ? archivedTab.textContent : 'no archived segment');
+  // The archived section holds it, with the day and the restore. It is a
+  // rail row now (the owner's 2026-11-17 ruling), not a segment inside the
+  // board: the rail IS the tab and the filter, one state with two doors.
+  const archivedTab = page.rows('.section-rail-row')
+    .find((b) => /archived/.test(String(b.textContent || '')));
+  check('IBC the archived section counts the row',
+    Boolean(archivedTab) && String(archivedTab.textContent).includes('1'),
+    archivedTab ? archivedTab.textContent : 'no archived section');
   archivedTab.click();
-  await flush(40);
+  await flush(60);
   const archRow = page.rows('.ib-row')[0];
   check('IBC the archived row shows what it was and when it went',
     Boolean(archRow) && archRow.textContent.includes('nightly-sweep') &&
@@ -5260,10 +5263,12 @@ async function anArchivedRowLivesInItsSegment() {
     String(c.body).includes('"op":"restore"'));
   check('IBC the restore posts its op', restores.length === 1,
     JSON.stringify(page.calls.filter((c) => c.url === '/api/inbox').map((c) => c.body)));
-  // Back on the Waiting segment the row is there again.
-  const waitingTab = page.rows('.ib-seg button').find((b) => /^Waiting/.test(b.textContent));
+  // Back on the Waiting section the row is there again — the rail is the
+  // tab and the filter now (the owner's 2026-11-17 ruling).
+  const waitingTab = page.rows('.section-rail-row')
+    .find((b) => /waiting/.test(String(b.textContent || '')));
   waitingTab.click();
-  await flush(40);
+  await flush(60);
   check('IBC the restored row is back in Waiting',
     page.rows('.ib-row').length === 1, String(page.rows('.ib-row').length));
 }
@@ -10523,7 +10528,7 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
   const railRows = page.rows('.section-rail-row');
   const railText = railRows.map((row) => row.textContent);
   check('MEM the rail leads with needs you and carries the type words',
-    railRows.length === 10 &&
+    railRows.length === 12 &&
       railText[0].includes('needs you') &&
       railText[1].includes('feedback') && railText[2].includes('project') &&
       railText.some((t) => t.includes('everything else')) &&
@@ -10532,7 +10537,11 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
       railText.some((t) => t.includes('today')) &&
       railText.some((t) => t.includes('skills')) &&
       railText.some((t) => t.includes('tools')) &&
-      railText.some((t) => t.includes('workflows')),
+      railText.some((t) => t.includes('workflows')) &&
+      // The knowledge sections that moved here from health (the owner's
+      // 2026-11-17 ruling: the second brain is a category of intelligence).
+      railText.some((t) => t.includes('corpus')) &&
+      railText.some((t) => t.includes('second brain')),
     railText.join(' | '));
   check('MEM one section renders at a time',
     page.rows('.section-body').length === 1 &&
@@ -11740,6 +11749,113 @@ async function theConnectCardSaysWhatHappened() {
 // verifies and validations — and two learning ops onto `learning`. The
 // icons plan specified `route_judged` ("a route with a check") and it was
 // never drawn, which is how the map ended up substituting the check.
+// The second rail on the three surfaces that were missing it (the owner's
+// 2026-11-17 report), and the axis each one wears:
+//
+//   health    - the checks themselves (NOT project: these are the machine's)
+//   inbox     - the five classes already computed (NOT project: inbox rows
+//               carry no project, and inventing one would be a lie)
+//   board     - the work's project, with an `all tasks` row kept alongside
+//
+// Each is the same `sectionRail`, so the fold, the keyboard walk and the
+// remembered choice come with it. And the icons discipline governs them: no
+// two rows share a mark, and no row falls through to `dot`.
+async function theThreeMissingSecondRailsAreInPlace() {
+  // Health: the checks, by category.
+  const health = boot({ width: 1440, hash: '#/second-brain', documents: {
+    state: (asked) => emptyState(asked), onboard: onboardDoc({ door: false }) } });
+  await flush(60);
+  health.open();
+  await flush(240);
+  const healthRows = health.rows('.section-rail-row');
+  const healthNames = healthRows.map((r) => String(r.textContent || '').replace(/\s+/g, ' ').trim());
+  check('RAIL health wears the second rail', healthRows.length >= 3, healthNames.join(' | '));
+  check('RAIL health\u2019s rows are its checks, not projects',
+    healthNames.some((n) => n.includes('lanes')) &&
+      healthNames.some((n) => n.includes('doctor')) &&
+      healthNames.some((n) => n.includes('build')),
+    healthNames.join(' | '));
+  const healthMarks = healthRows.map((r) => {
+    const svg = r.find((one) => one.name === 'svg')[0];
+    return svg ? svg.children.map((c) => JSON.stringify(c.attrs || {})).join('|') : '(none)';
+  });
+  check('RAIL every health row has its own mark',
+    healthMarks.every((m) => m !== '(none)') &&
+      new Set(healthMarks).size === healthRows.length,
+    'distinct=' + new Set(healthMarks).size + ' of ' + healthRows.length);
+  // The knowledge sections left health for Intelligence.
+  check('RAIL health no longer carries the corpus or the second brain',
+    !healthNames.some((n) => /corpus|second brain/.test(n)), healthNames.join(' | '));
+
+  // Inbox: the five classes it already computes.
+  const inbox = boot({ width: 1440, hash: '#/inbox', documents: {
+    state: (asked) => emptyState(asked), onboard: onboardDoc({ door: false }),
+    inbox: {
+      type: 'inbox', total: 5, archived: [], dismissed: [],
+      seats: [{ session: 's', tool: 'w', label: 'l', summary: 'x', key: 'seat:s', signature: 'a' }],
+      onboarding: [{ id: 'k', name: 'n', step: '1', why: 'w', key: 'onboard:k', signature: 'b' }],
+      asks: [{ session: 'r', from: 'bob', words: 'q', key: 'ask:r', signature: 'c' }],
+      cron: [{ name: 'j', outcome: 'failed', key: 'cron:j', signature: 'd', label: 'f', class: 'cron' }],
+      doctor: [{ check: 'api', why: 'x', key: 'doctor:api', signature: 'e' }],
+    } } });
+  await flush(60);
+  inbox.open();
+  await flush(260);
+  const inboxRows = inbox.rows('.section-rail-row');
+  const inboxNames = inboxRows.map((r) => String(r.textContent || '').replace(/\s+/g, ' ').trim());
+  check('RAIL the inbox shows its classes as rail rows',
+    inboxNames.some((n) => n.includes('answers')) &&
+      inboxNames.some((n) => n.includes('setup')) &&
+      inboxNames.some((n) => n.includes('questions')) &&
+      inboxNames.some((n) => n.includes('machinery')) &&
+      inboxNames.some((n) => n.includes('doctor')),
+    inboxNames.join(' | '));
+  check('RAIL the inbox rail carries waiting and archived too',
+    inboxNames.some((n) => n.includes('waiting')) &&
+      inboxNames.some((n) => n.includes('archived')), inboxNames.join(' | '));
+  const inboxMarks = inboxRows.map((r) => {
+    const svg = r.find((one) => one.name === 'svg')[0];
+    return svg ? svg.children.map((c) => JSON.stringify(c.attrs || {})).join('|') : '(none)';
+  });
+  check('RAIL every inbox row has its own mark',
+    inboxMarks.every((m) => m !== '(none)') &&
+      new Set(inboxMarks).size === inboxRows.length,
+    'distinct=' + new Set(inboxMarks).size + ' of ' + inboxRows.length);
+  check('RAIL the inbox\u2019s chip strip is retired',
+    inbox.rows('.ib-seg button').length === 0 && inbox.rows('.ib-chip').length === 0,
+    'seg=' + inbox.rows('.ib-seg button').length + ' chip=' + inbox.rows('.ib-chip').length);
+
+  // Board: per project, with all tasks kept.
+  const tasks = { type: 'tasks', tasks: [
+    { id: 't1', project: 'fleet', title: 'a', status: 'working' },
+    { id: 't2', project: 'fleet', title: 'b', status: 'done' },
+    { id: 't3', project: 'other', title: 'c', status: 'blocked' },
+  ] };
+  const board = boot({ width: 1440, hash: '#/board', documents: {
+    tasks, state: (asked) => emptyState(asked), onboard: onboardDoc({ door: false }) } });
+  await flush(60);
+  board.open();
+  await flush(240);
+  const boardRows = board.rows('.section-rail-row');
+  const boardNames = boardRows.map((r) => String(r.textContent || '').replace(/\s+/g, ' ').trim());
+  check('RAIL the board is scoped by project',
+    boardNames.some((n) => n.includes('all tasks')) &&
+      boardNames.some((n) => n.includes('fleet')) &&
+      boardNames.some((n) => n.includes('other')),
+    boardNames.join(' | '));
+  check('RAIL the all-tasks row counts every task',
+    boardNames[0] && boardNames[0].includes('3'), boardNames.join(' | '));
+  // Picking a project narrows the board to its tasks.
+  const other = boardRows.find((r) => String(r.textContent || '').includes('other'));
+  if (other) other.click();
+  await flush(160);
+  check('RAIL picking a project scopes the board to it',
+    board.text('board-board').includes('The board \u00b7 other'),
+    board.text('board-board').slice(0, 80));
+  check('RAIL the project scope names only that project\u2019s work',
+    board.rows('.board-card').length === 1, String(board.rows('.board-card').length));
+}
+
 async function everyCalibrationOpNamesItsOwnDrawing() {
   // APP, not SRC: SRC is the reconstructed bundle (store + router + dom +
   // app), so an offset found in it does not point where the same offset
@@ -14177,8 +14293,27 @@ async function theHealthLensIsVisibleAndFindable() {
   page.hash('#/second-brain');
   await flush(120);
   const board = page.text('brain-board');
-  check('P2 the health lens shows the lanes and the doctor',
-    board.includes('the lanes') && board.includes('the doctor'), board.slice(0, 160));
+  // Health wears the second rail now (the owner's 2026-11-17 ruling): one
+  // check at a time, its rail naming the rest. Before, every check was one
+  // flat stack and "the doctor" was simply further down the scroll.
+  const healthRail = page.rows('.section-rail-row')
+    .map((row) => String(row.textContent || '').replace(/\s+/g, ' ').trim());
+  check('P2 the health rail names its checks',
+    healthRail.length === 3 &&
+      healthRail.some((t) => t.includes('lanes')) &&
+      healthRail.some((t) => t.includes('doctor')) &&
+      healthRail.some((t) => t.includes('build')),
+    healthRail.join(' | '));
+  check('P2 the health lens shows the chosen check',
+    board.includes('the lanes'), board.slice(0, 160));
+  // Pressing another row shows that check — the rail is the navigation.
+  const doctorRow = page.rows('.section-rail-row')
+    .find((row) => String(row.textContent || '').includes('doctor'));
+  if (doctorRow) doctorRow.click();
+  await flush(120);
+  check('P2 a rail press brings that check to the board',
+    page.text('brain-board').includes('the doctor'),
+    page.text('brain-board').slice(0, 120));
 }
 
 // The project-centered workspace plan (P4): the Advanced surfaces are
@@ -14279,17 +14414,30 @@ async function theSubstrateHealsItselfAndOffersKiri() {
 }
 
 // The owner-approved self-healing actions (the self-healing extension):
-// the Health lens carries the corpus sync and the build restore; a down
-// lane offers the rebuild press on the services card.
+// the build restore lives on Health's build check, the corpus sync moved to
+// Intelligence with the corpus itself (the owner's 2026-11-17 ruling), and a
+// down lane offers the rebuild press on the services card.
 async function theOwnerApprovedActionsAreOnTheCards() {
   const page = boot({ documents: {} });
+  // Health's build check carries the restore; press the rail row for it.
   page.hash('#/second-brain');
   await flush(120);
+  const buildRow = page.rows('.section-rail-row')
+    .find((row) => String(row.textContent || '').includes('build'));
+  if (buildRow) buildRow.click();
+  await flush(120);
   const board = page.text('brain-board');
-  check('HEAL the health lens offers the corpus sync and the build restore',
-    board.includes('the corpus') && board.includes('sync now') &&
+  check('HEAL the build check offers the restore',
     board.includes('the build') && board.includes('restore the previous build'),
     board.slice(0, 240));
+  // The corpus is knowledge, so its sync lives on Intelligence now.
+  const knowledge = boot({ documents: { memory: memoryDoc } });
+  knowledge.hash('#/memory/corpus');
+  await flush(140);
+  const corpus = knowledge.text('memory-board');
+  check('HEAL the corpus sync rides the Intelligence corpus section',
+    corpus.includes('the corpus') && corpus.includes('sync now'),
+    corpus.slice(0, 200));
   const lanes = boot({
     documents: { state: (asked) => ({ ...emptyState(asked), services: { services: [
       { name: 'lanes', up: false, note: 'a lane cannot answer', repair: 'fleet install (rebuilds the lane venvs)' },
@@ -14686,22 +14834,32 @@ async function theSilentSurfaceActsNowAnswerWhereTheOwnerIsLooking() {
       finished: '2026-11-17 02:01', last_ok: '2026-11-17 02:01', current: 0,
       error: null, steps: [], log: [] },
   };
+  // The second brain is a category of intelligence (the owner's 2026-11-17
+  // ruling), so its instrument lives on the Intelligence rail now — the
+  // same refresh, reached by the section it belongs to.
   const brain = boot({
-    width: 1440, hash: '#/second-brain',
-    documents: { plugin, state: (asked) => emptyState(asked),
+    width: 1440, hash: '#/memory/second-brain',
+    documents: { plugin, memory: memoryDoc, state: (asked) => emptyState(asked),
       onboard: onboardDoc({ door: false }) },
   });
   await flush(60);
   brain.open();
-  await flush(260);
-  check('SILENT the transcript is hidden under health too',
+  await flush(300);
+  check('SILENT the transcript is hidden on Intelligence too',
     brain.el('log').hidden === true, String(brain.el('log').hidden));
-  const picker = brain.rows('select').find((s) => String(s.className || '').includes('surface-jobs'));
+  // Scope to the section that holds it: the Intelligence surface has its own
+  // `surface-refresh` button in the page instrument, and an unscoped query
+  // finds that one first.
+  const section = brain.rows('.section-body')
+    .find((one) => String(one.dataset.section || '') === 'second-brain');
+  check('SILENT the second brain renders as its own section',
+    !!section, brain.rows('.section-body').map((b) => b.dataset.section).join(','));
+  const picker = section && section.find((one) => String(one.className || '').includes('surface-jobs'))[0];
   check('SILENT the job picker offers what the tool runs',
     !!picker && picker.options.map((o) => o.value).join(',') === 'all,chats',
     picker ? picker.options.map((o) => o.value).join(',') : 'no picker');
-  const refresh = brain.rows('button')
-    .filter((b) => String(b.className || '').includes('surface-refresh'))[0];
+  const refresh = section && section.find((one) => one.name === 'button' &&
+    String(one.className || '').includes('surface-refresh'))[0];
   check('SILENT the refresh press is enabled while the tool is live',
     !!refresh && refresh.disabled === false,
     refresh ? String(refresh.disabled) : 'no button');
@@ -14715,8 +14873,10 @@ async function theSilentSurfaceActsNowAnswerWhereTheOwnerIsLooking() {
     JSON.stringify(acted.map((c) => c.body)));
   // And the press does not strand itself: it is rebuilt live, not left
   // saying "starting…" forever with nothing to read.
-  const after = brain.rows('button')
-    .filter((b) => String(b.className || '').includes('surface-refresh'))[0];
+  const afterSection = brain.rows('.section-body')
+    .find((one) => String(one.dataset.section || '') === 'second-brain');
+  const after = afterSection && afterSection.find((one) => one.name === 'button' &&
+    String(one.className || '').includes('surface-refresh'))[0];
   check('SILENT the refresh press comes back, not stuck on `starting…`',
     !!after && after.disabled === false && !String(after.textContent).includes('starting'),
     after ? String(after.textContent) + ' disabled=' + after.disabled : 'no button');
@@ -15010,6 +15170,8 @@ const cases = [
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
   ['ICONS every rendered rail row gets its own drawing',
     everyRenderedRailRowGetsItsOwnDrawing],
+  ['RAIL the three missing second rails are in place',
+    theThreeMissingSecondRailsAreInPlace],
   ['ICONS every calibration op names its own drawing',
     everyCalibrationOpNamesItsOwnDrawing],
   ['ICONS every key the face asks for is drawn', everyIconKeyTheFaceAsksForIsDrawn],

@@ -783,11 +783,23 @@
        task cards with their bulk check, tags and link dots, the running
        sweep, and the activity strip beneath. Drag a card between columns
        to move its status — optimistic, then settled (U21). -->
-  <main class="stage stage-board" id="panel-board" hidden aria-label="the board">
+  <!-- The board is scoped by PROJECT (the owner's 2026-11-17 ruling): the
+       rail carries an all-tasks row and then one row per project the work
+       belongs to, so a board with many projects is browsable without every
+       task being one undifferentiated column set. -->
+  <main class="stage stage-board stage-split" id="panel-board" hidden aria-label="the board">
+    <nav class="section-rail" id="board-rail" aria-label="projects"></nav>
     <div class="board" id="board-board"></div>
   </main>
 
-  <main class="stage stage-board" id="panel-inbox" hidden aria-label="the inbox">
+  <!-- The inbox wears the second rail like its siblings (the owner's
+       2026-11-17 report). The questions were already there — waiting or
+       archived, then which class — but as a chip strip inside the board,
+       so the page read as a list rather than a place. They are rail rows
+       now: one class at a time, its count on the row, and the queue
+       behind it. -->
+  <main class="stage stage-board stage-split" id="panel-inbox" hidden aria-label="the inbox">
+    <nav class="section-rail" id="inbox-rail" aria-label="inbox sections"></nav>
     <div class="board" id="inbox-board">
       <header class="ib-head">
         <h1>the inbox</h1>
@@ -1120,8 +1132,15 @@
 
   <!-- The second brain. The derived state, quieter: the gates, the
        loops, the harness runs, and the maturity signals. Cards, bars,
-       and a week grid, never a plain-text table. -->
-  <main class="stage stage-board" id="panel-second-brain" hidden>
+       and a week grid, never a plain-text table.
+
+       It wears the second rail like its siblings (the owner's 2026-11-17
+       report): the sections were a flat stack of cards, so the page had no
+       spine and no way to reach one part without reading all of it. The
+       rail names what the page holds — the checks, the atlas, the attention
+       queue, the method — and the board shows the chosen one. -->
+  <main class="stage stage-board stage-split" id="panel-second-brain" hidden>
+    <nav class="section-rail" id="brain-rail" aria-label="health sections"></nav>
     <div class="board" id="brain-board"></div>
   </main>
 
