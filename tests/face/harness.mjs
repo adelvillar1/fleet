@@ -315,6 +315,20 @@ class El {
       if (ev._stopped) break;
       node = node.parentNode;
     }
+    // A real browser's rule, and the one this stub was missing: pressing a
+    // submit button submits its owning form. Without it a press on any
+    // `<button type="submit">` in this app looks DEAD — the button carries
+    // no click listener of its own, the form carries the submit — so a
+    // sweep of the face reported every one of them as a dead action. The
+    // freshest instance was the onboarding door's "Wire it";
+    // `tests/face/harness.mjs`'s own cases never caught it because each
+    // one calls `fireOn('composer', 'submit')` by hand instead of pressing
+    // the button the owner presses.
+    if (kind === 'click' && String(this.type || '').toLowerCase() === 'submit') {
+      let form = this.parentNode;
+      while (form && String(form.name || '').toLowerCase() !== 'form') form = form.parentNode;
+      if (form) form.fire('submit', {});
+    }
   }
   matches(sel) { return matchesSimple(this, sel); }
   closest(sel) {
@@ -9966,6 +9980,15 @@ async function theSettingsRailCarriesOneSectionAtATime() {
     pickerOptions.indexOf('alpha/m-one') !== -1 &&
       pickerOptions.indexOf('alpha/m-two') === -1,
     pickerOptions.join(','));
+  // KI-563: a control that cannot act is DISABLED and says why, rather
+  // than looking live and returning. The last secondary has nothing below
+  // it, so its down arrow must be disabled with the reason on it.
+  const arrows = assignPane.find((one) => one.name === 'button' &&
+    String(one.textContent || '') === '\u2193');
+  check('KI-563 the last secondary\u2019s down arrow is disabled, and says why',
+    arrows.length > 0 && arrows[arrows.length - 1].disabled === true &&
+      String(arrows[arrows.length - 1].title || '').includes('nothing below it'),
+    arrows.map((a) => String(a.disabled)).join(','));
   const secondaryRow = assignPane.find((one) => one.className === 'cfg-fallback')[0];
   const raise = secondaryRow ?
     secondaryRow.children.find((one) => one.name === 'button' &&
@@ -14094,7 +14117,144 @@ async function theOwnerApprovedActionsAreOnTheCards() {
     lanes.text('svc-down').includes('Rebuild the lanes'), lanes.text('svc-down'));
 }
 
+// Freshness (the owner's dead-button review, 2026-11-17): every button the
+// face paints must do something when it is pressed. The owner reported "a
+// few that just don't do anything", and a static read cannot find them —
+// 310 creation sites look alike, and the ones that were broken were broken
+// by what they were SEEDED from, not by a missing listener.
+//
+// The sweep presses every visible button on every lens and fingerprints the
+// whole document (every element's hidden flag, class, aria state and text),
+// the fetch calls, and localStorage. A press that moves none of them is the
+// shape of a dead action.
+//
+// Two traps it has to respect, both learned here:
+//   * a `<button type="submit">` carries no click listener — its FORM does,
+//     so the stub's click now submits the owning form (below). Before that
+//     rule the sweep reported 22 dead buttons, 20 of them forms.
+//   * a button may be wired and still correctly silent because the state it
+//     acts on is already true — `fit` on a board already at the fitted
+//     scale, a tab re-pressed when it is the current one. Those are named
+//     and allowed by label, each with the reason, rather than waived.
+const SWEEP_STILL = {
+  'fit': 'fits to the board scale it is already at — it moves once zoomed away',
+  'Waiting · 0': 're-pressing the tab that is already current; nothing to change',
+};
+
+async function everyButtonOnEveryLensDoesSomething() {
+  const LENSES = ['chat', 'board', 'inbox', 'router', 'delegation', 'memory',
+    'sessions', 'learning', 'huddles', 'desk', 'calibration', 'design', 'vault',
+    'settings', 'second-brain', 'workspace-history', 'armada', 'bots', 'plugins',
+    'about'];
+  const panelOf = (b) => {
+    let n = b;
+    while (n) {
+      if (n.id && n.id.startsWith('panel-')) return n.id;
+      n = n.parentNode;
+    }
+    return '(chrome)';
+  };
+  const fingerprint = (page) => {
+    const parts = [];
+    const walk = (n) => {
+      parts.push((n.id || '') + '|' + (n.className || '') + '|' + (n.hidden ? 1 : 0) +
+        '|' + ((n.attrs && (n.attrs['aria-expanded'] || '') +
+          (n.attrs['aria-selected'] || '') + (n.attrs['aria-pressed'] || '')) || '') +
+        '|' + String(n.textContent || '').slice(0, 100));
+      (n.children || []).forEach(walk);
+    };
+    page.documentElement.children.forEach(walk);
+    let store = '';
+    try { store = JSON.stringify(Object.keys(page.sandbox.localStorage).sort()); } catch (e) { }
+    // The clipboard is an effect too, and the one a fidelity check misses:
+    // `copy the fact name` writes the clipboard and then reverts its own
+    // label on a timer the stub fires immediately, so it looked dead until
+    // the writes were counted here.
+    return parts.join('\n') + '|calls=' + page.calls.length + '|store=' + store +
+      '|clip=' + (page.clipboardWrites || []).length;
+  };
+
+  let driven = 0;
+  const dead = [];
+  for (const lens of LENSES) {
+    const page = boot({
+      width: 1440, hash: '#/' + lens,
+      documents: { state: (asked) => emptyState(asked), onboard: onboardDoc({ door: false }) },
+    });
+    await flush(60);
+    page.open();
+    await flush(150);
+    // Only the lens's own panel (or chrome that lives outside every panel)
+    // and only what is not hidden: a button on a surface that is not the
+    // current lens is not one the owner can press.
+    const buttons = page.rows('button').filter((b) => {
+      const panel = panelOf(b);
+      if (panel !== '(chrome)' && panel !== 'panel-' + lens) return false;
+      let n = b;
+      while (n) {
+        if (n.hidden === true) return false;
+        n = n.parentNode;
+      }
+      return true;
+    });
+    const seen = new Set();
+    for (const b of buttons) {
+      const label = String(b.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!label || label.length > 70 || seen.has(label)) continue;
+      seen.add(label);
+      const before = fingerprint(page);
+      let threw = null;
+      try { b.click(); } catch (error) { threw = String((error && error.message) || error); }
+      await flush(50);
+      driven += 1;
+      if (fingerprint(page) === before && !threw) dead.push(lens + ' \u00b7 ' + label);
+    }
+  }
+  // A sweep that drives nothing proves nothing: the count is asserted too.
+  check('DEAD every visible button on every lens was driven',
+    driven > 250, 'driven ' + driven);
+  // Only the named, justified silences may remain.
+  const unexpected = dead.filter((one) => {
+    const label = one.split(' \u00b7 ').slice(1).join(' \u00b7 ');
+    return !SWEEP_STILL[label];
+  });
+  check('DEAD no visible button is a dead action',
+    unexpected.length === 0, unexpected.join(' | ') || 'none');
+}
+
+// And the rule the sweep rests on, pinned on its own: a submit button
+// submits its form. Without it 20 real actions looked dead.
+async function pressingASubmitButtonSubmitsItsForm() {
+  const page = boot({
+    width: 1440, hash: '#/settings',
+    documents: { state: (asked) => emptyState(asked), onboard: onboardDoc({ door: false }) },
+  });
+  await flush(60);
+  page.open();
+  await flush(150);
+  const form = page.rows('.onboard-key')[0];
+  check('FORM the onboarding key form is on the face', !!form, String(!!form));
+  const input = form && form.querySelector('input');
+  if (input) input.value = 'sk-the-key';
+  const go = page.rows('button').find((b) =>
+    String(b.textContent || '').trim() === 'Wire it');
+  check('FORM the Wire it press is a submit button',
+    !!go && String(go.type).toLowerCase() === 'submit',
+    go ? String(go.type) : 'no button');
+  const before = page.calls.length;
+  if (go) go.click();
+  await flush(120);
+  const posted = page.calls.slice(before).filter((c) => c.method === 'POST' &&
+    c.url === '/api/onboard');
+  check('FORM pressing it posts the key it was given',
+    posted.length === 1 && String(posted[0].body).includes('sk-the-key'),
+    JSON.stringify(posted.map((c) => c.body)));
+}
+
 const cases = [
+  ['DEAD every visible button on every lens does something',
+    everyButtonOnEveryLensDoesSomething],
+  ['FORM pressing a submit button submits its form', pressingASubmitButtonSubmitsItsForm],
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
   ['ICONS every key the face asks for is drawn', everyIconKeyTheFaceAsksForIsDrawn],

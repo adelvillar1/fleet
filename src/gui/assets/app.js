@@ -21891,6 +21891,37 @@ import { node, svg, clip } from './core/dom.js';
     var options = cfgModelOptions ? cfgModelOptions() : [];
     var primary = cfgSelect(chain[0] || '', options, 'the ' + tier.workload + ' primary');
     var secondaries = node('div', 'cfg-list-rows');
+    // The picker's options are what the walk does not already carry, so a
+    // press cannot be aimed at a value the handler would ignore (KI-563).
+    var addPicker = null, add = null;
+    function syncAddable() {
+      if (!addPicker) return;
+      var held = chain.slice();
+      while (addPicker.options.length) addPicker.removeChild(addPicker.options[0]);
+      // `options` reaches this card as the pickers' own shape —
+      // `{value, label}` or a bare string — so the filter compares the
+      // VALUE, which is what `chain` carries.
+      var remaining = options.filter(function (one) {
+        var value = typeof one === 'string' ? one : one.value;
+        return held.indexOf(value) === -1;
+      });
+      remaining.forEach(function (one) {
+        var value = typeof one === 'string' ? one : one.value;
+        var label = typeof one === 'string' ? one : (one.label || one.value);
+        var option = node('option', null, label);
+        option.value = value;
+        addPicker.appendChild(option);
+      });
+      addPicker.value = remaining.length
+        ? (typeof remaining[0] === 'string' ? remaining[0] : remaining[0].value)
+        : '';
+      if (add) {
+        add.disabled = remaining.length === 0;
+        add.title = remaining.length
+          ? 'add the model chosen beside this press'
+          : 'this walk already carries every model it can';
+      }
+    }
     function paintSecondary() {
       secondaries.innerHTML = '';
       chain.slice(1).forEach(function (candidate, index) {
@@ -21926,6 +21957,16 @@ import { node, svg, clip } from './core/dom.js';
           }
           paintSecondary();
         });
+        // KI-563: a move that cannot happen is a disabled control, not a
+        // live one that returns. The last secondary has nothing below it,
+        // so its down arrow said "press me" and did nothing — the shape the
+        // owner's dead-button review kept finding. The reason rides the
+        // tooltip, so the control explains itself without a press.
+        var last = index + 2 >= chain.length;
+        down.disabled = last;
+        if (last) {
+          down.title = 'the last secondary \u2014 nothing below it to swap with';
+        }
         row.appendChild(down);
         var drop = node('button', 'replay-button', 'remove');
         drop.type = 'button';
@@ -21941,16 +21982,31 @@ import { node, svg, clip } from './core/dom.js';
         secondaries.appendChild(node('p', 'board-empty',
           'No secondary: this workload walks its primary alone, then the declared last resort.'));
       }
+      if (typeof syncAddable === 'function') syncAddable();
     }
     paintSecondary();
-    var addPicker = cfgSelect('', options, 'add a secondary to ' + tier.workload);
-    var add = node('button', 'replay-button', 'add secondary');
+    addPicker = cfgSelect('', options, 'add a secondary to ' + tier.workload);
+    add = node('button', 'replay-button', 'add secondary');
     add.type = 'button';
     add.dataset.act = 'add-secondary';
+    syncAddable();
     add.addEventListener('click', function () {
-      if (!addPicker.value || chain.indexOf(addPicker.value) !== -1) return;
+      // KI-563: the picker offers what the walk does not already carry, so
+      // an empty selection is a control with nothing to add — say so
+      // rather than returning. (A candidate already in the walk is no
+      // longer offered at all, which is the stronger fix: the press cannot
+      // be aimed at a value that would be ignored.)
+      if (!addPicker.value) {
+        add.title = 'choose a model to add \u2014 this walk already carries every one it can';
+        return;
+      }
+      if (chain.indexOf(addPicker.value) !== -1) {
+        add.title = addPicker.value + ' is already in this walk';
+        return;
+      }
       chain.push(addPicker.value);
       paintSecondary();
+      syncAddable();
     });
     var save = cfgCardActs([{
       label: 'save the workload', primary: true, run: function () {
