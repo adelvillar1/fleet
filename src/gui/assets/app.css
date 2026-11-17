@@ -6252,12 +6252,20 @@ pre.drawer-code {
 
 /* -------------------------------------------------------------- the pane */
 
+/* U13: the drawer is an overlay, but "the persistent panes never hide
+   behind it" is the owner's own rule, and the connections column is one
+   of them. So the pane's right edge is the stage's right edge, not the
+   viewport's: wherever the tissue holds a column, the pane steps left by
+   that column's width. `--pane-right` carries the offset in one place,
+   so the width math, the grip and the scrim cannot disagree — the grip
+   sits on this same edge, and a scrim that stopped short of it would dim
+   a column it no longer covers. */
 .pane {
   position: fixed;
   top: var(--topbar-height);
   bottom: var(--console-height);
-  right: 0;
-  width: min(var(--pane-width), 100vw);
+  right: var(--pane-right, 0);
+  width: min(var(--pane-width), calc(100vw - var(--pane-right, 0px)));
   z-index: 30;
   display: flex;
   flex-direction: column;
@@ -6267,11 +6275,25 @@ pre.drawer-code {
   background: var(--dsw-alias-surface);
   box-shadow: var(--shadow-3);
 }
+/* The offset itself. The tissue is a grid column at >=1081px only, and
+   the reveal strip takes its place when it is collapsed — the same two
+   states the `.face` template declares, so the pane's edge and the
+   stage's edge are one fact. Below the breakpoint the column is gone and
+   the pane may have the whole width. */
+:root { --pane-right: 0px; }
+@media (min-width: 1081px) {
+  body[data-tissue="on"] { --pane-right: var(--tissue-width); }
+  body[data-tissue="off"] { --pane-right: 30px; }
+}
 /* The drawer's scrim: the workspace dims behind it and a press on the
    scrim closes it, the way the object drawer does (U13). */
 .pane-scrim {
   position: fixed;
-  inset: 0;
+  /* The dim follows the drawer's own edge (U13/KI-555): a scrim that ran
+     to the viewport's right would darken the connections column the pane
+     deliberately steps around, so the column would be visible and look
+     disabled — worse than being covered. */
+  inset: 0 var(--pane-right, 0px) 0 0;
   z-index: 29;
   background: rgb(0 0 0 / 28%);
   opacity: 0;

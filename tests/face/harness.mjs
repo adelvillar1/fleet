@@ -1197,6 +1197,15 @@ function boot(options) {
     innerWidth: opts.width,
     innerHeight: 900,
     devicePixelRatio: 1,
+    // The pane's resize clamp reads a custom property through this
+    // (KI-555: the width the pane may take depends on what holds the
+    // right of the window). A stub without it would let the clamp read
+    // nothing and silently fall back, pinning the wrong thing.
+    getComputedStyle: (element) => ({
+      getPropertyValue: (name) => (element && element.style
+        ? element.style.getPropertyValue(name)
+        : ''),
+    }),
     matchMedia: (query) => ({
       matches: Boolean(opts.reducedMotion) && String(query).includes('prefers-reduced-motion'),
       addListener() {},
@@ -6163,15 +6172,20 @@ async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
     'closed');
 
   // The grip: drag left widens to the cap, the choice persists, the
-  // double-click resets, and the separator takes the keyboard.
+  // double-click resets, and the separator takes the keyboard. The cap is
+  // no longer the whole window (KI-555): at 1440 with the connections
+  // column open the pane stops at the column's edge, so the widest it may
+  // be is 1440 - stage floor 560 - tissue 320 = 560. Before the fix this
+  // case pinned 720, which is exactly the pane painting over 200px of a
+  // 320px column — the defect recorded as an expectation.
   const grip = page.rows('#pane-grip')[0];
   grip.fire('pointerdown', { clientX: 1000, pointerId: 1 });
   grip.fire('pointermove', { clientX: 700, pointerId: 1 });
   grip.fire('pointerup', { clientX: 700, pointerId: 1 });
   const widened = page.sandbox.document.documentElement.style.getPropertyValue('--pane-width');
   check('P the drag widens the pane to its cap and persists',
-    widened === '720px' &&
-      JSON.stringify(page.sandbox.localStorage.getItem('fleet-pane-width')) === '"720"',
+    widened === '560px' &&
+      JSON.stringify(page.sandbox.localStorage.getItem('fleet-pane-width')) === '"560"',
     String(widened));
   grip.fire('dblclick', {});
   const reset = page.sandbox.document.documentElement.style.getPropertyValue('--pane-width');
@@ -9562,6 +9576,108 @@ async function theSettingsRailCarriesOneSectionAtATime() {
     c.url === '/api/settings' && String(c.body).includes('"op":"provider-discover"'));
   check('PM the reload writes through the one writer',
     discoverWrites.length === 1, JSON.stringify(discoverWrites.map((c) => c.body)));
+
+  // KI-561: the reload answers where the press was made, and says what
+  // happened. Before this, `writeSettings` handed `onDone` the result of
+  // the re-read (which resolved undefined), so the card's sentence always
+  // fell to "the reload did not answer" — and it was painted into the
+  // settings column while the card lives in the pane. Both halves are
+  // pinned: the sentence lands in the card, and it carries the listing's
+  // own count rather than a guess. The reply is scripted, because a mock
+  // that answers `{}` cannot tell a success path from a silent one.
+  const succeed = boot({
+    width: 1440, hash: '#/settings/models',
+    settingsReply: (body) => {
+      let sent = {};
+      try { sent = JSON.parse(body || '{}'); } catch (error) {}
+      if (sent.op === 'provider-discover') {
+        return { body: { type: 'settings_write', op: 'provider-discover',
+          wrote: { id: 'alpha', ok: true, error: null,
+            models: ['m-one', 'm-two', 'm-three'], settings_written: 2 } } };
+      }
+      return { body: {} };
+    },
+    documents: { settings: settingsDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  await flush();
+  succeed.open();
+  await flush(80);
+  const succeedRow = succeed.rows('.cfg-item').find((row) =>
+    row.dataset.kind === 'provider' && row.textContent.includes('alpha'));
+  check('KI-561 the success boot opens the provider card', !!succeedRow,
+    String(!!succeedRow));
+  if (succeedRow) {
+    succeedRow.click();
+    await flush(60);
+    const successPane = succeed.el('dock-object-body');
+    const answerLine = successPane
+      .find((one) => one.dataset && one.dataset.role === 'provider-answer')[0] || null;
+    check('KI-561 the card carries its own reload answer line',
+      !!answerLine, String(!!answerLine));
+    const successReload = successPane.find((one) => one.name === 'button' &&
+      String(one.textContent || '').includes('reload models'))[0];
+    check('KI-561 the success boot carries the reload press', !!successReload,
+      String(!!successReload));
+    if (successReload) {
+      successReload.click();
+      await flush(120);
+      const said = successPane
+        .find((one) => one.dataset && one.dataset.role === 'provider-answer')[0] || null;
+      check('KI-561 the reload answers in the card, with the listing\u2019s count',
+        !!said && said.hidden === false && said.textContent.includes('3 models') &&
+          said.textContent.includes('2 with declared settings'),
+        said ? String(said.textContent) : 'no answer line');
+      // A press the card is still working answers in its own word: the
+      // button is disabled mid-flight and says so, so a second press
+      // cannot start a second discovery.
+      check('KI-561 the reload press is not left disabled after the answer',
+        successReload.disabled === false, String(successReload.disabled));
+    }
+  }
+
+  // And the failure path names the writer's own words in the same place.
+  const failing = boot({
+    width: 1440, hash: '#/settings/models',
+    settingsReply: (body) => {
+      let sent = {};
+      try { sent = JSON.parse(body || '{}'); } catch (error) {}
+      if (sent.op === 'provider-discover') {
+        return { body: { type: 'settings_write', op: 'provider-discover',
+          wrote: { id: 'alpha', ok: false, error: 'the key was refused (401)',
+            settings_written: 0 } } };
+      }
+      return { body: {} };
+    },
+    documents: { settings: settingsDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  await flush();
+  failing.open();
+  await flush(80);
+  const failingRow = failing.rows('.cfg-item').find((row) =>
+    row.dataset.kind === 'provider' && row.textContent.includes('alpha'));
+  check('KI-561 the failing boot opens the provider card', !!failingRow,
+    String(!!failingRow));
+  if (failingRow) {
+    failingRow.click();
+    await flush(60);
+    const failingPane = failing.el('dock-object-body');
+    const failingReload = failingPane.find((one) => one.name === 'button' &&
+      String(one.textContent || '').includes('reload models'))[0];
+    check('KI-561 the failing boot carries the reload press', !!failingReload,
+      String(!!failingReload));
+    if (failingReload) {
+      failingReload.click();
+      await flush(120);
+      const failingAnswer = failingPane
+        .find((one) => one.dataset && one.dataset.role === 'provider-answer')[0] || null;
+      check('KI-561 a refused reload names the writer\u2019s words in the card',
+        !!failingAnswer && !failingAnswer.hidden &&
+          failingAnswer.textContent.includes('refused'),
+        failingAnswer ? failingAnswer.textContent : 'no answer line');
+    }
+  }
 
   // U9: the account card completes the chain — the walks this provider
   // serves are named on the card that owns its models, and the owner
@@ -13185,6 +13301,55 @@ async function theThreadPaneCollapsesAndPersists() {
     ruleBlock('body[data-tissue="off"][data-pane="open"] .face') === '' &&
       ruleBlock('body[data-tissue="off"][data-pane="open"] .pane') === '',
     JSON.stringify(ruleBlock('body[data-tissue="off"][data-pane="open"] .face')));
+
+  // KI-555: the drawer is an overlay, but U13's own sentence is that the
+  // persistent panes never hide behind it — and the connections column is
+  // one of them. The pane therefore ends where the stage ends, stepping
+  // left by whatever holds the right of the window: the tissue's column
+  // when it is open, the reveal strip when it is collapsed, nothing below
+  // the breakpoint where neither exists. The offset is one property so
+  // the pane's edge, its width math, and the scrim cannot disagree.
+  const paneRule = ruleBlock('.pane');
+  check('KI-555 the pane is anchored to the stage\u2019s edge, not the viewport\u2019s',
+    paneRule.includes('right: var(--pane-right') &&
+      paneRule.includes('calc(100vw - var(--pane-right'),
+    paneRule);
+  check('KI-555 the scrim stops at the pane\u2019s edge so it dims no column it left',
+    ruleBlock('.pane-scrim').includes('inset: 0 var(--pane-right'),
+    ruleBlock('.pane-scrim'));
+  check('KI-555 the offset is the tissue\u2019s column, then the reveal strip, then nothing',
+    /data-tissue="on"\]\s*\{\s*--pane-right:\s*var\(--tissue-width\)/.test(CSS) &&
+      /data-tissue="off"\]\s*\{\s*--pane-right:\s*30px/.test(CSS) &&
+      CSS.includes('--pane-right: 0px'),
+    'on/off/default');
+  // Below the breakpoint the column does not exist, so the offset must
+  // not either — a 30px gap at 1080 would be a strip of nothing.
+  const mediaStart = CSS.indexOf('@media (min-width: 1081px)');
+  const offAt = CSS.indexOf('body[data-tissue="off"] { --pane-right: 30px; }');
+  check('KI-555 the offset lives inside the breakpoint that creates the column',
+    mediaStart > -1 && offAt > mediaStart, 'media=' + mediaStart + ' off=' + offAt);
+
+  // And the grip's own clamp agrees: a drag cannot widen the pane back
+  // over the column the stylesheet just stepped around. The stub models
+  // the custom property, so this is the clamp's real arithmetic.
+  const gripped = boot({
+    width: 1440, hash: '#/chat', documents: { state: receiptState },
+    storage: { 'fleet-pane': 'open' },
+  });
+  gripped.open();
+  await flush(60);
+  gripped.body.dataset.tissue = 'on';
+  gripped.documentElement.style.setProperty('--tissue-width', '320px');
+  const grip = gripped.el('pane-grip');
+  // ArrowLeft widens by 24 from the applied width; drive it past the
+  // stage floor and read where it stops.
+  for (let i = 0; i < 40; i += 1) grip.fire('keydown', { key: 'ArrowLeft', preventDefault() {} });
+  await flush(20);
+  const stopped = parseInt(gripped.documentElement.style.getPropertyValue('--pane-width'), 10);
+  // 1440 - stage floor 560 - tissue 320 = 560 is the widest the pane may
+  // be with the column open; the clamp must not report more.
+  check('KI-555 the grip cannot widen the pane over the connections column',
+    !isNaN(stopped) && stopped <= 560, 'stopped at ' + stopped + 'px');
 }
 
 // U31: the judged rows carry the meter, the gold border when the
