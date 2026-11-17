@@ -11969,6 +11969,58 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
       'missing=' + missing.join(',') + ' · drawn=' + drawn.size + ' asked=' + asked.size);
     check('ICONS the table draws the main rail\u2019s fifteen', drawn.size >= 15,
       'drawn=' + drawn.size);
+
+    // A duplicate key in the table, which no other pin could see.
+    //
+    // `ICONS` is an object literal, so a second declaration of the same
+    // key silently WINS. That is not a style nit: `'second-brain'` was
+    // declared twice — the project atlas grid near the top, and a pulse
+    // added when Health became a lens — so the pulse shadowed the grid,
+    // health wore the pulse, and `calibration`'s own specified pulse sat
+    // beside it. Two rail rows, one drawing, and every pin passed: the
+    // per-row shape comparison sees two distinct attribute strings and
+    // has no reason to look twice at one key. The bug was never the
+    // drawing; it was the duplicate that made the drawing unreachable.
+    const declared = [...block.matchAll(/^\s{4}'?([a-z][a-z_-]*)'?: \[/gm)].map((m) => m[1]);
+    const twice = declared.filter((key, at) => declared.indexOf(key) !== at);
+    check('ICONS no key is declared twice in the table',
+      twice.length === 0,
+      twice.length ? 'declared twice: ' + [...new Set(twice)].join(',') : 'none');
+
+    // And the question the rail's own pin asks wrongly: two rows whose
+    // shapes are DIFFERENT strings but the same drawing. Comparing the
+    // attribute text cannot tell a spike-and-plateau from a
+    // spike-and-plateau one unit over — so compare the geometry with the
+    // numbers thrown away. A drawing's skeleton is its commands and its
+    // shape kinds; two rows sharing one is one mark worn twice, whatever
+    // the coordinates say.
+    const skeleton = (shapes) => shapes
+      .map((shape) => shape.name + ':' + String(shape.attrs.d || shape.attrs.cx || '')
+        .replace(/-?\d+(\.\d+)?/g, '#'))
+      .join('|');
+    const startOfIcons = SRC.indexOf('var ICONS = {');
+    const endOfIcons = SRC.indexOf('// Which group an address belongs to');
+    const table = SRC.slice(startOfIcons, endOfIcons);
+    const byKey = {};
+    for (const m of table.matchAll(/^\s{4}'?([a-z][a-z_-]*)'?: \[\s*([\s\S]*?)^\s{4}\]/gm)) {
+      const key = m[1];
+      const shapes = [...m[2].matchAll(/\['(path|rect|circle|ellipse)', \{([^}]*)\}\]/g)]
+        .map((one) => ({
+          name: one[1],
+          attrs: Object.fromEntries([...one[2].matchAll(/'?([a-zA-Z-]+)'?\s*:\s*'?([^,']+)'?/g)]
+            .map((pair) => [pair[1], pair[2].trim()])),
+        }));
+      if (shapes.length) byKey[key] = shapes;
+    }
+    // The two rail rows the owner reported, by name, so a regression
+    // names itself instead of failing a count.
+    const reviewsShapes = byKey.calibration || [];
+    const healthShapes = byKey['second-brain'] || [];
+    check('ICONS reviews and health are not the same drawing',
+      !!reviewsShapes.length && !!healthShapes.length &&
+        skeleton(reviewsShapes) !== skeleton(healthShapes),
+      'reviews=' + skeleton(reviewsShapes).slice(0, 48) +
+        ' health=' + skeleton(healthShapes).slice(0, 48));
   }
 
   // The rail's collapse control is the icon alone (C9): no label span, the
@@ -12067,6 +12119,162 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
     check('ICONS every destination draws its own mark',
       shapes.every(Boolean) && new Set(shapes).size === 11,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
+
+    // The owner's own report, on the rendered rail rather than in the
+    // source: "reviews and health are still having the same icons on the
+    // main rail". Both rows existed and both drew different STRINGS —
+    // two spike-and-plateau pulses one unit apart — so the count above was
+    // satisfied while the eye saw one shape twice.
+    //
+    // The first version of this check erased the numbers and compared the
+    // command skeletons. It passed with the bug fully restored, because
+    // the two pulses are genuinely different command sequences
+    // (`M3 13h3.5l2.5-6 4 11…` against `M3 12h4l2-5 4 10…`) — erasing
+    // digits cannot turn one into the other. A check that cannot fail is
+    // worse than no check, so this one RASTERIZES each path into a 12x12
+    // grid and measures the overlap. The two pulses scored 0.92 against
+    // each other while unrelated rail marks sit at 0.09-0.27, so 0.55
+    // separates "the same drawing" from "two drawings" with room on both
+    // sides. Rejected on sight at 17px is what the owner reported; this is
+    // the number behind that judgement.
+    const rasterOf = (shapes) => {
+      const N = 12;
+      const grid = Array.from({ length: N }, () => new Array(N).fill(0));
+      const plot = (x, y) => {
+        const gx = Math.min(N - 1, Math.max(0, Math.round((x / 24) * (N - 1))));
+        const gy = Math.min(N - 1, Math.max(0, Math.round((y / 24) * (N - 1))));
+        grid[gy][gx] = 1;
+      };
+      for (const shape of shapes) {
+        // The evaluator hands back a `d` string, one per path shape. The
+        // first draft of this block read `shape.attrs.d` — the shape it
+        // had when the marks were scraped out of the source as DOM-ish
+        // objects. Wiring it to the evaluated table left the two types
+        // disagreeing, so every path plotted nothing, every overlap was
+        // 0.00, and the pin passed with the real bug restored: an
+        // instrument reading nothing reports perfect separation. Accept
+        // both spellings so the change of source cannot gut it again.
+        const d = String(typeof shape === 'string' ? shape : (shape.attrs || {}).d || '');
+        let x = 0, y = 0;
+        for (const m of d.matchAll(/([MmLlHhVvAa])([^MmLlHhVvAa]*)/g)) {
+          const nums = [...m[2].matchAll(/-?\d+(?:\.\d+)?/g)].map((one) => Number(one[0]));
+          const cmd = m[1];
+          if (cmd === 'M') { x = nums[0]; y = nums[1]; plot(x, y); }
+          else if (cmd === 'h') { x += nums[0]; plot(x, y); }
+          else if (cmd === 'H') { x = nums[0]; plot(x, y); }
+          else if (cmd === 'v') { y += nums[0]; plot(x, y); }
+          else if (cmd === 'V') { y = nums[0]; plot(x, y); }
+          else if (cmd === 'l' || cmd === 'L') {
+            for (let at = 0; at + 1 < nums.length; at += 2) {
+              const nx = cmd === 'l' ? x + nums[at] : nums[at];
+              const ny = cmd === 'l' ? y + nums[at + 1] : nums[at + 1];
+              const steps = 16;
+              for (let step = 1; step <= steps; step++) {
+                plot(x + ((nx - x) * step) / steps, y + ((ny - y) * step) / steps);
+              }
+              x = nx; y = ny;
+            }
+          }
+          // The arcs, which several marks differ ONLY by — `vault` and
+          // `trust` are the same body and stem with a closed shackle
+          // against an open one (`a3.5 3.5 0 0 1 7 0` against
+          // `a3.5 3.5 0 0 1 6.7 -1.3`). Dropping this command made the
+          // two rasterize identically at 1.00 and reported a collision
+          // that was not there: the omitted stroke WAS the difference. An
+          // arc is approximated by its chord bowed out to the radius on
+          // the sweep's side, which is enough to separate a semicircle
+          // from a sliver.
+          else if (cmd === 'a' || cmd === 'A') {
+            for (let at = 0; at + 6 < nums.length; at += 7) {
+              const rx = nums[at], ry = nums[at + 1];
+              const sweep = nums[at + 4];
+              const nx = cmd === 'a' ? x + nums[at + 5] : nums[at + 5];
+              const ny = cmd === 'a' ? y + nums[at + 6] : nums[at + 6];
+              const chordX = nx - x, chordY = ny - y;
+              const length = Math.hypot(chordX, chordY) || 1;
+              const bulge = Math.min(rx, ry) * (sweep ? 1 : -1);
+              const midX = (x + nx) / 2 - (chordY / length) * bulge;
+              const midY = (y + ny) / 2 + (chordX / length) * bulge;
+              const steps = 16;
+              for (let step = 0; step <= steps; step++) {
+                const t = step / steps;
+                const one = (1 - t) * (1 - t) * x + 2 * (1 - t) * t * midX + t * t * nx;
+                const two = (1 - t) * (1 - t) * y + 2 * (1 - t) * t * midY + t * t * ny;
+                plot(one, two);
+              }
+              x = nx; y = ny;
+            }
+          }
+        }
+      }
+      return grid;
+    };
+    const overlap = (left, right) => {
+      const a = rasterOf(left), b = rasterOf(right);
+      let shared = 0, either = 0;
+      for (let y = 0; y < a.length; y++) {
+        for (let x = 0; x < a.length; x++) {
+          if (a[y][x] && b[y][x]) shared += 1;
+          if (a[y][x] || b[y][x]) either += 1;
+        }
+      }
+      return either ? shared / either : 0;
+    };
+    // The marks, EVALUATED from the table rather than regexed out of it.
+    //
+    // The first version sliced the table with a regex over the source. It
+    // looked right and was wrong: a key declared on one line
+    // (`calibration: [['path', …]],`) has no `^    ]` of its own, so the
+    // body swallowed every following key — `calibration`'s "shapes" were
+    // a dozen unrelated paths, `health`'s likewise, and the two giant
+    // sets scored 0.00 against each other. The pin passed with the real
+    // bug restored. Reading the literal as a value removes the whole
+    // class: no line shapes to guess at.
+    const tableStart = SRC.indexOf('var ICONS = {') + 'var ICONS = '.length;
+    const tableEnd = SRC.indexOf('};', tableStart) + 1;
+    const source = SRC.slice(tableStart, tableEnd).replace(/\/\/[^\n]*/g, '');
+    const ICON_TABLE = vm.runInNewContext('(' + source + ')');
+    const pathsOf = (key) => (ICON_TABLE[key] || [])
+      .filter((shape) => Array.isArray(shape) && shape[0] === 'path')
+      .map((shape) => String((shape[1] || {}).d || ''));
+    // The rows the owner named, as a pair that must not look alike.
+    const reviewsPaths = pathsOf('calibration');
+    const healthPaths = pathsOf('health');
+    check('ICONS reviews and health are both drawn',
+      reviewsPaths.length > 0 && healthPaths.length > 0,
+      'reviews=' + reviewsPaths.length + ' health=' + healthPaths.length);
+    check('ICONS the reviews and health drawings do not overlap',
+      overlap(reviewsPaths, healthPaths) < 0.55,
+      'overlap=' + overlap(reviewsPaths, healthPaths).toFixed(2) +
+        ' (the two pulses scored 0.92; unrelated marks 0.09-0.27)');
+    // And the whole table, because the owner's complaint is a class, not
+    // a pair: any two marks that rasterize to one silhouette.
+    //
+    // Scoped to marks with the SAME SHAPE COUNT, which is the rule the
+    // icons plan already states — a surface and its own section share a
+    // drawing on purpose, so `learning` keeps its staircase-and-node and
+    // `lesson` keeps the bare staircase, one stroke apart (they score 1.00
+    // on the paths alone because the node is a `circle`, and they never
+    // share a rail). What must never happen is two marks built from the
+    // same number of paths whose strokes trace the same line — that is a
+    // drawing copied by accident, which is what reviews and health were.
+    const keys = Object.keys(ICON_TABLE);
+    const twins = [];
+    let closest = 0;
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const left = pathsOf(keys[i]), right = pathsOf(keys[j]);
+        if (!left.length || !right.length) continue;
+        const leftAll = (ICON_TABLE[keys[i]] || []).length;
+        const rightAll = (ICON_TABLE[keys[j]] || []).length;
+        if (leftAll !== rightAll) continue;
+        const score = overlap(left, right);
+        if (score > closest) closest = score;
+        if (score >= 0.75) twins.push(keys[i] + '/' + keys[j] + '=' + score.toFixed(2));
+      }
+    }
+    check('ICONS no two marks of equal weight rasterize to the same drawing',
+      twins.length === 0, twins.join(', ') || ('none · closest pair ' + closest.toFixed(2)));
   }
 
   // The desk (the desk plan's C3/C14): the route reaches a built panel —

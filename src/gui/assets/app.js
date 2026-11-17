@@ -872,8 +872,29 @@ import { node, svg, clip } from './core/dom.js';
       ['path', { d: 'M5.5 20v-5M10 20V9.5M14.5 20v-8M19 20V5.5' }],
       ['path', { d: 'M3.5 20h17' }]
     ],
-    // the second brain's health mark: a pulse, the machine's own heartbeat
-    'second-brain': [['path', { d: 'M3 12h4l2-5 4 10 2-5h6' }]],
+    // The health lens's mark: a kit with a cross — the machine's own
+    // checks, and the one drawing on this rail that says "is it well"
+    // rather than "what is it".
+    //
+    // This key used to be a SECOND `'second-brain'` declaration (a pulse,
+    // added when Health became a lens on 2026-11-15). Because an object
+    // literal keeps the last of two identical keys, that pulse silently
+    // shadowed the atlas grid at the top of this table, so the health row
+    // wore the pulse and `calibration` — whose own pulse is specified in
+    // docs/plans/2026-11-04-icons.md — wore the same shape beside it. Two
+    // rail rows, one drawing. The pin could not see it: it compares each
+    // row's shape attributes, and two distinct strings are two distinct
+    // shapes to a string comparison, whatever the eye says at 17px.
+    //
+    // Drawn for 17px and measured there: a wide 15x12 body against
+    // `gate`'s tall 12x17 doorway, with the cross at the centre. The
+    // shield-with-a-cross candidate was rejected for colliding with the
+    // existing `screen` shield, and a boxed heartbeat for turning to mush
+    // inside 17 pixels.
+    health: [
+      ['rect', { x: '4.5', y: '6', width: '15', height: '12', rx: '2.5' }],
+      ['path', { d: 'M12 9v6M9 12h6' }]
+    ],
     models: [
       ['rect', { x: 7, y: 7, width: 10, height: 10, rx: 2 }],
       ['path', { d: 'M12 7V3.6M12 20.4V17M7 12H3.6M20.4 12H17' }]
@@ -29200,6 +29221,28 @@ import { node, svg, clip } from './core/dom.js';
     'workspace-history': 'layerfs', about: 'version'
   };
 
+  // The address-to-mark map, for the one address whose mark is not its own
+  // name. `second-brain` is both the Health rail lens AND the Intelligence
+  // section that holds the project atlas, and those are two concepts: the
+  // lens asks "is the machine well", the section is the atlas itself. The
+  // rail and the palette both read this map, so the two cannot disagree —
+  // and the section map (`MEMORY_SECTION_ICONS`) still names
+  // `second-brain` for the atlas, which now draws what it always meant.
+  //
+  // Before this map the lens resolved to the atlas's own key, so the
+  // table carried a second `'second-brain'` declaration to give health a
+  // different drawing — and a duplicate key silently wins in an object
+  // literal, which is how reviews and health ended up sharing one pulse.
+  var ADDRESS_MARKS = {
+    'second-brain': 'health'
+  };
+
+  /// The icon key for a rail address: its own name unless the map says
+  /// otherwise.
+  function markFor(address) {
+    return ADDRESS_MARKS[address] || address;
+  }
+
   function buildRail() {
     el.railTree.textContent = '';
     var folded = railFoldedGroups();
@@ -29249,7 +29292,7 @@ import { node, svg, clip } from './core/dom.js';
         var isPlugin = (face.plugins || []).some(function (one) {
           return one.enabled && one.name === address;
         });
-        link.appendChild(icon(isPlugin ? 'plugin' : address, 'surfaces-icon'));
+        link.appendChild(icon(isPlugin ? 'plugin' : markFor(address), 'surfaces-icon'));
         link.appendChild(node('span', 'surfaces-label', name));
         // The expert register (U45): the subsystem name behind the plain
         // label, revealed when the console's expert switch is on. The
@@ -29457,7 +29500,7 @@ import { node, svg, clip } from './core/dom.js';
         row.setAttribute('role', 'option');
         row.dataset.address = item[0];
         var mark = node('span', 'palette-row-mark');
-        mark.appendChild(icon(item[0]));
+        mark.appendChild(icon(markFor(item[0])));
         row.appendChild(mark);
         row.appendChild(node('span', 'palette-row-name', item[1]));
         // Whether the surface is live is on the row, not hidden: a later
