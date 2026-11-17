@@ -21988,10 +21988,17 @@ import { node, svg, clip } from './core/dom.js';
   /// `disabled_models` the off list, `model_settings` the provider's
   /// declaration beside the owner's overrides.
   function providerSections(read, provider, override) {
-    var detail = (override && override.detail) || '';
+    // KI-559: the endpoint field is seeded from the entry's own base_url,
+    // never from the list row's `detail`. That detail is a CAPTION —
+    // "base · KEY_ENV · enabled" — and this field is posted back as
+    // `base_url` on every save, so seeding it from the caption wrote the
+    // caption into the provider's endpoint: a disabled provider's URL
+    // became "…/v1 · STEPFUN_API_KEY · enabled/chat/completions", which
+    // no request can dial. The read publishes base_url now; the caption
+    // stays a caption and is not used here at all.
     var base = node('input', 'knob-box');
     base.type = 'text';
-    base.value = detail;
+    base.value = provider.base_url || '';
     base.placeholder = 'the provider\u2019s own endpoint, when it overrides the compiled one';
     base.setAttribute('aria-label', 'the endpoint');
     // KI-423: where this provider publishes its model listing, when that

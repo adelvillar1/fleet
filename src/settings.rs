@@ -2170,6 +2170,61 @@ mod router_tests {
         );
     }
 
+    /// KI-559: the endpoint the card used to write was its own caption
+    /// line — `"<base> · <KEY_ENV> · enabled"` — because the field was
+    /// seeded from the list row's display detail. Every request then built
+    /// `…/v1 · KEY · enabled/chat/completions`, which curl refuses with
+    /// exit 3 before any HTTP. The writer now refuses the same shape by
+    /// name, and still accepts everything a real endpoint looks like —
+    /// including the loopback fixtures the roster carries on purpose.
+    #[test]
+    fn an_endpoint_no_request_could_dial_is_refused_by_name() {
+        let caption = "https://api.stepfun.ai/step_plan/v1 · STEPFUN_API_KEY · enabled";
+        let error = validate_base_url(caption).unwrap_err();
+        assert!(error.contains("whitespace"), "{error}");
+        assert!(
+            error.contains("caption"),
+            "it names the likely cause: {error}"
+        );
+        // A single stray space is the same defect, on any provider.
+        assert!(validate_base_url("https://api.example.com/v 1").is_err());
+        // Everything below is a base someone really runs.
+        for fine in [
+            "https://api.stepfun.ai/step_plan/v1",
+            "http://127.0.0.1:9/v1",
+            "http://127.0.0.1:8420",
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        ] {
+            assert!(validate_base_url(fine).is_ok(), "`{fine}` must be accepted");
+        }
+        // Empty is the compiled default's business, not the writer's.
+        assert!(validate_base_url("").is_ok());
+        assert!(validate_base_url("   ").is_ok());
+    }
+
+    /// And the write itself refuses before the key lands: a refusal after
+    /// `set_secret_with` would leave a secret for a provider that was
+    /// never written, the state KI-407 exists to prevent.
+    #[test]
+    fn a_captioned_endpoint_is_refused_before_the_key_is_stored() {
+        let home = scratch("ki559-refuse");
+        let entry = serde_json::json!({
+            "id": "probe",
+            "base_url": "https://api.example.invalid/v1 · PROBE_API_KEY · enabled",
+            "key_env": "PROBE_API_KEY",
+            "models": ["m"]
+        })
+        .to_string();
+        let error = set_provider_with_key_with(&home, &entry, Some("sk-secret"), None)
+            .expect_err("the captioned endpoint must be refused");
+        assert!(error.contains("whitespace"), "{error}");
+        // The key did not land, and neither did the provider.
+        let (present, _) = secret_state(&home, "PROBE_API_KEY");
+        assert!(!present, "the key must not be stored by a refused write");
+        let stored = std::fs::read_to_string(home.join("config.json")).unwrap_or_default();
+        assert!(!stored.contains("probe"), "the provider must not be stored");
+    }
+
     /// A provider whose listing lives elsewhere is asked there: OpenCode's
     /// chat is `…/inference/openai/v1/chat/completions` while its listing
     /// is `…/inference/v1/models`, and the listing is public while the
@@ -3585,6 +3640,39 @@ pub fn normalize_base_url(base: &str) -> String {
     trimmed.to_string()
 }
 
+/// Whether a provider's endpoint could actually be dialed (KI-559).
+///
+/// The chat URL is built as `{base}/chat/completions` and the listing as
+/// `{base}/models`, so a base carrying whitespace — or a display line the
+/// card wrote back as if it were a value — produces a request URL no
+/// client can parse. `curl` refuses it outright (exit 3, URL malformed)
+/// and `ureq` returns a transport error, so the provider looks broken
+/// while its key is fine.
+///
+/// Deliberately narrow: this rejects what cannot POSSIBLY dial, and does
+/// not police schemes or hosts. A base of `http://127.0.0.1:9/v1` is a
+/// test fixture the roster carries on purpose, and a lane base may be
+/// anything the owner runs; refusing those would be the writer inventing
+/// a policy the owner never asked for.
+pub fn validate_base_url(base: &str) -> Result<(), String> {
+    let trimmed = base.trim();
+    if trimmed.is_empty() {
+        // An empty base is the compiled default's business: the merge
+        // treats an absent value as "leave the roster's own", and an
+        // explicit empty string is how a surface clears an override.
+        return Ok(());
+    }
+    if trimmed.chars().any(char::is_whitespace) {
+        return Err(format!(
+            "the endpoint `{trimmed}` carries whitespace, so the request URL \
+             (`{{endpoint}}/chat/completions`) cannot be dialed — the provider \
+             card used to seed this field from its own caption line \
+             (`<endpoint> · <KEY_ENV> · enabled`); paste the endpoint alone"
+        ));
+    }
+    Ok(())
+}
+
 pub fn discover_provider_models(
     base_url: &str,
     models_url: Option<&str>,
@@ -3895,6 +3983,16 @@ pub fn set_provider_with_key_with(
     if id.is_empty() {
         return Err("the entry names no provider id".to_string());
     }
+    // KI-559: refuse an endpoint no request could dial, BEFORE the key is
+    // stored. The order is the point — a refusal after `set_secret_with`
+    // would leave a secret behind for a provider that was never written,
+    // which is the state KI-407 exists to prevent. The defect this guards
+    // was a caption written into this field ("…/v1 · KEY · enabled"), so
+    // the check names whitespace and marks the read's own caption as the
+    // likely cause rather than making the owner guess.
+    if let Some(base) = value.get("base_url").and_then(|base| base.as_str()) {
+        validate_base_url(base)?;
+    }
     let mut store: Option<String> = None;
     if let Some(key) = key.map(str::trim).filter(|key| !key.is_empty()) {
         let name = value
@@ -4055,6 +4153,12 @@ pub fn set_provider(home: &Path, entry: &str) -> Result<String, String> {
     let id = parsed.id().to_string();
     if id.is_empty() {
         return Err("the entry names no provider id".to_string());
+    }
+    // KI-559: the same endpoint check the keyed writer runs, so the CLI
+    // path cannot write an endpoint the GUI path refuses. One rule, both
+    // doors.
+    if let Some(base) = parsed.base_url.as_deref() {
+        validate_base_url(base)?;
     }
     // A provider with no models is a declaration, not an error: KI-407's
     // ruling is that adding a provider is independent of its catalog, so

@@ -12231,6 +12231,14 @@ fn catalog_document(catalog: &crate::settings::Catalog) -> Value {
         })).collect::<Vec<_>>(),
         "providers": catalog.providers.iter().map(|entry| json!({
             "id": entry.id,
+            // KI-559: the entry's own endpoint, so the card edits a value
+            // rather than a caption. The card seeded its endpoint field
+            // from the list row's `detail` — a display line reading
+            // "base · KEY_ENV · enabled" — and wrote that back as
+            // `base_url`, so any save or disable press corrupted the
+            // provider's endpoint. A card that cannot see the value cannot
+            // preserve it (KI-423's lesson, one field over).
+            "base_url": entry.base_url,
             "kind": entry.kind,
             "billing": entry.billing,
             "enabled": entry.enabled,

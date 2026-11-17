@@ -9384,7 +9384,16 @@ async function theSettingsRailCarriesOneSectionAtATime() {
       { key: 'ui.adapt', value: 'on', kind: 'text', source: 'default', summary: 'adapt' },
       { key: 'runs.max_turns', value: 12, kind: 'number', source: 'default', summary: 'turns' },
     ],
-    lists: [{ key: 'quick', kind: 'workload', detail: '', reverts: true, seed: '' }],
+    lists: [{ key: 'quick', kind: 'workload', detail: '', reverts: true, seed: '' },
+      // KI-559's precondition: the provider's list row carries a CAPTION
+      // in `detail` — "<base> · <KEY_ENV> · enabled" — exactly as the
+      // real read renders it. The card seeds its endpoint from the entry's
+      // base_url, never from this, and the fixture makes that failure
+      // possible to observe: with the caption seeded, the endpoint field
+      // reads "http://127.0.0.1:9/v1 · ALPHA_API_KEY · enabled".
+      { key: 'alpha', kind: 'provider',
+        detail: 'http://127.0.0.1:9/v1 · ALPHA_API_KEY · enabled',
+        reverts: true, seed: '{"id":"alpha","base_url":"http://127.0.0.1:9/v1"}' }],
     rules: [{ label: 'bash · pwd', tool: 'bash', program: 'pwd' }],
     env: [{ name: 'FLEET_EMBEDDING_ENDPOINT', present: true, source: 'env' },
       { name: 'FLEET_JUDGE_BUDGET_USD_DAY', present: true, source: 'env' }],
@@ -9414,6 +9423,7 @@ async function theSettingsRailCarriesOneSectionAtATime() {
         known: true, enabled: true, key_present: true, billing: 'plan', kind: 'http' }],
       providers: [{ id: 'alpha', kind: 'http', billing: 'plan', enabled: true,
       key_present: true, key_env: 'ALPHA_API_KEY', disabled_reason: null,
+      base_url: 'http://127.0.0.1:9/v1',
       models_url: 'http://127.0.0.1:9/inference/v1/models',
       models: ['m-one', 'm-two'], disabled_models: ['m-two'],
       headers: { 'x-opencode-session': '{session}' },
@@ -9544,6 +9554,24 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   // KI-423: the listing URL is a field on the card, and it carries the
   // value the read supplied. A card that cannot see the value cannot
   // preserve it — the save that omitted it erased a custom listing.
+  //
+  // KI-559: the same rule for the endpoint, and the reason it needed
+  // saying. The card seeded this field from the list row's display
+  // `detail` — a caption, "<base> · <KEY_ENV> · enabled" — and posted it
+  // back as `base_url` on every save and on the disable press, so the
+  // owner's one disable wrote the caption into the endpoint and every
+  // request then built a URL no client can dial. The field must carry the
+  // VALUE the read published, and must never carry the caption.
+  const endpointField = pane.find((one) => one.name === 'input' &&
+    one.getAttribute && one.getAttribute('aria-label') === 'the endpoint')[0] || null;
+  check('KI-559 the endpoint field carries the read\u2019s own base_url',
+    !!endpointField && endpointField.value === 'http://127.0.0.1:9/v1',
+    endpointField ? String(endpointField.value) : 'no endpoint field');
+  check('KI-559 the endpoint field never carries the row\u2019s caption',
+    !!endpointField && !endpointField.value.includes('\u00b7') &&
+      !endpointField.value.includes('ALPHA_API_KEY') &&
+      !endpointField.value.includes('enabled'),
+    endpointField ? String(endpointField.value) : 'no endpoint field');
   const listingField = pane.find((one) => one.name === 'input' &&
     one.getAttribute && one.getAttribute('aria-label') === 'the listing')[0] || null;
   check('\u00a7KI-423 the card carries the listing field, filled from the read',
