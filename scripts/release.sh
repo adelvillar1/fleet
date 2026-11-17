@@ -392,7 +392,12 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # KEYFILE was already checked above the build (createUpdaterArtifacts signs
 # there too, via TAURI_SIGNING_PRIVATE_KEY). -k takes the key's CONTENTS,
 # not a path — the path form fails to decode (proved live 2026-11-08).
-cargo-tauri signer sign -k "$(cat "$KEYFILE")" "$APP_TAR" --password ""
+# KI-556: --app-version binds the signature to the version it ships with.
+# Without it the signer warns and emits an unbound signature, which an
+# updater configured with `requireSignedVersion` rejects — so the cut is
+# one config flip away from shipping an install nothing will accept.
+cargo-tauri signer sign -k "$(cat "$KEYFILE")" "$APP_TAR" --password "" \
+  --app-version "$VERSION"
 [ -f "$APP_TAR.sig" ] || die "the signer left no .sig beside $APP_TAR"
 
 echo "== uploading the assets =="
