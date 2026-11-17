@@ -8,7 +8,7 @@ tier: durable
 shape: [docs]
 phrases: [canonical skills, skills library, where do skills live, install a skill, SKILL.md source, agents skills]
 missing: []
-recall-count: 700
+recall-count: 701
 superseded-by:
 valid-until:
 ---
