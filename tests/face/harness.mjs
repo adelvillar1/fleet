@@ -1235,11 +1235,16 @@ function boot(options) {
     scrollTo: () => {},
     confirm: () => true,
     prompt: () => opts.promptAnswer || 'a name',
-    open: () => null,
+    open: (url) => { windowOpens.push(String(url || '')); return null; },
     fetch: fetchImpl,
     focus: () => {},
   };
   const clipboardWrites = [];
+  // A press whose whole effect is a new tab is a real action, and the stub
+  // used to discard it — `open the frame` looked dead for exactly that
+  // reason. Recording the URL makes the action observable the way the
+  // clipboard's writes are.
+  const windowOpens = [];
   const navigator_ = { clipboard: { writeText: (text) => { clipboardWrites.push(text); return Promise.resolve(); } }, userAgent: 'node', language: 'en' };
   const sandbox = {
     document: document_,
@@ -1331,6 +1336,9 @@ function boot(options) {
     el: (id) => IDS[id] || null,
     rows: (sel) => documentElement.querySelectorAll(sel),
     clipboardWrites,
+    // The tabs a press opened: `open the frame` is one action that leaves
+    // no other trace in the document.
+    windowOpens,
     // The timers the page armed (KI-380's beat watch) and the harness's
     // own failure hook, so a case can fail a fetch mid-flight.
     intervals,
@@ -14171,7 +14179,8 @@ async function everyButtonOnEveryLensDoesSomething() {
     // label on a timer the stub fires immediately, so it looked dead until
     // the writes were counted here.
     return parts.join('\n') + '|calls=' + page.calls.length + '|store=' + store +
-      '|clip=' + (page.clipboardWrites || []).length;
+      '|clip=' + (page.clipboardWrites || []).length +
+      '|tabs=' + (page.windowOpens || []).length;
   };
 
   let driven = 0;
@@ -14251,10 +14260,297 @@ async function pressingASubmitButtonSubmitsItsForm() {
     JSON.stringify(posted.map((c) => c.body)));
 }
 
+// The class the first sweep could not reach, and the owner asked about
+// directly: the buttons that exist ONLY because something needs the owner —
+// an approval seat standing over the composer, the inbox's five classes,
+// the repair verbs when a service is down, a frame's action bar. An idle
+// fixture renders none of them, so a sweep built on one proves nothing
+// about them.
+//
+// Every row here is shaped exactly as `bridge.rs`'s `inbox_rows` stamps it
+// — `key` is `"{class}:{id}"` and a signature rides beside it. That detail
+// is load-bearing: the row menu's toggle compares `face.inboxOpen` to
+// `row.key`, so a fixture without keys makes the ⋯ look dead when it is
+// the fixture that is wrong.
+async function everyButtonOnAnOwnerActionSurfaceDoesSomething() {
+  const row = (cls, id, extra) => Object.assign({ key: cls + ':' + id, signature: 'sig-' + id }, extra);
+  const inbox = {
+    type: 'inbox', total: 5, archived: [], dismissed: [],
+    seats: [row('seat', 'seat-s1', { session: 'seat-s1', tool: 'write_file',
+      label: 'tmp/n.md', summary: 'the run wants to create the file',
+      verdict: 'the standing class decides', allowlistable: true })],
+    onboarding: [row('onboard', 'key', { id: 'key', name: 'give the bot face its own key',
+      step: '2 of 3', why: 'the bot conversations route through their own key' })],
+    asks: [row('ask', 'room-1', { session: 'room-1', from: 'bob',
+      words: 'do we ship it behind the flag?' })],
+    cron: [row('cron', 'nightly', { name: 'nightly-sweep', outcome: 'failed',
+      schedule: '0 3 * * *', task: 'sweep', last_run: '03:00', runs: 12, successes: 11 })],
+    doctor: [row('doctor', 'api', { check: 'api', why: 'the API did not answer' })],
+  };
+  const down = {
+    state: (asked) => ({ ...emptyState(asked), services: { services: [
+      { name: 'layerfs', up: false, note: 'the container is not running' },
+      { name: 'docker', up: false, note: 'no runtime', needs_runtime: true },
+      { name: 'lanes', up: false, note: 'a lane cannot answer' },
+    ] } }),
+    onboard: onboardDoc({ door: false }),
+  };
+  // A board whose set is incoherent: the review card's "fix the drift"
+  // only exists on that state.
+  const design = {
+    type: 'design', refused: [],
+    projects: [{ project: '/w', boards: [{ slug: 'b1', name: 'B1', frames: 1, sets: ['set-a'] }] }],
+    active: { slug: 'b1', name: 'B1',
+      frames: [{ id: 'f1', name: 'one', x: 0, y: 0, w: 400, h: 300, kind: 'html',
+        html: '<p>a</p>', set: 'set-a', page: 'home' }],
+      sets: [{ name: 'set-a', pages: [{ id: 'home', slug: 'home' }],
+        coherence: { ok: false, missing: ['radius'], broken: ['/gone'], duplicates: ['home'] } }] },
+  };
+  const beat = (page) => {
+    const parts = [];
+    const walk = (n) => {
+      parts.push((n.id || '') + '|' + (n.className || '') + '|' + (n.hidden ? 1 : 0) +
+        '|' + String(n.textContent || '').slice(0, 90));
+      (n.children || []).forEach(walk);
+    };
+    page.documentElement.children.forEach(walk);
+    return parts.join('\n') + '|calls=' + page.calls.length +
+      '|clip=' + (page.clipboardWrites || []).length +
+      '|tabs=' + (page.windowOpens || []).length;
+  };
+  const booted = (docs, hash) => boot({ width: 1440, hash, documents: docs });
+  const visible = (b) => {
+    let n = b;
+    while (n) { if (n.hidden === true) return false; n = n.parentNode; }
+    return true;
+  };
+  // Drive one labelled press on a fresh page, reporting whether anything moved.
+  const drive = async (docs, hash, selector, label) => {
+    const page = booted(docs, hash);
+    await flush(60);
+    page.open();
+    await flush(220);
+    const pick = () => page.rows('button').filter(visible)
+      .filter((b) => /row|item|decision|canvas-act|surface-refresh|svc-repair|ib-more|replay-button|primary|danger/.test(String(b.className || '')) || b.dataset.decision)
+      .find((b) => String(b.textContent || '').replace(/\s+/g, ' ').trim() === label ||
+        String(b.getAttribute && b.getAttribute('aria-label') || '') === label);
+    const target = pick();
+    if (!target) return { found: false };
+    const before = beat(page);
+    let threw = null;
+    try { target.click(); } catch (error) { threw = String((error && error.message) || error); }
+    await flush(80);
+    return { found: true, moved: beat(page) !== before, threw };
+  };
+
+  // 1. The approval seat's four decisions. It stands over the composer only
+  //    while a call is waiting for the owner.
+  const seatDocs = {
+    state: (asked) => ({ ...emptyState(asked), approval: { tool: 'write_file',
+      label: 'tmp/x.md', summary: 'the run wants to create the file', allowlistable: true,
+      verdict: { destructive: false, reason: 'a workspace write', judged_from: 'sys1',
+        confidence: 0.91 } } }),
+    onboard: onboardDoc({ door: false }),
+  };
+  // The seat has TWO hosts on purpose (the KI-380 class): the composer's
+  // seat and the design page's own panel, so a run started from the canvas
+  // raises its approval where the owner is looking. Both carry the same
+  // four decisions, so each host is driven on its own — a pin that pressed
+  // only the first match would miss the other host entirely, which is
+  // exactly what the first draft of this case did.
+  const seatPage = booted(seatDocs, '#/chat');
+  await flush(60);
+  seatPage.open();
+  await flush(200);
+  const decisions = seatPage.rows('button').filter((b) => b.dataset && b.dataset.decision);
+  check('ASK the approval seat renders its decisions',
+    decisions.length >= 3, String(decisions.length));
+  check('ASK both seat hosts carry the decisions',
+    seatPage.rows('#seat-actions button').filter((b) => b.dataset && b.dataset.decision).length >= 3 &&
+      seatPage.rows('#design-seat button').filter((b) => b.dataset && b.dataset.decision).length >= 3,
+    'seat=' + seatPage.rows('#seat-actions button').length +
+      ' design=' + seatPage.rows('#design-seat button').length);
+  for (const host of ['#seat-actions', '#design-seat']) {
+    for (const decision of ['once', 'always', 'deny']) {
+      const page = booted(seatDocs, '#/chat');
+      await flush(60);
+      page.open();
+      await flush(200);
+      const button = page.rows(host + ' button')
+        .find((b) => b.dataset && b.dataset.decision === decision);
+      check('ASK ' + host + ' offers `' + decision + '`', !!button, String(!!button));
+      const before = page.calls.length;
+      if (button) button.click();
+      await flush(80);
+      const answered = page.calls.slice(before).filter((c) => c.url.startsWith('/api/approve'));
+      check('ASK ' + host + '\u2019s `' + decision + '` answers the call it stands for',
+        answered.length === 1 && String(answered[0].body).includes(decision),
+        JSON.stringify(answered.map((c) => c.body)));
+    }
+  }
+
+  // 2. The inbox's five classes, every row verb and every row-menu verb.
+  let inboxDriven = 0;
+  const inboxDead = [];
+  for (const cls of ['seat', 'onboard', 'ask', 'cron', 'doctor']) {
+    const page = booted({ inbox, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) }, '#/inbox');
+    await flush(60);
+    page.open();
+    await flush(200);
+    const rowEl = page.rows('.ib-row').find((r) => String(r.dataset.class || '') === cls);
+    if (!rowEl) { inboxDead.push(cls + ' (row never rendered)'); continue; }
+    const verbs = rowEl.querySelectorAll('.ib-actions button')
+      .map((b) => String(b.textContent || '').trim());
+    for (const label of verbs) {
+      const result = await drive({ inbox, state: (asked) => emptyState(asked),
+        onboard: onboardDoc({ door: false }) }, '#/inbox', '.ib-actions button', label);
+      if (!result.found) continue;
+      inboxDriven += 1;
+      if (!result.moved && !result.threw) inboxDead.push(cls + ' » ' + label);
+    }
+    // The row menu: it exists only while the row's key is open.
+    const menuPage = booted({ inbox, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) }, '#/inbox');
+    await flush(60);
+    menuPage.open();
+    await flush(200);
+    const more = menuPage.rows('.ib-row')
+      .find((r) => String(r.dataset.class || '') === cls)
+      .querySelectorAll('button').find((b) => String(b.textContent || '').trim() === '\u22ef');
+    if (more) more.click();
+    await flush(140);
+    const menu = menuPage.rows('.ib-menu')[0];
+    check('ASK the `' + cls + '` row\u2019s menu opens on its \u22ef',
+      !!menu && menu.querySelectorAll('button').length > 0,
+      menu ? String(menu.querySelectorAll('button').length) : 'no menu');
+    if (!menu) { inboxDead.push(cls + ' » \u22ef'); continue; }
+    const menuVerbs = menu.querySelectorAll('button')
+      .map((b) => String(b.textContent || '').trim());
+    for (const label of menuVerbs) {
+      const page2 = booted({ inbox, state: (asked) => emptyState(asked),
+        onboard: onboardDoc({ door: false }) }, '#/inbox');
+      await flush(60);
+      page2.open();
+      await flush(200);
+      const more2 = page2.rows('.ib-row')
+        .find((r) => String(r.dataset.class || '') === cls)
+        .querySelectorAll('button').find((b) => String(b.textContent || '').trim() === '\u22ef');
+      if (more2) more2.click();
+      await flush(120);
+      const m2 = page2.rows('.ib-menu')[0];
+      const verb = m2 && m2.querySelectorAll('button')
+        .find((b) => String(b.textContent || '').trim() === label);
+      if (!verb) continue;
+      const before = beat(page2);
+      let threw = null;
+      try { verb.click(); } catch (error) { threw = String((error && error.message) || error); }
+      await flush(80);
+      inboxDriven += 1;
+      if (beat(page2) === before && !threw) inboxDead.push(cls + ' \u22ef ' + label);
+    }
+  }
+  check('ASK every inbox row verb and menu verb was driven',
+    inboxDriven >= 25, 'driven ' + inboxDriven);
+  check('ASK no inbox row verb is a dead action',
+    inboxDead.length === 0, inboxDead.join(' | ') || 'none');
+
+  // 3. The repair verbs: they exist only while a service is down.
+  for (const [label, url] of [
+    ['Repair', '/api/repair/layerfs'],
+    ['Install kiri and start the container', '/api/repair/install-runtime'],
+    ['Rebuild the lanes', '/api/repair/lanes'],
+  ]) {
+    const page = booted(down, '#/chat');
+    await flush(60);
+    page.open();
+    await flush(220);
+    const button = page.rows('button').filter(visible)
+      .find((b) => String(b.textContent || '').trim() === label);
+    check('ASK the down-service card offers `' + label + '`', !!button, String(!!button));
+    const before = page.calls.length;
+    if (button) button.click();
+    await flush(90);
+    const posted = page.calls.slice(before).filter((c) => c.url === url && c.method === 'POST');
+    check('ASK `' + label + '` posts its own repair', posted.length === 1,
+      JSON.stringify(page.calls.slice(before).map((c) => c.method + ' ' + c.url)));
+  }
+
+  // 4. The frame's action bar, and the review card's drift fix — both
+  //    exist only once a board is loaded.
+  const barPage = booted({ design, state: (asked) => emptyState(asked),
+    onboard: onboardDoc({ door: false }) }, '#/design');
+  await flush(80);
+  barPage.open();
+  await flush(240);
+  const acts = barPage.rows('button').filter((b) => String(b.className || '').includes('canvas-act'))
+    .map((b) => String(b.textContent || '').trim());
+  check('ASK the frame carries its action bar',
+    acts.length >= 6, acts.join(','));
+  const barDead = [];
+  for (const label of acts) {
+    const page = booted({ design, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) }, '#/design');
+    await flush(80);
+    page.open();
+    await flush(240);
+    const button = page.rows('button')
+      .filter((b) => String(b.className || '').includes('canvas-act'))
+      .find((b) => String(b.textContent || '').trim() === label);
+    if (!button) continue;
+    const before = beat(page);
+    let threw = null;
+    try { button.click(); } catch (error) { threw = String((error && error.message) || error); }
+    await flush(120);
+    if (beat(page) === before && !threw) barDead.push(label);
+  }
+  check('ASK no frame action is a dead press', barDead.length === 0,
+    barDead.join(',') || 'none');
+  // `open the frame` leaves the document untouched: its whole effect is a
+  // new tab, which the stub now records.
+  {
+    const page = booted({ design, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) }, '#/design');
+    await flush(80);
+    page.open();
+    await flush(240);
+    const open = page.rows('button')
+      .filter((b) => String(b.className || '').includes('canvas-act'))
+      .find((b) => String(b.textContent || '').trim() === 'open');
+    if (open) open.click();
+    await flush(60);
+    check('ASK `open` opens the frame\u2019s own address',
+      page.windowOpens.length === 1 && String(page.windowOpens[0]).startsWith('/api/design/frame/'),
+      JSON.stringify(page.windowOpens));
+  }
+  {
+    const page = booted({ design, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) }, '#/design');
+    await flush(80);
+    page.open();
+    await flush(240);
+    const review = page.rows('button')
+      .filter((b) => String(b.className || '').includes('canvas-act'))
+      .find((b) => String(b.textContent || '').trim() === 'review');
+    if (review) review.click();
+    await flush(160);
+    const fix = page.rows('button').find((b) => String(b.textContent || '').trim() === 'fix the drift');
+    check('ASK an incoherent set offers `fix the drift`', !!fix, String(!!fix));
+    const before = page.calls.length;
+    if (fix) fix.click();
+    await flush(140);
+    check('ASK `fix the drift` asks for the fix',
+      page.calls.slice(before).some((c) => c.url === '/api/run' && c.method === 'POST'),
+      JSON.stringify(page.calls.slice(before).map((c) => c.method + ' ' + c.url)));
+  }
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
   ['FORM pressing a submit button submits its form', pressingASubmitButtonSubmitsItsForm],
+  ['ASK every button on an owner-action surface does something',
+    everyButtonOnAnOwnerActionSurfaceDoesSomething],
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
   ['ICONS every key the face asks for is drawn', everyIconKeyTheFaceAsksForIsDrawn],
