@@ -18891,6 +18891,11 @@ import { node, svg, clip } from './core/dom.js';
         face.settings = doc;
         if (face.panel === 'settings') paintSettings();
         else if (face.panel === 'vault') paintVault();
+        // The read resolves WITH the document. A caller that waits for the
+        // re-read to land has something to read; before this it resolved
+        // undefined, so every `onDone(reply)` downstream received nothing
+        // and read its own answer as silent (KI-561).
+        return doc;
       })
       .catch(function () { });
   }
@@ -18941,6 +18946,14 @@ import { node, svg, clip } from './core/dom.js';
   // One write, then the read again: the panel paints what the writer
   // confirmed, and a refusal names itself the way the writer did. Every
   // outcome lands on the settings board's own line (U1).
+  //
+  // `onDone` receives the WRITE's reply — `{status, body}` with the
+  // writer's `body.wrote` — because that is what a caller asks about: the
+  // discovery's outcome, the key's store, the plugin's elevation. It used
+  // to receive whatever `readSettings` resolved, which was nothing, so
+  // every reply-reading caller in the surface silently took its empty
+  // path (KI-561). The re-read still runs first, so a caller's paint sees
+  // the new document.
   function writeSettings(op, fields, onDone) {
     var body = Object.assign({ op: op }, fields || {});
     settingsSay('saving', settingsLabel(op, fields));
@@ -18948,10 +18961,15 @@ import { node, svg, clip } from './core/dom.js';
       if (reply.status !== 200) {
         settingsSay('refused', 'the write was refused',
           (reply.body && reply.body.error) || 'the surface said no without a reason');
+        // A refusal stops here: the caller's `onDone` is its success path,
+        // and running it would paint its own "saved" over the writer's
+        // words (the harness's U1 case caught exactly that).
         return;
       }
       settingsSay('saved', settingsLabel(op, fields));
-      return readSettings(true).then(onDone);
+      return readSettings(true).then(function () {
+        if (onDone) onDone(reply);
+      });
     }).catch(function () {
       settingsSay('unreachable', 'the settings surface is unreachable',
         'the write never left this page \u2014 check the face is still running');
@@ -22133,18 +22151,71 @@ import { node, svg, clip } from './core/dom.js';
     reload.type = 'button';
     reload.dataset.act = 'provider-discover';
     reload.addEventListener('click', function () {
+      if (reload.disabled) return;
+      // The press answers at once: the word changes before the round trip,
+      // so a discovery that takes seconds is visibly happening rather than
+      // looking like nothing did (KI-561).
+      busy(true, 'reloading\u2026');
+      answer('asking ' + provider.id + ' for its catalog\u2026', false);
       writeSettings('provider-discover', { id: provider.id }, function (reply) {
-        var wrote = reply && reply.wrote;
-        if (wrote && wrote.ok) {
-          settingsNotice('the catalog is reloaded' +
-            (wrote.settings_written ? ' \u00b7 ' + wrote.settings_written + ' models with declared settings' : ''),
-            provider.id);
+        busy(false);
+        var wrote = (reply && reply.body && reply.body.wrote) || (reply && reply.wrote) || {};
+        if (wrote.ok) {
+          var found = (wrote.models && wrote.models.length) || 0;
+          var kept = wrote.settings_written || 0;
+          settingsNotice('the catalog is reloaded', provider.id);
+          // The sentence lands in the card, then the card is rebuilt from
+          // the read so the answer is what the owner is looking at.
+          answer(provider.id + ' answered \u2014 ' + found + ' model' +
+            (found === 1 ? '' : 's') +
+            (kept ? ' \u00b7 ' + kept + ' with declared settings' : ''), false);
+          repaint();
         } else {
-          settingsNotice(wrote && wrote.error ? wrote.error : 'the reload did not answer', provider.id);
+          var why = (wrote && wrote.error) || 'the reload did not answer';
+          settingsNotice(why, provider.id);
+          answer(why, true);
         }
       });
     });
     acts.appendChild(reload);
+    // The card's own answer line, beside the press that asked (KI-561).
+    // The board's status line lives in the settings column, which is a
+    // different column from this card — the pane — so a sentence painted
+    // there is a sentence nobody reads. Every provider act answers here.
+    //
+    // The answer is remembered per provider, because a successful reload
+    // repaints the card from the home's own read: a sentence held only in
+    // a local node would be wiped by the very repaint that shows the new
+    // catalog, which is the same silent-feedback failure one layer down.
+    var said = node('p', 'derivation');
+    said.setAttribute('role', 'alert');
+    said.dataset.role = 'provider-answer';
+    var remembered = face.providerAnswer;
+    if (remembered && remembered.id === provider.id) {
+      said.hidden = false;
+      said.textContent = remembered.text;
+      said.dataset.tone = remembered.bad ? 'bad' : 'good';
+    } else {
+      said.hidden = true;
+    }
+    function answer(text, bad) {
+      face.providerAnswer = { id: provider.id, text: text, bad: !!bad };
+      said.hidden = false;
+      said.textContent = text;
+      said.dataset.tone = bad ? 'bad' : 'good';
+    }
+    // The card is rebuilt from the home's own read, so a reloaded catalog
+    // is what the owner then sees: the model rows, the windows the
+    // listing declared, and the enabled key state all come from the
+    // document, never from the stale copy this card opened with.
+    function repaint() {
+      if (document.body.dataset.objectCard !== 'open') return;
+      openSettingsRow('provider:' + provider.id);
+    }
+    function busy(on, label) {
+      reload.disabled = on;
+      reload.textContent = on ? label : 'reload models';
+    }
     if (catalog.length) {
       catalog.forEach(function (model) {
         var isOff = disabled.indexOf(model) !== -1;
@@ -22319,6 +22390,7 @@ import { node, svg, clip } from './core/dom.js';
             'its models stay reachable through the compiled entry, and the key stays in the vault.'
           : provider.id + ' has no override in this home\u2019s config, so there is nothing of yours to remove.')],
       ['the reload', acts],
+      ['what the reload answered', said],
       ['the write', save]
     ];
   }
@@ -29905,8 +29977,28 @@ import { node, svg, clip } from './core/dom.js';
     if (!el.paneGrip) return;
     var MIN = 300, MAX = 720, STAGE_FLOOR = 560, DEFAULT = 440;
     var applied = DEFAULT;
+    // KI-555: the pane's right edge is the stage's, so whatever holds the
+    // right of the window is not the pane's to take — the connections
+    // column when it is open, the reveal strip when it is collapsed. A
+    // clamp that ignored it would let a drag push the pane back over the
+    // column the stylesheet just stepped around, which is the same defect
+    // wearing a different hat.
+    function reserved() {
+      if (window.innerWidth <= 1080) return 0;
+      var tissue = document.body.dataset.tissue;
+      if (tissue === 'on') {
+        var raw = window.getComputedStyle
+          ? window.getComputedStyle(document.documentElement)
+            .getPropertyValue('--tissue-width')
+          : '';
+        var width = parseFloat(raw);
+        return isNaN(width) ? 320 : width;
+      }
+      return tissue === 'off' ? 30 : 0;
+    }
     function clamp(width) {
-      var max = Math.max(MIN, Math.min(MAX, window.innerWidth - STAGE_FLOOR));
+      var max = Math.max(
+        MIN, Math.min(MAX, window.innerWidth - STAGE_FLOOR - reserved()));
       return Math.round(Math.min(max, Math.max(MIN, width)));
     }
     function apply(width, remember) {
