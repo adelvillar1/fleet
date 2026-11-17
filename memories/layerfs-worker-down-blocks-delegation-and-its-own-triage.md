@@ -9,7 +9,7 @@ shape: [state-sync, foreign-root, incomplete]
 phrases: [LayerFS worker did not answer, connect ECONNREFUSED 127.0.0.1:49473, "layerfs refused [Failed]", the call was not sent, subagent failed ... 0 turns, the log holds what it did]
 missing: ["read the child's ~/.fleet/sessions/<id>.jsonl log, which sits outside the MCP filesystem server's Desktop/Downloads allowlist", probe port 49473 directly — no generic HTTP/TCP fetch tool exists in the deferred catalog and browse is disabled, determine whether the 49473 port is persisted state (stale dial) or the worker's live bind port, read fleet's layerfs spawn/exit logs under ~/.fleet/logs]
 premises: []
-recall-count: 0
+recall-count: 1
 superseded-by:
 valid-until:
 source:

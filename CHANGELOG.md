@@ -12,6 +12,57 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.14 — 2026-11-17
+
+The idle sweep stops disabling the tools it was measuring.
+
+**No core tool is disabled for being unused.** The lifecycle sweep protects
+a tool by name, and the list of protected names held ten — `bash`,
+`read_file`, `write_file`, `edit`, `grep`, `glob`, `todo`, `remember`,
+`supersede`, `subagent`. Everything else the harness declares was fair game
+for a gate that disables what has not been called yet, so the sweep had
+taken nineteen of the harness's own tools: `vision`, `deck`, `browse`, `ui`,
+`web`, `plan`, `process`, `extract`, `use_skill`, `list_dir`, `apply_patch`,
+`repo_map`, `file_change`, `convention`, `improve`, `frame`, `review_frame`,
+`hybrid_search`, `mcp_resource`, `mcp_prompt` — plus five `blend1` lane
+tools. `vision` went on 2026-10-31 with the reason `idle — 0 success in 0
+call over 50 declared runs` and stayed off for seventeen days; the owner's
+ruling is that this is the wrong reading. A tool nobody has called yet is
+not a tool nobody wants, and the age of its last use is not evidence either
+way.
+
+The protection is now **derived** rather than remembered: every name
+`tools::known_tool_names()` returns, the three capability tools, and every
+`mcp__` lane tool are protected, so a tool this build declares tomorrow is
+protected the day it is named. A lane's tools were already governed by the
+lane's own lifecycle — a lane that dies withdraws its tools at the death —
+and a second gate scoring idleness could only produce the same mistake. The
+gate reads `state_of` and both manual guards (the CLI's `tools disable` and
+the face's card), so `--force` is the one way past it.
+
+`known_tool_names()` was itself the hole it promised not to be: the
+function's own comment says "every tool name the harness can declare" while
+omitting `goal`, `ui`, `extract`, `author_persona` and
+`message_orchestrator`. Deriving from it would have inherited the gap, so
+the five are named.
+
+Pins: `no_core_tool_is_ever_swept_for_being_unused` walks every declared
+tool at a hundred runs of zero use and fails if any of them reaches
+`Candidate`; `the_protected_set_is_derived_from_the_harness` fails if a
+declared or capability name is unprotected. The gate fixtures that used
+`deck`, `vision` and `recall` as their idle subjects were repointed at
+`fixture__*` names, because a protected tool can no longer demonstrate a
+sweep at all. `fleet tools sweep` now reports `0 disabled, 42 skipped`, and
+this home's `tools.disabled` is empty.
+
+**Still open, and named rather than implied:** the `vision` tool is declared
+and executes but cannot answer — `Client::routed` leaves `base_url` empty
+and `api::chat` builds `format!("{}/chat/completions", base_url)`, so every
+call fails `Bad URL: RelativeUrlWithoutBase`. And `reviews` and `health`
+still share one rail mark: `ICONS` declares `'second-brain'` twice, so the
+second declaration (a pulse) shadows the first (the project atlas grid), and
+the pulse is the shape `calibration` already owns.
+
 ## v0.8.13 — 2026-11-17
 
 The rest of the dogfooding day: the rails, the marks, and the update door.

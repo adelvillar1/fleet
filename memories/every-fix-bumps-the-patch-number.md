@@ -9,7 +9,7 @@ shape: [deploy, resolved]
 phrases: [if we fix something and a new build is created we bump the number, 0.6.x to 0.7.y I would let you know in advance, you have my explicit approval from now on, the three declarations move together, doctor binary line compares bytes not the version string]
 missing: []
 premises: []
-recall-count: 1
+recall-count: 2
 superseded-by:
 valid-until:
 source:
