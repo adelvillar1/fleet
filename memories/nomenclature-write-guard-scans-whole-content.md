@@ -8,7 +8,7 @@ tier: durable
 shape: [change, fail-open]
 phrases: [case or separator variant of the established term, write_file refused, KI-284, backtick spans, Run_Options, mcp-server-registry plan]
 missing: []
-recall-count: 790
+recall-count: 793
 superseded-by:
 valid-until:
 ---

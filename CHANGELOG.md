@@ -12,6 +12,50 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.15 — 2026-11-17
+
+Reviews and health stop wearing the same mark.
+
+**Two rail rows, one drawing.** `ICONS` declared `'second-brain'` twice: the
+project atlas grid near the top of the table, and a pulse added on
+2026-11-15 when Health became a lens. A duplicate key in an object literal
+silently keeps the last one, so the pulse shadowed the grid, the health row
+wore the pulse — and `calibration`, whose two-beat signal is specified in
+`docs/plans/2026-11-04-icons.md`, wore the same shape beside it. Nothing was
+wrong with either drawing; what was wrong was that one of them could never
+be reached.
+
+**Health has a mark of its own.** A kit with a cross: a wide 15x12 body
+against `gate`'s tall doorway, the cross at the centre. Measured at 17px
+against every neighbour it could be confused with — the shield-with-a-cross
+candidate was rejected for colliding with the existing `screen` shield, and a
+boxed heartbeat for turning to mush inside 17 pixels. The address keeps its
+key and gains a map (`ADDRESS_MARKS`): `second-brain` is both the Health lens
+and the Intelligence section that holds the atlas, so the lens asks for
+`health` while the section still names `second-brain`. The rail and the
+palette read that one map, so they cannot disagree.
+
+**The pin that should have caught it, and didn't.** The icons plan's guard
+compares each rendered row's shape attributes as strings, and two pulses
+drawn one unit apart are two different strings — so it was satisfied while
+the eye saw one shape twice. Three checks replace that gap: no key may be
+declared twice in the table; the reviews and health drawings must not
+overlap; and no two marks of equal weight may rasterize to one silhouette.
+The overlap is measured by rasterizing each path onto a 12x12 grid — the two
+pulses scored 0.87-0.92 against each other where unrelated rail marks sit at
+0.09-0.27.
+
+Getting that pin honest took three attempts, and the failures are the
+lesson. The first compared command skeletons with the numbers erased and
+passed with the bug fully restored, because two pulses are genuinely
+different command sequences. The second scraped the table with a regex over
+the source, and a key declared on one line (`calibration: [[…]],`) has no
+closing bracket of its own, so its body swallowed every following key. The
+third read `shape.attrs.d` from strings the evaluator now returns, so every
+path plotted nothing and every overlap read 0.00 — an instrument reading
+nothing reports perfect separation. All three are red-proofed now against
+both defect shapes, the duplicate and the two-pulse pair.
+
 ## v0.8.14 — 2026-11-17
 
 The idle sweep stops disabling the tools it was measuring.
