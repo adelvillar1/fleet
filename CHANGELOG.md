@@ -12,6 +12,59 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.12 — 2026-11-17
+
+A day of dogfooding, and the buttons were lying.
+
+**The press now answers where you are looking.** Both halves of the same
+defect, and neither button was broken: `run the cycle now` on Intelligence
+really ran the consolidation pass, and the second-brain `refresh` under
+health really posted — and both said so in `#log`, the chat transcript,
+which lives inside `panel-chat` and is hidden on every other lens. The work
+happened; the confirmation went to a panel nobody had on screen, which is
+indistinguishable from a dead button. `notice` now routes on whether the
+transcript is actually visible and otherwise lands on a strip at the foot of
+the stage, outside every panel, which clears itself after eight seconds.
+172 of the face's 227 notice sites were on non-chat paths.
+
+**The provider card edits its endpoint, not a caption of it.** The card
+seeded its endpoint field from the row's display line — `base · KEY_ENV ·
+enabled` — and posted that field back as `base_url` on every save and on the
+disable press. Disabling a provider therefore wrote its own caption into the
+endpoint, and every request then built a URL no client can dial. The read
+publishes the entry's own `base_url` now, the card seeds from it, and both
+writers refuse an endpoint carrying whitespace — before the key is stored,
+so a refusal cannot strand a secret for a provider that was never written.
+
+**The drawer stops at the stage's edge.** It was fixed to the viewport's
+right, so at 1440 it covered the whole connections column — U13's "the
+persistent panes never hide behind it," broken by the column it names. One
+`--pane-right` property now carries the offset that the pane, its width
+math, its grip and its dim all read, so they cannot disagree. The grip's own
+clamp subtracts it, so a drag cannot widen the pane back over the column.
+
+**Every button gets pressed, by a test.** Two sweeps drive the DOM instead
+of reading it: every visible button on all 20 lenses, and every button on a
+surface that only exists because something needs you — the approval seat's
+decisions in both of its hosts, the inbox's five row classes with their row
+and menu verbs, the service-repair verbs, a frame's action bar. 373 lens
+presses and 248 acting presses now run clean, and a press that does its work
+in silence fails the suite. Two harness blind spots came out of it and are
+fixed: a `type=submit` press never submitted its form (20 live buttons
+looked dead), and `setTimeout` ran synchronously, so no transient state
+could be observed at all.
+
+**The updater signature names its version.** The signer was called without
+`--app-version`, so the signature was not bound to the release it ships
+with — fine today, and rejected by any updater configured with
+`requireSignedVersion`. The version now rides inside the signed trusted
+comment.
+
+Also fixed: a settings write hands its caller the write's own reply (every
+reply-reading caller had been silently taking its empty path since the
+helper was written), and a provider card's last-secondary arrow is disabled
+with its reason instead of looking live and returning.
+
 ## v0.8.11 — 2026-11-16
 
 Speak into the composer, and the day's three fixes.
