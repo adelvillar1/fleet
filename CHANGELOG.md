@@ -12,6 +12,54 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.13 — 2026-11-17
+
+The rest of the dogfooding day: the rails, the marks, and the update door.
+
+**About is back on the rail, and a waiting release says so.** About had been
+folded into Settings' advanced section, so the only door to the update apply
+sat three presses into a place the rail never named. The Settings update card
+compounded it: it announced that a new version was available, offered one
+button that only re-checked the feed, and its own comment claimed a link to
+About the code never built. About is a rail destination again, its entry
+badges `new` (with the version and the way to take it) from the first paint,
+and the update card carries the door its comment promised.
+
+**Every surface wears the second rail, each on its own axis.** Health, inbox
+and board were the only split pages without one, so each read as a single
+scroll rather than a place. Their scopes are what their own data supports:
+health by its checks (lanes, doctor, build — the machine's, not anyone's
+project), the inbox by the five classes it already computed plus waiting and
+archived (its chip strip is retired; the rail is the tab and the filter), and
+the board by project, with an `all tasks` row kept alongside so nothing is
+reachable only through a filter.
+
+**The second brain is a category of intelligence.** The corpus and the
+project atlas had been stacked on health beside the lane probe, sorting "is
+the machine well" together with "what does it know". Both are Intelligence
+sections now, with their reads and repaint guards following them.
+
+**One meaning per mark.** The 2026-11-04 icons discipline had degraded in
+ways its own pin could not see, because that pin asked "is every key the face
+names drawn?" — and the fallback `dot` is drawn. So three Intelligence rows
+had fallen through to one hollow bullet, three calibration ops shared a bare
+check, and two marks simply did not read as what they were (`tools` was a
+next-arrow; it is a wrench now). The map is complete, `route_judged` and
+`validate` got the drawings the plan specified, and the pins now ask the
+discipline's real question: every rendered row gets its own mark, and no two
+share one.
+
+Also fixed in the harness, so these judgements can be trusted: the
+owner-inbox mock answers a re-read with the staged document, `setTimeout`
+callbacks defer like a browser's instead of firing inline, `window.open` and
+clipboard writes are recorded as effects a press can have, and four
+second-brain endpoints are mapped instead of silently answering `{}`.
+
+Still open, and named rather than implied: KI-566 (a settings read missing a
+key can still throw the rail into a half-built state), KI-560 (re-enabling a
+model on the provider card deletes it from the provider) and KI-562 (the
+"reload them all" card still answers into the old silence).
+
 ## v0.8.12 — 2026-11-17
 
 A day of dogfooding, and the buttons were lying.
