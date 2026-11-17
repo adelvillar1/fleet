@@ -384,6 +384,9 @@ function boot(options) {
   let streamSource = null;
   const storage = new Map(Object.entries(opts.storage || {}));
   const intervals = [];
+  // Deferred timers (`setTimeout`) in the order they were armed. A stub
+  // that ran them at once could never show a transient state.
+  const timers = [];
   let failNext = null;
 
   const documents = opts.documents || {};
@@ -1060,6 +1063,44 @@ function boot(options) {
     // One declared query, enforced the way the bridge enforces it: the
     // manifest's set is the boundary, and an undeclared name comes back
     // as a refusal with its reason, never as an empty answer.
+    // The second-brain panel's own two reads and its act endpoint. They
+    // were unmapped, so a case booting `#/second-brain` silently got `{}`
+    // — which made the job picker render with no options at all and its
+    // refresh press send `job: ""`. A surface whose own reads are absent
+    // is a surface no case can judge.
+    if (pathOnly === '/api/second-brain' || pathOnly === '/api/second-brain/plugin') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.plugin ||
+          documents['second-brain'] || { type: 'second_brain_plugin', plugin: {}, pipeline: null }),
+      });
+    }
+    if (pathOnly === '/api/second-brain/act' && method === 'POST') {
+      const sent = init && init.body ? JSON.parse(init.body) : {};
+      const scripted = typeof documents.brainAct === 'function'
+        ? documents.brainAct(sent)
+        : documents.brainAct;
+      if (scripted) {
+        return Promise.resolve({
+          status: scripted.status || 200,
+          ok: (scripted.status || 200) === 200,
+          json: () => Promise.resolve(scripted.body || {}),
+        });
+      }
+      return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) });
+    }
+    if (pathOnly === '/api/memories/consolidate' && method === 'POST') {
+      const scripted = typeof documents.consolidate === 'function'
+        ? documents.consolidate()
+        : documents.consolidate;
+      return Promise.resolve({
+        status: (scripted && scripted.status) || 200,
+        ok: !(scripted && scripted.status && scripted.status !== 200),
+        json: () => Promise.resolve(scripted
+          ? (scripted.body || { type: 'consolidation', actions: [] })
+          : { type: 'consolidation', actions: [] }),
+      });
+    }
     if (pathOnly === '/api/plugins/query') {
       const parsed = init && init.body ? JSON.parse(init.body) : {};
       const declared = (documents.queries || {})[parsed.name] || [];
@@ -1227,7 +1268,17 @@ function boot(options) {
       addEventListener() {},
       removeEventListener() {},
     }),
-    setTimeout: (fn) => { fn(); return (timerIds += 1); },
+    // A real `setTimeout` runs LATER; this stub ran the callback at once.
+    // That was invisible while nothing depended on the gap, but a strip
+    // that shows itself and clears on an 8-second timer cleared itself
+    // before any assertion could see it. Deferred timers are queued here
+    // and drained by `flushTimers()`, so a case can look at what was
+    // shown BEFORE the clear — which is the state a browser spends eight
+    // seconds in.
+    setTimeout: (fn) => {
+      timers.push(fn);
+      return (timerIds += 1);
+    },
     clearTimeout: () => {},
     setInterval: (fn) => { intervals.push(fn); return (timerIds += 1); },
     clearInterval: () => {},
@@ -1342,6 +1393,13 @@ function boot(options) {
     // The timers the page armed (KI-380's beat watch) and the harness's
     // own failure hook, so a case can fail a fetch mid-flight.
     intervals,
+    // Drain the deferred timers — what a browser does eight seconds later.
+    flushTimers() {
+      while (timers.length) {
+        const fn = timers.shift();
+        try { fn(); } catch (error) { /* a timer's own failure is its own */ }
+      }
+    },
     title: () => document_.title,
     // The failure hook takes a setter: the closure's own variable, so
     // the next fetch the page issues inside the vm fails.
@@ -1881,13 +1939,10 @@ async function theHealthCardNamesWhatIsDownAndTheRepair() {
   const again = page.text('svc-down');
   check('C0 a down transition repaints the card', /docker/.test(again) &&
     /start Docker Desktop/.test(again), again);
-  const stream = page.rows('.stream')[0];
-  const noticeText = stream && stream.children.length
-    ? stream.children[stream.children.length - 1].textContent
-    : '';
-  check('C0 the transition lands as a notice on the transcript',
-    /fleet health/.test(noticeText) && /service down/.test(noticeText),
-    noticeText.slice(0, 200));
+  const sayText = page.text('face-say');
+  check('C0 the transition lands where the owner is looking',
+    /fleet health/.test(sayText) && /service down/.test(sayText),
+    sayText.slice(0, 200));
 }
 
 async function aRoutedEventPaintsTheLiveDecisionWithItsFacts() {
@@ -4215,10 +4270,16 @@ async function theArchiveIsTheOneEndAndTheOwnersVerb() {
     refused.rows('.work-row')[0].querySelector('.work-archive');
   if (busyChip) busyChip.click();
   await flush();
-  check('ARCH a refusal names itself in the stream',
-    refused.text('log').includes('the archive was refused') &&
-    refused.text('log').includes('in flight'),
-    refused.text('log').slice(0, 120));
+  // The refusal must name itself where the owner is LOOKING. On this lens
+  // the transcript is hidden (log.hidden is true), so asserting the text in
+  // `#log` pinned the silence this review is about — the sentence was
+  // there, in a panel nobody had on screen.
+  check('ARCH the transcript is not the visible surface here',
+    refused.el('log').hidden === true, String(refused.el('log').hidden));
+  check('ARCH a refusal names itself where the owner is looking',
+    refused.text('face-say').includes('the archive was refused') &&
+    refused.text('face-say').includes('in flight'),
+    refused.text('face-say').slice(0, 120));
 }
 
 // The chat review (the owner's report): an owner message renders its
@@ -8752,10 +8813,13 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     String(one.textContent) === 'copy placeholder')[0];
   if (copy) copy.click();
   await flush(20);
+  // The same rule: the confirmation has to be visible on the design lens,
+  // where the transcript is hidden. The clipboard is the durable evidence;
+  // the strip is what the owner sees.
   check('PM-D the placeholder is one press away',
-    !copy || page.rows('.card-row').some((one) =>
-      String(one.textContent).includes('{{img:mark}}')),
-    copy ? String(copy.textContent) : 'no copy control');
+    !copy || (page.clipboardWrites.some((one) => String(one).includes('{{img:mark}}')) &&
+      page.text('face-say').includes('{{img:mark}}')),
+    copy ? (JSON.stringify(page.clipboardWrites) + ' / ' + page.text('face-say')) : 'no copy control');
   page.fireOn('dock-object-close', 'click');
   await flush(20);
 
@@ -14272,6 +14336,166 @@ async function pressingASubmitButtonSubmitsItsForm() {
 // is load-bearing: the row menu's toggle compares `face.inboxOpen` to
 // `row.key`, so a fixture without keys makes the ⋯ look dead when it is
 // the fixture that is wrong.
+// The wider sweep behind the owner's two reports: of every press on every
+// lens that actually makes a call, how many say nothing at all? A press that
+// NAVIGATES is answered by the surface it lands on, and a REFRESH is
+// answered by the repainted surface itself — those are exempt by design.
+// What is left is a press that stays where it is, does its work, and shows
+// nothing the owner can read: the shape of both reported buttons.
+//
+// Two silences remain and both are named below rather than waived: the
+// onboarding card's `not now`, which only speaks when the reply carries a
+// consequence, and its inbox twin, which speaks through the row leaving the
+// queue. Neither is invisible in the reported sense — the queue visibly
+// shrinks — but neither says a word, and the case records the exact count
+// so a third one cannot arrive unnoticed.
+const SILENT_EXEMPT = {
+  'not now': 'the row leaves the queue and the card set shrinks — the state is the answer',
+  'refresh': 'the surface repaints from the re-read; the repaint is the answer',
+};
+
+async function noPressDoesItsWorkInSilence() {
+  const LENSES = ['chat', 'board', 'inbox', 'router', 'delegation', 'memory',
+    'sessions', 'learning', 'huddles', 'desk', 'calibration', 'design', 'vault',
+    'second-brain', 'workspace-history', 'armada', 'bots', 'plugins', 'about'];
+  const docs = () => ({
+    memory: memoryDoc,
+    state: (asked) => emptyState(asked),
+    onboard: onboardDoc({ door: false }),
+  });
+  const visible = (b) => {
+    let n = b;
+    while (n) { if (n.hidden === true) return false; n = n.parentNode; }
+    return true;
+  };
+  const snap = (page) => JSON.stringify({
+    c: page.calls.length,
+    say: String(page.el('face-say').textContent || ''),
+    log: String(page.el('log').textContent || '').length,
+  });
+  let acted = 0;
+  const silent = [];
+  for (const lens of LENSES) {
+    const probe = boot({ width: 1440, hash: '#/' + lens, documents: docs() });
+    await flush(60);
+    probe.open();
+    await flush(200);
+    const labels = [...new Set(probe.rows('button').filter(visible)
+      .map((b) => String(b.textContent || '').replace(/\s+/g, ' ').trim())
+      .filter((t) => t && t.length < 60))];
+    for (const label of labels) {
+      const page = boot({ width: 1440, hash: '#/' + lens, documents: docs() });
+      await flush(60);
+      page.open();
+      await flush(200);
+      const button = page.rows('button').filter(visible)
+        .find((b) => String(b.textContent || '').replace(/\s+/g, ' ').trim() === label);
+      if (!button) continue;
+      const startHash = String(page.window.location.hash);
+      const before = snap(page);
+      let threw = null;
+      try { button.click(); } catch (error) { threw = String((error && error.message) || error); }
+      await flush(120);
+      const after = snap(page);
+      const navigated = String(page.window.location.hash) !== startHash;
+      if (JSON.parse(after).c <= JSON.parse(before).c) continue;
+      acted += 1;
+      if (after !== before || navigated || threw) continue;
+      if (SILENT_EXEMPT[label]) continue;
+      silent.push(lens + ' \u00bb ' + label);
+    }
+  }
+  check('SILENT the sweep drove a real number of acting presses',
+    acted > 200, 'acted ' + acted);
+  check('SILENT no press does its work in silence',
+    silent.length === 0, silent.join(' | ') || 'none');
+}
+
+// The owner's two reports, pinned exactly: "under intelligence there is a
+// card that says needs you but the button on that card does nothing" and
+// "under health the button to refresh the second brain does nothing".
+//
+// Neither button was unwired. Both did their work and said so in #log — the
+// chat transcript — which lives inside panel-chat and is hidden on every
+// other lens. `run the cycle now` really ran a pass; the refresh really
+// posted. The answer was appended to a panel the owner did not have on
+// screen, which is indistinguishable from a dead button.
+//
+// So the assertion is not "a call was made" (that was always true) but "a
+// sentence the owner can read appeared on the surface they are on".
+async function theSilentSurfaceActsNowAnswerWhereTheOwnerIsLooking() {
+  // 1. Intelligence: the needs-you card's pass.
+  const memory = boot({
+    width: 1440, hash: '#/memory',
+    documents: { memory: memoryDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  await flush(60);
+  memory.open();
+  await flush(240);
+  check('SILENT the transcript is hidden on Intelligence',
+    memory.el('log').hidden === true, String(memory.el('log').hidden));
+  const runCycle = memory.rows('button')
+    .find((b) => String(b.textContent || '').trim() === 'run the cycle now');
+  check('SILENT the needs-you card carries its press', !!runCycle, String(!!runCycle));
+  const beforeCalls = memory.calls.length;
+  if (runCycle) runCycle.click();
+  await flush(200);
+  check('SILENT the pass really runs',
+    memory.calls.slice(beforeCalls).some((c) =>
+      c.url === '/api/memories/consolidate' && c.method === 'POST'),
+    JSON.stringify(memory.calls.slice(beforeCalls).map((c) => c.method + ' ' + c.url)));
+  check('SILENT the pass answers ON THE SURFACE the owner is on',
+    memory.el('face-say').hidden === false &&
+      memory.text('face-say').includes('the pass landed'),
+    memory.text('face-say') || '(nothing said)');
+
+  // 2. Health: the second-brain refresh.
+  const plugin = {
+    type: 'second_brain_plugin', refused: [], read_at: 'now',
+    plugin: { name: 'second brain', role: 'tool', home: '/tmp/sb',
+      address: 'http://127.0.0.1:4175', live: true, has_tool: true,
+      jobs: [{ name: 'all', label: 'everything' }, { name: 'chats', label: 'chats' }] },
+    pipeline: { job: 'all', running: false, started: '2026-11-17 02:00',
+      finished: '2026-11-17 02:01', last_ok: '2026-11-17 02:01', current: 0,
+      error: null, steps: [], log: [] },
+  };
+  const brain = boot({
+    width: 1440, hash: '#/second-brain',
+    documents: { plugin, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  await flush(60);
+  brain.open();
+  await flush(260);
+  check('SILENT the transcript is hidden under health too',
+    brain.el('log').hidden === true, String(brain.el('log').hidden));
+  const picker = brain.rows('select').find((s) => String(s.className || '').includes('surface-jobs'));
+  check('SILENT the job picker offers what the tool runs',
+    !!picker && picker.options.map((o) => o.value).join(',') === 'all,chats',
+    picker ? picker.options.map((o) => o.value).join(',') : 'no picker');
+  const refresh = brain.rows('button')
+    .filter((b) => String(b.className || '').includes('surface-refresh'))[0];
+  check('SILENT the refresh press is enabled while the tool is live',
+    !!refresh && refresh.disabled === false,
+    refresh ? String(refresh.disabled) : 'no button');
+  const beforeRefresh = brain.calls.length;
+  if (refresh) refresh.click();
+  await flush(220);
+  const acted = brain.calls.slice(beforeRefresh)
+    .filter((c) => c.url === '/api/second-brain/act');
+  check('SILENT the refresh posts the job the picker shows',
+    acted.length === 1 && String(acted[0].body).includes('"job":"all"'),
+    JSON.stringify(acted.map((c) => c.body)));
+  // And the press does not strand itself: it is rebuilt live, not left
+  // saying "starting…" forever with nothing to read.
+  const after = brain.rows('button')
+    .filter((b) => String(b.className || '').includes('surface-refresh'))[0];
+  check('SILENT the refresh press comes back, not stuck on `starting…`',
+    !!after && after.disabled === false && !String(after.textContent).includes('starting'),
+    after ? String(after.textContent) + ' disabled=' + after.disabled : 'no button');
+}
+
 async function everyButtonOnAnOwnerActionSurfaceDoesSomething() {
   const row = (cls, id, extra) => Object.assign({ key: cls + ':' + id, signature: 'sig-' + id }, extra);
   const inbox = {
@@ -14551,6 +14775,9 @@ const cases = [
   ['FORM pressing a submit button submits its form', pressingASubmitButtonSubmitsItsForm],
   ['ASK every button on an owner-action surface does something',
     everyButtonOnAnOwnerActionSurfaceDoesSomething],
+  ['SILENT a surface act answers where the owner is looking',
+    theSilentSurfaceActsNowAnswerWhereTheOwnerIsLooking],
+  ['SILENT no press does its work in silence', noPressDoesItsWorkInSilence],
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
   ['ICONS every key the face asks for is drawn', everyIconKeyTheFaceAsksForIsDrawn],

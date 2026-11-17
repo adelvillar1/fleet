@@ -2858,10 +2858,57 @@ import { node, svg, clip } from './core/dom.js';
   // the log the server replays and the inspector counts only what the
   // server sent — a page that invented its own history would be the one
   // place this face lies.
+  //
+  // WHERE it lands is the whole of it. `face.stream` lives inside #log,
+  // which lives inside panel-chat — so on every other lens the row was
+  // appended to a transcript the owner could not see, and a press that did
+  // its work read as a dead button. The owner reported two: "run the cycle
+  // now" on Intelligence and the second-brain refresh under health, both
+  // of which really ran and said so invisibly.
+  //
+  // The test is whether the transcript is actually VISIBLE, not which lens
+  // is current: several lenses (sessions, board, inbox) paint inside
+  // panel-chat and keep the log on screen, so keying on the lens name put
+  // their answers on the strip and broke the cases that read them from the
+  // stream. Visibility is the fact; the lens name was a proxy for it.
+  function transcriptVisible() {
+    if (!el.log || !el.log.hidden) return !!el.log;
+    return false;
+  }
   function notice(title, text) {
+    if (!transcriptVisible()) {
+      faceSay(title, text);
+      return;
+    }
     var el0 = card('notice', '!', title, text, null, null);
     face.stream.appendChild(el0);
     settle();
+  }
+
+  /// The face's own answer strip (the dead-button review's fix): one line
+  /// over whatever surface the owner is on, for an act whose outcome has
+  /// nowhere else visible to land. `refused` reads red, everything else
+  /// green, on the same words the transcript card would have carried.
+  var faceSayTimer = null;
+  function faceSay(title, text) {
+    var host = document.getElementById('face-say');
+    if (!host) return;
+    var refused = /refus|cannot|not |no reason|unreachable|failed|did not|nothing/i
+      .test(String(title));
+    host.textContent = '';
+    host.hidden = false;
+    host.dataset.state = refused ? 'refused' : 'saved';
+    host.appendChild(node('span', 'face-say-node', refused ? 'not done' : 'done'));
+    host.appendChild(node('span', 'face-say-title', String(title)));
+    if (text) host.appendChild(node('span', 'face-say-detail', String(text)));
+    if (faceSayTimer) window.clearTimeout(faceSayTimer);
+    // It clears itself: a strip that stays would be a second status line
+    // competing with the run strip. Eight seconds is long enough to read
+    // two clauses and short enough not to linger.
+    faceSayTimer = window.setTimeout(function () {
+      host.hidden = true;
+      host.textContent = '';
+    }, 8000);
   }
 
   // A document's refusal is its `refused` entries — never the key. A good

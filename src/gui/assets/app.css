@@ -460,6 +460,39 @@ button, input, textarea, select { font: inherit; }
   overflow: hidden;
 }
 
+/* The face's answer strip: a surface act's one line, over the surface that
+   asked. It sits outside every panel (a child of .face, not of any stage)
+   because the answer to a press must be visible wherever the press was
+   made — the bug this replaces wrote into #log, which exists only inside
+   panel-chat, so every answer on every other lens was invisible. Fixed to
+   the foot of the stage, above the console, so it never displaces layout. */
+.face-say {
+  position: fixed;
+  left: calc(var(--rail-actual) + 16px);
+  right: calc(var(--pane-right, 0px) + 16px);
+  bottom: calc(var(--console-height) + 14px);
+  z-index: 34;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface);
+  box-shadow: var(--shadow-3);
+  font-size: 12px;
+  color: var(--dsw-alias-ink-secondary);
+  pointer-events: none;
+}
+.face-say[hidden] { display: none; }
+.face-say-node { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.face-say[data-state="saved"] .face-say-node { color: var(--dsw-alias-ok); }
+.face-say[data-state="refused"] .face-say-node,
+.face-say[data-state="unreachable"] .face-say-node { color: var(--dsw-alias-down); }
+.face-say-title { color: var(--dsw-alias-ink); }
+.face-say-detail { color: var(--dsw-alias-ink-tertiary); }
+
 .surfaces { grid-column: 1; grid-row: 1 / -1; }
 .topbar, .meter { grid-column: 2 / -1; }
 .stage { grid-column: 2; grid-row: 3; }

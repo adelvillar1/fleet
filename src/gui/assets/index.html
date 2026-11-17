@@ -92,6 +92,16 @@
 <div class="grain" aria-hidden="true"></div>
 <div class="face">
 
+  <!-- The face's own answer strip. A settings write, a consolidation pass,
+       a refresh — each is a surface act whose one-line outcome has to land
+       where the press was made. It used to land in #log, the chat
+       transcript, which lives inside panel-chat and is hidden on every
+       other lens: pressing "run the cycle now" on Intelligence really did
+       run the pass and then said so in a panel nobody was looking at, so
+       the button read as dead. This strip is outside every panel, so its
+       line is visible from wherever the press came. -->
+  <div class="face-say" id="face-say" role="status" aria-live="polite" hidden></div>
+
   <!-- The surfaces rail: the plan's left column, full height. One
        declaration in app.js builds this tree and the command palette, so
        there is one structure and not two to keep in sync. The rail orients
