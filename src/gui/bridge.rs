@@ -12669,7 +12669,7 @@ fn settings_apply(
             let name = text("name")?;
             let disabled =
                 flag("disabled").ok_or_else(|| "the write says disable or enable".to_string())?;
-            if disabled && crate::lifecycle::PROTECTED_TOOLS.contains(&name.as_str()) {
+            if disabled && crate::lifecycle::is_protected(&name) {
                 return Err(format!(
                     "`{name}` is protected \u{2014} the working core the sweep never touches"
                 ));

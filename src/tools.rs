@@ -2188,6 +2188,18 @@ pub fn known_tool_names() -> Vec<&'static str> {
         SEND_FILE_TOOL,
         COMPUTER_USE_TOOL,
         TOOL_SEARCH_TOOL,
+        // The five that were missing while the doc comment claimed to
+        // name every tool the harness can declare. `known_tool_names`
+        // is the one list the lifecycle gate derives its protections
+        // from (the owner's 2026-11-17 ruling), so a name absent here
+        // was a name the sweep could disable: `goal`, `ui`, `extract`
+        // and `author_persona` all rode every run and stayed
+        // sweepable because this function never said their names.
+        GOAL_TOOL,
+        UI_TOOL,
+        EXTRACT_TOOL,
+        AUTHOR_PERSONA_TOOL,
+        MESSAGE_ORCHESTRATOR_TOOL,
     ]);
     names
 }

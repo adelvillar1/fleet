@@ -708,13 +708,17 @@ mod tests {
     #[test]
     fn lifecycle_metrics_feed_the_gate_and_the_sweep_caps() {
         let home = scratch("sweep");
-        // Twelve sessions, each declaring deck (introduced 2026-10-17)
-        // and never calling it: past trial, past the window, zero use.
+        // Twelve sessions, each declaring an idle LANE tool and never
+        // calling it: past trial, past the window, zero use. The
+        // fixture used to name `deck`, a real tool; the owner's
+        // 2026-11-17 ruling protects every declared tool from the sweep,
+        // so a native name can no longer demonstrate a sweep at all.
+        // The mechanism under test is unchanged — only the subject.
         for index in 0..12 {
             let mut session = crate::session::Session::create(&home, "test-model").unwrap();
             session
                 .record(&crate::session::Record::Declarations {
-                    names: vec!["bash".to_string(), "deck".to_string()],
+                    names: vec!["bash".to_string(), "fixture__idle_tool".to_string()],
                     tier: "core".to_string(),
                     withheld: Vec::new(),
                     head_sha256: String::new(),
@@ -728,13 +732,16 @@ mod tests {
         let metrics = lifecycle_metrics(&scan);
         let deck = metrics
             .iter()
-            .find(|metrics| metrics.name == "deck")
-            .expect("deck is measured");
+            .find(|metrics| metrics.name == "fixture__idle_tool")
+            .expect("the idle lane tool is measured");
         assert_eq!(deck.declared_runs, 12);
         let state = crate::lifecycle::state_of(deck, &thresholds, &[]);
         assert_eq!(state, crate::lifecycle::State::Candidate);
         let plan = crate::lifecycle::sweep_plan(&metrics, &thresholds, &[]);
-        assert!(plan.disabled.iter().any(|(name, _)| name == "deck"));
+        assert!(plan
+            .disabled
+            .iter()
+            .any(|(name, _)| name == "fixture__idle_tool"));
         assert!(plan.skipped.iter().any(|(name, _)| name == "bash"));
         let _ = std::fs::remove_dir_all(&home);
     }

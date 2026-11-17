@@ -23,6 +23,16 @@ use crate::settings::LifecycleThresholds;
 /// `--force`. The working core plus the memory writers and delegation:
 /// each is either load-bearing for every run or decisive when it is
 /// used at all.
+///
+/// The owner's 2026-11-17 ruling: **no core tool a harness uses may be
+/// disabled for being unused.** A tool being unused is not evidence it
+/// is unwanted — `vision` was swept on 2026-10-31 for "0 success in 0
+/// call over 50 declared runs" and stayed off for seventeen days, which
+/// did not prove nobody wanted to look at a picture; it proved nothing
+/// had invoked the tool yet. Every name [`crate::tools::known_tool_names`]
+/// returns is native and protected for that reason (see
+/// [`protected_native`]); this list carries only the names outside that
+/// function's reach.
 pub const PROTECTED_TOOLS: &[&str] = &[
     "bash",
     "read_file",
@@ -35,6 +45,48 @@ pub const PROTECTED_TOOLS: &[&str] = &[
     "supersede",
     "subagent",
 ];
+
+/// The tools the owner's ruling puts beyond the sweep: every native tool
+/// the harness declares, plus [`PROTECTED_TOOLS`].
+///
+/// This is deliberately DERIVED, not a second hand-list. The hand-list
+/// was the defect: it named ten tools and missed `vision`, `deck`,
+/// `browse`, `ui`, `extract`, `web`, `plan`, `process`, `list_dir`,
+/// `apply_patch`, `file_change`, `repo_map`, `use_skill`, `convention`,
+/// `improve`, `frame`, `review_frame`, `hybrid_search`, `mcp_resource`
+/// and `mcp_prompt` — so the sweep could disable nearly the whole native
+/// surface, and on this home it did disable nineteen of them. A list
+/// that must be remembered is a list that drifts; the harness already
+/// knows its own tool names, so the gate asks it.
+pub fn protected_native() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = crate::tools::known_tool_names();
+    names.extend([
+        crate::capabilities::MEASURE_TOOL,
+        crate::capabilities::IMAGINE_TOOL,
+        crate::capabilities::BROWSE_TOOL,
+    ]);
+    for name in PROTECTED_TOOLS {
+        if !names.contains(name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// Whether the sweep may never touch `name`.
+///
+/// A lane's tools (`mcp__<lane>__<tool>`) are protected for the same
+/// reason and a stronger one: their availability is already governed by
+/// the lane's own lifecycle — a lane that dies withdraws its tools at
+/// the death — so a second gate measuring idleness can only produce the
+/// 2026-11-17 state, where five `blend1` tools sat disabled for
+/// seventeen days because nothing had called them yet.
+pub fn is_protected(name: &str) -> bool {
+    if name.starts_with(crate::tools::MCP_NAMESPACE) {
+        return true;
+    }
+    protected_native().iter().any(|one| *one == name)
+}
 
 /// When each native tool was introduced, backfilled from the git
 /// history (read 2026-10-23). Backfill-only: the exact denominator is
@@ -320,7 +372,7 @@ pub fn state_of(metrics: &Metrics, thresholds: &LifecycleThresholds, disabled: &
     if disabled.iter().any(|name| name == &metrics.name) {
         return State::Disabled;
     }
-    if PROTECTED_TOOLS.contains(&metrics.name.as_str()) {
+    if is_protected(&metrics.name) {
         return State::Protected;
     }
     let age = days_between(&metrics.first_declared, &metrics.today).unwrap_or(0);
@@ -752,6 +804,15 @@ fn token_set(text: &str) -> std::collections::BTreeSet<String> {
 mod tests {
     use super::*;
 
+    /// A name the sweep may still act on. The fixtures used to say
+    /// `deck` and `vision` — real tools, and after the owner's
+    /// 2026-11-17 ruling both are protected, so every gate test that
+    /// kept them as its idle subject asserted the wrong state. A
+    /// fixture must exercise the mechanism without being a tool the
+    /// mechanism may no longer touch.
+    const IDLE: &str = "fixture__some_idle_tool";
+    const IDLE2: &str = "fixture__another_idle_tool";
+
     fn thresholds() -> LifecycleThresholds {
         LifecycleThresholds::default()
     }
@@ -777,9 +838,9 @@ mod tests {
     #[test]
     fn a_disabled_tool_is_disabled_whatever_its_numbers() {
         let state = state_of(
-            &metrics("deck", 100, 50, 50, 0),
+            &metrics(IDLE, 100, 50, 50, 0),
             &thresholds(),
-            &["deck".to_string()],
+            &[IDLE.to_string()],
         );
         assert_eq!(state, State::Disabled);
     }
@@ -790,20 +851,106 @@ mod tests {
         assert_eq!(state, State::Protected);
     }
 
+    /// The owner's 2026-11-17 ruling, as a gate: **no core tool a harness
+    /// uses may be disabled for being unused.** The old protection was a
+    /// hand-list of ten names, so the sweep could — and did — disable
+    /// `vision`, `deck`, `browse`, `ui`, `web`, `plan`, `process`,
+    /// `extract`, `use_skill`, `list_dir`, `apply_patch`, `repo_map`,
+    /// `file_change`, `convention`, `improve`, `frame`, `review_frame`,
+    /// `hybrid_search`, `mcp_resource` and `mcp_prompt`: nineteen of the
+    /// harness's own tools, each for the crime of not having been called
+    /// yet. This case fails the moment a declared tool becomes sweepable
+    /// again, and it asks the harness for its own names rather than a
+    /// second list that could drift the same way the first one did.
+    #[test]
+    fn no_core_tool_is_ever_swept_for_being_unused() {
+        let mut declared: Vec<&str> = crate::tools::known_tool_names();
+        declared.extend([
+            crate::capabilities::MEASURE_TOOL,
+            crate::capabilities::IMAGINE_TOOL,
+            crate::capabilities::BROWSE_TOOL,
+        ]);
+        let thresholds = thresholds();
+        // A tool never called over a hundred runs, declared long ago.
+        let idle_forever = |name: &str| Metrics {
+            name: name.to_string(),
+            declared_runs: 100,
+            calls: 0,
+            successes: 0,
+            errors: 0,
+            first_declared: "2026-10-01".to_string(),
+            today: "2026-10-23".to_string(),
+        };
+        let sweepable: Vec<&str> = declared
+            .into_iter()
+            .filter(|name| state_of(&idle_forever(name), &thresholds, &[]) == State::Candidate)
+            .collect();
+        assert!(
+            sweepable.is_empty(),
+            "these declared tools are still sweepable for being unused: {sweepable:?}"
+        );
+        // And the sweep itself, not just the state: a plan built over
+        // every declared tool disables none of them.
+        let all: Vec<Metrics> = crate::tools::known_tool_names()
+            .into_iter()
+            .map(idle_forever)
+            .collect();
+        let plan = sweep_plan(&all, &thresholds, &[]);
+        assert!(
+            plan.disabled.is_empty(),
+            "the sweep would disable declared tools: {plan:?}"
+        );
+    }
+
+    /// The derivation is real, not a longer hand-list: a name this build
+    /// could declare tomorrow is protected the day it is named, with no
+    /// edit to `PROTECTED_TOOLS`.
+    #[test]
+    fn the_protected_set_is_derived_from_the_harness() {
+        let protected = protected_native();
+        for name in crate::tools::known_tool_names() {
+            assert!(
+                protected.contains(&name),
+                "`{name}` is declared but not protected"
+            );
+        }
+        for name in [
+            crate::capabilities::MEASURE_TOOL,
+            crate::capabilities::IMAGINE_TOOL,
+            crate::capabilities::BROWSE_TOOL,
+        ] {
+            assert!(
+                protected.contains(&name),
+                "`{name}` is a capability and not protected"
+            );
+        }
+        // `vision` is the one the sweep actually took; it is the case
+        // the ruling was written for.
+        assert!(is_protected("vision"));
+        assert!(is_protected("deck"));
+        assert!(is_protected("browse"));
+        // A lane's own tools ride the same rule: their availability is
+        // the lane's lifecycle, not an idleness score. Five `blend1`
+        // tools were disabled for seventeen days for never having been
+        // called.
+        assert!(is_protected("mcp__blend1__ask"));
+        assert!(is_protected("mcp__anything__anything"));
+    }
+
     #[test]
     fn trial_is_a_window_of_runs_and_days() {
         // Enough runs but not enough days.
         let young = Metrics {
             first_declared: "2026-10-20".to_string(),
-            ..metrics("deck", 20, 0, 0, 0)
+            ..metrics(IDLE, 20, 0, 0, 0)
         };
         assert_eq!(state_of(&young, &thresholds(), &[]), State::Trial);
         // Enough days but not enough runs.
-        let sparse = metrics("deck", 5, 0, 0, 0);
+        let sparse = metrics(IDLE, 5, 0, 0, 0);
         assert_eq!(state_of(&sparse, &thresholds(), &[]), State::Trial);
         // Both boundaries met: a zero-use tool is a candidate.
         assert_eq!(
-            state_of(&metrics("deck", 10, 0, 0, 0), &thresholds(), &[]),
+            state_of(&metrics(IDLE, 10, 0, 0, 0), &thresholds(), &[]),
             State::Candidate
         );
     }
@@ -811,25 +958,25 @@ mod tests {
     #[test]
     fn one_success_keeps_a_tool_active() {
         assert_eq!(
-            state_of(&metrics("deck", 30, 3, 1, 2), &thresholds(), &[]),
+            state_of(&metrics(IDLE, 30, 3, 1, 2), &thresholds(), &[]),
             State::Active
         );
     }
 
     #[test]
     fn a_broken_tool_is_broken_not_candidate() {
-        let state = state_of(&metrics("deck", 30, 10, 0, 9), &thresholds(), &[]);
+        let state = state_of(&metrics(IDLE, 30, 10, 0, 9), &thresholds(), &[]);
         assert_eq!(state, State::Broken);
         // Seven errors with one success misses the 80% line and clears
         // the idle rate: active, flagged by neither rule.
         assert_eq!(
-            state_of(&metrics("deck", 30, 10, 1, 7), &thresholds(), &[]),
+            state_of(&metrics(IDLE, 30, 10, 1, 7), &thresholds(), &[]),
             State::Active
         );
         // Ten failing calls with no success are idle by the rate, so
         // they are a candidate even under the 80% line.
         assert_eq!(
-            state_of(&metrics("deck", 30, 10, 0, 7), &thresholds(), &[]),
+            state_of(&metrics(IDLE, 30, 10, 0, 7), &thresholds(), &[]),
             State::Candidate
         );
     }
@@ -853,7 +1000,7 @@ mod tests {
 
     #[test]
     fn a_broken_tool_is_skipped_not_disabled() {
-        let list = vec![metrics("deck", 30, 10, 0, 9)];
+        let list = vec![metrics(IDLE, 30, 10, 0, 9)];
         let outcome = sweep_plan(&list, &thresholds(), &[]);
         assert!(outcome.disabled.is_empty());
         assert!(outcome.skipped[0].1.contains("broken"));
@@ -935,13 +1082,13 @@ mod tests {
         // recorded exactly once — sweep's own record, no second pass
         // anywhere (KI-384: the CLI loop used to file the same disable
         // again with a `tools: ` prefix).
-        let list = vec![metrics("deck", 30, 0, 0, 0), metrics("vision", 30, 0, 0, 0)];
+        let list = vec![metrics(IDLE, 30, 0, 0, 0), metrics(IDLE2, 30, 0, 0, 0)];
         let plan = sweep(&home, &thresholds(), &list, &[], true, Some(&stream));
         let applied: usize = plan.iter().map(|(_, kind)| kind.applied.len()).sum();
         assert_eq!(applied, 2, "{plan:?}");
         settle(&stream);
-        assert_eq!(count_lifecycle_rows(&root, "deck"), 1);
-        assert_eq!(count_lifecycle_rows(&root, "vision"), 1);
+        assert_eq!(count_lifecycle_rows(&root, IDLE), 1);
+        assert_eq!(count_lifecycle_rows(&root, IDLE2), 1);
         drop(stream);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -953,7 +1100,7 @@ mod tests {
         // dates — the 2026-10-31 sweep's `50 of 10 runs` shape (KI-382).
         let young = Metrics {
             first_declared: "2026-10-20".to_string(),
-            ..metrics("recall", 50, 0, 0, 0)
+            ..metrics(IDLE, 50, 0, 0, 0)
         };
         let outcome = sweep_plan(&[young], &base, &[]);
         assert_eq!(outcome.skipped.len(), 1, "{outcome:?}");
@@ -967,7 +1114,7 @@ mod tests {
         );
 
         // Age cleared, runs hold: the runs alone, the term that failed.
-        let sparse = metrics("deck", 3, 0, 0, 0);
+        let sparse = metrics(IDLE, 3, 0, 0, 0);
         let outcome = sweep_plan(&[sparse], &base, &[]);
         assert_eq!(
             outcome.skipped[0].1,
@@ -978,7 +1125,7 @@ mod tests {
         // half of the comparison.
         let both = Metrics {
             first_declared: "2026-10-20".to_string(),
-            ..metrics("vision", 3, 0, 0, 0)
+            ..metrics(IDLE2, 3, 0, 0, 0)
         };
         let outcome = sweep_plan(&[both], &base, &[]);
         assert_eq!(

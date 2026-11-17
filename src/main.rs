@@ -1187,7 +1187,7 @@ fn lifecycle_row(home: &std::path::Path, name: &str, action: &str, reason: &str)
 /// `fleet tools disable <name> [--force]`: the manual verb. A protected
 /// tool refuses without `--force` and names the protection.
 fn tools_disable(home: &std::path::Path, name: &str, force: bool) -> ExitCode {
-    if fleet::lifecycle::PROTECTED_TOOLS.contains(&name) && !force {
+    if fleet::lifecycle::is_protected(name) && !force {
         eprintln!(
             "fleet: `{name}` is protected \u{2014} the working core the sweep never touches. \
              `--force` disables it anyway."

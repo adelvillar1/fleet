@@ -1488,13 +1488,17 @@ async fn a_disabled_tool_is_undeclared_and_its_call_names_the_rule() {
 #[tokio::test]
 async fn the_lifecycle_sweep_disables_only_what_the_gate_names() {
     let home = temp_home("lifecycle-sweep");
-    // Twelve aged sessions declaring deck and never calling it: a
-    // candidate. bash is declared too, and protected.
+    // Twelve aged sessions declaring an idle LANE tool and never calling
+    // it: a candidate. bash is declared too, and protected. The fixture
+    // used to say `deck`; since the owner's 2026-11-17 ruling protects
+    // every declared tool from the sweep, a native name cannot
+    // demonstrate a sweep at all — the mechanism is what this case
+    // proves, so the subject is a name the gate may still act on.
     for index in 0..12 {
         let mut session = Session::create(&home, "test-model").unwrap();
         session
             .record(&Record::Declarations {
-                names: vec!["bash".to_string(), "deck".to_string()],
+                names: vec!["bash".to_string(), "fixture__idle_tool".to_string()],
                 tier: "core".to_string(),
                 withheld: Vec::new(),
                 head_sha256: String::new(),
@@ -1505,14 +1509,14 @@ async fn the_lifecycle_sweep_disables_only_what_the_gate_names() {
     }
     // Dry run: nothing is written.
     let output = sweep_output(&home, false);
-    assert!(output.contains("deck"), "{output}");
+    assert!(output.contains("fixture__idle_tool"), "{output}");
     assert!(fleet::settings::tools_disabled(&home).is_empty());
-    // Apply: deck is disabled, bash is skipped as protected.
+    // Apply: the idle lane tool is disabled, bash is skipped as protected.
     let output = sweep_output(&home, true);
-    assert!(output.contains("disable  deck"), "{output}");
+    assert!(output.contains("disable  fixture__idle_tool"), "{output}");
     assert_eq!(
         fleet::settings::tools_disabled(&home),
-        vec!["deck".to_string()]
+        vec!["fixture__idle_tool".to_string()]
     );
     assert!(output.contains("protected"), "{output}");
     // The calibration row exists: the sweep's own stream wrote it
@@ -1532,7 +1536,7 @@ async fn the_lifecycle_sweep_disables_only_what_the_gate_names() {
     let mut rows = String::new();
     read_jsonl(&root, &mut rows);
     assert!(
-        rows.contains("\"op\":\"lifecycle\"") && rows.contains("\"name\":\"deck\""),
+        rows.contains("\"op\":\"lifecycle\"") && rows.contains("\"name\":\"fixture__idle_tool\""),
         "{rows}"
     );
     std::fs::remove_dir_all(&home).ok();
