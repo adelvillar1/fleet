@@ -5497,6 +5497,36 @@ async function theDrawerWaitsForTheOwnerOnDeskAndLearning() {
     String(desk.rows('#pane-context .facts').length));
 }
 
+// The orphaned-by-navigation review (2026-11-16, beside KI-557): a
+// transient overlay must not ride over the lens a navigation lands on. The
+// invite door is the probe — anything that navigates (a palette command, a
+// hash edit, a door's own link) closes it on arrival.
+async function anArrivalClosesTheTransientOverlays() {
+  const page = boot({
+    hash: '#/chat',
+    documents: {
+      settings: {
+        roles: {
+          dir: '/tmp',
+          entries: [{ name: 'designer', description: 'makes pages', tools: [], skills: [], shapes: [], overlay: 'voice' }],
+        },
+      },
+      state: (asked) => emptyState(asked),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(40);
+  page.IDS['composer-add-bot'].click();
+  await flush();
+  check('NAV the invite door opens', page.IDS['invite-door'].hidden === false,
+    'hidden=' + page.IDS['invite-door'].hidden);
+  page.window.location.hash = '#/desk';
+  await flush(120);
+  check('NAV an arrival closes the door it found open',
+    page.IDS['invite-door'].hidden === true, 'hidden=' + page.IDS['invite-door'].hidden);
+}
+
 // The owner's 2026-11-16 black-hole report: a run kept going at the
 // bridge while the owner looked elsewhere; its row read "working" and the
 // chat stream never came back. Returning to a driven conversation must go
@@ -13897,6 +13927,7 @@ const cases = [
   ['C1 the composer starts a conversation with bots', theComposerStartsWithBots],
   ['MIC the composer dictates into the box', theComposerDictatesIntoTheBox],
   ['REATTACH a driven conversation comes back with its transcript', aDrivenConversationReattachesWhenTheOwnerComesBack],
+  ['NAV an arrival closes the transient overlays', anArrivalClosesTheTransientOverlays],
   ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
   ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],

@@ -26988,6 +26988,20 @@ import { node, svg, clip } from './core/dom.js';
     var parts = addr.parts;
     var which = addr.lens;
     var focusId = addr.id;
+    // An arrival is a new place: no transient overlay from the last one may
+    // ride over it. The doors, the pops, the @ picker and the palette all
+    // close here, because a navigation can start from a palette command, a
+    // hash edit, or a door's own link — and without this the open modal
+    // stays on top of the lens it moved to (the orphaned-by-navigation
+    // class, the same review that found KI-557).
+    closePalette();
+    closeReferences();
+    closeInviteDoor();
+    closeHuddleDoor();
+    if (el.personaDoor) el.personaDoor.hidden = true;
+    if (el.folderPop && !el.folderPop.hidden) toggleFolderPop(false);
+    if (el.docPop && !el.docPop.hidden) toggleDocPop(false);
+    if (el.goalPop && !el.goalPop.hidden) setGoalPop(false);
     // U40: the skills surface folded into Intelligence as its Skills
     // segment. Its old address walks to the segment — there is no panel of
     // its own to arrive at, so the fold happens here, before the panel
