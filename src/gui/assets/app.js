@@ -317,7 +317,14 @@ import { node, svg, clip } from './core/dom.js';
     // this section rather than the lenses: installed surfaces are
     // advanced, and the rail's first section is the product.
     ['advanced', 'settings', [
-      ['settings', 'settings']
+      ['settings', 'settings'],
+      // KI-568: About is not "everything else" — it is the build's own
+      // receipt, and it holds the only door to the update apply. It was
+      // reachable only through Settings then the advanced section then
+      // the About row, three presses into a place the rail never named,
+      // so a waiting release had no findable way to be taken. A build's
+      // version belongs under the gear, beside settings, one press away.
+      ['about', 'about']
     ]]
   ];
 
@@ -26329,6 +26336,18 @@ import { node, svg, clip } from './core/dom.js';
         'the feed has not been asked yet from this process.')]);
     }
     sections.push(['the check', act], ['what it answered', said]);
+    // KI-568: the door this comment promised and the code never built. A
+    // card that says "0.8.13 is available" and offers only a re-check is
+    // a dead end — the apply lives in the About pane, so the card that
+    // announces the release must be able to reach it.
+    var toAbout = node('button', 'replay-button replay-resume',
+      update.candidate ? 'open About to update' : 'open About');
+    toAbout.type = 'button';
+    toAbout.addEventListener('click', function () {
+      closeDrawer();
+      window.location.hash = '#/about';
+    });
+    sections.push(['the apply', toAbout]);
     if (update.installed_via === 'dev-build') {
       sections.push(['what apply does here', node('p', 'derivation',
         'a dev build does not update the checkout \u2014 build it again instead. ' +
@@ -28939,6 +28958,18 @@ import { node, svg, clip } from './core/dom.js';
           : '';
         return;
       }
+      // KI-568: a waiting release says so on the rail, so taking an update
+      // is one press rather than a hunt. The flag is the same `changed`
+      // the settings section computes from the update check — the rail and
+      // the settings rail cannot disagree about whether a build is behind.
+      if (span.dataset.count === 'about') {
+        var release = (face.settings && face.settings.update || {});
+        var behind = release.candidate || '';
+        span.hidden = !behind;
+        span.textContent = behind ? 'new' : '';
+        span.title = behind ? behind + ' is available \u2014 open About to update' : '';
+        return;
+      }
       if (span.dataset.count !== 'sessions') return;
       span.hidden = !waiting;
       span.textContent = waiting ? String(waiting) : '';
@@ -30434,6 +30465,14 @@ import { node, svg, clip } from './core/dom.js';
       // And one onboarding read: it decides which state of the home the
       // owner sees — the door or the work home.
       readOnboard(false);
+      // KI-568: one settings read at boot, so the rail's About entry can
+      // say a release is waiting without the owner first walking into the
+      // settings surface. It is the same read the settings board makes and
+      // it lands in `face.settings`, so nothing is duplicated — and its
+      // failure is silent on purpose: a rail badge is not worth a banner.
+      readSettings(false).then(function () {
+        if (el.railTree) paintRailCounts();
+      }).catch(function () { });
     })
     .catch(function (error) {
       document.documentElement.setAttribute('data-fleet-mounted', '1');

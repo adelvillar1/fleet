@@ -11828,15 +11828,18 @@ async function theConnectCardSaysWhatHappened() {
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
     // U44's seven lenses plus the archive door (the owner's 2026-11-14
     // ruling: the archive is a destination), the Health lens (the
-    // project-centered workspace plan) and the Settings door.
-    check('ICONS the rail lists the destinations', links.length === 10,
+    // project-centered workspace plan), the Settings door — and About
+    // (KI-568): the build's receipt, and the only door to the update
+    // apply, which used to sit three presses deep in a section the rail
+    // never named.
+    check('ICONS the rail lists the destinations', links.length === 11,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 10,
+      shapes.every(Boolean) && new Set(shapes).size === 11,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 
@@ -14423,6 +14426,119 @@ async function noPressDoesItsWorkInSilence() {
 //
 // So the assertion is not "a call was made" (that was always true) but "a
 // sentence the owner can read appeared on the surface they are on".
+// The owner's report after the 0.8.12 cut: "we lost the about option on the
+// rail, there is no easy way to update the app now."
+//
+// About is not a lens — it is the build's receipt, and it holds the ONLY
+// door to the update apply. It had been folded into Settings' advanced
+// section, so taking an update meant Settings, then advanced, then About,
+// through a rail that never named it. Worse, the Settings update card
+// announced "0.8.13 is available", offered one button that only re-checked
+// the feed, and its own comment claimed a link to About that the code never
+// built — a card that tells you an update exists and gives you no way to
+// take it.
+//
+// Three things are pinned here: About is a rail destination, a waiting
+// release says so on that rail entry from the first paint, and the update
+// card can reach the apply.
+async function aboutIsOnTheRailAndAWaitingReleaseIsVisible() {
+  const settingsDoc = (candidate) => ({
+    type: 'settings', read_at: 'now',
+    scalars: [], lists: [], rules: [], env: [], cron: [],
+    soul: { present: false, text: '' },
+    router: { pin: '', judged: [], tiers: [], min_confidence: 0.5,
+      default_workload: 'quick', allow_api_models: false, roster: [] },
+    catalog: { models: [], providers: [] },
+    roles: { dir: '/tmp', entries: [] }, vault: { names: [] }, lanes: { lanes: [] },
+    servers: { servers: [] },
+    tools: { calls_per_turn: 0, deferred_above: 0, definition_tokens: 0, disabled: [] },
+    telegram: { present: false, source: 'unset' }, service: {},
+    update: { current: '0.8.12', candidate, installed_via: 'dmg',
+      last_check: '2026-11-17' },
+  });
+  const bootWith = (candidate) => boot({
+    width: 1440, hash: '#/chat',
+    documents: { settings: settingsDoc(candidate), state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+
+  // 1. About is a rail destination, and it lands.
+  const page = bootWith('');
+  await flush(60);
+  page.open();
+  await flush(300);
+  const rail = page.rows('.surfaces-link');
+  const about = rail.find((one) => String(one.dataset.address || '') === 'about');
+  check('ABOUT the rail names About', !!about,
+    rail.map((one) => one.dataset.address).join(','));
+  if (about) {
+    about.click();
+    await flush(200);
+    check('ABOUT the rail press lands on the About pane',
+      page.window.location.hash === '#/about' && page.IDS['panel-about'].hidden === false,
+      'hash=' + page.window.location.hash +
+        ' hidden=' + (page.IDS['panel-about'] ? page.IDS['panel-about'].hidden : 'no panel'));
+  }
+  // With nothing newer the entry says nothing: an empty counter is
+  // decoration, the rail's own rule.
+  const quiet = about && about.querySelectorAll('.surfaces-count')[0];
+  check('ABOUT a build that is current badges nothing',
+    !!quiet && quiet.hidden === true, quiet ? String(quiet.textContent) : 'no badge');
+
+  // 2. A waiting release says so on the rail, from the first paint — the
+  //    owner must not have to walk into Settings to learn a build is behind.
+  const behind = bootWith('0.8.13');
+  await flush(60);
+  behind.open();
+  await flush(300);
+  const behindAbout = behind.rows('.surfaces-link')
+    .find((one) => String(one.dataset.address || '') === 'about');
+  const badge = behindAbout && behindAbout.querySelectorAll('.surfaces-count')[0];
+  check('ABOUT a waiting release badges the rail entry',
+    !!badge && badge.hidden === false && String(badge.textContent) === 'new',
+    badge ? String(badge.textContent) + ' hidden=' + badge.hidden : 'no badge');
+  check('ABOUT the badge names the version and the way to take it',
+    !!badge && String(badge.title).includes('0.8.13') &&
+      /open About to update/.test(String(badge.title)),
+    badge ? String(badge.title) : 'no badge');
+
+  // 3. The Settings update card reaches the apply instead of dead-ending.
+  const settings = bootWith('0.8.13');
+  await flush(60);
+  settings.hash('#/settings');
+  await flush(300);
+  const updateSection = settings.rows('.section-rail-row')
+    .find((one) => String(one.textContent || '').includes('update'));
+  check('ABOUT the settings rail carries the update section', !!updateSection,
+    settings.rows('.section-rail-row').map((one) => one.textContent).join(','));
+  if (updateSection) {
+    updateSection.click();
+    await flush(200);
+    const row = settings.rows('.cfg-item')
+      .find((one) => String(one.textContent || '').includes('is available'));
+    check('ABOUT the update card says a candidate is available', !!row,
+      settings.rows('.cfg-item').map((one) => one.textContent).join(' | '));
+    if (row) {
+      row.click();
+      await flush(200);
+      const pane = settings.el('dock-object-body');
+      const verbs = pane ? pane.querySelectorAll('button')
+        .map((one) => String(one.textContent || '').trim()) : [];
+      check('ABOUT the update card offers a door to the apply, not just a re-check',
+        verbs.some((label) => /open About/i.test(label)), verbs.join(' | '));
+      const door = pane && pane.querySelectorAll('button')
+        .find((one) => /open About/i.test(String(one.textContent || '')));
+      if (door) {
+        door.click();
+        await flush(200);
+        check('ABOUT that door lands on the About pane',
+          settings.window.location.hash === '#/about',
+          'hash=' + settings.window.location.hash);
+      }
+    }
+  }
+}
+
 async function theSilentSurfaceActsNowAnswerWhereTheOwnerIsLooking() {
   // 1. Intelligence: the needs-you card's pass.
   const memory = boot({
@@ -14775,6 +14891,8 @@ const cases = [
   ['FORM pressing a submit button submits its form', pressingASubmitButtonSubmitsItsForm],
   ['ASK every button on an owner-action surface does something',
     everyButtonOnAnOwnerActionSurfaceDoesSomething],
+  ['ABOUT the rail names About, and a waiting release says so',
+    aboutIsOnTheRailAndAWaitingReleaseIsVisible],
   ['SILENT a surface act answers where the owner is looking',
     theSilentSurfaceActsNowAnswerWhereTheOwnerIsLooking],
   ['SILENT no press does its work in silence', noPressDoesItsWorkInSilence],
