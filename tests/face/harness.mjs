@@ -5497,6 +5497,54 @@ async function theDrawerWaitsForTheOwnerOnDeskAndLearning() {
     String(desk.rows('#pane-context .facts').length));
 }
 
+// The owner's 2026-11-16 black-hole report: a run kept going at the
+// bridge while the owner looked elsewhere; its row read "working" and the
+// chat stream never came back. Returning to a driven conversation must go
+// through the resume and reattach the transcript — never answer an empty
+// box over a live run.
+async function aDrivenConversationReattachesWhenTheOwnerComesBack() {
+  const page = boot({
+    hash: '#/sessions/open-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+        sessions: [row('open-1', 'working', { title: 'the black hole' })],
+      },
+      state: (asked) => ({
+        ...emptyState(asked),
+        session: 'open-1',
+        running: true,
+        driving: 'open-1',
+        events: [{ type: 'message', role: 'owner', text: 'build the black hole' }],
+      }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(40);
+  check('REATTACH the run opens with its transcript',
+    page.IDS.log.hidden === false && page.text('log').includes('build the black hole'),
+    'log hidden=' + page.IDS.log.hidden);
+
+  // The owner looks elsewhere: the threads lens detaches the view.
+  page.window.location.hash = '#/chat';
+  await flush(80);
+  check('REATTACH the threads lens detaches the view',
+    page.IDS.log.hidden === true, 'log hidden=' + page.IDS.log.hidden);
+
+  // Coming back through the route: the resume must run and the transcript
+  // must return.
+  const before = page.calls.filter((c) => c.url.startsWith('/api/resume')).length;
+  page.window.location.hash = '#/sessions/open-1';
+  await flush(120);
+  const resumed = page.calls.filter((c) => c.url.startsWith('/api/resume')).length;
+  check('REATTACH the return resumes the session', resumed > before, before + ' -> ' + resumed);
+  check('REATTACH the transcript is back',
+    page.IDS.log.hidden === false && page.text('log').includes('build the black hole'),
+    'log hidden=' + page.IDS.log.hidden + ' text=' + page.text('log').slice(0, 80));
+}
+
 // The composer's microphone (the dictation plan): one press starts a
 // recording on the server, the second stops it, and the transcript lands
 // where the caret was. The server records — a page never opens the mic.
@@ -13848,6 +13896,7 @@ const cases = [
   ['C1 the conversation adds a bot in place', theConversationAddsABotInPlace],
   ['C1 the composer starts a conversation with bots', theComposerStartsWithBots],
   ['MIC the composer dictates into the box', theComposerDictatesIntoTheBox],
+  ['REATTACH a driven conversation comes back with its transcript', aDrivenConversationReattachesWhenTheOwnerComesBack],
   ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
   ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],

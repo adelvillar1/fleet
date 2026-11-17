@@ -14944,8 +14944,15 @@ import { node, svg, clip } from './core/dom.js';
     face.panel = 'sessions';
     setWork(true);
     if (window.innerWidth <= 1180) setWork(false);
-    var driven = face.driving === id && face.running;
-    if (same || driven) {
+    // The transcript is the only proof a conversation is really open: the
+    // resume is skipped only when THIS page already shows it. A run that
+    // kept going while the owner looked elsewhere lives at the bridge, and
+    // the threads lens detaches the view — so a bare `driven` check
+    // answered an empty box over a live run (the owner's 2026-11-16
+    // report: the row read "working", the stream never appeared).
+    var attached = same && el.log && !el.log.hidden &&
+      face.stream && face.stream.children.length > 0;
+    if (attached) {
       paintWork();
       paintConvHead();
       return Promise.resolve();
@@ -27239,6 +27246,14 @@ import { node, svg, clip } from './core/dom.js';
         storeOpenSession(null);
         el.log.hidden = true;
         el.empty.hidden = false;
+        // The view detaches from the run, which continues at the bridge. A
+        // stale running flag would queue this composer's sends behind a
+        // run nobody is looking at (the 2026-11-05 regression) and would
+        // let a row's return skip the reattach.
+        face.running = false;
+        face.driving = '';
+        face.seat = null;
+        face.stop = null;
       }
       // A reload is the same address again (the reload-reattach plan):
       // the conversation the face held comes back through the same seed
