@@ -764,9 +764,14 @@ import { node, svg, clip } from './core/dom.js';
     platforms: [
       ['path', { d: 'M7 18a4.2 4.2 0 0 1 .4-8.4 5.2 5.2 0 0 1 10 1.4A3.6 3.6 0 0 1 17 18z' }]
     ],
+    // A wrench, as the icons plan specified. It had been a chevron plus a
+    // rule — `M5 7l5 5-5 5` is a "next" arrow — which at 17px read as the
+    // rail's own collapse control sitting inside a row's mark. Legibility
+    // was measured and the shape was not, until the drawing was rendered
+    // and read (KI-569).
     tools: [
-      ['path', { d: 'M5 7l5 5-5 5' }],
-      ['path', { d: 'M12.5 17H19' }]
+      ['path', { d: 'M14.7 6.3a3.6 3.6 0 0 0 4.6 4.6l-8 8a2.1 2.1 0 0 1-3-3l8-8a3.6 3.6 0 0 0-1.6-1.6z' }],
+      ['path', { d: 'M7.4 16.6l.9.9' }]
     ],
     workflows: [
       ['rect', { x: '3.5', y: '9.5', width: '5.5', height: '5.5', rx: '1' }],
@@ -810,6 +815,26 @@ import { node, svg, clip } from './core/dom.js';
     verify: [
       ['circle', { cx: 12, cy: 12, r: 8.2 }],
       ['path', { d: 'M8 12.3l2.6 2.6L16 9.4' }]
+    ],
+    // The three the calibration rail had been collapsing onto `verify`,
+    // each drawn for its own meaning (KI-569, reinstating the 2026-11-04
+    // discipline). `route_judged` is the plan's own "a route with a check"
+    // — specified in docs/plans/2026-11-04-icons.md and never drawn, which
+    // is why the map substituted the bare check and two unrelated ops
+    // inherited it. A judgment is a route that was graded; a validation is
+    // a claim held up against its evidence; a verify is the plain check.
+    //
+    // All three stay inside the 24-unit box: the first draft's check ran to
+    // x=20.6 and read as a stray blob at 17px, which only showed up when
+    // the drawing was rasterised and looked at rather than counted.
+    route_judged: [
+      ['path', { d: 'M2.5 15.5h3.5l2.5-8 3 8h3' }],
+      ['path', { d: 'M13.5 9.5l2.2 2.2 4.3-5' }]
+    ],
+    validate: [
+      ['path', { d: 'M6 3.5h8l4 4v13H6z' }],
+      ['path', { d: 'M14 3.5v4h4' }],
+      ['path', { d: 'M8.6 14.6l1.7 1.7 3.3-3.6' }]
     ],
     timing: [
       ['circle', { cx: 12, cy: 13, r: 6.5 }],
@@ -7185,11 +7210,20 @@ import { node, svg, clip } from './core/dom.js';
 
   // One mark per concept. A surface's own section shares the surface's
   // mark (reference = the book); everything else gets its own drawing.
+  // One meaning per mark, on every rail (the 2026-11-04 icons discipline).
+  // Every section this rail can render must be named here: the fallback is
+  // 'dot', and three silent dots is exactly the drift the discipline was
+  // written to stop. The Intelligence surface folded skills, tools and
+  // workflows into this rail (U40) and the map was never extended, so all
+  // three wore the same hollow bullet while their own drawings already
+  // existed in ICONS — a layered diamond, a wrench, a branching chain.
   var MEMORY_SECTION_ICONS = {
     'needs-you': 'pending', 'user': 'person', 'feedback': 'rules',
     'project': 'repo', 'reference': 'memory', 'episodic': 'events',
     'everything-else': 'other', 'retired': 'retired', 'archive': 'archive',
-    'today': 'today'
+    'today': 'today',
+    // The three Intelligence segments (U40's fold).
+    'skills': 'skills', 'tools': 'tools', 'workflows': 'workflows'
   };
 
   /// The type sections the read actually holds, in the substrate's own
@@ -15281,7 +15315,7 @@ import { node, svg, clip } from './core/dom.js';
 
   var CALIBRATION_OPS = [
     ['route', 'routes', 'router'],
-    ['route_judged', 'judgments', 'verify'],
+    ['route_judged', 'judgments', 'route_judged'],
     ['turn', 'turns', 'chat'],
     ['delegation', 'delegations', 'delegation'],
     ['propose', 'proposals', 'spark'],
@@ -15296,9 +15330,9 @@ import { node, svg, clip } from './core/dom.js';
     ['footprint', 'footprint checks', 'measure'],
     ['shape', 'shapes', 'shape'],
     ['curate', 'curations', 'curate'],
-    ['validate', 'validations', 'verify'],
+    ['validate', 'validations', 'validate'],
     ['demand', 'demand signals', 'demand'],
-    ['learn_probe', 'learn probes', 'learning'],
+    ['learn_probe', 'learn probes', 'practice'],
     ['learn_check', 'learn checks', 'learning']
   ];
 

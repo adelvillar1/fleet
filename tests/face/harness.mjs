@@ -11718,7 +11718,117 @@ async function theConnectCardSaysWhatHappened() {
   // drawn. Thirteen were not — the rail showed huddles, vault and plugins
   // as the same hollow ring — so the check is the whole class, read from
   // the source rather than from one rendered screen.
-  async function everyIconKeyTheFaceAsksForIsDrawn() {
+  // The icons discipline's second half, and the one its own pin was missing.
+//
+// `everyIconKeyTheFaceAsksForIsDrawn` asks "is every key the face names
+// drawn?" — and it passed while three Intelligence rows wore the same
+// hollow bullet, because the key they fell through to `dot` IS drawn. The
+// discipline's actual rule is stronger: every row a rail RENDERS gets its
+// own meaning, and no two rows may share a drawing. A map that is merely
+// complete-looking is the drift, not the guard.
+//
+// The failure mode is specific and was live for weeks: the Intelligence
+// surface folded skills, tools and workflows into the memory rail (U40),
+// the section map was never extended, and `MEMORY_SECTION_ICONS[id] ||
+// 'dot'` silently gave all three the same mark.
+// The same rule on the calibration rail, asserted from the source because
+// the op list is the map: a day only renders the ops it has rows for, so a
+// boot cannot prove every op's mark is distinct. What can be proven is that
+// no two ops name the same drawing, and that every op names a drawn one.
+//
+// Three ops had collapsed onto the bare `verify` check — judgments,
+// verifies and validations — and two learning ops onto `learning`. The
+// icons plan specified `route_judged` ("a route with a check") and it was
+// never drawn, which is how the map ended up substituting the check.
+async function everyCalibrationOpNamesItsOwnDrawing() {
+  // APP, not SRC: SRC is the reconstructed bundle (store + router + dom +
+  // app), so an offset found in it does not point where the same offset
+  // points in the app source — the first draft of this case sliced whitespace
+  // and matched nothing, which read as "route_judged -> absent".
+  const at = APP.indexOf('var CALIBRATION_OPS = [');
+  const ops = APP.slice(at, APP.indexOf('];', at));
+  const pairs = [...ops.matchAll(/\['[a-z_]+', '[^']+', '([a-z][a-z_-]*)'\]/g)]
+    .map((m) => m[1]);
+  const start = APP.indexOf('var ICONS = {');
+  const stop = APP.indexOf('// Which group an address belongs to');
+  const drawn = new Set([...APP.slice(start, stop)
+    .matchAll(/^\s{4}'?([a-z][a-z_-]*)'?: \[/gm)].map((m) => m[1]));
+  check('ICONS the calibration rail declares its ops', pairs.length >= 15,
+    'ops=' + pairs.length);
+  const undrawn = [...new Set(pairs)].filter((key) => !drawn.has(key)).sort();
+  check('ICONS every calibration op names a drawn mark',
+    undrawn.length === 0, 'undrawn=' + undrawn.join(','));
+  const seen = {};
+  const shared = [];
+  pairs.forEach((key, index) => {
+    if (seen[key] === undefined) { seen[key] = index; return; }
+    shared.push(key + ' (ops ' + seen[key] + ' and ' + index + ')');
+  });
+  check('ICONS no two calibration ops share a mark',
+    shared.length === 0, shared.join('; ') || 'none');
+  // The three that drifted, named by OP: each must name a key used by no
+  // other op. `route_judged` and `validate` were both `verify`; a
+  // regression names itself here rather than failing a bare count.
+  const trio = ['route_judged', 'validate', 'verify'];
+  const named = [...ops.matchAll(/\['([a-z_]+)', '[^']+', '([a-z][a-z_-]*)'\]/g)]
+    .map((m) => ({ op: m[1], icon: m[2] }));
+  trio.forEach((opName) => {
+    const row = named.find((one) => one.op === opName);
+    check('ICONS `' + opName + '` carries a mark of its own',
+      !!row && named.filter((one) => one.icon === row.icon).length === 1,
+      opName + ' -> ' + (row ? row.icon : 'absent') +
+        (row ? ' x' + named.filter((one) => one.icon === row.icon).length : ''));
+  });
+}
+
+async function everyRenderedRailRowGetsItsOwnDrawing() {
+  const mem = boot({
+    width: 1440, hash: '#/memory',
+    documents: { memory: memoryDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  await flush(60);
+  mem.open();
+  await flush(260);
+  const rows = mem.rows('.section-rail-row');
+  check('ICONS the memory rail renders its rows', rows.length >= 8,
+    'rows=' + rows.length);
+  const signature = (row) => {
+    const svg = row.find((one) => one.name === 'svg')[0];
+    return svg ? svg.children.map((child) => JSON.stringify(child.attrs || {})).join('|') : '(none)';
+  };
+  const labels = rows.map((row) => String(row.textContent || '').replace(/\s+/g, ' ').trim());
+  const byShape = {};
+  rows.forEach((row, index) => {
+    const key = signature(row);
+    (byShape[key] = byShape[key] || []).push(labels[index]);
+  });
+  const shared = Object.keys(byShape)
+    .filter((key) => byShape[key].length > 1)
+    .map((key) => byShape[key].join(' / '));
+  check('ICONS no two rows on the memory rail share a drawing',
+    shared.length === 0, shared.join(' ; ') || 'none');
+  check('ICONS every memory rail row carries a mark of its own',
+    rows.every((row) => signature(row) !== '(none)'),
+    labels.join(' | '));
+  // The three that drifted, by name — a regression that reintroduces the
+  // shared bullet names itself rather than failing a count.
+  const named = {};
+  rows.forEach((row, index) => { named[labels[index]] = signature(row); });
+  const segments = ['skills', 'tools', 'workflows']
+    .filter((name) => Object.keys(named).some((label) => label.startsWith(name)));
+  check('ICONS the Intelligence segments each wear their own mark',
+    new Set(segments.map((name) => {
+      const label = Object.keys(named).find((one) => one.startsWith(name));
+      return label ? named[label] : 'absent';
+    })).size === segments.length,
+    segments.map((name) => {
+      const label = Object.keys(named).find((one) => one.startsWith(name));
+      return name + '=' + (label ? named[label].slice(0, 24) : 'absent');
+    }).join(' | '));
+}
+
+async function everyIconKeyTheFaceAsksForIsDrawn() {
     const start = SRC.indexOf('var ICONS = {');
     const stop = SRC.indexOf('// Which group an address belongs to');
     const block = SRC.slice(start, stop);
@@ -14898,6 +15008,10 @@ const cases = [
   ['SILENT no press does its work in silence', noPressDoesItsWorkInSilence],
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
+  ['ICONS every rendered rail row gets its own drawing',
+    everyRenderedRailRowGetsItsOwnDrawing],
+  ['ICONS every calibration op names its own drawing',
+    everyCalibrationOpNamesItsOwnDrawing],
   ['ICONS every key the face asks for is drawn', everyIconKeyTheFaceAsksForIsDrawn],
   ['ICONS the rail toggle is the icon alone', theRailToggleIsTheIconAlone],
   ['ICONS the rail\u2019s groups fold', theRailsGroupsFold],
