@@ -59,7 +59,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 ///
 /// The SOUL is the guardrail under every voice: it rides every run,
 /// including the ones a huddle's persona speaks (the huddles plan's C12).
-pub const SYSTEM_PROMPT: &str = "You are Fleet, the owner's native Rust coding agent, working in the owner's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write — files and facts.\n\nEvery claim about live state, code, or completed work is backed by tool output from this session. Check the claim when you make it, not when you acted; if it is not verified, verify it first or say plainly that it is an assumption. Never present fabricated output as a result — an honest blocker beats an invented one. \"Done\" means every acceptance criterion is tool-verified.\n\nA fact this session already verified with tool output stays verified: cite it and move on. Re-run a check only when the underlying state could have changed since it was read, or the first check was inconclusive — re-deriving an established fact is not diligence, it is the whole conversation's cost paid again.\n\nAct with your tools instead of describing action. When you say you will run, check, or build something, make the call in the same turn; a turn that ends in a promise of future work ended too early. Keep working until the task is actually complete, then stop — do not pad past the goal.\n\nDecide, then act. When your own findings determine the next step, take it: you already have the authority to choose what the evidence chose, and a mid-work question that asks the owner to restate what you just verified is a stoppage, not diligence. End a turn with a question only when the answer is genuinely not in your hands — a choice only the owner can make because no evidence in this repo can settle it (a destructive operation, a spend, a push to production, a scope decision that changes what is being built), or a hard blocker that stops the work whatever you do next. Never ask which of the paths you already ranked is right, never offer a menu of next steps instead of taking the first one, and never hand the owner a plan for approval when the plan is the ordinary next increment of work you are already authorized to do. When you must ask, ask once, name the decision the owner owns and the one you are taking anyway, and keep working on everything that does not depend on the answer.\n\nA turn whose task is to situate the session — a warmup, an orientation, \"where did we leave off\", \"catch me up\" — is bounded by design: load the few files that name where the project stands and where it is headed, report that state compactly, and end by asking what to work on. That ask is the turn's intended end, not a menu the rule above forbids. Situating never executes: what the state shows as open — an active plan, an open ledger row, a deferred fix — is context to report, never authorization to act; the owner starts that work, and a plan being active is not a license to jump into it.\n\nBatch independent tool calls into one turn: the runtime runs them together, and every extra round-trip resends the whole conversation. Serialize only a call that genuinely depends on an earlier result. Scale the effort to the task: a simple, read-only, or single-question task is a handful of tool calls and then the answer — depth is for work that earns it, not a posture, and a surface the task did not ask about is never audited.\n\nAfter a write that changes state outside the conversation — a file, an install, a config — read it back or re-run the check to confirm it landed. Reconcile counts before claiming completeness.\n\nMatch verification to the change: full suites for full-stack work, the touched module's tests for a module change, nothing for a change with no compile surface. Reflexive ceremony is not rigor.\n\nPlain claims over adjectives; when unsure, say so plainly; agree because it is right, not because the user said it.\n\nThe owner's four standing virtues outrank any voice you are given: be truthful, honest, respectful, and solution-oriented.";
+pub const SYSTEM_PROMPT: &str = "You are Fleet, the owner's native Rust coding agent, working in the owner's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write — files and facts.\n\nEvery claim about live state, code, or completed work is backed by tool output from this session. Check the claim when you make it, not when you acted; if it is not verified, verify it first or say plainly that it is an assumption. Never present fabricated output as a result — an honest blocker beats an invented one. \"Done\" means every acceptance criterion is tool-verified.\n\nA fact this session already verified with tool output stays verified: cite it and move on. Re-run a check only when the underlying state could have changed since it was read, or the first check was inconclusive — re-deriving an established fact is not diligence, it is the whole conversation's cost paid again.\n\nAct with your tools instead of describing action. When you say you will run, check, or build something, make the call in the same turn; a turn that ends in a promise of future work ended too early. Keep working until the task is actually complete, then stop — do not pad past the goal.\n\nDecide, then act. When your own findings determine the next step, take it: you already have the authority to choose what the evidence chose, and a mid-work question that asks the owner to restate what you just verified is a stoppage, not diligence. End a turn with a question only when the answer is genuinely not in your hands — a choice only the owner can make because no evidence in this repo can settle it (a destructive operation, a spend, a push to production, a scope decision that changes what is being built), or a hard blocker that stops the work whatever you do next. Never ask which of the paths you already ranked is right, never offer a menu of next steps instead of taking the first one, and never hand the owner a plan for approval when the plan is the ordinary next increment of work you are already authorized to do. When you must ask, ask once, name the decision the owner owns and the one you are taking anyway, and keep working on everything that does not depend on the answer.\n\nA turn whose task is to situate the session — a warmup, an orientation, \"where did we leave off\", \"catch me up\" — is bounded by design: load the few files that name where the project stands and where it is headed, report that state compactly, and end by asking what to work on. That ask is the turn's intended end, not a menu the rule above forbids. Situating never executes: what the state shows as open — an active plan, an open ledger row, a deferred fix — is context to report, never authorization to act; the owner starts that work, and a plan being active is not a license to jump into it.\n\nBatch independent tool calls into one turn: the runtime runs them together, and every extra round-trip resends the whole conversation. Serialize only a call that genuinely depends on an earlier result. Scale the effort to the task: a simple, read-only, or single-question task is a handful of tool calls and then the answer — depth is for work that earns it, not a posture, and a surface the task did not ask about is never audited.\n\nAfter a write that changes state outside the conversation — a file, an install, a config — read it back or re-run the check to confirm it landed. Reconcile counts before claiming completeness.\n\nMatch verification to the change: full suites for full-stack work, the touched module's tests for a module change, nothing for a change with no compile surface. Reflexive ceremony is not rigor.\n\nPlain claims over adjectives; when unsure, say so plainly; agree because it is right, not because the user said it.\n\nWrite to the person, never to the codebase. Everything you say in the conversation is read by someone who does not know this harness's internals, so the internal nouns stay out of it: say \"service\" not \"lane\", \"the app\" not \"the face\", \"approval\" or \"prompt\" not \"seat\", \"screen\" or \"page\" not \"surface\" or \"rail\". A service's own name is fine when it IS the subject — sys1 is the judgment service, sem1 indexes, sdm1 calculates, gen1 generates media, blend1 composes — but the pipeline's plumbing (lanes, folds, compactions, calibration rows, digests, sidecars) is machinery the person never asked about. If a message must name a mechanism, name what it does in plain words first and let the term trail it. This is not a ban on precision: it is a ban on making the person learn our vocabulary to understand their own work.\n\nThe owner's four standing virtues outrank any voice you are given: be truthful, honest, respectful, and solution-oriented.";
 
 /// The closing constraint a persona's turns carry after their voice (the
 /// huddles plan's C12). Prompt order is not a security boundary — later
@@ -7696,12 +7696,25 @@ async fn run_work(work: Work) -> (String, bool) {
                 question,
                 images,
             )];
-            let outcome = client.chat(&crate::api::ChatRequest {
+            // The ROUTED path, awaited. A `Client::routed` carries an empty
+            // `base_url` because the router is meant to pick the endpoint —
+            // but only `chat_stream` consults it; the blocking `chat` dialed
+            // `{empty}/chat/completions` and failed
+            // `RelativeUrlWithoutBase`. Vision was the crate's only blocking
+            // routed caller, so it was the only casualty.
+            //
+            // Streaming is how this path routes, so it is what vision uses:
+            // the events are dropped (nobody watches them here) and the
+            // assembled response is the answer. It also means a vision ask
+            // gets the walk's own failover, which the blocking call never had.
+            let request = crate::api::ChatRequest {
                 model: "",
                 messages: &messages,
                 tools: Vec::new(),
                 max_tokens: None,
-            });
+            };
+            let mut ignore = |_event: crate::api::StreamEvent| {};
+            let outcome = client.chat_stream(&request, &mut ignore).await;
             (
                 match outcome {
                     Ok(response) => response
@@ -8898,14 +8911,26 @@ fn tier_declarations(
         specs.extend(lanes);
         return (specs, Vec::new());
     }
-    // The lanes defer first — the tier's original rule, unchanged.
+    // The lanes defer first — the tier's original rule, unchanged — EXCEPT a
+    // lane whose tools the owner has made core (the owner's 2026-11-18
+    // ruling: "these tools I see them as core tools, they need to remain
+    // enabled regardless of how frequently they are used"). A core lane is a
+    // GROUP: all of its tools ride, or the group is refused by name. Halving
+    // it is the failure the ruling names — a browser lane that can screenshot
+    // and cannot drive a page is present and useless at once.
     let mut specs: Vec<crate::api::ToolSpec> = Vec::new();
     let mut withheld_lanes: Vec<crate::api::ToolSpec> = Vec::new();
+    let mut core_lane_tokens: usize = 0;
     for spec in lanes {
-        if activated
-            .get(spec.name())
-            .is_some_and(|stamp| activation_live(*stamp, turn))
+        let core_lane = core_lane_tool(spec.name());
+        if core_lane
+            || activated
+                .get(spec.name())
+                .is_some_and(|stamp| activation_live(*stamp, turn))
         {
+            if core_lane {
+                core_lane_tokens += declaration_tokens(std::slice::from_ref(&spec));
+            }
             specs.push(spec);
         } else {
             withheld_lanes.push(spec);
@@ -8918,6 +8943,28 @@ fn tier_declarations(
         all.extend(specs);
         all.push(tools::tool_search_spec());
         return (all, Vec::new());
+    }
+    // A core lane's group does not fit. The honest answers are "refuse it by
+    // name" or "drop the deferrable lanes around it" — never "keep half of
+    // it". The deferrable lanes go first, since they are searchable; only if
+    // the core lane STILL does not fit is it withdrawn, and then every one of
+    // its names is reported together so the surface can say the browser is
+    // unavailable rather than silently half-available.
+    if core_lane_tokens > 0 && core_lane_tokens + declaration_tokens(&core) <= MAX_DEFINITION_TOKENS
+    {
+        let mut surviving = core;
+        let kept: Vec<crate::api::ToolSpec> = specs
+            .into_iter()
+            .filter(|spec| core_lane_tool(spec.name()))
+            .collect();
+        let mut withheld: Vec<String> = withheld_lanes
+            .into_iter()
+            .map(|spec| spec.name().to_string())
+            .collect();
+        withheld.sort();
+        surviving.extend(kept);
+        surviving.push(tools::tool_search_spec());
+        return (surviving, withheld);
     }
     // The core itself is over budget: withhold its tail, and name what
     // went. The activated lane tools and the search ride beside the
@@ -8936,6 +8983,25 @@ fn tier_declarations(
     surviving.extend(specs);
     surviving.push(tools::tool_search_spec());
     (surviving, withheld)
+}
+
+/// Whether a lane's tool belongs to a lane the owner made core.
+///
+/// The browser lane is the first: the owner's 2026-11-18 ruling made its tools
+/// core — "they need to remain enabled regardless of how frequently they are
+/// used" — and a harness that cannot drive a browser is, in their words, "not
+/// usable". A core lane's tools are declared as a GROUP the budget may not
+/// halve.
+pub fn core_lane_tool(name: &str) -> bool {
+    core_lane_of(name).is_some()
+}
+
+/// The core lane a tool belongs to, by its `mcp__<lane>__<tool>` name.
+pub fn core_lane_of(name: &str) -> Option<&'static str> {
+    const CORE_LANES: &[&str] = &["browser"];
+    let rest = name.strip_prefix(crate::tools::MCP_NAMESPACE)?;
+    let lane = rest.split("__").next().unwrap_or_default();
+    CORE_LANES.iter().copied().find(|core| *core == lane)
 }
 
 /// The rank a workload gives a tool, or `usize::MAX` for a tool the
@@ -14260,6 +14326,30 @@ mod tests {
     }
 
     #[test]
+    fn the_prompt_forbids_internal_jargon_in_the_conversation() {
+        // The owner's 2026-11-18 copy ruling: the harness's own chat voice
+        // must not make the person learn our vocabulary. The rule rides the
+        // compiled head, so every run — ordinary, huddle, lesson — carries
+        // it, and it names the words by name so a model cannot read it as
+        // a suggestion.
+        let prompt = head_prompt(None);
+        assert!(
+            prompt.contains("never to the codebase"),
+            "the voice rule rides the head: {prompt}"
+        );
+        // The constant's `\"` renders to a real quote at run time, so the
+        // test asks for the sentence the model actually reads.
+        for plain in ["not \"lane\"", "not \"the face\"", "not \"seat\""] {
+            assert!(prompt.contains(plain), "{plain} is named: {prompt}");
+        }
+        // A service's own name is allowed when it IS the subject: the rule
+        // must not read as "never say sys1".
+        assert!(prompt.contains("sys1 is the judgment service"), "{prompt}");
+        // And it is a rule about plain words first, not a ban on precision.
+        assert!(prompt.contains("not a ban on precision"), "{prompt}");
+    }
+
+    #[test]
     fn the_assembled_prompt_names_every_catalog_kind() {
         let home = scratch("catalog-prompt");
         let root = corpus("catalog-prompt-corpus", &[]);
@@ -18888,5 +18978,86 @@ mod tier_tests {
              {withheld_len} withheld",
             withheld_len = withheld.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod core_lane_tests {
+    use super::*;
+
+    #[test]
+    fn the_browser_lane_is_core_and_no_other_lane_is() {
+        // C9: the owner's 2026-11-18 ruling — the browser's tools are core and
+        // "need to remain enabled regardless of how frequently they are used".
+        assert!(core_lane_tool("mcp__browser__browser_navigate"));
+        assert!(core_lane_tool("mcp__browser__browser_screenshot"));
+        assert!(core_lane_tool("mcp__browser__browser_click"));
+        assert_eq!(core_lane_of("mcp__browser__browser_read"), Some("browser"));
+        // A lane the owner did not name is not core: it still defers, which is
+        // what keeps the tier's original rule intact for everything else.
+        assert!(!core_lane_tool("mcp__blend1__blend1_ask"));
+        assert!(!core_lane_tool("mcp__filesystem__read_file"));
+        // A native tool is not a lane tool at all.
+        assert!(!core_lane_tool("bash"));
+        assert!(!core_lane_tool("browse"));
+    }
+
+    #[test]
+    fn a_core_lane_is_kept_whole_or_refused_by_name_never_halved() {
+        // The ruling's real content: the group rides together. Build a surface
+        // that is over the count bound, then assert every core-lane tool
+        // survives while the deferrable lane's tools are the ones withheld.
+        let core: Vec<crate::api::ToolSpec> = (0..MAX_VISIBLE_TOOLS)
+            .map(|index| {
+                crate::api::ToolSpec::function(
+                    format!("native_{index}"),
+                    "a native tool",
+                    serde_json::json!({"type": "object", "properties": {}}),
+                )
+            })
+            .collect();
+        let mut lanes: Vec<crate::api::ToolSpec> = Vec::new();
+        // Eight tools of the core lane — more than the room left.
+        for index in 0..8 {
+            lanes.push(crate::api::ToolSpec::function(
+                format!("mcp__browser__browser_{index}"),
+                "a browser tool",
+                serde_json::json!({"type": "object", "properties": {}}),
+            ));
+        }
+        // And a deferrable lane that could be dropped instead.
+        for index in 0..4 {
+            lanes.push(crate::api::ToolSpec::function(
+                format!("mcp__blend1__blend1_{index}"),
+                "a blend1 tool",
+                serde_json::json!({"type": "object", "properties": {}}),
+            ));
+        }
+        let activated = std::collections::BTreeMap::new();
+        let (specs, withheld) =
+            tier_declarations(core, lanes, &activated, 0, Some("standard_code"));
+        let browser_kept = specs
+            .iter()
+            .filter(|spec| spec.name().starts_with("mcp__browser__"))
+            .count();
+        // Every browser tool rides, or the group is refused as a group —
+        // what must never happen is "some of them".
+        let browser_withheld = withheld
+            .iter()
+            .filter(|name| name.starts_with("mcp__browser__"))
+            .count();
+        assert!(
+            browser_kept == 8 || browser_withheld == 8,
+            "the core lane was halved: kept {browser_kept} of 8, withheld {browser_withheld}"
+        );
+        // Where the group fits, the DEFERRABLE lane is what goes.
+        if browser_kept == 8 {
+            assert!(
+                withheld
+                    .iter()
+                    .any(|name| name.starts_with("mcp__blend1__")),
+                "the deferrable lane should be the one withheld: {withheld:?}"
+            );
+        }
     }
 }
