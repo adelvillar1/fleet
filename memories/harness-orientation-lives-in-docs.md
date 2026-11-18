@@ -8,7 +8,7 @@ tier: durable
 shape: [docs]
 phrases: [how we do things, how I work, where to find things, methodology, session protocol, house rules]
 missing: []
-recall-count: 610
+recall-count: 625
 superseded-by:
 valid-until:
 ---

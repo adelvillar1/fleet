@@ -9,7 +9,7 @@ shape: [rendering, drops-the-row, resolved]
 phrases: ["notice appends to face.stream inside #log inside panel-chat", transcriptVisible not the lens name, face-say strip outside every panel, three cases were pinning the silence, stub setTimeout ran callbacks synchronously, second-brain endpoints unmapped in the mock]
 missing: []
 premises: []
-recall-count: 24
+recall-count: 53
 superseded-by:
 valid-until:
 source:

@@ -9,7 +9,7 @@ shape: [build, change, resolved]
 phrases: [10+ of rust building for just a tiny change, FLEET_ASSETS_FROM, scripts/face-dev.sh live, FACE_ONLY, include_str! embeds the assets so a JS edit is a rust edit, save and refresh]
 missing: []
 premises: []
-recall-count: 1
+recall-count: 2
 superseded-by:
 valid-until:
 source:

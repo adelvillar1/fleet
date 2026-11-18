@@ -9,7 +9,7 @@ shape: [deploy, resolved]
 phrases: [every fix doesn't bump the patch number, only needed whenever there is enough to warrant a 15 minute build, 20 minutes or more of gates, every minute change goes through the same zero risk pipeline, if the release is not cut and the binary is not recreated we can afford failure because it's cheap to rollback, I want to get back to that]
 missing: []
 premises: []
-recall-count: 0
+recall-count: 2
 superseded-by:
 valid-until:
 source:

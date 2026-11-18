@@ -8,7 +8,7 @@ tier: durable
 shape: [change]
 phrases: [unrelated pairs sit at 0.63; related pairs reach 0.85; the 0.15 vector weight is confirmed; proximity must not outrank direction]
 missing: []
-recall-count: 712
+recall-count: 720
 superseded-by:
 valid-until:
 ---
