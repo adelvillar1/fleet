@@ -4529,7 +4529,10 @@ mod tests {
     fn summary(id: &str) -> SessionSummary {
         SessionSummary {
             first_text: None,
-            last_plan: None,
+            subject: None,
+            machinery_only: false,
+            empty: false,
+            first_plan: None,
             personas: Vec::new(),
             id: id.to_string(),
             model: "deepseek-flash".to_string(),
