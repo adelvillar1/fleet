@@ -15265,18 +15265,22 @@ async function theBoardShowsQueuedWorkWithItsAssignment() {
     drawer.toLowerCase().includes('depends on'), drawer.slice(0, 260));
 }
 
-// The owner's 2026-11-18 ruling: "the rail when collapsed show the icons
-// that have number badges aligned to the right while the rest is centered,
-// the rail should account for that to begin with and collapse to the size
-// that contains space for the badges and align the icons to the right and
-// not centered."
+// The owner's 2026-11-18 ruling, corrected the same day: the collapsed rail
+// packs its ICONS to the LEFT edge, and the badges ride the row's other end.
 //
-// The stub DOM has no layout engine — `offsetWidth` is a fixed 320 and
-// there is no cascade — so a pixel claim here would be fiction. What CAN
-// be pinned honestly is the CSS that decides the geometry, and the
-// arithmetic that made the width what it is: every collapsed row packs to
-// one right edge, the badge's slot is reserved whether or not a number is
-// waiting, and the column is wide enough for icon + gap + slot.
+// The first reading of the ask was `flex-end`, and it was mine, not theirs —
+// the ruling as quoted said "aligned to the right" about the BADGES, and what
+// the owner wanted was the ICONS on one left edge, because the icons are the
+// thing they scan. A rule pinning the wrong side is worse than no rule: it
+// makes the defect permanent and cites the owner for it. The CSS comment now
+// names the correction so a later reader does not restore it.
+//
+// The stub DOM has no layout engine — `offsetWidth` is a fixed 320 and there
+// is no cascade — so a pixel claim here would be fiction. What CAN be pinned
+// honestly is the CSS that decides the geometry, plus the arithmetic that
+// made the width what it is: every collapsed row packs to one LEFT edge, the
+// badge is pushed to the far end of the same row, its slot is reserved
+// whether or not a number is waiting, and the column holds icon + gap + slot.
 async function theCollapsedRailAlignsOnOneRightEdgeAndFitsItsBadge() {
   const icons = 'body[data-rail="icons"] ';
   // The collapsed alignment is ONE grouped rule (the mark, the links, the
@@ -15285,18 +15289,24 @@ async function theCollapsedRailAlignsOnOneRightEdgeAndFitsItsBadge() {
   const groupAt = CSS.indexOf(icons + '.mark,');
   const groupEnd = CSS.indexOf('}', groupAt);
   const group = flat(CSS.slice(groupAt, groupEnd));
-  check('RAILW the collapsed row packs to the right, never the centre',
-    group.includes('justify-content: flex-end') &&
-      !group.includes('justify-content: center'),
+  check('RAILW the collapsed row packs to the LEFT, never the centre or the right',
+    group.includes('justify-content: flex-start') &&
+      !group.includes('justify-content: center') &&
+      !group.includes('justify-content: flex-end'),
     group);
   check('RAILW the mark, the links, the palette and the toggle share that edge',
     group.includes('.mark') && group.includes('.surfaces-link') &&
       group.includes('.surfaces-palette') && group.includes('.surfaces-toggle'),
     group.slice(0, 200));
-  // The badge's slot is reserved: a count arriving must not move the icon.
+  // The badge's slot is reserved AND pushed to the row's far end: `auto` on
+  // its leading margin is what keeps the icons on one edge while the number
+  // sits at the other. A fixed gap there instead (the first attempt) let
+  // every row carrying a count pull its icon off the shared edge.
   const slot = flat(ruleBlock(icons + '.surfaces-count'));
   check('RAILW the badge has a reserved slot, not a minimum width',
-    slot.includes('flex: 0 0') && !/margin-left: auto/.test(slot), slot);
+    slot.includes('flex: 0 0'), slot);
+  check('RAILW the badge rides the row\u2019s far end, so the icon keeps its edge',
+    /margin-left:\s*auto/.test(slot), slot);
   check('RAILW a hidden count keeps its box',
     flat(ruleBlock(icons + '.surfaces-count[hidden]')).includes('visibility: hidden'),
     flat(ruleBlock(icons + '.surfaces-count[hidden]')));

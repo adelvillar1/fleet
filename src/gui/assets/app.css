@@ -875,19 +875,21 @@ body[data-rail="icons"] .surfaces-section + .surfaces-section::before {
   margin: 0 12px 8px;
   background: var(--dsw-alias-hairline);
 }
-/* Collapsed, every row packs to the RIGHT edge, not the centre.
-   Centring is what made the rail read as two different things: a row
-   with a count put its badge at the far right (the badge's `margin-left:
-   auto` wins over `justify-content`) and pushed its icon left, while a
-   row with no count sat dead centre — so the badged icons looked
-   aligned one way and the rest another (the owner's 2026-11-18 ruling).
-   One right edge for every row; the mark, the links and the palette all
-   hang off it. */
+/* Collapsed, every row packs to the LEFT edge, not the centre and not the
+   right. The badges are the reason for a shared edge at all: a row with a
+   count put its badge at the far right (the badge's `margin-left: auto`
+   wins over `justify-content`) and pushed its icon LEFT, while a row with
+   no count sat dead centre — so the badged icons looked aligned one way
+   and the rest another. The edge is the ICON's, because the icons are what
+   the owner scans; the counts ride the other end of the same row, which is
+   where a number belongs. (The owner's 2026-11-18 ruling named the edge,
+   and named it from the wrong side: `flex-end` was mine, `flex-start` is
+   theirs.) */
 body[data-rail="icons"] .mark,
 body[data-rail="icons"] .surfaces-link,
 body[data-rail="icons"] .surfaces-palette,
 body[data-rail="icons"] .surfaces-toggle {
-  justify-content: flex-end;
+  justify-content: flex-start;
   padding: 0 6px;
 }
 /* The badge's slot is reserved whether or not a count is waiting, so the
@@ -896,7 +898,9 @@ body[data-rail="icons"] .surfaces-toggle {
    hidden count keeps its box and shows nothing: an empty counter is still
    decoration, it just no longer costs the row its alignment. */
 body[data-rail="icons"] .surfaces-count {
-  margin-left: 10px;
+  /* `auto`, not a gap: the slot is pushed to the row's other end, so the
+     icons keep one left edge whether or not a count is beside them. */
+  margin-left: auto;
   /* A fixed slot, not a minimum: the column is sized for the badge once,
      so a number arriving never moves the icon beside it. Three digits fit
      and a fourth clips inside the slot rather than resizing the rail. */
