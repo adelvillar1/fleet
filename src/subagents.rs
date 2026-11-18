@@ -1842,8 +1842,7 @@ fn notice_once(progress: &mut dyn Write, line: String) {
 /// is found under the working directory's `docs/plans/`, the node moves
 /// to `Running`, and the re-dispatch ceiling is enforced by the graph
 /// itself. A node no plan carries is the named error.
-fn dispatch_node(node: &str) -> Result<(), String> {
-    let cwd = std::env::current_dir().unwrap_or_default();
+fn dispatch_node(cwd: &std::path::Path, node: &str) -> Result<(), String> {
     let plans = cwd.join("docs").join("plans");
     let Ok(entries) = std::fs::read_dir(&plans) else {
         return Err(format!(
@@ -1856,8 +1855,18 @@ fn dispatch_node(node: &str) -> Result<(), String> {
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        let Ok(mut graph) = crate::plan_graph::PlanGraph::load(&path) else {
-            continue;
+        // The runtime file carries the state, the document carries the
+        // declaration. A plan approved but never run has no runtime file yet
+        // — and the FIRST dispatch is exactly that moment — so the
+        // declaration is generated when the file is absent. `load` alone
+        // silently skipped it, so a node could not be dispatched until
+        // something else had written the file.
+        let mut graph = match crate::plan_graph::PlanGraph::load(&path) {
+            Ok(loaded) => loaded,
+            Err(_) => match crate::plan_graph::PlanGraph::generate(&path) {
+                Ok(generated) => generated,
+                Err(_) => continue,
+            },
         };
         if graph.graph.node(node).is_none() {
             continue;
@@ -1872,6 +1881,304 @@ fn dispatch_node(node: &str) -> Result<(), String> {
     Err(format!("no plan carries the node `{node}`"))
 }
 
+#[cfg(test)]
+mod settle_tests {
+    use super::*;
+
+    /// A home-shaped root with one approved plan declaring the given nodes.
+    fn root_with_plan(tag: &str, nodes: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("fleet-settle-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let plans = root.join("docs").join("plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        std::fs::write(
+            plans.join("2026-11-18-run.md"),
+            format!(
+                "---\nstatus: active\ncreated: 2026-11-18\nupdated: 2026-11-18\nslug: the-run\n---\n\n# R\n\n```graph\n{{ \"nodes\": [{nodes}] }}\n```\n"
+            ),
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn a_completed_child_settles_its_node_done_when_the_gates_pass() {
+        // D3: the orchestrator's completion is the signal. D1: the node is
+        // settled STRICTLY — the gates run, and a pass is what makes it
+        // `done`. A node that admits no paths has nothing for the
+        // nomenclature gate to refuse, so its gate set passes.
+        let root = root_with_plan(
+            "pass",
+            r#"{ "id": "quiet-node", "cost": 1, "approach": "do it" }"#,
+        );
+        let said = settle_completed_node(&root, "quiet-node");
+        assert!(said.contains("its gates passed"), "{said}");
+        assert!(said.contains("done"), "{said}");
+        // And the graph on disk says so: no node is left `running`.
+        let plan = crate::plan_graph::PlanGraph::load(&root.join("docs/plans/2026-11-18-run.md"))
+            .expect("the runtime file is written");
+        assert_eq!(
+            plan.graph.node("quiet-node").map(|node| node.status),
+            Some(crate::graph::Status::Verified),
+            "the node is verified, not merely reported"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_completed_child_that_does_not_verify_becomes_a_named_decision() {
+        // D2: an unverified completion is a DECISION, not a silent state.
+        // The sentence names the failing gate and the ways out, because a
+        // node left `Running` blocks every dependent — and `Failed` would
+        // block them too (`remaining_at` skips only `Verified`).
+        //
+        // The failure is driven by a CONTRADICTED delta, which is the one
+        // gate a plan fixture can provoke without a whole tree behind it:
+        // the child's own log refused the report it made.
+        let root = root_with_plan(
+            "drift",
+            r#"{ "id": "drifted", "cost": 1, "approach": "do it" }"#,
+        );
+        {
+            let plan_path = root.join("docs/plans/2026-11-18-run.md");
+            let mut plan = crate::plan_graph::PlanGraph::generate(&plan_path).unwrap();
+            plan.graph
+                .record_delta(
+                    "drifted",
+                    Delta {
+                        state: DeltaState::Followed,
+                        reason: DeltaReason::RightAndFollowed,
+                        companion: String::new(),
+                        instead: String::new(),
+                        forced: false,
+                        children: Vec::new(),
+                        contradiction: Some(
+                            "the log shows no write to the declared path".to_string(),
+                        ),
+                        declares: Vec::new(),
+                    },
+                )
+                .unwrap();
+            plan.save(&plan_path).unwrap();
+        }
+        let said = settle_completed_node(&root, "drifted");
+        assert!(said.contains("did NOT verify"), "{said}");
+        assert!(
+            said.contains("yours to"),
+            "it names the owner's call: {said}"
+        );
+        assert!(said.contains("absorb"), "it names the ways out: {said}");
+        // The node is NOT silently done, and not silently failed either.
+        let plan = crate::plan_graph::PlanGraph::load(&root.join("docs/plans/2026-11-18-run.md"))
+            .expect("the runtime file is written");
+        let status = plan.graph.node("drifted").map(|node| node.status);
+        assert_ne!(
+            status,
+            Some(crate::graph::Status::Verified),
+            "nothing is asserted done"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn two_nodes_move_through_the_order_a_prerequisite_imposes() {
+        // C5: dispatch then settle, twice, and the document reports the order
+        // a prerequisite imposes. This is the whole reason the three
+        // functions take their root as a parameter — a test cannot mutate the
+        // process's cwd (`set_current_dir` has no callers in this crate by
+        // design), so a fixture home is only reachable through the argument.
+        let root = root_with_plan(
+            "order",
+            r#"{ "id": "first", "cost": 1, "approach": "the first" },
+               { "id": "second", "cost": 1, "prereqs": ["first"], "approach": "the second" }"#,
+        );
+        let read = |root: &std::path::Path| {
+            let plan =
+                crate::plan_graph::PlanGraph::load(&root.join("docs/plans/2026-11-18-run.md"))
+                    .expect("the runtime file is written");
+            let status = |id: &str| {
+                plan.graph
+                    .node(id)
+                    .map(|node| node.status.as_str().to_string())
+                    .unwrap_or_default()
+            };
+            (status("first"), status("second"))
+        };
+
+        // Nothing has run: both are pending, and `second` cannot start while
+        // its prerequisite is unfinished.
+        dispatch_node(&root, "first").expect("the first node dispatches");
+        assert_eq!(read(&root), ("running".to_string(), "pending".to_string()));
+        // The prerequisite is still unfinished, so the second node is not
+        // ready — the graph says so, not the test.
+        let plan =
+            crate::plan_graph::PlanGraph::load(&root.join("docs/plans/2026-11-18-run.md")).unwrap();
+        assert!(
+            !plan
+                .graph
+                .unlock("second")
+                .map(|u| u.is_unlocked())
+                .unwrap_or(true),
+            "the dependent waits while its prerequisite runs"
+        );
+
+        // The first settles: the document moves it to verified, and only then
+        // does the second become dispatchable.
+        let said = settle_completed_node(&root, "first");
+        assert!(said.contains("done"), "{said}");
+        assert_eq!(read(&root), ("verified".to_string(), "pending".to_string()));
+        let plan =
+            crate::plan_graph::PlanGraph::load(&root.join("docs/plans/2026-11-18-run.md")).unwrap();
+        assert!(
+            plan.graph
+                .unlock("second")
+                .map(|u| u.is_unlocked())
+                .unwrap_or(false),
+            "the dependent unlocks when its prerequisite verifies"
+        );
+
+        // Now the second, and the plan is finished in order.
+        dispatch_node(&root, "second").expect("the second node dispatches");
+        assert_eq!(read(&root), ("verified".to_string(), "running".to_string()));
+        let said = settle_completed_node(&root, "second");
+        assert!(said.contains("done"), "{said}");
+        assert_eq!(
+            read(&root),
+            ("verified".to_string(), "verified".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_root_decides_which_plans_are_read_not_the_process_cwd() {
+        // The defect the cwd threading fixes: a run launched from one
+        // directory that works in another. Before the change, `dispatch_node`
+        // scanned the PROCESS's `docs/plans` and refused a node the fixture
+        // plan plainly declares.
+        let root = root_with_plan("root-is-param", r#"{ "id": "only", "cost": 1 }"#);
+        assert!(
+            dispatch_node(&root, "only").is_ok(),
+            "the node is found in the root it was handed"
+        );
+        // A different root holds no such plan: the refusal names it rather
+        // than silently succeeding against the process's own tree.
+        let other = std::env::temp_dir().join(format!("fleet-settle-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&other);
+        std::fs::create_dir_all(other.join("docs").join("plans")).unwrap();
+        let refused = dispatch_node(&other, "only");
+        assert!(refused.is_err(), "another root does not carry the node");
+        assert!(
+            refused.unwrap_err().contains("no plan carries"),
+            "the refusal is named"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn a_node_no_plan_carries_is_named_rather_than_ignored() {
+        let root = root_with_plan("orphan", r#"{ "id": "only-this", "cost": 1 }"#);
+        let said = settle_completed_node(&root, "not-in-any-plan");
+        assert!(said.contains("carries it"), "{said}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// Settle a plan node whose child COMPLETED: run its declared gates and
+/// record the outcome (the owner's 2026-11-18 ruling, D1/D2/D3).
+///
+/// D3 — the orchestrator's own completion report is the signal. The child
+/// said the work landed; that is what reaches this function, so no poll and
+/// no second clock decides a node is done.
+///
+/// D1 — STRICT: `verify::promote`'s gates run against the artifact. "The
+/// child said it completed" is not verification; the graph's own law is
+/// that `done` is earned, never asserted.
+///
+/// D2 — an unverified completion is a DECISION, not a state. The node is
+/// left `Running` and the returned sentence names the failing gates and the
+/// three ways out, because a node that silently stays `Running` blocks
+/// every dependent forever — and marking it `Failed` would block them just
+/// the same (`Graph::remaining_at` skips only `Verified`). The card is the
+/// only honest answer.
+///
+/// Returns one sentence for the result: what happened, and what the parent
+/// owns. A node no plan carries is named rather than ignored.
+fn settle_completed_node(cwd: &std::path::Path, node: &str) -> String {
+    let plans = cwd.join("docs").join("plans");
+    let Ok(entries) = std::fs::read_dir(&plans) else {
+        return format!(
+            "plan node `{node}` completed, but no plans directory exists at {} — nothing recorded",
+            plans.display()
+        );
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        // The runtime file carries the state; the document carries the
+        // declaration. A plan dispatched before settlement has the former —
+        // but a node settled on a plan whose runtime file was never written
+        // (a child that ran without a dispatch record) must still resolve,
+        // so the declaration is generated when the file is absent. This is
+        // `PlanRegistry::scan`'s own order, and for its reason: skipping
+        // would report "no plan carries it" about a node the plan plainly
+        // declares.
+        let mut graph = match crate::plan_graph::PlanGraph::load(&path) {
+            Ok(loaded) => loaded,
+            Err(_) => match crate::plan_graph::PlanGraph::generate(&path) {
+                Ok(generated) => generated,
+                Err(_) => continue,
+            },
+        };
+        if graph.graph.node(node).is_none() {
+            continue;
+        }
+        // The gates run against the tree the node's work landed in — the
+        // same root `dispatch_node` scans, so dispatch and settlement can
+        // never look at two different graphs.
+        //
+        // ONE node, not the whole graph: `verify_all` sweeps every node it
+        // can see, so a graph-wide call from here would settle a completing
+        // child's SIBLINGS as a side effect — a dependent still `Pending`
+        // would come back `Verified` because something else finished. A
+        // completion is one node's event.
+        let gate = crate::verify::FactGate::new(cwd);
+        let dependents = graph.graph.dependents(node).len();
+        let settled = graph
+            .graph
+            .node(node)
+            .map(|declared| gate.verify(declared, dependents));
+        let verified = settled.as_ref().map(|one| one.verified).unwrap_or(false);
+        if verified {
+            graph.graph.mark_verified(node);
+        }
+        if let Err(error) = graph.save(&path) {
+            return format!(
+                "plan node `{node}` completed and {verified} verified, but the record could not \
+                 be written: {error}"
+            );
+        }
+        if verified {
+            return format!("plan node `{node}` completed, its gates passed, and it is done");
+        }
+        let failures = settled
+            .map(|one| one.failures().join("; "))
+            .filter(|said| !said.is_empty())
+            .unwrap_or_else(|| "no gate ran".to_string());
+        return format!(
+            "plan node `{node}` completed but did NOT verify: {failures}. This is yours to \
+             decide — absorb the work, respawn the node (until the re-dispatch ceiling), or \
+             re-plan it. It stays `running` until you do, and every dependent stays blocked."
+        );
+    }
+    format!(
+        "plan node `{node}` completed, but no plan under {} carries it — nothing recorded",
+        plans.display()
+    )
+}
+
 /// Mark a plan node failed: the graph whose runtime file carries the
 /// node is found under the working directory's `docs/plans/` — the
 /// same scan the plan surface reads — and the node's transition is the
@@ -1879,8 +2186,7 @@ fn dispatch_node(node: &str) -> Result<(), String> {
 /// `PlanGraph::save`, so the execution record carries the failure. The
 /// first graph whose load succeeds and whose nodes name the id wins;
 /// a node no plan carries is the named error.
-fn mark_node_failed(reason: &str, node: &str) -> Result<u32, String> {
-    let cwd = std::env::current_dir().unwrap_or_default();
+fn mark_node_failed(cwd: &std::path::Path, reason: &str, node: &str) -> Result<u32, String> {
     let plans = cwd.join("docs").join("plans");
     let Ok(entries) = std::fs::read_dir(&plans) else {
         return Err(format!("no plans directory at {}", plans.display()));
@@ -1948,6 +2254,18 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // builds the child is not the module that composes the message, and
     // the parts are what the row, the label, and the delta read.
     let brief = Brief::parse(&goal);
+    // The tree a plan node's graph is read from: THIS RUN's working folder,
+    // not the process's. The two differ whenever fleet was launched from one
+    // directory and the conversation works in another, and a dispatch that
+    // scanned the launch directory would refuse "no plan carries the node"
+    // about a plan the run is plainly executing (the owner's 2026-11-18
+    // ruling on one source of truth). `FileAccess::Folder` is the
+    // conversation's own folder; the other states fall back exactly as the
+    // launch folder below already does.
+    let plan_root = match &file_access {
+        FileAccess::Folder(root) => root.clone(),
+        _ => std::env::current_dir().unwrap_or_default(),
+    };
     // The supervision wiring's first half (the unattended-goals plan's
     // C12): a child bound to a plan node dispatches it before the child
     // runs, so the node is `Running` for the child's lifetime. A node
@@ -1955,7 +2273,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // hears it before a child is spent on work the graph has already
     // given up on (C13).
     if let Some(node_id) = &node {
-        if let Err(reason) = dispatch_node(node_id) {
+        if let Err(reason) = dispatch_node(&plan_root, node_id) {
             return SubagentResult::refused(reason);
         }
     }
@@ -2482,6 +2800,18 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // `settle` still verifies on landed facts — a fact outranks a
     // failed report.
     if let Some(node) = &node {
+        // A COMPLETED child is not a finished node (the owner's 2026-11-18
+        // ruling, D1/D2/D3). The orchestrator's own report is the signal
+        // that the work landed; the node is then settled strictly — its
+        // declared gates run against the artifact through `verify::promote`
+        // — and a node that does not verify becomes a DECISION for the
+        // owner rather than a silent `Running` that blocks every dependent
+        // forever (a `Failed` node blocks them too: the score's
+        // `remaining_at` skips only `Verified`).
+        if result.outcome == Outcome::Completed {
+            let settled = settle_completed_node(&plan_root, node);
+            result.reason = Some(settled);
+        }
         if let Some(reason) = match result.outcome {
             Outcome::Completed => None,
             Outcome::MaxTurns => Some(format!("the child hit its {}-turn cap", result.turns)),
@@ -2492,7 +2822,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
                     .unwrap_or_else(|| "the child failed".to_string()),
             ),
         } {
-            let marked = mark_node_failed(&reason, node);
+            let marked = mark_node_failed(&plan_root, &reason, node);
             result.reason = Some(match marked {
                 Ok(attempts) => format!(
                     "plan node `{node}` marked failed after {attempts} attempt(s) — {reason}. \
