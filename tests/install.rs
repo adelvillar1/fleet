@@ -835,7 +835,7 @@ fn the_install_builds_the_sealed_bundle_when_none_is_discovered() {
     // succeed); the manifest's runtime digest — what the fresh bundle
     // records — is present, because the chain just pulled it.
     let docker_script = format!(
-        "#!/bin/sh\necho \"$@\" >> '{log}'\ncase \"$*\" in\n  info) exit 0 ;;\n  \"image inspect sha256:3d27e5c11\"*) exit 0 ;;\n  \"image inspect\"*) exit 1 ;;\n  pull*) exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+        "#!/bin/sh\necho \"$@\" >> '{log}'\nbuilt=\"$HOME/.cache/layerfs-worktrees/fixture/artifacts/build-linux-fixture/manifest.json\"\ncase \"$*\" in\n  info) exit 0 ;;\n  images*digests*) exit 0 ;;\n  \"image inspect sha256:3d27e5c11\"*|\"image inspect node@sha256:3d27e5c11\"*) if [ -f \"$built\" ]; then exit 0; else exit 1; fi ;;\n  \"image inspect\"*) exit 1 ;;\n  pull*) exit 0 ;;\n  *) exit 0 ;;\nesac\n",
         log = log.display()
     );
     fs::write(&docker, docker_script).unwrap();

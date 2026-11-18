@@ -11856,22 +11856,22 @@ async fn a_recorded_call_re_runs_without_touching_the_log() {
         .unwrap()
         .to_string_lossy()
         .into_owned();
-    // The ask-mode first press stands the seat the run path would stand.
+    // A call in the destructive class stands the seat the run path would
+    // stand. A fresh home resolves to `ask`, and `ask` stops at the
+    // destructive class and nothing else, so this is the one class the
+    // re-run cannot walk around.
     let seat = bridge
-        .replay_tool(&id, "bash", r#"{"command":"echo re-run"}"#)
+        .replay_tool(
+            &id,
+            "bash",
+            r#"{"command":"rm -rf /tmp/fleet-replay-never-ran"}"#,
+        )
         .await
-        .expect("the ask class stands a seat, not a refusal");
+        .expect("the destructive class stands a seat, not a refusal");
     assert_eq!(seat["seat"].as_bool(), Some(true), "{seat}");
     assert_eq!(seat["logged"].as_bool(), Some(false));
-    // Under a mode that approves bash without asking, the same press
-    // executes through the executor.
-    let _ = bridge.run_with(
-        &id,
-        "ignored",
-        fleet::approvals::Mode::YesGuarded,
-        None,
-        Some("/tmp"),
-    );
+    // Everything else executes through the executor with no seat at all —
+    // core tools never ask, the same ruling seen from the other side.
     let replayed = bridge
         .replay_tool(&id, "bash", r#"{"command":"echo re-run"}"#)
         .await
