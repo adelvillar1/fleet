@@ -1226,6 +1226,14 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* The label is part of the drag HANDLE, not a passage to select: the
+     whole row is `draggable`, so a selectable label lets a pointer-down
+     begin a native TEXT-drag instead, whose DataTransfer carries the row's
+     words rather than its index — the drop handler then reads NaN and
+     returns, so the row looks moved while dragging and never lands. The
+     handle glyph already said this; the text beside it now says it too. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 .queue-row button {
   border: 1px solid var(--dsw-alias-hairline);

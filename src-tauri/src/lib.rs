@@ -324,6 +324,21 @@ pub fn run() {
                             )
                             .title("fleet")
                             .inner_size(1440.0, 900.0)
+                            // The queue's rows reorder with HTML5 drag and
+                            // drop, and the desktop window's default on is
+                            // Tauri's OWN native drop handler
+                            // (`drag_drop_handler_enabled: true` in
+                            // tauri-runtime). That handler claims the drag
+                            // for the webview, so an in-page row drop never
+                            // reaches the row's listener — the row follows
+                            // the cursor and nothing lands. The handler only
+                            // exists to deliver OS file drops as events, and
+                            // this face consumes none: the only `drop` and
+                            // `dragover` listeners in app.js belong to the
+                            // queue row. Turning it off costs no capability
+                            // the face uses and hands the drag back to the
+                            // page.
+                            .disable_drag_drop_handler()
                             .build()
                             {
                                 Ok(_) => {}

@@ -37,6 +37,10 @@ const RUST = fs.readFileSync(path.join(ROOT, 'src/gui/bridge.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/gui/mod.rs'), 'utf8');
 const BOTJS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/bot.js'), 'utf8');
 const CSS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.css'), 'utf8');
+// The desktop shell's own source: the window builder is the one place a
+// webview-level drag handler is switched off, and no asset check can see
+// a Rust builder into the page it hands the drag to.
+const RUST_TAURI = fs.readFileSync(path.join(ROOT, 'src-tauri/src/lib.rs'), 'utf8');
 const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 const ruleBlock = (selector) => {
   const at = CSS.indexOf(selector + ' {');
@@ -406,7 +410,30 @@ function boot(options) {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(doc || emptyState(asked)) });
     }
     if (pathOnly === '/api/sessions') {
-      return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.sessions || emptySessions()) });
+      // The server's own q= contract (D9): the typed words ride the
+      // request, and each row whose records carry them comes back with a
+      // `matched` line. A case OPTS IN by carrying a `search` block — so
+      // the many other readers of this endpoint keep the document they
+      // declare.
+      const asked = new URL('http://x' + url).searchParams.get('q') || '';
+      const doc = documents.sessions || emptySessions();
+      if (!asked || !doc.search) {
+        return Promise.resolve({ status: 200, json: () => Promise.resolve(doc) });
+      }
+      const rows = (doc.sessions || []).map((row) => {
+        const said = row.body || '';
+        if (!said.toLowerCase().includes(asked.toLowerCase())) return row;
+        const cut = { ...row, matched: said.slice(0, 160) };
+        delete cut.body;
+        return cut;
+      });
+      const answered = {
+        ...doc,
+        search: { query: asked, bound: doc.search.bound || 200,
+          searched: (doc.sessions || []).length },
+        sessions: rows,
+      };
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(answered) });
     }
     // The dispatch hero flow (U20, S2): a task is minted, a thread opens
     // for it, the run streams there. The stub returns the task + session
@@ -3329,8 +3356,11 @@ async function aContentQueryDrivesTheWorkList() {
         type: 'sessions', read_at: 'now', current: '',
         counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
         search: { query: 'deployment notes', bound: 200, searched: 2 },
+        // The row's body is what the server reads; its title shares no
+        // word with the query, so only a content answer can find it.
         sessions: [row('hit-1', 'completed',
-          { title: 'the conversation that said it', matched: 'where did I put the deployment notes' })],
+          { title: 'the conversation that said it',
+            body: 'where did I put the deployment notes' })],
       },
       state: (asked) => ({ ...emptyState(asked), session: asked }),
     },
@@ -3340,15 +3370,50 @@ async function aContentQueryDrivesTheWorkList() {
   await flush();
   const box = page.IDS['work-head'].querySelector('.work-search input') ||
     page.rows('.work-search input')[0];
+  // The ask itself: typing must reach the server. The face filtered its
+  // in-memory metadata alone until 2026-11-18, so a conversation whose
+  // BODY said the words could not be found by typing them — the server's
+  // q= was never sent, and the box answered only for titles.
+  const askedUrls = () => page.calls
+    .map((one) => String(one.url))
+    .filter((one) => one.startsWith('/api/sessions') && one.includes('q='));
+  const beforeAsk = askedUrls().length;
   box.value = 'deployment notes';
-  page.fireOn(box.id || 'task', 'input', {});
-  // The stub re-fetches with the query; the document's matched line
-  // rides the row.
-  await flush(60);
+  // Fired on the box itself: it carries no id (it is built with none), so
+  // an id-addressed fire lands on the composer and pins nothing.
+  box.fire('input', {});
+  // The ask is debounced — the read is a filesystem scan — so it lands a
+  // beat after the keystroke rather than inside the input handler.
+  page.flushTimers();
+  await flush(120);
+  const asks = askedUrls();
+  check('C9 typing a query asks the server for it',
+    asks.length > beforeAsk,
+    asks.join(' ; ') || '(no q= request left the page)');
+  check('C9 the ask carries the owner\u2019s words',
+    asks.some((one) => decodeURIComponent(one).includes('deployment notes')),
+    asks.join(' ; '));
+  // The query narrows the list to what the LOGS said: this row's title
+  // shares no word with the query, so only the answer can keep it.
+  check('C9 the content answer survives the filter',
+    page.rows('.work-row').length === 1,
+    String(page.rows('.work-row').length));
   const matched = page.rows('.work-matched');
   check('C9 the row carries the matched line',
     matched.length === 1 && matched[0].textContent.includes('deployment notes'),
     matched.map((one) => one.textContent).join(';'));
+  // The heads answer the search too: a count naming the archive's whole
+  // population over one searched row is the same lie as an unfiltered
+  // list.
+  const headCount = page.rows('.work-count')[0];
+  check('C9 the head counts what the search found',
+    !!headCount && /1 match/.test(headCount.textContent),
+    headCount ? headCount.textContent : '(no head count)');
+  const groupHead = page.rows('.work-group')[0];
+  check('C9 the group head counts what survived the search',
+    !!groupHead && /^.*1/.test(groupHead.textContent) &&
+      !/1[0-9]/.test(groupHead.textContent.replace(/\D+1$/, '')),
+    groupHead ? groupHead.textContent : '(no group)');
   // Opening the row jumps to the conversation, as every row does.
   page.rows('.work-row')[0].click();
   await flush(80);
@@ -6269,6 +6334,29 @@ async function theQueueReordersByDragAndDrainsWhenTheRunEnds() {
       queued().join(',') !== beforeNative,
       'before=' + beforeNative + ' after=' + queued().join(','));
   }
+
+  // The two halves the stub cannot see, and the reasons the case above
+  // stays green while a real pointer drag does not land.
+  //
+  // (1) The label must not be selectable. The row is `draggable`, so a
+  // pointer-down on a SELECTABLE label starts a native text-drag whose
+  // DataTransfer carries the row's words instead of the handler's index —
+  // and `Number('one')` is NaN, so the drop returns. The stub's own
+  // `fire` never starts a text-drag, so it cannot fail this way.
+  check('QCON the row label is not a text selection',
+    /user-select:\s*none/.test(ruleBlock('.queue-text')),
+    ruleBlock('.queue-text') || 'rule missing');
+  // (2) The desktop window must not claim the drag for the webview. Tauri's
+  // native drop handler is on by default (`drag_drop_handler_enabled:
+  // true`), and while it is on an in-page row drop never reaches the row:
+  // the row follows the cursor and nothing lands. Verified against the
+  // pinned tauri 2.12.5 at
+  // src-tauri/src/lib.rs — the builder must call the off switch.
+  check('QCON the desktop window hands HTML5 drags to the page',
+    /disable_drag_drop_handler\s*\(\s*\)/.test(RUST_TAURI),
+    RUST_TAURI.includes('disable_drag_drop_handler')
+      ? 'the call is present'
+      : 'no disable_drag_drop_handler call in src-tauri/src/lib.rs');
 }
 
 // conversation-control C8: a live turn hides its rewind, and the run's

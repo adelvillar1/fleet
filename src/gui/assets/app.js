@@ -12204,17 +12204,37 @@ import { node, svg, clip } from './core/dom.js';
 
   // The archive read: the log heads as summaries, newest first, with the
   // session this face anchors named and every row's derived state.
+  //
+  // The typed query rides the request (D9). The server is the only side
+  // that can read a log's records, so it is the only side that can answer
+  // "which of these said this?" — the answer comes back as a `matched`
+  // line on the rows that did. `face.sessionAsked` records which text the
+  // current document answers, and `face.sessionAsking` is told a newer ask
+  // is on the wire, so a paint between a keystroke and its answer neither
+  // credits an older read's lines to a newer query nor prints a
+  // titles-only count it is about to replace.
   function readSessions(force) {
     var now = Date.now();
     if (!force && face.sessions && now - face.sessionsAt < 4000) return Promise.resolve();
     face.sessionsAt = now;
-    return fetch('/api/sessions', { headers: { accept: 'application/json' } })
+    var asked = (face.sessionQuery || '').trim();
+    face.sessionAsked = asked;
+    var url = '/api/sessions' + (asked ? '?q=' + encodeURIComponent(asked) : '');
+    return fetch(url, { headers: { accept: 'application/json' } })
       .then(function (reply) {
         if (reply.status === 401) throw new Error('token');
         return reply.json();
       })
       .then(function (doc) {
+        // A read that is no longer the newest ask's is dropped: it was
+        // selected for a query the owner has moved past, so painting it
+        // would show the older question's answer under the newer words.
+        // The comparison is against the REQUEST's own words, not against
+        // whatever `search` block the document happens to carry — a
+        // document can name a search without this read having asked.
+        if (asked !== (face.sessionQuery || '').trim()) return;
         face.sessions = doc;
+        face.sessionAsking = false;
         if (face.panel === 'sessions') paintWork();
         paintRecent();
         paintConvHead();
@@ -12223,6 +12243,7 @@ import { node, svg, clip } from './core/dom.js';
       .catch(function () {
         // KI-380: re-armed, never swallowed — the rail is the seat's
         // other road home (the needs-you row), so its read dies loud.
+        face.sessionAsking = false;
         connectionDown('the archive read');
         window.setTimeout(function () { readSessions(true); }, 5000);
       });
@@ -15123,9 +15144,43 @@ import { node, svg, clip } from './core/dom.js';
     return groups;
   }
 
+  // The content ask (D9): a typed query is a question about the LOGS, not
+  // just about the titles the page already holds. The server answers it —
+  // literal, bounded to the newest SEARCH_BOUND logs — and marks every row
+  // whose own records carry the words with a `matched` line. The page
+  // filtered on its in-memory metadata alone until now, which is why a
+  // conversation whose body said "warmup" could not be found by typing it:
+  // the read that would have said so was never sent.
+  //
+  // The read is a filesystem scan, so a keystroke is not its unit: the ask
+  // is debounced.
+  var searchTimer = null;
+  function askSearch(words) {
+    face.sessionQuery = words || '';
+    var asked = (face.sessionQuery || '').trim();
+    face.sessionAsking = !!asked && asked !== (face.sessionAsked || '');
+    paintWork();
+    if (searchTimer) window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(function () { readSessions(true); }, 220);
+  }
+
+  // Whether a row survives the typed query. The server's answer leads: a
+  // row it marked `matched` is a row whose own records contain the words,
+  // which is the search the owner means. The metadata test stays as the
+  // second road — a row is findable by its title, project or model even
+  // when its log's newest window holds no hit — and it is also what
+  // answers while the debounced read is in flight, so typing never blanks
+  // the list between keystrokes.
+  //
+  // A `matched` line only counts for the query it ANSWERED: after the box
+  // is cleared the previous document still carries its lines until the
+  // unsearched read lands, and crediting them to the new state would let a
+  // cleared search keep asserting a match.
   function sessionMatchesQuery(row) {
     var asked = (face.sessionQuery || '').trim().toLowerCase();
     if (!asked) return true;
+    var answered = (face.sessionAsked || '').trim().toLowerCase();
+    if (row.matched && answered === asked) return true;
     var channel = (row.channel || []).join(' ');
     return [row.id, row.title, row.workspace, row.model, row.kind, row.job,
       row.class, row.state, channel]
@@ -15146,7 +15201,13 @@ import { node, svg, clip } from './core/dom.js';
   /// one end a conversation comes to. "all" is the archive door the rail
   /// used to carry, kept as a press rather than a destination.
   function workStateFilter() {
+    // While a query is typed, a count answers "how many would this press
+    // show?" — so the rows the query left are what gets counted. Counting
+    // the archive's whole population there would name 27 beside a press
+    // that shows 2, which is the same dishonesty as an unfiltered list.
+    var searching = !!(face.sessionQuery || '').trim();
     var shown = workRows().filter(railRow);
+    if (searching) shown = shown.filter(sessionMatchesQuery);
     var active = shown.filter(function (row) { return row.state !== 'archived'; });
     var archived = shown.filter(function (row) { return row.state === 'archived'; });
     return [
@@ -15247,7 +15308,22 @@ import { node, svg, clip } from './core/dom.js';
     var title = node('h2', null, 'work');
     head.appendChild(title);
     var countText = 'reading\u2026';
-    if (counts) {
+    var asking = (face.sessionQuery || '').trim();
+    if (asking) {
+      // The typed query is the day's question, so the head answers it: how
+      // many conversations match, not how many the archive holds. While a
+      // newer ask is on the wire the head says it is looking — a count
+      // computed here would be the titles-only answer, and it is about to
+      // be replaced by the logs' answer a moment later.
+      if (face.sessionAsking) {
+        countText = 'looking for \u201c' + asking + '\u201d\u2026';
+      } else {
+        var found = all.filter(railRow).filter(workStatePasses)
+          .filter(sessionMatchesQuery).length;
+        countText = found + (found === 1 ? ' match' : ' matches') +
+          ' for \u201c' + asking + '\u201d';
+      }
+    } else if (counts) {
       var mine = counts.yours == null ? counts.total : counts.yours;
       countText = counts.needs
         ? counts.needs + (counts.needs === 1 ? ' needs you' : ' need you')
@@ -15278,7 +15354,11 @@ import { node, svg, clip } from './core/dom.js';
     box.setAttribute('aria-label', 'search work');
     box.addEventListener('input', function () {
       face.sessionQuery = box.value;
-      paintWork();
+      // The typed words go to the server as well as to the list: it owns
+      // the logs, and only it can say which conversations' BODIES carry
+      // them. The repaint keeps the caret here, so the read landing does
+      // not take the owner's place in the box.
+      askSearch(box.value);
       var again = el.workList && el.workHead.querySelector('.work-search input');
       if (again) {
         again.focus();
@@ -15351,7 +15431,14 @@ import { node, svg, clip } from './core/dom.js';
       })
     };
 
+    // Under a search the heads count what SURVIVED it, not what the
+    // archive holds: a "28" over two rows is the same lie as an unfiltered
+    // list. Unsearched, the read's own counts lead — they are the
+    // archive's fact and the page never re-derives them.
+    var searching = !!(face.sessionQuery || '').trim();
+
     var groupCount = function (key, rows) {
+      if (searching) return rows.length;
       return counts ? counts[key] : rows.length;
     };
     if (groups.needs.length) {
@@ -15402,6 +15489,12 @@ import { node, svg, clip } from './core/dom.js';
       if (face.sessionQuery) {
         said = 'Nothing under this home matches \u201c' + face.sessionQuery + '\u201d';
         if (state !== 'all') said += ' under ' + state;
+        // A miss has to be honest about how far the search could see: the
+        // server reads a bounded window of the newest logs, so "nothing"
+        // over 200 logs is a different fact from "nothing" over all of
+        // them.
+        var bound = read && read.search && read.search.bound;
+        if (bound) said += '. The newest ' + bound + ' conversations were read';
         said += '.';
       } else if (state === 'archived') {
         said = 'No conversation here has been archived yet.';
@@ -15616,8 +15709,13 @@ import { node, svg, clip } from './core/dom.js';
     body.appendChild(node('span', 'work-name', row.title || sessionLabel(row.id)));
     // The content match's line, when a query drove the row (D9): the
     // row names why it matched, the whole line clipped — never a
-    // summary a model wrote.
-    if (row.matched) {
+    // summary a model wrote. Only the query it answered earns the line:
+    // a cleared or retyped box leaves the previous document's lines in
+    // place until its own read lands, and a stale line would name words
+    // the owner is no longer asking about.
+    if (row.matched &&
+        (face.sessionAsked || '').trim().toLowerCase() ===
+          (face.sessionQuery || '').trim().toLowerCase()) {
       body.appendChild(node('span', 'work-matched', row.matched));
     }
     var meta = node('span', 'work-meta');
