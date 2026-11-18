@@ -12,6 +12,25 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.18 — 2026-11-18
+
+The collapsed rail's icons line up on the left.
+
+The alignment fix before this one named the wrong edge, and it was mine: the
+ruling quoted the owner asking for the badge-carrying rows to line up and the
+icons to share an edge, and the rule I wrote packed every row to the RIGHT
+(`flex-end`). The icons are what the owner scans, so the shared edge is the
+LEFT one; the counts ride the far end of their own row, where a number
+belongs. Measured in the real engine at the collapsed width: every row's icon
+now starts at x=14 with a badge slot present, where `flex-end` put all of them
+at x=57.
+
+The face check that pinned the wrong side has been rewritten rather than
+deleted — it now asserts `flex-start`, and separately asserts that the badge is
+pushed to the row's far end with `margin-left: auto`, which is the half that
+keeps the icons on one edge when a count arrives. Reverting the CSS turns both
+red.
+
 ## v0.8.17 — 2026-11-18
 
 The search reads the logs, and the queue drags.
