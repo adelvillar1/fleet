@@ -178,7 +178,18 @@
   --topbar-height: 58px;
   --console-height: 40px;
   --rail-width: 236px;
-  --rail-width-icons: 66px;
+  /* Collapsed, the rail must hold an icon AND a badge beside it, because
+     the count is the one thing a collapsed rail still has to say — a
+     surface with work waiting must be visible without expanding.
+     The arithmetic, so the number is not a guess: the section padding
+     (2 x 8px) and the row's own (2 x 6px) take 28px, the icon is 18px,
+     the gap to the badge is 10px, and the badge's reserved slot is 34px
+     (26px of pill plus its 2 x 5px padding, sized for three digits so a
+     busy day does not resize the column). 28 + 18 + 10 + 34 = 90px.
+     The old 66px left a 38px content box for a 62px row, so the badge
+     overran the row and pushed the icon off its centre — which is what
+     the owner saw. */
+  --rail-width-icons: 90px;
   /* The rail's live width: the grid rules read this one, so a collapsed
      rail narrows the column whatever else the shell carries (the tissue,
      the reveal strip, the narrow media query). */
@@ -864,11 +875,38 @@ body[data-rail="icons"] .surfaces-section + .surfaces-section::before {
   margin: 0 12px 8px;
   background: var(--dsw-alias-hairline);
 }
+/* Collapsed, every row packs to the RIGHT edge, not the centre.
+   Centring is what made the rail read as two different things: a row
+   with a count put its badge at the far right (the badge's `margin-left:
+   auto` wins over `justify-content`) and pushed its icon left, while a
+   row with no count sat dead centre — so the badged icons looked
+   aligned one way and the rest another (the owner's 2026-11-18 ruling).
+   One right edge for every row; the mark, the links and the palette all
+   hang off it. */
+body[data-rail="icons"] .mark,
 body[data-rail="icons"] .surfaces-link,
 body[data-rail="icons"] .surfaces-palette,
 body[data-rail="icons"] .surfaces-toggle {
-  justify-content: center;
-  padding: 0;
+  justify-content: flex-end;
+  padding: 0 6px;
+}
+/* The badge's slot is reserved whether or not a count is waiting, so the
+   icon beside it never moves when a number arrives — the rail accounts
+   for the badge "to begin with" rather than re-laying-out per row. A
+   hidden count keeps its box and shows nothing: an empty counter is still
+   decoration, it just no longer costs the row its alignment. */
+body[data-rail="icons"] .surfaces-count {
+  margin-left: 10px;
+  /* A fixed slot, not a minimum: the column is sized for the badge once,
+     so a number arriving never moves the icon beside it. Three digits fit
+     and a fourth clips inside the slot rather than resizing the rail. */
+  flex: 0 0 34px;
+  min-width: 34px;
+  box-sizing: border-box;
+}
+body[data-rail="icons"] .surfaces-count[hidden] {
+  display: inline-block;
+  visibility: hidden;
 }
 body[data-rail="icons"] .surfaces-link[aria-current="page"]::before { left: 1px; }
 body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
@@ -921,6 +959,20 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .svc-repair:hover { background: rgba(0, 0, 0, 0.08); }
 .svc-repair[disabled] { opacity: 0.6; cursor: default; }
+/* The banner's own put-away press: the same grammar as the repair beside
+   it, held to the far end so it reads as "close this", not "fix this". */
+.svc-dismiss {
+  margin-left: 10px;
+  padding: 1px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+}
+.svc-dismiss:hover { opacity: 1; text-decoration: underline; }
 .conn-down {
   position: fixed;
   top: 52px;
@@ -1875,11 +1927,19 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
    overflowing card used to paint past it, turning .face into the scroll
    trap scrollIntoView then dragged: the top bar left the viewport the
    moment a memory's card opened. */
-body[data-object-card="open"] .pane-tabs,
-body[data-object-card="open"] .pane-body { display: none; }
-body[data-object-card="open"] .dock-object {
+/* The drawer is a PANE TAB now (the owner's 2026-11-18 ruling: the pane is
+   part of the drawer and its main component), so nothing is blanked to make
+   room for it. This rule used to hide every tab and every other panel when
+   an object opened — which is exactly why the drawer read as pointless: it
+   was the only thing left on a surface it had just emptied. The panel takes
+   the pane's column through the ordinary `.pane-body` rule, and the tabs
+   stay reachable beside it. */
+#pane-detail {
+  padding: 8px 12px;
+  gap: 10px;
+}
+#pane-detail .dock-object {
   display: block;
-  overflow-y: auto;
   min-height: 0;
   flex: 1 1 auto;
 }
@@ -7477,6 +7537,59 @@ body[data-work="collapsed"] .work-list { display: none; }
   outline: none;
 }
 
+/* The state filter: live · archived · all, each carrying its count.
+   It replaced the `archive` rail row (the owner's 2026-11-17
+   consolidation) and the quiet "archived · N sessions" toggle that used
+   to hide at the bottom of the list — one concept, one control, above
+   the rows so the choice is visible before it is made. */
+.work-filters {
+  display: flex;
+  gap: 4px;
+  padding: 6px 0 2px;
+}
+
+.work-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+  height: 24px;
+  padding: 0 8px;
+  border: var(--card-hairline);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.work-filter:hover {
+  color: var(--dsw-alias-ink);
+  background: var(--dsw-alias-surface);
+}
+
+/* The chosen state reads as chosen, not merely tinted: the fill and the
+   ink both move, so a glance separates it from its neighbours. */
+.work-filter[data-on='true'] {
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink);
+  border-color: var(--dsw-alias-ink-tertiary);
+}
+
+.work-filter-n {
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10px;
+}
+
+.work-filter[data-on='true'] .work-filter-n {
+  color: var(--dsw-alias-ink-secondary);
+}
+
 .work-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -11592,4 +11705,180 @@ body[data-motion="off"] .board-card.running::after { animation: none; }
   font-family: var(--mono);
   font-size: 12px;
   letter-spacing: 0.04em;
+}
+
+/* The fix press and the dismiss press (the owner's 2026-11-18 ruling: a
+   message needs a way to be put away, and a message about a wrong setting
+   needs the press that fixes it). Both sit under the line they belong to,
+   on the same row, quiet enough to read as an offer rather than a demand. */
+.notice-acts,
+.doctor-fix {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.doctor-fix-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dsw-alias-ink-secondary);
+}
+/* The fix press is the one that DOES something, so it wears the accent's
+   border rather than the plain hairline — visible, still not a primary. */
+.doctor-fix-press {
+  border-color: var(--dsw-alias-accent);
+  color: var(--dsw-alias-accent);
+}
+.doctor-fix-press:hover { background: var(--dsw-alias-surface); }
+
+/* The board's atomic task (the owner's 2026-11-18 ruling: the board shows
+   work at execution level, so a row is one delegatable task — what it is,
+   who it is for, and what it waits on). The whole row is the press that
+   opens the drawer; a task is inspected here, not dragged. */
+.board-task {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--r-sm);
+  background: var(--card-bg);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.board-task:hover {
+  border-color: var(--dsw-alias-accent);
+  background: var(--dsw-alias-surface-raised);
+}
+.board-task:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
+.board-task-top { display: block; min-width: 0; }
+.board-task-title {
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--dsw-alias-ink);
+  /* Two lines then an ellipsis: a task's approach can be a paragraph, and a
+     card that grows without bound breaks the column it sits in. */
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.board-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-ink-secondary);
+}
+/* Who it is for: the one fact the owner asked to see on every card. */
+.board-task-who {
+  padding: 1px 7px;
+  border-radius: 20px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.board-task-who.unassigned {
+  border-style: dashed;
+  color: var(--dsw-alias-ink-secondary);
+}
+.board-task-serves,
+.board-task-cost {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+/* What it waits on, on the row: a queued task with no reason reads as
+   stuck, and the dependency is the reason. */
+.board-task-wait {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--dsw-alias-ink-secondary);
+}
+/* The drawer's dependency groups: one list per state, the label carrying
+   the state so the rows need no second mark. */
+.board-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-ink);
+}
+
+/* The pane's work tab (the owner's 2026-11-18 ruling, D3: "show just as a
+   tree that shows the delegatable work status and depends on not visually
+   fancy but effective for a pane on the drawer"). Rows, not a plot: a few
+   hundred pixels holds a status column, a name and a dependency, and
+   nothing more. */
+#pane-work { padding: 8px 12px; gap: 10px; }
+.pane-work-tree { display: grid; gap: 2px; }
+.pane-work-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 2px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.pane-work-row:hover { background: var(--dsw-alias-accent-wash); }
+/* The state is the mark's colour, so the word beside it can stay quiet. */
+.pane-work-row[data-state="verified"] .pane-work-state { color: var(--green); }
+.pane-work-row[data-state="running"] .pane-work-state { color: var(--accent); }
+.pane-work-row[data-state="failed"] .pane-work-state { color: var(--red); }
+.pane-work-row[data-state="ready"] .pane-work-state { color: var(--dsw-alias-ink); }
+.pane-work-row[data-state="waiting"] .pane-work-state { color: var(--faint); }
+.pane-work-state { font-size: 11px; text-align: center; }
+.pane-work-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-ink);
+}
+.pane-work-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dsw-alias-ink-secondary);
+}
+/* What it depends on rides its own line under the row rather than a fourth
+   column: "after first" is a sentence, not a value. */
+.pane-work-dep {
+  grid-column: 2 / -1;
+  font-size: 11px;
+  color: var(--faint);
+}
+.pane-work-head {
+  margin: 10px 0 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-secondary);
+}
+
+/* The project the files pane is rooted at (the contextual pane's C1): a
+   scope must never be invisible, so the pane names it — the conversation's
+   own working folder, the one source of truth the run uses. It sits above
+   the tree rather than in the head, which carries eight tabs. */
+.pane-project {
+  margin: 0 0 6px;
+  overflow: hidden;
+  padding: 1px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 20px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -251,8 +251,12 @@
             <path d="M3 17c2.5-4 4.5-4 7 0s4.5 4 7 0" opacity="0.5"></path>
           </svg>
         </button>
+        <!-- The icon is the owner asking "show me what I am looking at":
+             it opens the contextual view, not whichever tab they last
+             used (the owner's 2026-11-18 ruling). -->
         <button class="pane-open" id="pane-open" type="button"
-                aria-label="the pane: the run, files, preview, web" title="the pane: the run, files, preview, web">
+                aria-label="the detail pane: what you are looking at, its files, preview and web"
+                title="the detail pane: what you are looking at, its files, preview and web">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
                stroke-linecap="round" aria-hidden="true">
             <rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect>
@@ -1105,15 +1109,15 @@
   <div class="door" id="huddle-door" hidden>
     <div class="form">
       <h2>New huddle</h2>
-      <p class="sub">A room with you and one or more bots. The goal is its standing objective.</p>
+      <p class="sub">A huddle is a working session you share with one or more bots. Say what you want out of it and pick who's in the room.</p>
       <div class="field">
-        <label for="huddle-goal">goal</label>
-        <input type="text" id="huddle-goal" placeholder="what this room is for">
+        <label for="huddle-goal">what do you want out of it?</label>
+        <input type="text" id="huddle-goal" placeholder="what do you want out of it?">
       </div>
       <div class="field">
-        <label>bots in the room</label>
+        <label>who do you want in it?</label>
         <div class="convener" id="huddle-convenor"></div>
-        <p class="hint">the first one named leads the room</p>
+        <p class="hint">the first one you pick leads</p>
       </div>
       <div class="acts">
         <button class="press primary" id="huddle-create" type="button">open the room</button>
@@ -1191,6 +1195,14 @@
              is what the surface is about. -->
         <button class="pane-tab" id="tab-context" type="button" role="tab"
                 aria-controls="pane-context" aria-selected="false" hidden>the work</button>
+        <!-- The drawer IS the pane's main component (the owner's
+             2026-11-18 ruling: "the collapsible pane should be part of the
+             drawer and it should be main component of it, otherwise the
+             drawer serves no real purpose"). Every object the face can
+             inspect lands here — a task, a row, a message — and the tab
+             appears only while one is open. -->
+        <button class="pane-tab" id="tab-detail" type="button" role="tab"
+                aria-controls="pane-detail" aria-selected="false" hidden>detail</button>
         <button class="pane-tab active" id="tab-run" type="button" role="tab"
                 aria-controls="pane-run" aria-selected="true">run</button>
         <button class="pane-tab" id="tab-receipts" type="button" role="tab"
@@ -1199,6 +1211,12 @@
                 aria-controls="pane-files" aria-selected="false">files</button>
         <button class="pane-tab" id="tab-preview" type="button" role="tab"
                 aria-controls="pane-preview" aria-selected="false">preview</button>
+        <!-- What this conversation delegated, as a tree (the owner's
+             2026-11-18 ruling, D1/D2/D3): session-bound, the current work
+             only, plain rows rather than a plot. It appears only while
+             something is delegating. -->
+        <button class="pane-tab" id="tab-work" type="button" role="tab"
+                aria-controls="pane-work" aria-selected="false" hidden>work</button>
         <button class="pane-tab" id="tab-web" type="button" role="tab"
                 aria-controls="pane-web" aria-selected="false">web</button>
       </div>
@@ -1213,17 +1231,22 @@
      this face was launched from, and a credential file is refused by
      name — the browser can ask for a file now, which is exactly where
      one would leak. -->
-    <section class="card dock-object" id="dock-object" hidden>
-      <header class="card-head">
-        <h2 id="dock-object-title">object</h2>
-        <button class="ghost" id="dock-object-close" type="button"
-                title="close this object, and the dock if it opened it">close</button>
-      </header>
-      <div class="dock-object-body" id="dock-object-body"></div>
-    </section>
 
     <div class="pane-body" id="pane-context" role="tabpanel"
          aria-labelledby="tab-context" hidden></div>
+    <!-- The drawer's own panel: the object card's content, now a first
+         class pane view rather than a stack above the tabs. `closeObject`
+         puts the whole pane away, the same verb the card's close had. -->
+    <div class="pane-body" id="pane-detail" role="tabpanel" aria-labelledby="tab-detail" hidden>
+      <section class="card dock-object" id="dock-object">
+        <header class="card-head">
+          <h2 id="dock-object-title">object</h2>
+          <button class="ghost" id="dock-object-close" type="button"
+                  title="close this object, and the pane with it">close</button>
+        </header>
+        <div class="dock-object-body" id="dock-object-body"></div>
+      </section>
+    </div>
     <div class="pane-body" id="pane-run" role="tabpanel" aria-labelledby="tab-run">
     <section class="card process-card" id="process-card">
       <header class="card-head">
@@ -1281,8 +1304,8 @@
         <span class="count" id="rule-count">0</span>
       </header>
       <p class="card-note" id="trust-note">
-        Calls the owner has said yes to for good. A remembered rule stops the prompt before it
-        is drawn, so the seat thins out as the work repeats.
+        Approvals you have given for good. A saved rule answers the question before it is
+        asked, so you are interrupted less as the same work repeats.
       </p>
       <ul class="rules" id="rules"></ul>
     </section>
@@ -1298,11 +1321,22 @@
       <div class="tissue-empty" id="thread-pane-empty" hidden></div>
     </div>
     <div class="pane-body" id="pane-files" role="tabpanel" aria-labelledby="tab-files" hidden>
-      <nav class="pane-tree" id="pane-tree" aria-label="the working directory"></nav>
+      <!-- The project this tree is rooted at (the contextual pane's C1): a
+           scope must never be invisible, or the pane shows another
+           project's files without saying so. It sits here rather than in
+           the head, which already carries eight tabs at a 300px floor. -->
+      <p class="pane-project" id="pane-project"></p>
+      <nav class="pane-tree" id="pane-tree" aria-label="the project's files"></nav>
       <div class="pane-file" id="pane-file"></div>
     </div>
     <div class="pane-body" id="pane-preview" role="tabpanel" aria-labelledby="tab-preview" hidden>
       <div class="pane-preview" id="pane-preview-body"></div>
+    </div>
+    <!-- The delegation tree: one row per delegated run, indented by
+         depth, with its status and what it depends on. Effective over
+         fancy — a pane is a few hundred pixels wide. -->
+    <div class="pane-body" id="pane-work" role="tabpanel" aria-labelledby="tab-work" hidden>
+      <div class="pane-work-list" id="pane-work-list"></div>
     </div>
     <div class="pane-body" id="pane-web" role="tabpanel" aria-labelledby="tab-web" hidden>
       <form class="pane-address" id="pane-address">

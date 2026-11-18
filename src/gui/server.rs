@@ -308,43 +308,48 @@ async fn serve_connection(
         // when it is missing (KI-299); the 192 icon answers it.
         ("GET", "/favicon.ico") => write_blob(&mut stream, "image/png", ICON_CACHE, ICON_192).await,
         ("GET", "/app.css") => {
-            let reply = if query_value(&request.query, "v") == Some(ASSET_HASH) {
-                versioned_asset("text/css; charset=utf-8", STYLES)
-            } else {
-                asset("text/css; charset=utf-8", STYLES)
-            };
+            let reply = env_asset(
+                "text/css; charset=utf-8",
+                STYLES,
+                "src/gui/assets/app.css",
+                &request.query,
+            );
             write_reply(&mut stream, reply).await
         }
         ("GET", "/app.js") => {
-            let reply = if query_value(&request.query, "v") == Some(ASSET_HASH) {
-                versioned_asset("text/javascript; charset=utf-8", SCRIPT)
-            } else {
-                asset("text/javascript; charset=utf-8", SCRIPT)
-            };
+            let reply = env_asset(
+                "text/javascript; charset=utf-8",
+                SCRIPT,
+                "src/gui/assets/app.js",
+                &request.query,
+            );
             write_reply(&mut stream, reply).await
         }
         ("GET", "/core/store.js") => {
-            let reply = if query_value(&request.query, "v") == Some(ASSET_HASH) {
-                versioned_asset("text/javascript; charset=utf-8", STORE)
-            } else {
-                asset("text/javascript; charset=utf-8", STORE)
-            };
+            let reply = env_asset(
+                "text/javascript; charset=utf-8",
+                STORE,
+                "src/gui/assets/core/store.js",
+                &request.query,
+            );
             write_reply(&mut stream, reply).await
         }
         ("GET", "/core/router.js") => {
-            let reply = if query_value(&request.query, "v") == Some(ASSET_HASH) {
-                versioned_asset("text/javascript; charset=utf-8", ROUTER)
-            } else {
-                asset("text/javascript; charset=utf-8", ROUTER)
-            };
+            let reply = env_asset(
+                "text/javascript; charset=utf-8",
+                ROUTER,
+                "src/gui/assets/core/router.js",
+                &request.query,
+            );
             write_reply(&mut stream, reply).await
         }
         ("GET", "/core/dom.js") => {
-            let reply = if query_value(&request.query, "v") == Some(ASSET_HASH) {
-                versioned_asset("text/javascript; charset=utf-8", DOM)
-            } else {
-                asset("text/javascript; charset=utf-8", DOM)
-            };
+            let reply = env_asset(
+                "text/javascript; charset=utf-8",
+                DOM,
+                "src/gui/assets/core/dom.js",
+                &request.query,
+            );
             write_reply(&mut stream, reply).await
         }
         ("GET", "/vendor/purify.min.js") => {
@@ -531,7 +536,12 @@ async fn serve_connection(
             let document = if decode_query(&request.query, "abs") == "1" {
                 bridge.tree_abs(&asked).await
             } else {
-                bridge.tree(&asked).await
+                // The contained tree is rooted at the conversation's own
+                // project folder (the contextual pane's one source of
+                // truth), so the surface has to name which conversation
+                // asks — the same `?session=` every other scoped read takes.
+                let session = asked_session(bridge, &request);
+                bridge.tree(&session, &asked).await
             };
             write_reply(&mut stream, api(200, document)).await
         }
@@ -1520,6 +1530,12 @@ async fn serve_connection(
             Ok(document) => write_reply(&mut stream, api(200, document)).await,
             Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
         },
+        // The browser engine's install (the owner's 2026-11-18 ruling: the
+        // harness recommends obscura, and a press installs or updates it).
+        ("POST", "/api/repair/browser") => match bridge.repair_browser().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
         ("POST", "/api/repair/lanes") => match bridge.rebuild_lanes().await {
             Ok(document) => write_reply(&mut stream, api(200, document)).await,
             Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
@@ -1865,6 +1881,10 @@ async fn serve_connection(
         // The board's reads and moves (U14/U21, S4): the tasks the board
         // lens renders, and the optimistic-then-settled status move.
         ("GET", "/api/tasks") => write_reply(&mut stream, api(200, bridge.tasks().await)).await,
+        // The board's own read (the owner's 2026-11-18 ruling): the work at
+        // execution level — one card per approved plan with its atomic
+        // tasks, their columns and their dependencies.
+        ("GET", "/api/board") => write_reply(&mut stream, api(200, bridge.board().await)).await,
         ("POST", "/api/tasks/status") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -3367,6 +3387,49 @@ pub(crate) fn manifest() -> Reply {
 /// picked up; the header lets a root-scoped worker be served from a path
 /// that is not itself the scope root.
 pub(crate) fn worker() -> Reply {
+    // A dev build must not install a worker at all, and this route is
+    // where that is decided: the page registers `/sw.js` unconditionally,
+    // so the honest place to refuse is the script's own bytes.
+    //
+    // The worker's whole job is to cache `/app.js?v=<hash>` forever
+    // (`isVersionedAsset` → `fromCacheOrNetwork`). In a debug build the
+    // hash is a build coordinate while the body is read from disk on every
+    // request — exactly the pair the cache cannot represent, so an
+    // installed worker would pin the OLD script and make an edit look like
+    // it did nothing. Serving a worker that unregisters itself (and drops
+    // its caches) keeps the save-and-refresh loop honest, and undoes any
+    // worker a previous dev session already installed.
+    if cfg!(debug_assertions) || assets_from().is_some() {
+        return Reply {
+            status: "200 OK",
+            content_type: "text/javascript; charset=utf-8",
+            extra: vec![
+                ("Cache-Control".to_string(), "no-store".to_string()),
+                ("Service-Worker-Allowed".to_string(), "/".to_string()),
+                ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
+            ],
+            body: [
+                "// fleet dev build: the face reads its assets from disk, so a",
+                "// service worker would pin a stale script and make edits look",
+                "// like no-ops. Unregister, drop the caches, and reload.",
+                "self.addEventListener('install', function () { self.skipWaiting(); });",
+                "self.addEventListener('activate', function (event) {",
+                "  event.waitUntil((async function () {",
+                "    try {",
+                "      var keys = await caches.keys();",
+                "      await Promise.all(keys.map(function (key) {",
+                "        return key.indexOf('fleet-shell-') === 0 ? caches.delete(key) : null;",
+                "      }));",
+                "    } catch (error) {}",
+                "    await self.clients.claim();",
+                "    var all = await self.clients.matchAll({ type: 'window' });",
+                "    all.forEach(function (client) { client.navigate(client.url); });",
+                "  })());",
+                "});",
+            ]
+            .join("\n"),
+        };
+    }
     Reply {
         status: "200 OK",
         content_type: "text/javascript; charset=utf-8",
@@ -3379,17 +3442,128 @@ pub(crate) fn worker() -> Reply {
     }
 }
 
-/// An unversioned asset revalidates; only the URL carrying the build's
-/// own hash is immutable. A browser that asked the bare path (an old
-/// bookmark, a tool that strips queries) therefore never pins a stale
-/// script.
-fn asset(content_type: &'static str, body: &'static str) -> Reply {
+// `asset()` (the plain revalidating reply) is gone: every text asset now
+// routes through `served`, which owns the live-vs-embedded decision AND
+// the cache grammar together. Keeping the old helper would have left a
+// second way to answer an asset — the shape that lets one route serve a
+// stale body while the others do not.
+
+/// A served asset's bytes, from disk in a dev build and from the binary
+/// in a release build.
+///
+/// The owner's 2026-11-17 complaint: "an icon change takes minutes… it's
+/// minutes of rust building for just a tiny change." The cause is not
+/// the build being slow, it is that a JS edit was a RUST edit: `app.js`
+/// is embedded with `include_str!`, so cargo recompiles the crate and
+/// relinks a binary for a one-line icon tweak. Nothing about an icon
+/// needs the compiler.
+///
+/// So a DEBUG build reads the asset from the tree on every request, and
+/// the loop becomes save-and-refresh in the browser with no build at all.
+/// A release build keeps the embed exactly as it was — the shipped
+/// binary carries its assets, which is what makes it a single file and
+/// what the asset hash addresses.
+///
+/// The read is deliberately total: a missing or unreadable file falls
+/// back to the embedded copy rather than 500-ing the face, so a dev
+/// server started from a stale binary still serves a working page.
+/// Where a live face should read its assets from instead of the copy
+/// compiled into it.
+///
+/// The owner's 2026-11-17 ruling: a cut is for what is worth a 15-minute
+/// build plus its gates; a minute change must not ride the same
+/// zero-risk pipeline. The last thing standing between that ruling and a
+/// real save-and-refresh loop was that the INSTALLED binary embeds its
+/// assets — so seeing an icon change meant a release build and a reload.
+///
+/// `FLEET_ASSETS_FROM` removes that: point a running face at a tree and
+/// it serves the files there. It is a deliberately awkward, opt-in name:
+///
+///   - nothing sets it for you, and the LaunchAgent never will, so a
+///     shipped face keeps its embedded assets and stays a single file;
+///   - it is honoured in RELEASE builds too, which is the whole point —
+///     the binary you are actually looking at can serve the tree you are
+///     actually editing;
+///   - a face running under it serves `no-cache` for every asset (see
+///     `served`), so the browser cannot pin a body that the tree has
+///     since changed;
+///   - an unreadable file falls back to the embedded copy, so a typo in
+///     the variable shows the shipped face rather than a blank page.
+///
+/// `dev-home` in scripts/face-dev.sh uses it; a by-hand session is
+/// `FLEET_ASSETS_FROM=$PWD fleet gui`.
+fn assets_from() -> Option<&'static std::path::Path> {
+    let asked = std::env::var_os("FLEET_ASSETS_FROM")?;
+    if asked.is_empty() {
+        return None;
+    }
+    // Leaked once on purpose: this is read per request and the value is
+    // fixed for the process's life, so a Box::leak costs one allocation
+    // at first use and no borrow gymnastics anywhere else.
+    let owned: &'static std::path::PathBuf = Box::leak(Box::new(std::path::PathBuf::from(asked)));
+    Some(owned.as_path())
+}
+
+/// The bytes an asset route answers with: the override tree when one is
+/// set, the source tree in a debug build, and the embedded copy otherwise.
+fn served(
+    content_type: &'static str,
+    embedded: &'static str,
+    relative: &'static str,
+    versioned: bool,
+) -> Reply {
+    let from_override = assets_from();
+    let read_from: Option<std::path::PathBuf> = match from_override {
+        Some(root) => Some(root.join(relative)),
+        // The tree the binary was built from: `CARGO_MANIFEST_DIR` is a
+        // compile-time constant, so this names the source tree even when
+        // the server's cwd is somewhere else.
+        None if cfg!(debug_assertions) => {
+            Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative))
+        }
+        None => None,
+    };
+    let (body, live) = match read_from.as_deref().map(std::fs::read_to_string) {
+        Some(Ok(text)) => (std::borrow::Cow::Owned(text), true),
+        Some(Err(_)) => (
+            std::borrow::Cow::Borrowed(embedded),
+            from_override.is_some(),
+        ),
+        None => (std::borrow::Cow::Borrowed(embedded), false),
+    };
+    // A live-served body changes under the build's hash, so the hash is no
+    // longer the content's address: answering `immutable` for `?v=<hash>`
+    // would pin a script the tree has since replaced. A live asset always
+    // revalidates. The embedded path keeps the immutable grammar exactly
+    // as it shipped.
+    let immutable = versioned && !live;
     Reply {
         status: "200 OK",
         content_type,
-        extra: cache_control("no-cache"),
-        body: body.to_string(),
+        extra: cache_control(if immutable {
+            "public, max-age=31536000, immutable"
+        } else {
+            "no-cache"
+        }),
+        body: body.into_owned(),
     }
+}
+
+/// The route-level form: compare the request's `?v=` against the build's
+/// hash and serve the asset immutably only when it matches.
+///
+/// This is the router's own grammar kept in one place. Before it, every
+/// asset route repeated the same four-line `if` — and the dev read would
+/// have had to be threaded through each copy, which is how one route ends
+/// up serving a stale script while the other five do not.
+fn env_asset(
+    content_type: &'static str,
+    embedded: &'static str,
+    relative: &'static str,
+    query: &str,
+) -> Reply {
+    let versioned = query_value(query, "v") == Some(ASSET_HASH);
+    served(content_type, embedded, relative, versioned)
 }
 
 /// The bot shell and its assets: the same cache grammar the console's
@@ -4497,10 +4671,28 @@ mod tests {
             &format!("GET /app.css?v={hash} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
             None,
         );
-        assert!(
-            immutable.contains("Cache-Control: public, max-age=31536000, immutable"),
-            "{immutable}"
-        );
+        // The cache grammar is build-dependent on purpose (the owner's
+        // 2026-11-17 ruling: an asset edit must not cost a Rust compile).
+        // An EMBEDDED asset's build hash really is its content's address,
+        // so that URL may be immutable forever. A LIVE asset — a debug
+        // build, or any face under FLEET_ASSETS_FROM — has a body that
+        // changes under the hash, so answering immutable there pins a
+        // script the tree has already replaced and makes an edit look
+        // like a no-op. Both branches are pinned so neither can drift
+        // into the other's promise.
+        let live = cfg!(debug_assertions) || crate::gui::server::assets_from().is_some();
+        if live {
+            assert!(
+                immutable.contains("Cache-Control: no-cache"),
+                "a live-served asset must never answer immutable: {immutable}"
+            );
+            assert!(!immutable.contains("immutable"), "{immutable}");
+        } else {
+            assert!(
+                immutable.contains("Cache-Control: public, max-age=31536000, immutable"),
+                "{immutable}"
+            );
+        }
         let bare = ask(
             port,
             "GET /app.css HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
@@ -4512,12 +4704,23 @@ mod tests {
         let worker = ask(port, "GET /sw.js HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", None);
         assert!(worker.starts_with("HTTP/1.1 200"), "{worker}");
         assert!(worker.contains("Service-Worker-Allowed: /"), "{worker}");
-        assert!(worker.contains("Cache-Control: no-cache"), "{worker}");
-        assert!(
-            worker.contains(hash),
-            "the worker carries the build stamp: {worker}"
-        );
-        assert!(!worker.contains("__FLEET_ASSET_HASH__"), "{worker}");
+        // A live-served face must NOT install a caching worker: the worker
+        // exists to pin `/app.js?v=<hash>`, and under a live tree that hash
+        // no longer names the body. The dev answer is a self-unregistering
+        // stub with `no-store`; the embedded answer is the real worker
+        // stamped with the build hash.
+        if live {
+            assert!(worker.contains("Cache-Control: no-store"), "{worker}");
+            assert!(worker.contains("fleet dev build"), "{worker}");
+            assert!(!worker.contains("__FLEET_ASSET_HASH__"), "{worker}");
+        } else {
+            assert!(worker.contains("Cache-Control: no-cache"), "{worker}");
+            assert!(
+                worker.contains(hash),
+                "the worker carries the build stamp: {worker}"
+            );
+            assert!(!worker.contains("__FLEET_ASSET_HASH__"), "{worker}");
+        }
 
         let manifest = ask(
             port,

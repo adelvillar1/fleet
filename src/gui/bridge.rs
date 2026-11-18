@@ -456,7 +456,16 @@ impl Bridge {
             pending_replay: None,
             launch,
             driving: None,
-            permissions: crate::approvals::Mode::Ask,
+            // The mode the owner DECLARED, not a hard-coded default. The
+            // headless path has always resolved this (`main.rs`: the flag,
+            // then `config_word`); the face seeded `Ask` and never read the
+            // setting, so `approvals: yes-guarded` was honoured by the CLI and
+            // ignored by the surface the owner actually uses. An absent or
+            // unknown word resolves to `Ask` — fail-closed, unchanged.
+            permissions: crate::approvals::resolve(
+                None,
+                crate::approvals::config_word(&home).as_deref(),
+            ),
             provider_pin: None,
             workdirs: load_workdirs(&home),
             journal: crate::journal::Journal::open(&home)
@@ -723,7 +732,7 @@ impl Bridge {
                 crate::health::apply_probe_failures(
                     report,
                     "lanes",
-                    "a lane cannot answer",
+                    "a service cannot answer",
                     &lane_failures,
                 );
                 crate::health::apply_probe_failures(
@@ -1174,6 +1183,22 @@ impl Bridge {
         .unwrap_or_else(|_| json!({"type": "tasks", "refused": ["the tasks read did not land"]}))
     }
 
+    /// The board's own read: the owner's work at execution level, one card
+    /// per approved plan with its atomic delegatable tasks, plus the
+    /// owner's ad-hoc tasks. Blocking, because it reads plans off disk.
+    pub async fn board(&self) -> Value {
+        let home = self.home.clone();
+        let root = self.cwd.clone();
+        tokio::task::spawn_blocking(move || board_read(&home, &root))
+            .await
+            .unwrap_or_else(|_| {
+                json!({
+                    "type": "board",
+                    "refused": ["the board read did not land"],
+                })
+            })
+    }
+
     /// A task's status move (U21, S4): optimistic-then-settled — the face
     /// moves the card at once, this writes the append-only record, and the
     /// read-back is the graded truth. The status vocabulary is the store's
@@ -1584,7 +1609,7 @@ impl Bridge {
             "usage" => Ok(self.usage()),
             "cache" => Ok(self.cache()),
             "related" => Ok(self.related("", "", 20).await),
-            "tree" => Ok(self.tree("").await),
+            "tree" => Ok(self.tree("", "").await),
             "workspace-history" => Ok(self.related("workspace-history", "", 20).await),
             other => Err(format!(
                 "`{other}` is declared but the bridge does not answer it yet — the declared                  set is the boundary, not a promise of breadth"
@@ -2192,7 +2217,7 @@ impl Bridge {
                 // The lane holds the credential and runs the vendor flow;
                 // fleet only hands it the path.
                 let spec = crate::lanes::spec_for("sys1")
-                    .map_err(|error| format!("the sys1 lane cannot start: {error}"))?;
+                    .map_err(|error| format!("the judgment service cannot start: {error}"))?;
                 let parsed = crate::perception::parse_via_lane(&path, &name, &home, spec).await?;
                 Ok(json!({
                     "type": "attachment",
@@ -3152,11 +3177,11 @@ impl Bridge {
             };
             let outcome = tokio::task::spawn_blocking(move || async move {
                 let server = crate::mcp::McpServer::spawn(&spec)
-                    .map_err(|error| format!("the lane could not start: {error}"))?;
+                    .map_err(|error| format!("the service could not start: {error}"))?;
                 server
                     .initialize()
                     .await
-                    .map_err(|error| format!("the lane's handshake failed: {error}"))?;
+                    .map_err(|error| format!("the service's handshake failed: {error}"))?;
                 let result = server
                     .call_tool(&tool_name, parsed)
                     .await
@@ -3377,18 +3402,24 @@ impl Bridge {
                 Ok(crate::clipboard::Clip::Image { name, mime, bytes }) => {
                     // base64 so the page can carry it in the run's own
                     // JSON body without a second encoding step.
-                    use base64::Engine;
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    let size = bytes.len();
                     json!({
                         "type": "clipboard",
                         "kind": "image",
-                        "image": {
-                            "name": name,
-                            "mime": mime,
-                            "bytes": encoded,
-                            "size": size,
-                        },
+                        "image": crate::clipboard::encoded(&name, &mime, &bytes),
+                    })
+                }
+                Ok(crate::clipboard::Clip::Images(images)) => {
+                    // The same shape per entry as the single image above, so
+                    // the composer loops ONE pipeline rather than growing a
+                    // second arm for a list (the owner's 2026-11-18 request:
+                    // "paste one or more images").
+                    json!({
+                        "type": "clipboard",
+                        "kind": "images",
+                        "images": images
+                            .iter()
+                            .map(|one| crate::clipboard::encoded(&one.name, &one.mime, &one.bytes))
+                            .collect::<Vec<Value>>(),
                     })
                 }
                 Ok(crate::clipboard::Clip::Empty) => json!({
@@ -3671,11 +3702,11 @@ impl Bridge {
         let url = format!("{origin}/api/design/frame/{slug}/{frame_id}");
         let spec = crate::lanes::spec_for("browser")?;
         let server = crate::mcp::McpServer::spawn(&spec)
-            .map_err(|error| format!("the browser lane could not start: {error}"))?;
+            .map_err(|error| format!("the browser service could not start: {error}"))?;
         server
             .initialize()
             .await
-            .map_err(|error| format!("the browser lane did not answer: {error}"))?;
+            .map_err(|error| format!("the browser service did not answer: {error}"))?;
         server
             .call_tool("browser_navigate", json!({ "url": url }))
             .await
@@ -3748,11 +3779,11 @@ impl Bridge {
         );
         let spec = crate::lanes::spec_for("browser")?;
         let server = crate::mcp::McpServer::spawn(&spec)
-            .map_err(|error| format!("the browser lane could not start: {error}"))?;
+            .map_err(|error| format!("the browser service could not start: {error}"))?;
         server
             .initialize()
             .await
-            .map_err(|error| format!("the browser lane did not answer: {error}"))?;
+            .map_err(|error| format!("the browser service did not answer: {error}"))?;
         let url = format!("{origin}/api/design/frame/{slug}/{frame_id}");
         let mut captures: Vec<(String, String)> = Vec::new();
         for (label, width, height) in [("desktop", frame.w, frame.h), ("phone", 390.0, 844.0)] {
@@ -3851,11 +3882,11 @@ impl Bridge {
         std::fs::create_dir_all(&dir)
             .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
         let server = crate::mcp::McpServer::spawn(&spec)
-            .map_err(|error| format!("the browser lane could not start: {error}"))?;
+            .map_err(|error| format!("the browser service could not start: {error}"))?;
         server
             .initialize()
             .await
-            .map_err(|error| format!("the browser lane did not answer: {error}"))?;
+            .map_err(|error| format!("the browser service did not answer: {error}"))?;
         let mut pngs: std::collections::BTreeMap<String, Vec<u8>> =
             std::collections::BTreeMap::new();
         for (id, name, w, h) in &frames {
@@ -4220,6 +4251,26 @@ impl Bridge {
     /// the macOS install; the health loop wakes the daemon and starts the
     /// worker once the runtime answers. Loopback-only, like the repair —
     /// the remote allowlist does not gain this route.
+    /// Install or update obscura from its GitHub release (the owner's
+    /// 2026-11-18 ruling: the harness recommends installing it, and a stale
+    /// engine is the same press as a missing one).
+    ///
+    /// Answers the fresh engine document, so the card that pressed it can
+    /// re-read and say what it now has rather than asserting success.
+    pub async fn repair_browser(self: &std::sync::Arc<Self>) -> Result<Value, String> {
+        let _guard = self.repair_in_flight.lock().await;
+        let home = self.home.clone();
+        let said = tokio::task::spawn_blocking(move || crate::engine::install(&home))
+            .await
+            .map_err(|_| "the install did not land".to_string())??;
+        let engine = crate::engine::find(&self.home);
+        Ok(json!({
+            "type": "engine",
+            "said": said,
+            "engine": crate::engine::engine_field(&self.home, &engine),
+        }))
+    }
+
     pub async fn repair_install_runtime(self: &std::sync::Arc<Self>) -> Result<Value, String> {
         let _guard = self.repair_in_flight.lock().await;
         tokio::task::spawn_blocking(install_kiri)
@@ -4272,7 +4323,7 @@ impl Bridge {
             }
         })
         .await
-        .map_err(|_| "the lane rebuild did not land".to_string())?;
+        .map_err(|_| "the service rebuild did not land".to_string())?;
         let fresh = crate::health::probe(&self.home, false);
         {
             let mut guard = self.health.lock().expect("health slot");
@@ -5405,8 +5456,30 @@ impl Bridge {
     }
 
     /// The pane's tree read, off the working directory.
-    pub async fn tree(&self, asked: &str) -> Value {
-        let root = self.cwd.clone();
+    /// The pane's file tree, rooted at the CONVERSATION's project folder
+    /// (the owner's 2026-11-18 ruling on the contextual pane: "d1 most
+    /// conversations have a folder if they don't you can't really do much
+    /// work any way as most work is bound to a folder" and "d3 follow the
+    /// source of truth, we shouldn't have two different sources").
+    ///
+    /// The source of truth is `effective_folder` — the same resolution the
+    /// state document hands the face as `folder` and the run uses as its
+    /// working directory. This read used `self.cwd`, the directory the
+    /// binary was LAUNCHED from, so the files tab never followed the project
+    /// and a conversation working elsewhere saw the wrong tree.
+    ///
+    /// A conversation with no folder falls back to the launch directory,
+    /// which is what it has always shown; the containment rule is unchanged
+    /// either way — a path that leaves the root is refused by name.
+    pub async fn tree(&self, session: &str, asked: &str) -> Value {
+        let root = {
+            let state = lock(&self.state);
+            state
+                .effective_folder(session)
+                .map(std::path::PathBuf::from)
+                .filter(|path| path.is_dir())
+                .unwrap_or_else(|| self.cwd.clone())
+        };
         let asked = asked.to_string();
         match tokio::task::spawn_blocking(move || tree_read(&root, &asked)).await {
             Ok(document) => document,
@@ -7506,6 +7579,8 @@ fn wrote_fact_name(output: &str) -> Option<String> {
 fn session_children(home: &std::path::Path, session: &str, live: &LiveFace) -> Vec<Value> {
     let titles = load_titles(home);
     let archived = load_archived(home);
+    // The naming ladder's deliverable rung, read once for every child.
+    let deliverables = crate::desk::first_by_session(home);
     let Ok(entries) = session::list(home) else {
         return Vec::new();
     };
@@ -7526,7 +7601,9 @@ fn session_children(home: &std::path::Path, session: &str, live: &LiveFace) -> V
         let (title, _) = title_ladder(
             titles.get(&entry.id).cloned(),
             session_goal(home, &entry.id),
-            entry.last_plan.clone(),
+            deliverables.get(&entry.id).cloned(),
+            entry.first_plan.clone(),
+            entry.subject.clone(),
             entry.first_text.clone(),
         );
         out.push(json!({
@@ -8227,7 +8304,7 @@ fn attach_local(cwd: &std::path::Path, asked: &str, consent: bool) -> Result<Att
     let escalation = match route {
         crate::documents::Route::Local | crate::documents::Route::Pdf => {
             let services = crate::lanes::services_root()
-                .map_err(|_| "the documents lane is not installed".to_string())?;
+                .map_err(|_| "the documents service is not installed".to_string())?;
             match crate::documents::extract(&full, &services) {
                 crate::documents::Outcome::Extracted(text) => {
                     return Ok(Attachment::Ready(json!({
@@ -8961,12 +9038,43 @@ fn handback_reason(reason: &str) -> bool {
 }
 
 /// Whose work a row is: the owner's own conversation, a scheduled job's
-/// run, a delegated child, or a peer's channel conversation.
+/// run, a delegated child, a peer's channel conversation, or — the fifth
+/// class the owner named on 2026-11-18 — an **empty** conversation.
+///
+/// An empty log holds exactly one record, its `start`: a New press (or a
+/// face that opened a conversation and never sent a message) that was
+/// never used. It has no work, no project and nobody in it, so it is not
+/// a conversation and does not belong on the owner's list. Measured on
+/// this machine: 45 of 918 logs were exactly that, and every one of them
+/// was being counted as one of *the owner's* conversations — which is
+/// half of why that list never felt like his.
+///
+/// It is its own class rather than silently dropped: the read still
+/// counts it, the archive stays honest about what it holds, and anything
+/// searching the log can still find it.
+///
+/// The sixth class is the derived one: a log whose every owner message
+/// names the machinery — "Reply with exactly the single word: done",
+/// "Use list_dir to list the current directory" — is **verification
+/// traffic**. It ran the harness; it never said what the work was about,
+/// so it belongs to no user and no project. Measured on this machine:
+/// 32 rows sat on the owner's list with no subject in any message.
+///
+/// The judgement is derived from the log, not from a sidecar mark, so it
+/// stays true as new probes land and needs nobody to remember to mark
+/// them (the old `sessions-probes.json` hand-marks drifted to a single
+/// day in October). A log with no owner message is `empty`, which is a
+/// narrower and more honest word for it.
 fn work_class(entry: &session::SessionSummary) -> &'static str {
     match entry.kind.as_deref() {
         Some(session::SCHEDULED_KIND) => "background",
         Some(session::SUBAGENT_KIND) => "delegated",
         Some(session::PROBE_KIND) => "probe",
+        // Nobody ever spoke here: a start record and nothing else.
+        _ if entry.empty => "empty",
+        // Nobody ever said what the work was about: every message names
+        // the machinery.
+        _ if entry.machinery_only => "probe",
         _ if entry.channel.is_some() => "channel",
         _ => "yours",
     }
@@ -8982,23 +9090,45 @@ fn work_class(entry: &session::SessionSummary) -> &'static str {
 /// has never meant system work.
 /// The dynamic title ladder: the owner's rename, the standing goal
 /// (what the conversation is FOR — it moves when the work moves), the
-/// last plan's line (what the run was building), the first words.
+/// first deliverable that was requested, the first plan that was
+/// executed, the first words.
+///
+/// The owner's 2026-11-18 naming ruling: a conversation is named by "the
+/// first deliverable that was requested or the first plan that was
+/// executed". The deliverable outranks the plan because a deliverable is
+/// what the owner asked FOR; the plan is only how the run set about it.
+/// Both are the FIRST, never the last: a conversation that asked for
+/// three things, or planned twice, is named by what opened it, because
+/// every later one is the middle of the work rather than its name.
+///
+/// The `subject` rung answers the case that has neither: the first owner
+/// message that is about the work rather than about the machinery. It is
+/// what stops a conversation that opened with a smoke test from being
+/// named by the smoke test forever, and it is why the raw `first` message
+/// is the last rung instead of the only one.
+///
 /// Returns the name and the rung that served, so a derived name is
 /// marked as derived and a stale goal is diagnosable. The owner's
 /// rename is the truth at every rung: an explicit title is never
-/// overridden by a later goal or plan.
+/// overridden by a later goal, deliverable or plan.
 fn title_ladder(
     owner: Option<String>,
     goal: Option<String>,
+    deliverable: Option<String>,
     plan: Option<String>,
+    subject: Option<String>,
     first: Option<String>,
 ) -> (Option<String>, &'static str) {
     if let Some(owner) = owner {
         (Some(owner), "owner")
     } else if let Some(goal) = goal {
         (Some(goal), "goal")
+    } else if let Some(deliverable) = deliverable {
+        (Some(deliverable), "deliverable")
     } else if let Some(plan) = plan {
         (Some(plan), "plan")
+    } else if let Some(subject) = subject {
+        (Some(subject), "subject")
     } else {
         (first, "first")
     }
@@ -9522,7 +9652,7 @@ fn learning_document(
                 "goal": plan.map(|fact| fact.description.clone()).unwrap_or_default(),
                 "id": session.id,
                 "title": session
-                    .last_plan
+                    .first_plan
                     .clone()
                     .or(session.first_text.clone())
                     .unwrap_or_default(),
@@ -9577,7 +9707,7 @@ fn learning_document(
     let history_row = |summary: &crate::session::SessionSummary| {
         serde_json::json!({
             "id": summary.id,
-            "title": summary.last_plan.clone().or(summary.first_text.clone()).unwrap_or_default(),
+            "title": summary.first_plan.clone().or(summary.first_text.clone()).unwrap_or_default(),
             "ended": summary.ended,
             "created": summary.created,
             // The project a lesson belongs to: its session's own working
@@ -9664,6 +9794,9 @@ fn sessions_read(
     let summaries = crate::generate::load_summaries(home);
     let archived = load_archived(home);
     let probes = load_probes(home);
+    // The naming ladder's deliverable rung: one desk scan for the whole
+    // panel, because the read is per-home and the rows are per-session.
+    let deliverables = crate::desk::first_by_session(home);
     let entries = match session::list(home) {
         Ok(entries) => entries,
         Err(error) => {
@@ -9711,9 +9844,13 @@ fn sessions_read(
     let background_total = entries
         .iter()
         .filter(|entry| {
+            // An empty conversation is housekeeping, not a row the owner
+            // reads: it gets the same small window as a scheduled run,
+            // so a pile of unused New presses can never crowd the
+            // owner's real conversations out of the read.
             matches!(
                 class_of(entry),
-                "background" | "delegated" | "channel" | "probe"
+                "background" | "delegated" | "channel" | "probe" | "empty"
             )
         })
         .count();
@@ -9771,7 +9908,9 @@ fn sessions_read(
             let (title, title_from) = title_ladder(
                 titles.get(&entry.id).cloned(),
                 goal.clone(),
-                entry.last_plan.clone(),
+                deliverables.get(&entry.id).cloned(),
+                entry.first_plan.clone(),
+                entry.subject.clone(),
                 first,
             );
             json!({
@@ -9857,6 +9996,29 @@ fn sessions_read(
     };
     let needs = count_owner(&["needs-approval", "paused"]);
     let working = count_owner(&["working"]);
+    // Empty conversations: logs with a start record and nothing else.
+    // Counted over the whole archive before the window, the way the
+    // background total is — the window bounds the rows it carries, its
+    // count is the archive's own fact.
+    // The two housekeeping counts the archive keeps honest without
+    // rendering: never-used New presses, and verification traffic whose
+    // every message names the machinery. Both are whole-archive facts
+    // (counted before the window), because the window bounds the rows it
+    // carries and its counts are not.
+    let (empty, verification) = crate::session::list(home)
+        .map(|all| {
+            let mut empty = 0usize;
+            let mut verification = 0usize;
+            for entry in &all {
+                match work_class(entry) {
+                    "empty" => empty += 1,
+                    "probe" => verification += 1,
+                    _ => {}
+                }
+            }
+            (empty, verification)
+        })
+        .unwrap_or((0, 0));
     let background = background_total;
     let archived_count = count_owner(&["archived"]);
     let total = sessions.len();
@@ -9882,6 +10044,14 @@ fn sessions_read(
             "needs": needs,
             "working": working,
             "background": background,
+            // Never used: a New press that sent nothing. Housekeeping,
+            // counted so the archive stays honest about what it holds,
+            // rendered nowhere on the owner's list.
+            "empty": empty,
+            // Verification traffic: every message names the machinery, so
+            // it belongs to no user and no project. Findable, never on the
+            // owner's list.
+            "verification": verification,
             "archived": archived_count,
             "earlier": earlier,
             "yours": yours,
@@ -9994,6 +10164,220 @@ fn install_kiri() -> Result<(), String> {
 /// whether it passes or fails — the inbox keeps only the failures, the
 /// lens shows the whole picture. The deep lane probe is `fleet lanes`
 /// (the /api/lanes read beside this one).
+/// The board: the owner's work at execution level (the owner's 2026-11-18
+/// ruling, `docs/plans/2026-11-18-the-board-at-execution-level.md`).
+///
+/// "It should show queued work that's pending, in the case of plans each
+/// card should show the atomic delegatable tasks and to which
+/// workload/persona that it's going to be assigned to… The board shouldn't
+/// show any tasks that are not user initiated or derived from a plan that
+/// is user initiated."
+///
+/// **Provenance is derived, never hand-marked** (C5). An APPROVED plan is
+/// the owner's own work by construction: `plan_graph` generates a graph
+/// only from an approved plan, so a card's existence *is* its provenance —
+/// a cron run, a delegated child, an eval run and a probe all write their
+/// own session log and never a plan. The owner's ad-hoc tasks come from the
+/// workspace graph, which only a run the owner started writes.
+///
+/// Each node is one atomic delegatable task (C2), and its three states are
+/// the board's columns read straight off the graph (C1):
+///
+/// - **done** — `Status::Verified`, the only state that subtracts.
+/// - **in process** — `Status::Running`.
+/// - **queued** — pending or failed, ready or waiting. A queued card names
+///   what it waits on, because "pending" with no reason is a card the owner
+///   cannot act on.
+///
+/// The assignee is the node's own declaration when the plan named someone,
+/// else the plan's execution verdict — the workload the plan itself declares
+/// it runs under (C3). An absent verdict leaves it empty rather than
+/// inventing an owner.
+fn board_read(home: &std::path::Path, root: &std::path::Path) -> Value {
+    let plans = plans_read(root);
+    let tasks = ad_hoc_tasks(home);
+    let count = |column: &str| -> usize {
+        plans
+            .iter()
+            .flat_map(|plan| plan["tasks"].as_array().cloned().unwrap_or_default())
+            .filter(|task| task["column"] == column)
+            .count()
+            + tasks.iter().filter(|task| task["column"] == column).count()
+    };
+    let mut refused: Vec<String> = Vec::new();
+    if plans.is_empty() {
+        refused.push(format!(
+            "{} holds no approved plan \u{2014} a plan contributes work once it is approved",
+            root.join("docs").join("plans").display()
+        ));
+    }
+    json!({
+        "type": "board",
+        "read_at": crate::boards::now_stamp(),
+        "counts": {
+            "queued": count("queued"),
+            "in-process": count("in-process"),
+            "done": count("done"),
+            "plans": plans.len(),
+        },
+        "plans": plans,
+        "tasks": tasks,
+        "refused": refused,
+    })
+}
+
+/// One card per approved plan, each carrying its atomic tasks.
+///
+/// `plan_graph` already enumerates the documents, reads the frontmatter, and
+/// loads-or-generates each graph — so this walks its registry rather than
+/// repeating the scan. A draft never reaches here: `generates_a_graph` is
+/// false for it, which is the same rule that makes a card's existence its
+/// provenance.
+fn plans_read(root: &std::path::Path) -> Vec<Value> {
+    let dir = root.join("docs").join("plans");
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+                .collect()
+        })
+        .unwrap_or_default();
+    // Name order, so the board does not reshuffle between reads: a board
+    // that moves cannot be read at a glance.
+    paths.sort();
+
+    let mut cards: Vec<Value> = Vec::new();
+    for path in paths {
+        let Ok(meta) = crate::plan_graph::read_meta(&path) else {
+            continue;
+        };
+        if !meta.status.generates_a_graph() {
+            continue;
+        }
+        let declared = match crate::plan_graph::PlanGraph::generate(&path) {
+            Ok(plan) => plan,
+            Err(_) => continue,
+        };
+        // The runtime state when one has landed, the declaration otherwise:
+        // an approved plan that has never run is legitimately all queued.
+        let live = crate::plan_graph::PlanGraph::load(&path).ok();
+        let graph = live
+            .as_ref()
+            .map(|one| &one.graph)
+            .unwrap_or(&declared.graph);
+        // The plan's own workload, when its frontmatter named a verdict:
+        // the fallback every unassigned node inherits (C3).
+        let workload = meta.execution.map(|verdict| verdict.as_str().to_string());
+
+        let mut tasks: Vec<Value> = Vec::new();
+        for node in graph.nodes() {
+            let unlock = graph.unlock(&node.id).unwrap_or_default();
+            let column = match node.status {
+                crate::graph::Status::Verified => "done",
+                crate::graph::Status::Running => "in-process",
+                // Pending and failed are both unfinished: the owner needs
+                // them on the board, and a failed node is the one they
+                // most need to see.
+                _ => "queued",
+            };
+            let assignee = if !node.assignee.trim().is_empty() {
+                Some(node.assignee.clone())
+            } else {
+                workload.clone()
+            };
+            // The dependencies grouped by the state each is in — the three
+            // the owner named — read off the graph so the drawer cannot
+            // disagree with the columns.
+            let depends_on: Vec<Value> = node
+                .prereqs
+                .iter()
+                .map(|prereq| {
+                    let state = graph
+                        .nodes()
+                        .iter()
+                        .find(|other| &other.id == prereq)
+                        .map(|other| match other.status {
+                            crate::graph::Status::Verified => "done",
+                            crate::graph::Status::Running => "in-process",
+                            _ => "queued",
+                        })
+                        .unwrap_or("queued");
+                    json!({ "id": prereq, "state": state })
+                })
+                .collect();
+            tasks.push(json!({
+                "id": node.id,
+                // The card's line: the node's declared approach, which is
+                // what the task IS. The id is the fallback because a node
+                // that declared no approach is still delegatable work.
+                "title": if node.approach.trim().is_empty() {
+                    node.id.clone()
+                } else {
+                    node.approach.clone()
+                },
+                "column": column,
+                "state": crate::graph::state_word(node, &unlock),
+                "status": node.status.as_str(),
+                "cost": node.cost,
+                "assignee": assignee,
+                // The drawer's context: everything a person needs to judge
+                // one task without opening the plan (C4).
+                "approach": node.approach,
+                "serves": declared.serves.get(&node.id).cloned(),
+                "capabilities": node.capabilities.phrase(),
+                "paths": node.paths,
+                "depends_on": depends_on,
+                "waiting_on": unlock.waiting,
+                "reason": unlock.reason(),
+            }));
+        }
+        let queued = tasks
+            .iter()
+            .filter(|task| task["column"] == "queued")
+            .count();
+        cards.push(json!({
+            "id": meta.slug,
+            "plan": path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default(),
+            "status": meta.status.as_str(),
+            "updated": meta.updated,
+            "workload": workload,
+            "queued": queued,
+            "tasks": tasks,
+        }));
+    }
+    cards
+}
+
+/// The owner's own ad-hoc tasks: the workspace graph, whose only writer is a
+/// run the owner started. They ride beside the plans rather than merged into
+/// them, because a plan's node and a standalone task are different objects
+/// with different lifecycles.
+fn ad_hoc_tasks(home: &std::path::Path) -> Vec<Value> {
+    let graph = crate::workspace::read(home);
+    graph
+        .tasks
+        .values()
+        .map(|task| {
+            json!({
+                "id": task.id,
+                "title": task.title,
+                "column": match task.status {
+                    crate::workspace::Status::Done => "done",
+                    crate::workspace::Status::Working => "in-process",
+                    crate::workspace::Status::Blocked => "queued",
+                },
+                "assignee": task.assignee.as_str(),
+                "binding": task.binding,
+            })
+        })
+        .collect()
+}
+
 fn doctor_read(home: &std::path::Path) -> Value {
     let mut checks: Vec<Value> = Vec::new();
     let home_outcome = crate::home::ensure_sessions_dir(home)
@@ -10029,12 +10413,159 @@ fn doctor_read(home: &std::path::Path) -> Value {
             "why": "the corpus has moved since its last sync \u{2014} sync it from the Health lens",
         }));
     }
-    json!({ "type": "doctor", "checks": checks })
+    // The browser engine (the owner's 2026-11-18 ruling): obscura first,
+    // Chrome as the last resort, and the release checked so a stale engine is
+    // named rather than assumed current. The check FAILS on two states — no
+    // engine at all, and a missing obscura — because both are things the
+    // owner can fix with a press. A `chrome` engine is `ok` with a note: the
+    // owner already chose it, so calling it a failure would nag about a
+    // decision they made.
+    let engine = crate::engine::find(home);
+    let engine_doc = crate::engine::engine_field(home, &engine);
+    let chosen = crate::settings::read_value(home, "browser.engine")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "obscura".to_string());
+    let (engine_ok, engine_why) = match (&engine, chosen.as_str()) {
+        (crate::engine::Engine::Obscura { version, .. }, _) => (
+            true,
+            format!(
+                "obscura {version} is installed{}",
+                engine_doc
+                    .get("note")
+                    .and_then(Value::as_str)
+                    .map(|note| format!(" \u{2014} {note}"))
+                    .unwrap_or_default()
+            ),
+        ),
+        (crate::engine::Engine::Chrome { .. }, "chrome") => (
+            true,
+            "Chrome is the chosen engine. It is the last resort: it does not clean up \
+             after itself and has a large memory footprint."
+                .to_string(),
+        ),
+        (crate::engine::Engine::Chrome { .. }, _) => (
+            false,
+            format!(
+                "obscura is not installed, so the browser would fall back to Chrome \u{2014} \
+                 install obscura to avoid it: {}",
+                crate::engine::RELEASES_REPO
+            ),
+        ),
+        (crate::engine::Engine::None, _) => (
+            false,
+            format!(
+                "no browser engine on this host \u{2014} install obscura: {}",
+                crate::engine::RELEASES_REPO
+            ),
+        ),
+    };
+    checks.push(json!({
+        "check": "browser", "ok": engine_ok, "why": engine_why, "engine": engine_doc,
+    }));
+    let mut document = json!({ "type": "doctor", "checks": checks });
+    // Every failing check that a press can fix carries that press, so the
+    // surface never has to guess what is fixable (the owner's 2026-11-18
+    // ruling).
+    with_repairs(&mut document);
+    document
+}
+
+/// The repair a failing check offers, if one can fix it.
+///
+/// The owner's 2026-11-18 ruling: "if they are due to a misconfiguration of
+/// settings a way to use the self-healing properties of fleet to fix them,
+/// give the user a fix action button". The mapping lives here, server-side,
+/// for the same reason the counts do (KI-300): a surface that decided which
+/// button to draw from the check's own words would be a second opinion about
+/// what is fixable, and it would sooner or later offer a press that cannot
+/// work.
+///
+/// Each entry names a REAL endpoint this bridge serves, and `label` is what
+/// the person reads — no internal noun, and the verb says what it will do,
+/// not which subsystem it touches. A check with no entry is honestly
+/// unfixable from here: the surface draws the reason and no button, which is
+/// better than a press that fails.
+///
+/// The costs are real, so each says what it does: rebuilding the services
+/// restarts them, and a rollback replaces the running app.
+fn repair_for(check: &str) -> Option<Value> {
+    let (label, action, note) = match check {
+        // The credential is the one misconfiguration a person can only fix
+        // by hand — the key is theirs. The action opens the right screen
+        // rather than pretending a press can supply it.
+        "credentials" => (
+            "add a key",
+            "#/settings/models",
+            "Opens the settings where the account's key is set.",
+        ),
+        // The corpus has moved: the sync is the self-healing press, the
+        // same one the corpus card carries.
+        "corpus" => (
+            "sync the memory",
+            "/api/corpus/sync",
+            "Pulls the shared memory from its remote. A merge conflict aborts safely.",
+        ),
+        // The services are not answering: this bridges the rebuild.
+        "services" => (
+            "rebuild the services",
+            "/api/repair/lanes",
+            "Reinstalls and restarts the background services, then re-checks them.",
+        ),
+        // The isolated workspace is unwell: the bridge reconciles a stale
+        // record first and reinstalls only when that is not enough.
+        "layerfs" => (
+            "repair the workspace",
+            "/api/repair/layerfs",
+            "Reconciles the workspace's record, and reinstalls it when that is not enough.",
+        ),
+        // The browser engine (the owner's 2026-11-18 ruling: obscura first,
+        // with the harness recommending its installation). The press installs
+        // or updates it from the release, so a missing engine and a stale one
+        // are one action at different starting points.
+        "browser" => (
+            "install obscura",
+            "/api/repair/browser",
+            "Downloads the latest obscura release and installs it, then re-checks.",
+        ),
+        // The runtime a container needs is missing.
+        "runtime" => (
+            "install the runtime",
+            "/api/repair/install-runtime",
+            "Installs and starts the container runtime the workspace needs.",
+        ),
+        _ => return None,
+    };
+    Some(json!({ "label": label, "action": action, "note": note }))
+}
+
+/// Attach the repair each failing check offers, so the surface draws the
+/// button beside the reason rather than deciding for itself what is
+/// fixable. A passing check carries no repair: there is nothing to fix.
+fn with_repairs(document: &mut Value) {
+    let Some(checks) = document.get_mut("checks").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for check in checks {
+        let name = check
+            .get("check")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let ok = check.get("ok").and_then(Value::as_bool).unwrap_or(true);
+        if ok {
+            continue;
+        }
+        if let Some(repair) = repair_for(&name) {
+            check["fix"] = repair;
+        }
+    }
 }
 
 fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value {
     let titles = load_titles(home);
     let archived = load_archived(home);
+    // The naming ladder's deliverable rung, read once for every room.
+    let deliverables = crate::desk::first_by_session(home);
     // The phase splits (the huddles plan's C9): which room each one broke
     // away from. Read off the start records, so the lineage is the log's
     // own rather than something the surface infers.
@@ -10074,7 +10605,9 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
         let (title, _) = title_ladder(
             titles.get(&entry.id).cloned(),
             goal.clone(),
-            entry.last_plan.clone(),
+            deliverables.get(&entry.id).cloned(),
+            entry.first_plan.clone(),
+            entry.subject.clone(),
             entry.first_text.clone(),
         );
         // Which members carry an owner-supplied image (C11): only those,
@@ -10863,15 +11396,16 @@ fn built_ins_value(home: &std::path::Path) -> Value {
     serde_json::json!(built_ins)
 }
 
-/// One lane row's human phrase: the role the lane plays, with the noun
-/// every row shares. A document that carries no role says nothing rather
-/// than a bare "lane".
+/// One service row's human phrase: the role the service plays, with the
+/// noun every row shares. A document that carries no role says nothing
+/// rather than a bare "service" (the owner's 2026-11-18 copy ruling:
+/// "lanes" is internal vocabulary and reads as "services").
 fn lane_phrase(role: &str) -> String {
     let role = role.trim();
     if role.is_empty() {
         String::new()
     } else {
-        format!("{role} lane")
+        format!("{role} service")
     }
 }
 
@@ -16097,11 +16631,16 @@ mod tests {
 
     #[test]
     fn the_title_ladder_orders_the_rungs() {
-        // All four rungs: the owner's rename is the truth.
+        // All six rungs, in the owner's order: the rename wins, then the
+        // standing goal, then the FIRST deliverable that was requested,
+        // then the FIRST plan executed, then the first message that is
+        // about the work, then the raw first words.
         let (title, from) = title_ladder(
             Some("the owner's words".into()),
             Some("the standing goal".into()),
-            Some("the plan's line".into()),
+            Some("the deliverable asked for".into()),
+            Some("the first plan".into()),
+            Some("the subject line".into()),
             Some("the first words".into()),
         );
         assert_eq!(title.as_deref(), Some("the owner's words"));
@@ -16110,24 +16649,115 @@ mod tests {
         let (title, from) = title_ladder(
             None,
             Some("the standing goal".into()),
-            Some("the plan's line".into()),
+            Some("the deliverable asked for".into()),
+            Some("the first plan".into()),
+            Some("the subject line".into()),
             Some("the first words".into()),
         );
         assert_eq!(title.as_deref(), Some("the standing goal"));
         assert_eq!(from, "goal");
-        // The plan rung: what the run was building.
+        // The deliverable rung outranks the plan: the owner asked FOR a
+        // deliverable, and the plan is only how the run set about it.
         let (title, from) = title_ladder(
             None,
             None,
-            Some("the plan's line".into()),
+            Some("the deliverable asked for".into()),
+            Some("the first plan".into()),
+            Some("the subject line".into()),
             Some("the first words".into()),
         );
-        assert_eq!(title.as_deref(), Some("the plan's line"));
+        assert_eq!(title.as_deref(), Some("the deliverable asked for"));
+        assert_eq!(from, "deliverable");
+        // The plan rung: what the run set out to build.
+        let (title, from) = title_ladder(
+            None,
+            None,
+            None,
+            Some("the first plan".into()),
+            Some("the subject line".into()),
+            Some("the first words".into()),
+        );
+        assert_eq!(title.as_deref(), Some("the first plan"));
         assert_eq!(from, "plan");
-        // The fallback: today's first words.
-        let (title, from) = title_ladder(None, None, None, Some("the first words".into()));
+        // The subject rung: the case with no deliverable and no plan —
+        // a conversation whose first message was a smoke test is named
+        // by the first message that is actually about the work.
+        let (title, from) = title_ladder(
+            None,
+            None,
+            None,
+            None,
+            Some("the subject line".into()),
+            Some("Reply with the single word ok".into()),
+        );
+        assert_eq!(title.as_deref(), Some("the subject line"));
+        assert_eq!(from, "subject");
+        // The fallback: today's first words, when nothing else is left.
+        let (title, from) =
+            title_ladder(None, None, None, None, None, Some("the first words".into()));
         assert_eq!(title.as_deref(), Some("the first words"));
         assert_eq!(from, "first");
+    }
+
+    #[test]
+    fn the_deliverable_rung_names_the_first_one_requested() {
+        // The ladder's deliverable rung reads the OLDEST bound deliverable
+        // by its `created` stamp — the one the conversation was opened
+        // for, not the one touched most recently (the owner's 2026-11-18
+        // ruling: "the first deliverable that was requested").
+        let home =
+            std::env::temp_dir().join(format!("fleet-first-deliverable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let session = "20261118T000000Z-abcdef";
+        // Two deliverables bound to ONE conversation; the second is
+        // written last, so a map that took the newest would name the row
+        // by the wrong work.
+        let mut first = crate::desk::create(
+            &home,
+            "the-first-thing",
+            "The first thing asked for",
+            "the owner",
+            "what it must say",
+            Vec::new(),
+            None,
+        )
+        .expect("the first deliverable is created");
+        first.created = "2026-11-01T00:00:00Z".into();
+        first.updated = "2026-11-01T00:00:00Z".into();
+        first.session = Some(session.to_string());
+        crate::desk::save(&home, &first).unwrap();
+        let mut second = crate::desk::create(
+            &home,
+            "a-later-thing",
+            "A later thing asked for",
+            "the owner",
+            "what it must say",
+            Vec::new(),
+            None,
+        )
+        .expect("the second deliverable is created");
+        second.created = "2026-11-15T00:00:00Z".into();
+        second.updated = "2026-11-15T00:00:00Z".into();
+        second.session = Some(session.to_string());
+        crate::desk::save(&home, &second).unwrap();
+        let named = crate::desk::first_by_session(&home);
+        assert_eq!(
+            named.get(session).map(String::as_str),
+            Some("The first thing asked for"),
+            "{named:?}"
+        );
+        let (title, from) = title_ladder(
+            None,
+            None,
+            named.get(session).cloned(),
+            Some("the first plan".into()),
+            Some("the subject line".into()),
+            Some("the first words".into()),
+        );
+        assert_eq!(title.as_deref(), Some("The first thing asked for"));
+        assert_eq!(from, "deliverable");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -16161,6 +16791,8 @@ mod tests {
         let (title, from) = title_ladder(
             Some("renamed by the owner".into()),
             Some("a goal set after the rename".into()),
+            None,
+            None,
             None,
             None,
         );
@@ -17873,14 +18505,18 @@ mod tests {
     }
 
     /// The pane's tree: one directory's entries, with each entry's kind
-    /// and size. The root is the process's own working directory — the
-    /// same rule the memory corpus resolves by — so the browser sees the
-    /// tree this face was launched from and nothing above it.
+    /// and size, rooted at the CONVERSATION's project folder (the
+    /// contextual pane's C1/D3). A conversation with no folder falls back
+    /// to the launch directory — the honest default, named in the pane —
+    /// and the containment rule is unchanged either way: a path that leaves
+    /// the root is refused by name.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_tree_reads_one_directory_under_the_root() {
         let (bridge, _sources, _door) = bridge().await;
         let here = std::env::current_dir().expect("a working directory");
-        let document = bridge.tree("src").await;
+        // No folder set on this conversation: the launch directory is the
+        // root, which is what the pane has always shown.
+        let document = bridge.tree("", "src").await;
         assert_eq!(document["type"], "tree");
         assert_eq!(document["root"], here.display().to_string());
         let entries = document["entries"].as_array().expect("the entries");
@@ -17892,8 +18528,46 @@ mod tests {
         );
         // A path that escapes the root is refused by name, and the
         // refusal says so rather than serving the parent.
-        let escaped = bridge.tree("../../etc").await;
+        let escaped = bridge.tree("", "../../etc").await;
         assert_eq!(escaped["refused"][0], "outside the working directory");
+    }
+
+    /// The tree follows the CONVERSATION, not the process: a chat with a
+    /// project folder reads that folder, which is the defect the twos-
+    /// sources rule was aimed at (the pane showed the launch directory
+    /// whatever project the conversation worked in).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_tree_follows_the_conversations_folder() {
+        let (bridge, _sources, _door) = bridge().await;
+        // A project folder somewhere else, with one file in it.
+        let project =
+            std::env::temp_dir().join(format!("fleet-tree-project-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("only-here.txt"), "the project's own file").unwrap();
+        bridge
+            .set_folder("the-chat", Some(project.display().to_string().as_str()))
+            .expect("the folder is granted");
+        let document = bridge.tree("the-chat", "").await;
+        // macOS resolves `/var` to `/private/var`, so the assertion compares
+        // canonical paths rather than the literal strings.
+        let root = document["root"].as_str().unwrap_or_default();
+        let want = std::fs::canonicalize(&project).expect("the project resolves");
+        assert_eq!(
+            std::fs::canonicalize(root).ok().as_deref(),
+            Some(want.as_path()),
+            "the root is the conversation's folder: {document}"
+        );
+        let names: Vec<&str> = document["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry["name"].as_str())
+            .collect();
+        assert!(names.contains(&"only-here.txt"), "{document}");
+        // The process root's own entries are NOT what this chat sees.
+        assert!(!names.contains(&"src"), "{document}");
+        let _ = std::fs::remove_dir_all(&project);
     }
 
     /// The pane's file read: the text, its language for the viewer, and
@@ -18810,7 +19484,10 @@ mod tests {
             id: id.to_string(),
             model: "deepseek-flash".to_string(),
             first_text: first_text.map(str::to_string),
-            last_plan: None,
+            subject: None,
+            machinery_only: false,
+            empty: false,
+            first_plan: None,
             personas: Vec::new(),
             created: "2026-10-23T00:00:00Z".to_string(),
             ended,
@@ -18827,6 +19504,252 @@ mod tests {
             last_write,
             path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),
         }
+    }
+
+    /// The board's fixture home: one root holding an `active` plan that
+    /// declares three nodes — one unassigned, one depending on it, one
+    /// depending on that — plus a `draft` plan that must never appear.
+    fn board_fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let home = std::env::temp_dir().join(format!("fleet-board-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let root = home.join("root");
+        let plans = root.join("docs").join("plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        std::fs::write(
+            plans.join("2026-11-18-run.md"),
+            r#"---
+status: active
+created: 2026-11-18
+updated: 2026-11-18
+slug: the-run
+execution: mixture
+---
+
+# The run
+
+```graph
+{
+  "nodes": [
+    { "id": "first", "cost": 2, "approach": "Do the first thing", "serves": "C1", "assignee": "scholar" },
+    { "id": "second", "cost": 3, "prereqs": ["first"], "approach": "Do the second thing", "serves": "C2" },
+    { "id": "third", "cost": 1, "prereqs": ["second"], "approach": "Do the third thing", "serves": "C3" }
+  ]
+}
+```
+"#,
+        )
+        .unwrap();
+        // A draft is not approved, so it generates no graph and reaches no
+        // card — the second half of the provenance rule.
+        std::fs::write(
+            plans.join("2026-11-18-draft.md"),
+            r#"---
+status: draft
+created: 2026-11-18
+updated: 2026-11-18
+slug: the-draft
+---
+
+# The draft
+
+```graph
+{ "nodes": [ { "id": "never", "cost": 1, "approach": "Never" } ] }
+```
+"#,
+        )
+        .unwrap();
+        (home, root)
+    }
+
+    #[test]
+    fn the_board_shows_queued_atomic_tasks_with_their_assignment() {
+        // C1 + C2 + C3: every declared node is one atomic task on the
+        // queued column, carrying who works it — its own declaration when
+        // the plan named someone, the plan's verdict otherwise.
+        let (home, root) = board_fixture("tasks");
+        let document = board_read(&home, &root);
+        let plans = document["plans"].as_array().unwrap();
+        assert_eq!(
+            plans.len(),
+            1,
+            "only the approved plan is a card: {document}"
+        );
+        let card = &plans[0];
+        assert_eq!(card["id"], "the-run");
+        assert_eq!(card["workload"], "mixture");
+        let tasks = card["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 3, "{card}");
+        for task in tasks {
+            assert_eq!(task["column"], "queued", "nothing has run: {task}");
+        }
+        // The node that named an assignee keeps it.
+        assert_eq!(tasks[0]["assignee"], "scholar");
+        // The node that named none inherits the plan's own workload.
+        assert_eq!(tasks[1]["assignee"], "mixture");
+        assert_eq!(tasks[2]["assignee"], "mixture");
+        // The readiness word distinguishes "start now" from "waiting".
+        assert_eq!(tasks[0]["state"], "ready");
+        assert_eq!(tasks[1]["state"], "waiting");
+    }
+
+    #[test]
+    fn the_board_names_each_tasks_dependencies_by_their_state() {
+        // C4's data half: the drawer's dependencies, each grouped by the
+        // state it is in — read off the graph, so the drawer cannot
+        // disagree with the columns.
+        let (home, root) = board_fixture("deps");
+        let document = board_read(&home, &root);
+        let tasks = document["plans"][0]["tasks"].as_array().unwrap();
+        assert_eq!(tasks[0]["depends_on"].as_array().unwrap().len(), 0);
+        let second = tasks[1]["depends_on"].as_array().unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0]["id"], "first");
+        assert_eq!(second[0]["state"], "queued", "{}", tasks[1]);
+        // The reason names what it waits on, so a pending card is
+        // actionable rather than mysterious.
+        assert!(
+            tasks[1]["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("first"),
+            "{}",
+            tasks[1]
+        );
+        // The criterion each node serves is the join to the plan's table.
+        assert_eq!(tasks[1]["serves"], "C2");
+        // The approach is the card's own line — what the work IS.
+        assert_eq!(tasks[1]["title"], "Do the second thing");
+    }
+
+    #[test]
+    fn the_board_shows_no_work_that_is_not_the_owners() {
+        // C5, the ruling's first filter: "The board shouldn't show any
+        // tasks that are not user initiated or derived from a plan that is
+        // user initiated." A card's existence IS its provenance — only an
+        // approved plan generates a graph, and a cron run, a delegated
+        // child, an eval run and a probe all write their own session log
+        // and never a plan. The draft in the fixture proves the filter.
+        let (home, root) = board_fixture("provenance");
+        let document = board_read(&home, &root);
+        let names: Vec<&str> = document["plans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|card| card["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["the-run"], "{document}");
+        // Nothing from the draft plan is anywhere in the document.
+        let text = document.to_string();
+        assert!(!text.contains("the-draft"), "{text}");
+        assert!(!text.contains("never"), "{text}");
+    }
+
+    #[test]
+    fn a_failing_check_carries_the_press_that_fixes_it_and_a_passing_one_does_not() {
+        // The owner's 2026-11-18 ruling: a failure caused by a wrong
+        // setting reaches the self-healing action that fixes it. The
+        // mapping is the server's, so a surface never decides for itself
+        // what is fixable — and every action it names is a REAL endpoint
+        // or a real screen, never an invented one.
+        let mut document = json!({
+            "type": "doctor",
+            "checks": [
+                {"check": "credentials", "ok": false, "why": "the key is not set"},
+                {"check": "corpus", "ok": false, "why": "the corpus has moved"},
+                {"check": "api", "ok": true, "why": "reachable"},
+                // A check nothing can fix from here: the reason stands
+                // and no press is offered, which beats a press that fails.
+                {"check": "mystery", "ok": false, "why": "nobody knows"}
+            ]
+        });
+        with_repairs(&mut document);
+        let checks = document["checks"].as_array().unwrap();
+        // The credential is the person's to supply: its press opens the
+        // screen, and the route is the one the app actually serves.
+        assert_eq!(checks[0]["fix"]["action"], "#/settings/models");
+        assert_eq!(checks[0]["fix"]["label"], "add a key");
+        // The corpus's press is the self-healing route.
+        assert_eq!(checks[1]["fix"]["action"], "/api/corpus/sync");
+        // A passing check carries nothing: there is nothing to fix.
+        assert!(checks[2].get("fix").is_none(), "{}", checks[2]);
+        // An unfixable failure is honest about it rather than offering a
+        // button that cannot work.
+        assert!(checks[3].get("fix").is_none(), "{}", checks[3]);
+    }
+
+    #[test]
+    fn every_repair_names_a_route_the_bridge_serves() {
+        // The registry can only offer presses that land: each action is
+        // either a hash route (a screen the app draws) or a POST route
+        // this server answers.
+        let server = include_str!("server.rs");
+        for check in ["credentials", "corpus", "services", "layerfs", "runtime"] {
+            let fix = repair_for(check).unwrap_or_else(|| panic!("{check} carries no fix"));
+            let action = fix["action"].as_str().unwrap();
+            assert!(!fix["label"].as_str().unwrap().is_empty(), "{check}");
+            // No internal noun in the words a person reads.
+            for jargon in ["lane", "face", "seat", "surface", "rail"] {
+                let said = format!("{} {}", fix["label"], fix["note"]).to_lowercase();
+                assert!(!said.contains(jargon), "{check} says {jargon}: {fix}");
+            }
+            if action.starts_with('#') {
+                assert!(
+                    action.contains("/settings"),
+                    "{check}: a screen action is a settings route: {action}"
+                );
+            } else {
+                assert!(
+                    server.contains(&format!("\"{action}\"")),
+                    "{check}: {action} must be a route the server serves"
+                );
+            }
+        }
+        // A name that is not a check offers nothing.
+        assert!(repair_for("not-a-check").is_none());
+    }
+
+    #[test]
+    fn an_unused_log_and_a_machinery_only_one_are_nobody_s_conversation() {
+        // The owner's 2026-11-18 ruling, both halves: "most of these
+        // sessions were not user initiated... they don't belong in the
+        // threads or conversation history". Neither class may be counted
+        // as the owner's, and both stay in the archive — the ruling says
+        // they "may still be searchable".
+        //
+        // An unused log: a start record and nothing else.
+        let mut unused = row("u", None, None, false, None, None, Some(now_secs()));
+        unused.empty = true;
+        assert_eq!(work_class(&unused), "empty");
+        // A log whose every message names the machinery.
+        let mut probe = row(
+            "p",
+            None,
+            None,
+            false,
+            None,
+            Some("Reply with exactly the single word: done"),
+            Some(now_secs()),
+        );
+        probe.machinery_only = true;
+        assert_eq!(work_class(&probe), "probe");
+        // A real conversation keeps its place: a first message that names
+        // the work is the owner's, however terse.
+        let real = row(
+            "r",
+            None,
+            None,
+            false,
+            None,
+            Some("reviews and health are still sharing the icon"),
+            Some(now_secs()),
+        );
+        assert_eq!(work_class(&real), "yours");
+        // Empty outranks machinery_only: a log with no message at all is
+        // the narrower word even if a caller sets both.
+        let mut both = row("b", None, None, false, None, None, Some(now_secs()));
+        both.empty = true;
+        both.machinery_only = true;
+        assert_eq!(work_class(&both), "empty");
     }
 
     fn now_secs() -> u64 {
@@ -19679,21 +20602,31 @@ mod tests {
         );
         assert_eq!(rows[0]["last"], "write the file");
         assert_eq!(row_of(rows, &done_id)["state"], "finished");
-        // A row whose log carries nothing readable refuses by name —
-        // never a blank that reads as finished (AC4).
+        // An unused log belongs to nobody, so the phone's inbox does not
+        // list it at all (the owner's 2026-11-18 ruling). It cannot be
+        // waiting on anything either: a seat is a proposed tool call, and
+        // a proposal writes records — an empty log has none.
         let bare = crate::session::Session::create(&home, "deepseek-flash").unwrap();
         let bare_id = bare.id().to_string();
         drop(bare);
         let document = inbox_document(&home, &live, &seats, 50);
         let rows = document["sessions"].as_array().expect("rows");
-        let bare_row = row_of(rows, &bare_id);
         assert!(
-            bare_row
-                .get("refused")
-                .and_then(|why| why.as_str())
-                .is_some(),
-            "the un-readable row names why: {bare_row}"
+            rows.iter().all(|row| row["id"] != bare_id.as_str()),
+            "an unused log is nobody's and the inbox drops it: {document}"
         );
+        // AC4 still holds for the rows that DO render: a row whose log
+        // carries nothing readable refuses by name, never a blank that
+        // reads as finished. Pinned here on a row that is actually
+        // listed, which is where the honesty rule bites.
+        for row in rows {
+            let said = row.get("last").and_then(Value::as_str).unwrap_or("");
+            let refused = row.get("refused").and_then(Value::as_str).unwrap_or("");
+            assert!(
+                !(said.trim().is_empty() && refused.trim().is_empty()),
+                "a rendered row says nothing and names no reason: {row}"
+            );
+        }
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -20446,18 +21379,25 @@ mod tests {
                 crate::session::replay(&dir.join(format!("{id}.jsonl"))).expect("replays");
             assert_eq!(records.len(), 1, "{id}: {records:?}");
         }
-        // The archive shows both as conversations (one now carrying its
-        // first message).
+        // The archive still HOLDS both — a New press is a real log on
+        // disk — but neither is on the owner's conversation list: a log
+        // with nothing but its start record was never used, so it belongs
+        // to nobody and names no project (the owner's 2026-11-18 ruling).
+        // The empty count is where the archive keeps that honest.
         let document = bridge.sessions("", "", None).await;
         let rows = document["sessions"].as_array().expect("rows");
         for id in [&first, &second] {
-            let row = rows
-                .iter()
-                .find(|row| row["id"] == id.as_str())
-                .unwrap_or_else(|| panic!("{id} in {document}"));
-            assert_eq!(row["state"], "new", "{row}");
-            assert_eq!(row["class"], "yours", "{row}");
+            let shown = rows.iter().find(|row| row["id"] == id.as_str());
+            // A row may still ride the bounded background window; what it
+            // must never be is one of the owner's conversations.
+            if let Some(row) = shown {
+                assert_ne!(row["class"], "yours", "an unused log is nobody's: {row}");
+            }
         }
+        assert!(
+            document["counts"]["empty"].as_u64().unwrap_or(0) >= 2,
+            "the archive counts the unused logs: {document}"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -20666,13 +21606,13 @@ mod tests {
         });
         let (state, detail) = lane_row_state(&resolved);
         assert_eq!(state, "resolved");
-        assert_eq!(detail, "judgment lane");
+        assert_eq!(detail, "judgment service");
         assert!(!detail.contains('/'), "{detail}");
 
         let missing = serde_json::json!({ "name": "documents", "role": "documents" });
         let (state, detail) = lane_row_state(&missing);
         assert_eq!(state, "not resolved", "{state}");
-        assert_eq!(detail, "documents lane");
+        assert_eq!(detail, "documents service");
 
         // An unavailable lane names the reason it gave, verbatim — that
         // reason is the service's own sentence and reads as one line.
@@ -20773,5 +21713,65 @@ mod tests {
         assert_eq!(plan["tools"][0], "read_file");
         assert_eq!(read["critical_path"].as_array().unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[cfg(test)]
+mod approval_seed_tests {
+    use super::*;
+
+    /// A detached bridge on a home whose config names an approval word.
+    fn face_on(tag: &str, approvals: Option<&str>) -> Bridge {
+        let home =
+            std::env::temp_dir().join(format!("fleet-approval-seed-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        if let Some(word) = approvals {
+            std::fs::write(
+                home.join("config.json"),
+                serde_json::json!({ "approvals": word }).to_string(),
+            )
+            .unwrap();
+        }
+        let (bridge, _sources) = Bridge::detached(home, "deepseek-flash".to_string(), None);
+        bridge
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_face_starts_in_the_mode_the_owner_declared() {
+        // The defect the owner hit: `approvals: yes-guarded` in the config was
+        // honoured by `fleet run` and ignored by the face, which seeded `Ask`.
+        // Vision then prompted, because `Ask` used to mean "prompt for
+        // everything".
+        let declared = face_on("guarded", Some("yes-guarded"));
+        assert_eq!(
+            lock(&declared.state).permissions,
+            crate::approvals::Mode::YesGuarded,
+            "the face reads the setting the same way the CLI does"
+        );
+        let unguarded = face_on("yes", Some("yes"));
+        assert_eq!(
+            lock(&unguarded.state).permissions,
+            crate::approvals::Mode::Yes
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_home_that_declares_nothing_still_fails_closed() {
+        // C2: absent, `ask`, or a word nobody knows reads as `Ask`. That is
+        // `resolve`'s fail-closed branch and the face does not get a second
+        // opinion about it.
+        for (tag, word) in [
+            ("absent", None),
+            ("ask", Some("ask")),
+            ("garbage", Some("yolo")),
+        ] {
+            let bridge = face_on(tag, word);
+            assert_eq!(
+                lock(&bridge.state).permissions,
+                crate::approvals::Mode::Ask,
+                "{tag} must read as ask"
+            );
+        }
     }
 }

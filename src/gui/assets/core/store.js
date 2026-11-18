@@ -27,7 +27,20 @@ export const face = {
     // lose the row the owner chose. The address mirrors it.
     focus: null,
     // A panel's own filters, held in memory for this visit only.
-    sessionsFilter: 'all',
+    //
+    // `sessionsFilter` is the conversations list's state filter, and it
+    // had been DEAD since the work column took this surface over: declared
+    // here, read nowhere. The 2026-11-17 consolidation (threads + archive
+    // collapsed into one lens) needed exactly this field, so it is adopted
+    // rather than shadowed by a second one.
+    //
+    // The vocabulary is the owner's: a THREAD was never a second object,
+    // it was "a conversation that is active or was active recently and
+    // requires some user's input", and an ARCHIVE was "a conversation
+    // that is no longer active or expected to be active". So the list
+    // holds conversations and the filter says which states: active
+    // (the default — the day's work), archived, or all.
+    sessionsFilter: 'active',
     // The archive groups by project; a folded group and a query are the
     // two ways to narrow 147 rows without losing the grouping.
     sessionFolded: {},
@@ -248,5 +261,9 @@ export const face = {
     // surface the work is in.
     actionCards: [],
     // The run tab is the pane's own default: where are we, before what exists.
-    paneTab: 'run'
+    paneTab: 'run',
+    // The object the drawer is showing, by name: empty when nothing is
+    // open, which is what retires the detail tab (the owner's 2026-11-18
+    // ruling — the pane is part of the drawer, and its main component).
+    objectTitle: ''
   };

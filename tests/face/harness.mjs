@@ -1173,6 +1173,25 @@ function boot(options) {
         json: () => Promise.resolve(scripted.body || scripted),
       });
     }
+    // The health lens's own read (the owner's 2026-11-18 ruling): a
+    // failing check may carry the press that fixes it, and a case scripts
+    // the document so that press can be exercised.
+    // The board's own read (the owner's 2026-11-18 ruling): the work at
+    // execution level, one card per approved plan with its atomic tasks.
+    if (pathOnly === '/api/board' && method === 'GET') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.board ||
+          { type: 'board', counts: { queued: 0, 'in-process': 0, done: 0, plans: 0 },
+            plans: [], tasks: [], refused: [] }),
+      });
+    }
+    if (pathOnly === '/api/doctor' && method === 'GET') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.doctor || { type: 'doctor', checks: [] }),
+      });
+    }
     return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
   };
 
@@ -1322,6 +1341,15 @@ function boot(options) {
     FileReader: class {
       readAsText(file) {
         this.result = file && file.text != null ? file.text : '';
+        if (this.onload) this.onload();
+      }
+      // The image paste reads a Blob as a data URL: `data:<mime>;base64,<b64>`.
+      // The stub mirrors the real API's result shape so the handler's own
+      // split-on-comma is exercised rather than bypassed.
+      readAsDataURL(file) {
+        const mime = (file && file.type) || 'application/octet-stream';
+        const body = (file && file.data != null) ? file.data : '';
+        this.result = 'data:' + mime + ';base64,' + body;
         if (this.onload) this.onload();
       }
     },
@@ -1724,10 +1752,10 @@ async function theHeadCarriesTheWayOutAndTheSwitcher() {
   // conversation — never an older active one.
   const news = page.calls.filter((c) => c.url.startsWith('/api/session/new'));
   check('C3 New mints at the press', news.length === 1, String(news.length));
-  check('C3 New walks home', page.window.location.hash === '#/chat', page.window.location.hash);
+  check('C3 New walks home', page.window.location.hash === '#/sessions', page.window.location.hash);
   check('C3 the home shows the welcome',
     page.IDS.empty.hidden === false && page.IDS.log.hidden === true,
-    'empty hidden: ' + page.IDS.empty.hidden);
+    'empty hidden: ' + page.IDS.empty.hidden + ' log hidden: ' + page.IDS.log.hidden);
 }
 
 // C5 (face half): with a run working in another conversation, a send
@@ -1780,7 +1808,8 @@ async function aStreamedReplyRendersAtItsBoundary() {
         counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
         sessions: [row('stream-1', 'working', { title: 'streaming' })],
       },
-      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      state: (asked) => ({ ...emptyState(asked), session: asked,
+        driving: 'this-one', running: true }),
     },
   });
   await flush();
@@ -3393,8 +3422,16 @@ async function theAddressesHold() {
   await flush();
   chat.open();
   await flush();
-  check('C8 #/chat closes the work column', chat.body.dataset.work !== 'open', String(chat.body.dataset.work));
-  check('C8 #/chat hides the work column', chat.IDS['work-col'].hidden === true, 'hidden');
+  // `#/chat` and `#/sessions` are one lens now: the conversations list
+  // and the way back to it were two rail rows over one painter, and the
+  // owner's 2026-11-17 consolidation made them one destination with a
+  // live/archived/all filter. So the home CARRYING the column is the
+  // improvement, not a regression — before it, the home was the one
+  // place you could not get back to your other conversations from.
+  check('C8 #/chat carries the work column', chat.body.dataset.work === 'open',
+    String(chat.body.dataset.work));
+  check('C8 #/chat shows the conversations', chat.IDS['work-col'].hidden !== true,
+    String(chat.IDS['work-col'].hidden));
   check('C8 #/chat shows the front door', chat.IDS['empty'].hidden === false, 'empty hidden');
   check('C8 #/chat hides the conversation head', chat.IDS['conv-head'].hidden === true, 'head hidden');
   check('C8 #/chat keeps the composer', chat.IDS['composer'].offsetHeight > 0, 'composer');
@@ -3487,7 +3524,7 @@ async function theClearCommandStartsAConversation() {
   const news = page.calls.filter((call) => call.url.startsWith('/api/session/new'));
   check('C4 /clear mints at the press', news.length === 1, String(news.length));
   check('C4 /clear walks home with the intent',
-    page.window.location.hash === '#/chat' && page.IDS.empty.hidden === false,
+    page.window.location.hash === '#/sessions' && page.IDS.empty.hidden === false,
     page.window.location.hash + ' / empty hidden: ' + page.IDS.empty.hidden);
 }
 
@@ -4193,20 +4230,36 @@ async function theArchiveIsTheOneEndAndTheOwnersVerb() {
     !!handedWord && handedWord.textContent === 'handed back',
     handedWord && handedWord.textContent);
 
-  // The archived group is one collapsed line, closed by default.
-  const archivedToggle = page.rows('.work-background')
-    .find((t) => String(t.textContent).includes('archived'));
-  check('ARCH the archived group is one quiet line', !!archivedToggle,
-    page.text('work-list').slice(0, 80));
-  check('ARCH it is closed by default',
-    !!archivedToggle && archivedToggle.getAttribute('aria-expanded') === 'false',
-    archivedToggle && archivedToggle.getAttribute('aria-expanded'));
-
-  // Opening it shows the rows; their chips offer the way back.
-  if (archivedToggle) archivedToggle.click();
+  // The archived rows are reached by the STATE FILTER now, not by a quiet
+  // toggle at the bottom of the list (the owner's 2026-11-17
+  // consolidation: threads + archive are one lens with a filter, so the
+  // filter is the one control that says which rows are wanted).
+  const filters = page.rows('.work-filter');
+  check('ARCH the state filter offers active, archived and all',
+    filters.length === 3 &&
+      filters.map((b) => String(b.textContent)).join(' ') === 'active2 archived2 all4',
+    filters.map((b) => String(b.textContent)).join(' | '));
+  const archivedChoice = filters.find((b) => String(b.textContent).startsWith('archived'));
+  check('ARCH archived is not the default',
+    !!archivedChoice && archivedChoice.getAttribute('aria-pressed') === 'false',
+    archivedChoice && archivedChoice.getAttribute('aria-pressed'));
+  // Under the default (live) no archived row is listed at all — that is
+  // the difference the two old rail rows used to carry.
+  check('ARCH live hides the archived rows',
+    page.rows('.work-row').filter((r) => r.dataset.state === 'archived').length === 0,
+    String(page.rows('.work-row').length));
+  if (archivedChoice) archivedChoice.click();
   await flush();
+  // The press repaints the strip, so the selected button is a NEW node —
+  // asserting on the captured one would read the old attribute and fail a
+  // working control (which is exactly what it did).
+  const nowChosen = page.rows('.work-filter')
+    .find((b) => String(b.textContent).startsWith('archived'));
+  check('ARCH choosing archived selects it',
+    !!nowChosen && nowChosen.getAttribute('aria-pressed') === 'true',
+    nowChosen && nowChosen.getAttribute('aria-pressed'));
   const goneRows = page.rows('.work-row').filter((r) => r.dataset.state === 'archived');
-  check('ARCH opening shows the archived rows', goneRows.length === 2,
+  check('ARCH choosing archived shows the archived rows', goneRows.length === 2,
     String(goneRows.length));
   const back = goneRows[0] && goneRows[0].querySelector('.work-archive');
   check('ARCH an archived row offers unarchive',
@@ -4590,13 +4643,16 @@ async function theHomeIsAlwaysReachable() {
   await flush();
   page.open();
   await flush(80);
-  const link = page.rows('.surfaces-link').find((l) => l.dataset.address === 'chat');
+  // The rail's conversation door is `sessions` now: threads and archive
+  // were two rows over one list, and the owner's 2026-11-17 consolidation
+  // left the one that lists them (with a live/archived/all filter).
+  const link = page.rows('.surfaces-link').find((l) => l.dataset.address === 'sessions');
   check('N1 the rail carries the conversation item', !!link,
     String(page.rows('.surfaces-link').length) + ' links');
   if (link) link.click();
   await flush(60);
   check('N1 the conversation item lands on the home',
-    page.window.location.hash === '#/chat', page.window.location.hash);
+    page.window.location.hash === '#/sessions', page.window.location.hash);
   check('N1 the home shows the welcome, not the transcript',
     page.IDS.empty.hidden === false && page.IDS.log.hidden === true,
     'empty: ' + page.IDS.empty.hidden + ' / log: ' + page.IDS.log.hidden);
@@ -4697,7 +4753,7 @@ async function newMintsImmediatelyAndTheSendNamesIt() {
   page.fireOn('conv-new', 'click');
   await flush(40);
   check('NEW mints at the press',
-    news().length === 1 && page.window.location.hash === '#/chat',
+    news().length === 1 && page.window.location.hash === '#/sessions',
     news().length + ' / ' + page.window.location.hash);
   check('the pending draft returns', page.IDS.task.value === 'pending words',
     JSON.stringify(page.IDS.task.value));
@@ -6153,6 +6209,38 @@ async function theQueueReordersByDragAndDrainsWhenTheRunEnds() {
   check('QCON a drag moves the row to the drop position',
     texts().join(',') === 'two,three,one', texts().join(','));
 
+  // The REAL browser sequence, which the drag above never exercises: a
+  // browser fires `dragend` on the SOURCE row after the drop, and fires it
+  // ALONE when the drag is cancelled or leaves the list. A `dragend` that
+  // clears the source index unconditionally leaves the next drag with no
+  // origin — the owner's report: the row looks moved while dragging and
+  // does not land.
+  const second = { data: '0', setData(k, v) { this.data = String(v); }, getData() { return this.data; } };
+  rows()[2].fire('dragstart', { dataTransfer: second });
+  rows()[2].fire('dragend', {});
+  await flush();
+  check('QCON a cancelled drag leaves the queue untouched',
+    texts().join(',') === 'two,three,one', texts().join(','));
+  // The full sequence on a fresh drag: start at the tail, land at the head,
+  // with `dragend` after the drop exactly as the DOM spec orders it. The
+  // queue is restored afterwards so the drain below keeps its own premise.
+  const third = { data: '2', setData(k, v) { this.data = String(v); }, getData() { return this.data; } };
+  rows()[2].fire('dragstart', { dataTransfer: third });
+  rows()[0].fire('drop', { preventDefault() {}, dataTransfer: third });
+  rows()[2].fire('dragend', {});
+  await flush();
+  check('QCON a drag with the full event sequence lands the row',
+    texts().join(',') === 'one,two,three', texts().join(','));
+  // Back to two,three,one — the state the drag test asserted and the drain
+  // below expects — by the same verb the owner has.
+  const fourth = { data: '0', setData(k, v) { this.data = String(v); }, getData() { return this.data; } };
+  rows()[0].fire('dragstart', { dataTransfer: fourth });
+  rows()[2].fire('drop', { preventDefault() {}, dataTransfer: fourth });
+  rows()[0].fire('dragend', {});
+  await flush();
+  check('QCON the queue returns to the order the drain expects',
+    texts().join(',') === 'two,three,one', texts().join(','));
+
   // A failure drains the head exactly as a finish does (C3): the head
   // leaves the queue and the composer takes its words. The dispatch it
   // starts is the send path's own pin.
@@ -6160,6 +6248,27 @@ async function theQueueReordersByDragAndDrainsWhenTheRunEnds() {
   await flush(200);
   check('QCON the run failing drains the queue head',
     texts().join(',') === 'three,one', texts().join(','));
+
+  // The owner's report, reproduced LAST so the probes above keep their own
+  // premise: a drag whose dataTransfer carries the row's TEXT (a native
+  // text-drag, which a `draggable` ancestor starts when the pointer goes
+  // down on the row's own label) rather than our index. `dragIndex` is null
+  // by then, so the handler falls back to `Number(getData(...))`, which is
+  // NaN for a word, and RETURNS. The outline followed the cursor; nothing
+  // lands. That is the owner's symptom exactly.
+  const native = { data: 'one', setData(k, v) { this.data = String(v); }, getData() { return this.data; } };
+  const queued = () => page.rows('.queue-row').map((r) => r.querySelector('.queue-text').textContent);
+  const beforeNative = queued().join(',');
+  const hadRows = page.rows('.queue-row');
+  if (hadRows.length >= 2) {
+    hadRows[1].fire('dragstart', { dataTransfer: native });
+    hadRows[0].fire('dragend', {});
+    hadRows[0].fire('drop', { preventDefault() {}, dataTransfer: native });
+    await flush();
+    check('QCON a drop carrying text instead of an index never silently no-ops',
+      queued().join(',') !== beforeNative,
+      'before=' + beforeNative + ' after=' + queued().join(','));
+  }
 }
 
 // conversation-control C8: a live turn hides its rewind, and the run's
@@ -6249,15 +6358,32 @@ async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
   const objectRow = page.rows('.cfg-item')[0];
   if (objectRow) objectRow.click();
   await flush(40);
-  check('P the object card opens in the pane',
-    page.body.dataset.pane === 'open' && page.IDS['dock-object'].hidden === false &&
+  // The drawer IS the pane's main component (the owner's 2026-11-18
+  // ruling): an object opens the pane ON its detail tab, showing while the
+  // run's own view stands down — not stacked above it as a second card.
+  check('P the object opens the pane on its detail tab',
+    page.body.dataset.pane === 'open' &&
+      page.IDS['pane-detail'].hidden === false &&
+      page.IDS['tab-detail'].hidden === false &&
+      page.IDS['tab-detail'].getAttribute('aria-selected') === 'true' &&
+      page.IDS['pane-run'].hidden === true &&
       page.text('dock-object-title').length > 0,
-    page.text('dock-object-title'));
+    'pane=' + page.body.dataset.pane +
+      ' detail=' + page.IDS['pane-detail'].hidden +
+      ' selected=' + page.IDS['tab-detail'].getAttribute('aria-selected') +
+      ' title=' + page.text('dock-object-title'));
   page.fireOn('dock-object-close', 'click');
   await flush(20);
+  // Closing an object retires the detail TAB (the drawer is a pane tab now,
+  // not a card stacked above them): the panel hides with it and the pane
+  // falls back to the run.
   check('P closing the object returns the run tab',
-    page.IDS['dock-object'].hidden === true && page.IDS['face-card'].hidden === false,
-    'closed');
+    page.IDS['pane-detail'].hidden === true &&
+      page.IDS['tab-detail'].hidden === true &&
+      page.IDS['tab-run'].getAttribute('aria-selected') === 'true',
+    'detail hidden=' + page.IDS['pane-detail'].hidden +
+      ' tab hidden=' + page.IDS['tab-detail'].hidden +
+      ' run=' + page.IDS['tab-run'].getAttribute('aria-selected'));
 
   // The grip: drag left widens to the cap, the choice persists, the
   // double-click resets, and the separator takes the keyboard. The cap is
@@ -7088,9 +7214,17 @@ async function theStrategyStepShowsItsPreview() {
     await flush();
     empty.hash('#/huddles');
     for (let i = 0; i < 8; i++) await flush();
+    // The invitation names the thing the owner actually starts — a
+    // huddle — and says what one is without a single internal word
+    // (the owner's 2026-11-18 copy ruling).
+    const emptyCopy = String(empty.IDS['room-empty'].textContent);
     check('C9 no rooms yet reads as the invitation',
-      String(empty.IDS['room-empty'].textContent).indexOf('A room for the work') !== -1,
-      String(empty.IDS['room-empty'].textContent).slice(0, 80));
+      emptyCopy.indexOf('Start a huddle') !== -1,
+      emptyCopy.slice(0, 80));
+    check('C9 the invitation explains a huddle in plain words',
+      emptyCopy.indexOf('working session') !== -1 &&
+        !/\bface\b|\bseat\b|\blane\b|\bledger\b/.test(emptyCopy),
+      emptyCopy.slice(0, 160));
     const picks = empty.rows('.picks .pick');
     check('C9 the invitation offers the home’s bots',
       picks.length >= 1, 'picks=' + picks.length);
@@ -10951,17 +11085,22 @@ async function theCalibrationRailCarriesTheGateAndTheDay() {
 
 async function theConversationNamesThemselvesByTheirWork() {
   // The sessions document in the bridge's own shape: one session named
-  // by its standing goal, one by its last plan, one by the owner's
-  // rename — the ladder derived server-side, the rung riding beside
-  // the name.
+  // by its standing goal, one by the first deliverable it asked for,
+  // one by the first plan it executed, one by the owner's rename — the
+  // ladder derived server-side, the rung riding beside the name.
   const sessionsDoc = {
     type: 'sessions', read_at: 'now', current: 'goal-1',
-    counts: { needs: 0, working: 1, background: 0, earlier: 2, total: 3 },
+    counts: { needs: 0, working: 1, background: 0, earlier: 4, total: 5 },
     sessions: [
       { ...row('goal-1', 'working', { title: 'rethink the landing for the owner\u2019s work',
         title_from: 'goal' }) },
-      { ...row('plan-1', 'completed', { title: 'the landing plan: the greet and the head',
+      { ...row('deliv-1', 'completed', { title: 'The quarterly report',
+        title_from: 'deliverable' }) },
+      { ...row('plan-1', 'completed', { title: 'the first plan: the greet and the head',
         title_from: 'plan' }) },
+      { ...row('subj-1', 'completed', {
+        title: 'reviews and health are still having the same icons',
+        title_from: 'subject' }) },
       { ...row('owner-1', 'completed', { title: 'renamed by the owner', title_from: 'owner' }) },
     ],
   };
@@ -10982,13 +11121,35 @@ async function theConversationNamesThemselvesByTheirWork() {
   const workText = page.text('work-list') || page.rows('.work-row').map((r) => r.textContent).join(' | ');
   check('NAME the rail rows carry the dynamic names',
     workText.includes('rethink the landing') &&
-      workText.includes('the landing plan: the greet') &&
+      workText.includes('the first plan: the greet') &&
+      workText.includes('The quarterly report') &&
       workText.includes('renamed by the owner'),
     workText.slice(0, 220));
   check('NAME the header names the open conversation and its rung',
     page.text('conv-name').includes('rethink the landing') &&
       (page.IDS['conv-title'] || { title: '' }).title.includes('the standing goal'),
     page.text('conv-name') + ' / ' + (page.IDS['conv-title'] || { title: '?' }).title);
+
+  // The rung words are the ruling's own (2026-11-18): the deliverable
+  // asked for, and the FIRST plan — a later plan never names a row, so
+  // a tooltip claiming "the last plan" would contradict the ladder.
+  const rungOf = async (id) => {
+    page.hash('#/sessions/' + id);
+    await flush(200);
+    return (page.IDS['conv-title'] || { title: '' }).title || '';
+  };
+  const deliv = await rungOf('deliv-1');
+  check('NAME the deliverable rung says what named the row',
+    deliv.includes('the first deliverable asked for'), deliv);
+  const plan = await rungOf('plan-1');
+  check('NAME the plan rung says FIRST, never the last',
+    plan.includes('the first plan') && !plan.includes('last plan'), plan);
+  // The subject rung: the case with no deliverable and no plan — a
+  // conversation whose first message named the machinery is named by
+  // the first message that is about the work.
+  const subj = await rungOf('subj-1');
+  check('NAME the subject rung says which message named the row',
+    subj.includes('the first message about the work'), subj);
 }
 
 // KI-380 (the zombie tab): the page whose server died never said so and
@@ -11771,7 +11932,7 @@ async function theThreeMissingSecondRailsAreInPlace() {
   const healthNames = healthRows.map((r) => String(r.textContent || '').replace(/\s+/g, ' ').trim());
   check('RAIL health wears the second rail', healthRows.length >= 3, healthNames.join(' | '));
   check('RAIL health\u2019s rows are its checks, not projects',
-    healthNames.some((n) => n.includes('lanes')) &&
+    healthNames.some((n) => n.includes('services')) &&
       healthNames.some((n) => n.includes('doctor')) &&
       healthNames.some((n) => n.includes('build')),
     healthNames.join(' | '));
@@ -11825,35 +11986,46 @@ async function theThreeMissingSecondRailsAreInPlace() {
     inbox.rows('.ib-seg button').length === 0 && inbox.rows('.ib-chip').length === 0,
     'seg=' + inbox.rows('.ib-seg button').length + ' chip=' + inbox.rows('.ib-chip').length);
 
-  // Board: per project, with all tasks kept.
-  const tasks = { type: 'tasks', tasks: [
-    { id: 't1', project: 'fleet', title: 'a', status: 'working' },
-    { id: 't2', project: 'fleet', title: 'b', status: 'done' },
-    { id: 't3', project: 'other', title: 'c', status: 'blocked' },
-  ] };
+  // Board: per PLAN (the owner's 2026-11-18 ruling replaced the old
+  // project scope — the board shows work at execution level, and the unit
+  // the owner started and can recognise is the plan, not the folder).
+  const boardDoc = {
+    type: 'board', read_at: 'now', refused: [], tasks: [],
+    counts: { queued: 2, 'in-process': 0, done: 0, plans: 2 },
+    plans: [
+      { id: 'the-first-plan', plan: 'a.md', status: 'active', workload: 'mixture',
+        queued: 1, updated: '2026-11-18', tasks: [
+          { id: 'a1', title: 'do a', column: 'queued', state: 'ready', status: 'pending',
+            cost: 1, assignee: 'mixture', depends_on: [], waiting_on: [], reason: null }] },
+      { id: 'the-second-plan', plan: 'b.md', status: 'active', workload: 'swarm',
+        queued: 1, updated: '2026-11-18', tasks: [
+          { id: 'b1', title: 'do b', column: 'queued', state: 'ready', status: 'pending',
+            cost: 1, assignee: 'swarm', depends_on: [], waiting_on: [], reason: null }] },
+    ],
+  };
   const board = boot({ width: 1440, hash: '#/board', documents: {
-    tasks, state: (asked) => emptyState(asked), onboard: onboardDoc({ door: false }) } });
+    board: boardDoc, state: (asked) => emptyState(asked), onboard: onboardDoc({ door: false }) } });
   await flush(60);
   board.open();
   await flush(240);
   const boardRows = board.rows('.section-rail-row');
   const boardNames = boardRows.map((r) => String(r.textContent || '').replace(/\s+/g, ' ').trim());
-  check('RAIL the board is scoped by project',
-    boardNames.some((n) => n.includes('all tasks')) &&
-      boardNames.some((n) => n.includes('fleet')) &&
-      boardNames.some((n) => n.includes('other')),
+  check('RAIL the board is scoped by plan',
+    boardNames.some((n) => n.includes('every plan')) &&
+      boardNames.some((n) => n.includes('the-first-plan')) &&
+      boardNames.some((n) => n.includes('the-second-plan')),
     boardNames.join(' | '));
-  check('RAIL the all-tasks row counts every task',
-    boardNames[0] && boardNames[0].includes('3'), boardNames.join(' | '));
-  // Picking a project narrows the board to its tasks.
-  const other = boardRows.find((r) => String(r.textContent || '').includes('other'));
-  if (other) other.click();
-  await flush(160);
-  check('RAIL picking a project scopes the board to it',
-    board.text('board-board').includes('The board \u00b7 other'),
-    board.text('board-board').slice(0, 80));
-  check('RAIL the project scope names only that project\u2019s work',
+  check('RAIL the every-plan row counts the plans',
+    boardNames[0] && boardNames[0].includes('2'), boardNames.join(' | '));
+  // Picking a plan narrows the board to its own card.
+  const second = boardRows.find((r) => String(r.textContent || '').includes('the-second-plan'));
+  if (second) second.click();
+  await flush(200);
+  check('RAIL picking a plan scopes the board to it',
     board.rows('.board-card').length === 1, String(board.rows('.board-card').length));
+  check('RAIL the plan scope shows that plan\u2019s tasks only',
+    board.text('board-board').includes('do b') && !board.text('board-board').includes('do a'),
+    board.text('board-board').slice(0, 120));
 }
 
 async function everyCalibrationOpNamesItsOwnDrawing() {
@@ -12050,8 +12222,8 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
     toggle.click();
     await flush();
     check('ICONS the toggle names its state after a press',
-      toggle.getAttribute('aria-label') === 'expand the surfaces rail' &&
-        toggle.title === 'expand the surfaces rail',
+      toggle.getAttribute('aria-label') === 'expand the menu' &&
+        toggle.title === 'expand the menu',
       'label=' + toggle.getAttribute('aria-label') + ' title=' + toggle.title);
   }
 
@@ -12110,14 +12282,20 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
     // (KI-568): the build's receipt, and the only door to the update
     // apply, which used to sit three presses deep in a section the rail
     // never named.
-    check('ICONS the rail lists the destinations', links.length === 11,
+    // TEN, not eleven: `threads` and `archive` were two rows over one
+    // list, and the owner's 2026-11-17 consolidation made them one
+    // destination with a live/archived/all filter (the difference between
+    // the two surfaces was a filter, never a place). The count is the
+    // assertion the consolidation changes, so it is the one that should
+    // be read — not a subtraction nobody re-derives.
+    check('ICONS the rail lists the destinations', links.length === 10,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 11,
+      shapes.every(Boolean) && new Set(shapes).size === 10,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
 
     // The owner's own report, on the rendered rail rather than in the
@@ -14178,30 +14356,58 @@ const boardTasks = () => ({
   ],
 });
 async function theBoardRendersColumnsAndSettlesMoves() {
-  const page = boot({ documents: { tasks: boardTasks(), state: (asked) => emptyState(asked) }, hash: '#/board' });
+  // The board became an EXECUTION view (the owner's 2026-11-18 ruling): one
+  // card per approved plan, each task in the column it stands in, and a
+  // press that opens the task's context. The old drag-and-settle shape —
+  // bulk selection and a `done` move that posted a status — is gone with
+  // it, because a plan's node is driven by its own run, not by dragging.
+  const boardDoc = {
+    type: 'board', read_at: 'now', refused: [], tasks: [],
+    counts: { queued: 1, 'in-process': 1, done: 1, plans: 1 },
+    plans: [{
+      id: 'the-run', plan: 'a.md', status: 'active', workload: 'mixture',
+      queued: 1, updated: '2026-11-18',
+      tasks: [
+        { id: 'q1', title: 'write the release notes', column: 'queued', state: 'ready',
+          status: 'pending', cost: 1, assignee: 'mixture', depends_on: [],
+          waiting_on: [], reason: null },
+        { id: 'r1', title: 'run the checks', column: 'in-process', state: 'running',
+          status: 'running', cost: 1, assignee: 'mixture', depends_on: [],
+          waiting_on: [], reason: null },
+        { id: 'd1', title: 'read the brief', column: 'done', state: 'verified',
+          status: 'verified', cost: 1, assignee: 'mixture', depends_on: [],
+          waiting_on: [], reason: null },
+      ],
+    }],
+  };
+  const page = boot({
+    documents: { board: boardDoc, state: (asked) => emptyState(asked), onboard: onboardDoc({ door: false }) },
+    hash: '#/board',
+  });
   page.open();
-  await flush(80);
+  await flush(200);
   const cols = page.rows('.board-col');
   check('S4 the board renders three columns', cols.length === 3, 'cols=' + cols.length);
-  check('S4 the cards land in their status columns',
+  check('S4 the tasks land in their columns',
     page.text('board-board').includes('write the release notes') &&
-      page.rows('.board-card').length === 3,
-    'cards=' + page.rows('.board-card').length);
-  // Bulk is explicit: a check selects, the bulk bar appears.
-  const check1 = page.rows('.board-check')[0];
-  check1.click();
-  await flush(40);
-  check('S4 bulk selection shows the bulk bar',
-    page.rows('.board-bulk').length === 1 && page.rows('.board-bulk')[0].hidden === false,
-    'bulk bar present');
-  // Optimistic-then-settled: a move posts the status and the card moves.
-  const moveBtn = page.rows('.board-move').filter((b) => b.textContent === 'done')[0];
-  moveBtn.click();
-  await flush(80);
-  const posts = page.calls.filter((c) => c.url === '/api/tasks/status' && c.method === 'POST');
-  check('S4 the status move posts and settles',
-    posts.length >= 1 && JSON.parse(posts[0].body).status === 'done',
-    JSON.stringify(posts.map((c) => c.body)));
+      page.rows('.board-task').length === 3,
+    'tasks=' + page.rows('.board-task').length);
+  // Every column holds exactly the task that belongs to it.
+  const byCol = (name) => page.rows('.board-col[data-status="' + name + '"] .board-task').length;
+  check('S4 each column holds its own tasks',
+    byCol('queued') === 1 && byCol('in-process') === 1 && byCol('done') === 1,
+    'queued=' + byCol('queued') + ' in-process=' + byCol('in-process') +
+      ' done=' + byCol('done'));
+  // A task is inspected, not dragged: the press opens its context, and the
+  // old bulk/move controls are gone rather than left lying.
+  check('S4 the drag-and-settle controls are retired',
+    page.rows('.board-bulk').length === 0 && page.rows('.board-move').length === 0,
+    'bulk=' + page.rows('.board-bulk').length + ' move=' + page.rows('.board-move').length);
+  page.rows('.board-task')[0].click();
+  await flush(160);
+  check('S4 a task press opens its context',
+    (page.text('dock-object-body') + page.text('drawer-body')).includes('write the release notes'),
+    page.text('dock-object-body').slice(0, 120));
 }
 
 // S6 (U0): the workspace shell — ONE read feeds the lenses and the pivot
@@ -14254,18 +14460,35 @@ async function theSpineFeedsTheLensesAndThePivotStaysInPlace() {
       ], deliverables: [], threads: [], instances: [],
         intelligence: { tools: 2, workflows: 1 } },
     },
-    hash: '#/board',
+    // The board left the spine when it became an execution view (the
+    // owner's 2026-11-18 ruling): it now reads `/api/board`, one card per
+    // approved plan. The claim this case makes — ONE read feeds the lens,
+    // and the pivot renders in place rather than fetching a foreign panel
+    // — is still true of the surfaces the spine feeds, so it is asserted
+    // on the inbox, which reads the spine for its work rows.
+    hash: '#/inbox',
   });
   page.open();
-  await flush(80);
-  check('S6 the board projects from the spine',
-    page.text('board-board').includes('the spine task'),
-    page.text('board-board').slice(0, 80));
-  const taskFetches = page.calls.filter((c) => c.url === '/api/tasks' && c.method === 'GET').length;
+  await flush(120);
   const spineFetches = page.calls.filter((c) => c.url === '/api/workspace' && c.method === 'GET').length;
-  check('S6 one read feeds the lens',
-    taskFetches === 0 && spineFetches >= 1,
-    'tasks fetches=' + taskFetches + ' spine fetches=' + spineFetches);
+  check('S6 one read feeds the lens', spineFetches >= 1,
+    'spine fetches=' + spineFetches);
+  // The board reads ITS OWN document now, and never the old tasks route.
+  const boardPage = boot({
+    documents: { board: { type: 'board', read_at: 'now', refused: [], tasks: [],
+      counts: { queued: 0, 'in-process': 0, done: 0, plans: 0 }, plans: [] },
+      state: (asked) => emptyState(asked), onboard: onboardDoc({ door: false }) },
+    hash: '#/board',
+  });
+  boardPage.open();
+  await flush(160);
+  check('S6 the board reads its own document',
+    boardPage.calls.filter((c) => c.url === '/api/board').length >= 1 &&
+      boardPage.calls.filter((c) => c.url === '/api/tasks').length === 0,
+    'board=' + boardPage.calls.filter((c) => c.url === '/api/board').length +
+      ' tasks=' + boardPage.calls.filter((c) => c.url === '/api/tasks').length);
+  page.hash('#/board');
+  await flush(120);
   // The pivot renders in place: the address reflects the lens, and the
   // workspace spine is re-read to project it — never a foreign panel.
   const nodes = page.IDS['tissue-graph'].querySelectorAll('.tissue-node');
@@ -14508,12 +14731,12 @@ async function theHealthLensIsVisibleAndFindable() {
     .map((row) => String(row.textContent || '').replace(/\s+/g, ' ').trim());
   check('P2 the health rail names its checks',
     healthRail.length === 3 &&
-      healthRail.some((t) => t.includes('lanes')) &&
+      healthRail.some((t) => t.includes('services')) &&
       healthRail.some((t) => t.includes('doctor')) &&
       healthRail.some((t) => t.includes('build')),
     healthRail.join(' | '));
   check('P2 the health lens shows the chosen check',
-    board.includes('the lanes'), board.slice(0, 160));
+    board.includes('the services'), board.slice(0, 160));
   // Pressing another row shows that check — the rail is the navigation.
   const doctorRow = page.rows('.section-rail-row')
     .find((row) => String(row.textContent || '').includes('doctor'));
@@ -14522,6 +14745,593 @@ async function theHealthLensIsVisibleAndFindable() {
   check('P2 a rail press brings that check to the board',
     page.text('brain-board').includes('the doctor'),
     page.text('brain-board').slice(0, 120));
+}
+
+// The owner's 2026-11-18 rulings on the contextual pane: D1 the
+// conversation's folder IS the project ("most conversations have a folder;
+// if they don't you can't really do much work any way"), D2 `made here` is
+// the current session's artifacts, D3 ONE source of truth ("we shouldn't
+// have two different sources, and that rule basically should apply
+// everywhere").
+async function thePaneIsRootedAtTheConversationsProject() {
+  const page = boot({
+    width: 1440, hash: '#/sessions/this-one',
+    documents: {
+      sessions: { type: 'sessions', read_at: 'now', current: 'this-one',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('this-one', 'completed', { title: 'this conversation' })] },
+      state: (asked) => ({
+        ...emptyState(asked), session: asked,
+        // The state document's own `folder` — `Bridge::effective_folder`'s
+        // answer, which is what the run uses and what the pane must read.
+        folder: { path: '/Users/someone/Projects/the-project',
+          name: 'the-project', rel: 'Projects/the-project' },
+      }),
+      tree: { type: 'tree', path: '', entries: [] },
+    },
+  });
+  await flush();
+  page.open();
+  await flush(200);
+  page.IDS['pane-open'].click();
+  await flush(200);
+  page.IDS['tab-files'].click();
+  await flush(200);
+
+  // The tree read names the conversation, so the bridge can root it at that
+  // conversation's folder rather than the process directory.
+  const reads = page.calls.filter((c) => String(c.url).startsWith('/api/tree'));
+  check('CTX the files read names the conversation',
+    reads.some((c) => String(c.url).includes('session=this-one')),
+    JSON.stringify(reads.map((c) => c.url)));
+
+  // C1: the pane NAMES the project it is showing. A scope that cannot be
+  // seen is how a pane shows another project's files without saying so.
+  const said = page.text('pane-project');
+  check('CTX the pane names the project it is rooted at',
+    said.includes('the-project'), said);
+  check('CTX the name comes from the state document, not a second source',
+    said.includes('project'), said);
+}
+
+// The owner's 2026-11-18 rulings on the pane's delegation tab: D1 the
+// CONVERSATION's tree (session-bound, covering the plan being executed and
+// non-plan work alike), D2 the current work only, D3 "show just as a tree
+// that shows the delegatable work status and depends on not visually fancy
+// but effective for a pane on the drawer."
+async function thePaneCarriesTheDelegationTree() {
+  const delegation = {
+    type: 'delegation', read_at: 'now', depth_cap: 4, refused: [],
+    live: {
+      id: 'parent-1', goal: 'the goal that delegated', status: 'running',
+      depth: 0, stop_reason: null, children: [
+        { id: 'kid-1', goal: 'the first child', status: 'stopped', depth: 1,
+          stop_reason: 'completed', children: [] },
+        { id: 'kid-2', goal: 'the second child', status: 'running', depth: 1,
+          stop_reason: null, children: [] },
+      ],
+    },
+    history: [],
+    graph: {
+      nodes: [
+        { id: 'first', state: 'verified', status: 'verified', cost: 1, prereqs: [] },
+        { id: 'second', state: 'waiting', status: 'pending', cost: 2, prereqs: ['first'] },
+      ],
+      edges: [[0, 1]], critical_path: [], blocks_most_work: null,
+      revisions: 0, diff_score: 0, replan: false,
+    },
+  };
+  const page = boot({
+    width: 1440, hash: '#/sessions/this-one',
+    documents: {
+      sessions: { type: 'sessions', read_at: 'now', current: 'this-one',
+        counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 1 },
+        sessions: [row('this-one', 'working', { title: 'this conversation' })] },
+      delegation,
+      state: (asked) => ({ ...emptyState(asked), session: asked,
+        driving: 'this-one', running: true }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(200);
+  page.push({ type: 'session', session: 'this-one' });
+  await flush(120);
+
+  // D1: the tab reads THIS conversation's delegation, not the launch
+  // session's — the route already honoured `?session=`, and the pane now
+  // names it. The pane asks on open, so the case opens it first.
+  page.IDV = null;
+  page.IDS['pane-open'].click();
+  await flush(200);
+  const asks = page.calls.filter((c) => String(c.url).startsWith('/api/delegation'));
+  check('TREE the pane asks the delegation read for this conversation',
+    asks.some((c) => String(c.url).includes('session=this-one')),
+    JSON.stringify(asks.map((c) => c.url)));
+  const tab = page.IDS['tab-work'];
+  check('TREE the pane carries a work tab when delegations exist',
+    tab && tab.hidden === false, 'hidden=' + (tab && tab.hidden));
+  if (tab) tab.click();
+  await flush(200);
+  // D3: rows, a status, and what it depends on — the plain tree.
+  const rows = page.rows('#pane-work-list .pane-work-row');
+  check('TREE the tab draws one row per delegated run',
+    rows.length >= 3, 'rows=' + rows.length);
+  const said = page.text('pane-work-list');
+  check('TREE the rows name what was delegated',
+    said.includes('the goal that delegated') && said.includes('the first child'),
+    said.slice(0, 160));
+  check('TREE a dependent row names what it waits on',
+    said.includes('after first'), said.slice(0, 200));
+  check('TREE the tree carries no plot, just rows',
+    page.rows('#pane-work-list svg').length === 0,
+    'svgs=' + page.rows('#pane-work-list svg').length);
+}
+
+// The owner's 2026-11-18 ruling (node completion D3): "the orchestration
+// model already knows when a deliverable is completed, that's the signal to
+// update the execution on the pane."
+//
+// So a delegation finishing is what moves the board — not a poll of its own,
+// and not a second liveness clock. A child bound to a plan node reports
+// `done`, and the execution view rereads.
+async function aFinishedDelegationUpdatesTheExecutionView() {
+  const page = boot({
+    // The board is a lens on a CONVERSATION: the delegation events name the
+    // child in `session` and the parent in `parent`, and the reducer passes a
+    // child only when the conversation it belongs to is the one showing.
+    // A CONVERSATION route, like the queue's own case: the reducer only
+    // paints into a conversation's transcript, and `#/chat` is the landing
+    // page with none. The case then moves to the board.
+    hash: '#/sessions/this-one',
+    documents: {
+      sessions: { type: 'sessions', read_at: 'now', current: 'this-one',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('this-one', 'completed', { title: 'this conversation' })] },
+      board: {
+        type: 'board', read_at: 'now', refused: [], tasks: [],
+        counts: { queued: 1, 'in-process': 0, done: 0, plans: 1 },
+        plans: [{
+          id: 'the-run', plan: 'a.md', status: 'active', workload: 'mixture',
+          queued: 1, updated: '2026-11-18',
+          tasks: [{ id: 't1', title: 'the task', column: 'queued', state: 'ready',
+            status: 'pending', cost: 1, assignee: 'mixture', depends_on: [],
+            waiting_on: [], reason: null }],
+        }],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(240);
+  page.push({ type: 'session', session: 'this-one' });
+  await flush(80);
+  page.hash('#/board');
+  await flush(200);
+  const before = page.calls.filter((c) => c.url === '/api/board').length;
+  check('D3 the board is read on arrival', before >= 1, 'reads=' + before);
+  // The guard the reread hangs off: a board that never landed has nothing
+  // to refresh, and the case has to know which side of it it is on.
+  check('D3 the board document landed', page.text('board-board').length > 0,
+    'board=' + page.text('board-board').slice(0, 60));
+
+  // A child starts and finishes. The finish is the signal. The event names
+  // the CHILD in `session` and the parent in `parent` — the reducer passes a
+  // delegation only when this conversation raised it (a background run's
+  // child stays a row in the work list rather than landing in a transcript
+  // it does not belong to), so the parent is what a real event carries.
+  page.push({ type: 'delegation', session: 'kid-1', parent: 'this-one',
+    goal: 'a delegated node', stage: 'spawned', detail: {} });
+  await flush(120);
+  page.push({ type: 'delegation', session: 'kid-1', parent: 'this-one',
+    goal: 'a delegated node', stage: 'done',
+    detail: { outcome: 'completed', turns: 3 } });
+  await flush(200);
+  const after = page.calls.filter((c) => c.url === '/api/board').length;
+  check('D3 a finished delegation rereads the execution view', after > before,
+    'before=' + before + ' after=' + after);
+}
+
+// The owner's 2026-11-18 ruling: "the icon to show the pane should open the
+// drawer and show the contextual pane."
+//
+// The icon is the owner asking "show me what I am looking at", so it must
+// open the CONTEXTUAL view — the inspected object, or the surface's own
+// context — rather than dropping them on whichever tab they last used. The
+// remembered tab is still what a reload returns to; the two are different
+// questions and the case pins both.
+async function thePaneIconOpensTheContextualView() {
+  // A board task whose detail is open: the pane's own contextual content
+  // (the drawer's detail tab) is what the icon must show.
+  const boardDoc = {
+    type: 'board', read_at: 'now', refused: [], tasks: [],
+    counts: { queued: 1, 'in-process': 0, done: 0, plans: 1 },
+    plans: [{
+      id: 'the-run', plan: 'a.md', status: 'active', workload: 'mixture',
+      queued: 1, updated: '2026-11-18',
+      tasks: [{ id: 't1', title: 'the one task', column: 'queued', state: 'ready',
+        status: 'pending', cost: 1, assignee: 'scholar', depends_on: [],
+        waiting_on: [], reason: null, approach: 'what this task does' }],
+    }],
+  };
+  const page = boot({
+    width: 1440, hash: '#/board',
+    documents: {
+      board: boardDoc,
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      onboard: onboardDoc({ door: false }),
+    },
+    // The owner last used `files`: the icon must NOT honour that.
+    storage: { 'fleet-pane-tab': 'files' },
+  });
+  await flush();
+  page.open();
+  await flush(220);
+
+  // Open a task: the drawer fills and the pane shows its detail.
+  const task = page.rows('.board-task')[0];
+  check('ICON a board task is on the board', !!task, 'rows=' + page.rows('.board-task').length);
+  if (task) task.click();
+  await flush(200);
+  check('ICON inspecting a task opens the pane on its detail',
+    page.body.dataset.pane === 'open' &&
+      page.IDS['tab-detail'].getAttribute('aria-selected') === 'true',
+    'pane=' + page.body.dataset.pane +
+      ' detail=' + page.IDS['tab-detail'].getAttribute('aria-selected'));
+
+  // The discriminating sequence: the object stays open, the owner browses
+  // the files tab (so `face.paneTab` is `files`, the last one used), the
+  // pane closes, and the icon is pressed. The remembered tab and the
+  // contextual tab now disagree — which is the whole point of the ruling.
+  page.IDS['tab-files'].click();
+  await flush(120);
+  check('ICON the owner can browse files beside the open object',
+    page.IDS['tab-files'].getAttribute('aria-selected') === 'true',
+    page.IDS['tab-files'].getAttribute('aria-selected'));
+  page.IDS['pane-close'].click();
+  await flush(80);
+  check('ICON the pane closes', page.body.dataset.pane !== 'open', page.body.dataset.pane);
+  page.IDS['pane-open'].click();
+  await flush(140);
+  check('ICON the icon opens the pane', page.body.dataset.pane === 'open',
+    page.body.dataset.pane);
+  check('ICON the icon shows the contextual view, not the last-used tab',
+    page.IDS['tab-detail'].getAttribute('aria-selected') === 'true' &&
+      page.IDS['tab-files'].getAttribute('aria-selected') !== 'true',
+    'detail=' + page.IDS['tab-detail'].getAttribute('aria-selected') +
+      ' files=' + page.IDS['tab-files'].getAttribute('aria-selected'));
+}
+
+// The owner's 2026-11-18 request: "I need to be able to paste one or more
+// images from the clipboard into the composer" — "with cmd-V on the keyboard".
+//
+// The handler used to REFUSE images with "an image cannot ride the composer
+// yet", and even the button stopped at one. Now ⌘V attaches every image the
+// event carries, through the same pipeline the button uses.
+async function pastePutsEveryImageOnTheComposer() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: 'ref-1',
+      counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+      sessions: [row('ref-1', 'working', { title: 'a run' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked,
+      driving: 'ref-1', running: true }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/ref-1', documents: doc });
+  await flush();
+  page.open();
+  await flush(120);
+
+  // One ⌘V carrying two images, the way a real event delivers them.
+  const file = (name, data) => ({
+    name, type: 'image/png', size: data.length, data,
+    getAsFile() { return this; },
+  });
+  const first = file('shot-a.png', 'AAAA');
+  const second = file('shot-b.png', 'BBBB');
+  const clipboardData = {
+    files: [],
+    items: [
+      { kind: 'file', type: 'image/png', getAsFile: () => first },
+      { kind: 'file', type: 'image/png', getAsFile: () => second },
+    ],
+  };
+  page.IDS['task'].fire('paste', { clipboardData });
+  await flush(120);
+  const chips = page.IDS['attach-chips'].children;
+  check('PASTE ⌘V attaches every image it carries', chips.length === 2,
+    'chips=' + chips.length + ' ' +
+      Array.prototype.map.call(chips, (c) => c.textContent).join(' | '));
+  const said = Array.prototype.map.call(chips, (c) => c.textContent).join(' | ');
+  check('PASTE the chips name both images',
+    said.includes('shot-a.png') && said.includes('shot-b.png'), said);
+
+  // Text with no image still pastes as text: the ordinary case is untouched.
+  const page2 = boot({ width: 1440, hash: '#/sessions/ref-1', documents: doc });
+  await flush();
+  page2.open();
+  await flush(120);
+  page2.IDS['task'].fire('paste', {
+    clipboardData: { files: [], items: [{ kind: 'string', type: 'text/plain' }] },
+  });
+  await flush(60);
+  check('PASTE text with no image leaves the composer to the browser',
+    page2.IDS['attach-chips'].children.length === 0,
+    'chips=' + page2.IDS['attach-chips'].children.length);
+
+  // The button and the keyboard agree: a list reply attaches all of them.
+  const many = {
+    type: 'clipboard', kind: 'images',
+    images: [
+      { name: 'one.png', mime: 'image/png', bytes: 'AAAA', size: 2048 },
+      { name: 'two.png', mime: 'image/png', bytes: 'BBBB', size: 2048 },
+    ],
+  };
+  const page3 = boot({ width: 1440, hash: '#/sessions/ref-1',
+    documents: { ...doc, clipboard: many } });
+  await flush();
+  page3.open();
+  await flush(120);
+  page3.IDS['paste'].click();
+  await flush(80);
+  const buttonChips = page3.IDS['attach-chips'].children;
+  check('PASTE the button attaches a list too', buttonChips.length === 2,
+    'chips=' + buttonChips.length);
+}
+
+// The owner's 2026-11-18 ruling: "now the board, it should show queued work
+// that's pending, in the case of plans each card should show the atomic
+// delegatable tasks and to which workload/persona that it's going to be
+// assigned to, when clicked on the tasks should show the drawer and all the
+// contextual information associated with with all of the dependencies,
+// queued, in process, and done."
+//
+// The board is the owner's work at execution level: one card per approved
+// plan, each task in its column, the assignee on the row, and a drawer that
+// answers what a task is and what stands between it and done.
+async function theBoardShowsQueuedWorkWithItsAssignment() {
+  const board = {
+    type: 'board', read_at: 'now',
+    counts: { queued: 3, 'in-process': 1, done: 1, plans: 1 },
+    refused: [],
+    tasks: [],
+    plans: [{
+      id: 'the-run', plan: '2026-11-18-the-run.md', status: 'active',
+      workload: 'mixture', queued: 3, updated: '2026-11-18',
+      tasks: [
+        { id: 'first', title: 'Read the thing', column: 'queued', state: 'ready',
+          status: 'pending', cost: 2, assignee: 'scholar', serves: 'C1',
+          approach: 'Read the thing and note what it does', capabilities: 'tools: bash',
+          paths: ['src/a.rs'], depends_on: [], waiting_on: [], reason: null },
+        { id: 'second', title: 'Write the thing', column: 'queued', state: 'waiting',
+          status: 'pending', cost: 3, assignee: 'mixture', serves: 'C2',
+          approach: 'Write the thing from what was read', capabilities: '',
+          paths: [], depends_on: [{ id: 'first', state: 'queued' }],
+          waiting_on: ['first'], reason: 'waiting on first' },
+        { id: 'third', title: 'Check the thing', column: 'in-process', state: 'running',
+          status: 'running', cost: 1, assignee: 'auditor', serves: 'C3',
+          approach: 'Check what was written', capabilities: '', paths: [],
+          depends_on: [{ id: 'first', state: 'done' }], waiting_on: [], reason: null },
+        { id: 'fourth', title: 'Ship the thing', column: 'done', state: 'verified',
+          status: 'verified', cost: 1, assignee: 'mixture', serves: 'C4',
+          approach: 'Ship what was checked', capabilities: '', paths: [],
+          depends_on: [{ id: 'third', state: 'in-process' }], waiting_on: [], reason: null },
+      ],
+    }],
+  };
+  const page = boot({
+    hash: '#/board',
+    documents: {
+      board,
+      sessions: { type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 }, sessions: [] },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(220);
+
+  const rows = page.rows('.board-task');
+  check('BOARD every atomic task is a row', rows.length === 4,
+    'rows=' + rows.length);
+  // The three columns, each holding what belongs to it.
+  const queued = page.rows('.board-col[data-status="queued"] .board-task');
+  const running = page.rows('.board-col[data-status="in-process"] .board-task');
+  const done = page.rows('.board-col[data-status="done"] .board-task');
+  check('BOARD queued work is on the queued column', queued.length === 2,
+    'queued=' + queued.length);
+  check('BOARD in-process and done are their own columns',
+    running.length === 1 && done.length === 1,
+    'in-process=' + running.length + ' done=' + done.length);
+  // The assignment is ON the row: the owner asked for it by name.
+  const who = rows.map((r) => {
+    const span = r.querySelectorAll ? null : null;
+    return String(r.textContent || '');
+  }).join(' | ');
+  check('BOARD each row names who it is for',
+    who.includes('scholar') && who.includes('mixture') && who.includes('auditor'),
+    who.slice(0, 200));
+  check('BOARD a waiting row names what it waits on',
+    who.includes('waiting on first'), who.slice(0, 240));
+
+  // A press opens the drawer with the task's whole context, its
+  // dependencies grouped by the state each is in.
+  const second = rows.find((r) => String(r.textContent || '').includes('Write the thing'));
+  check('BOARD a task row is a press', !!second, 'rows=' + rows.length);
+  if (second) second.click();
+  await flush(200);
+  // The object card is the inspector where there is room; the drawer is
+  // the narrow fallback. The case reads whichever the app filled, so it
+  // pins the drawer's CONTENT rather than one layout branch.
+  const drawer = [page.text('dock-object-body'), page.text('drawer-body')]
+    .filter(Boolean).join(' ');
+  check('BOARD the drawer names what the task is',
+    drawer.includes('Write the thing from what was read'), drawer.slice(0, 200));
+  check('BOARD the drawer names who it is for', drawer.includes('mixture'), drawer.slice(0, 240));
+  check('BOARD the drawer groups dependencies by their state',
+    drawer.toLowerCase().includes('depends on'), drawer.slice(0, 260));
+}
+
+// The owner's 2026-11-18 ruling: "the rail when collapsed show the icons
+// that have number badges aligned to the right while the rest is centered,
+// the rail should account for that to begin with and collapse to the size
+// that contains space for the badges and align the icons to the right and
+// not centered."
+//
+// The stub DOM has no layout engine — `offsetWidth` is a fixed 320 and
+// there is no cascade — so a pixel claim here would be fiction. What CAN
+// be pinned honestly is the CSS that decides the geometry, and the
+// arithmetic that made the width what it is: every collapsed row packs to
+// one right edge, the badge's slot is reserved whether or not a number is
+// waiting, and the column is wide enough for icon + gap + slot.
+async function theCollapsedRailAlignsOnOneRightEdgeAndFitsItsBadge() {
+  const icons = 'body[data-rail="icons"] ';
+  // The collapsed alignment is ONE grouped rule (the mark, the links, the
+  // palette, the toggle), so it is read as a group and asserted as one
+  // edge — a `ruleBlock` on a single selector would miss it and answer ''.
+  const groupAt = CSS.indexOf(icons + '.mark,');
+  const groupEnd = CSS.indexOf('}', groupAt);
+  const group = flat(CSS.slice(groupAt, groupEnd));
+  check('RAILW the collapsed row packs to the right, never the centre',
+    group.includes('justify-content: flex-end') &&
+      !group.includes('justify-content: center'),
+    group);
+  check('RAILW the mark, the links, the palette and the toggle share that edge',
+    group.includes('.mark') && group.includes('.surfaces-link') &&
+      group.includes('.surfaces-palette') && group.includes('.surfaces-toggle'),
+    group.slice(0, 200));
+  // The badge's slot is reserved: a count arriving must not move the icon.
+  const slot = flat(ruleBlock(icons + '.surfaces-count'));
+  check('RAILW the badge has a reserved slot, not a minimum width',
+    slot.includes('flex: 0 0') && !/margin-left: auto/.test(slot), slot);
+  check('RAILW a hidden count keeps its box',
+    flat(ruleBlock(icons + '.surfaces-count[hidden]')).includes('visibility: hidden'),
+    flat(ruleBlock(icons + '.surfaces-count[hidden]')));
+
+  // The arithmetic, read from the CSS itself rather than restated: the
+  // rail's own width minus the section and row padding must hold the
+  // icon, the gap and the badge's slot.
+  const width = Number((CSS.match(/--rail-width-icons:\s*(\d+)px/) || [])[1]);
+  const sectionPad = flat(ruleBlock(icons + '.surfaces')).match(/padding:\s*[\d.]+px\s+(\d+)px/);
+  const rowPad = group.match(/padding:\s*0\s+(\d+)px/);
+  const icon = Number((flat(ruleBlock('.surfaces-icon')).match(/width:\s*(\d+)px/) || [])[1]);
+  // The gap is the BASE row's (the collapsed rule inherits it rather than
+  // restating it). It is found by its `display: flex` block specifically:
+  // an earlier `.surfaces-link { display: none }` would answer `ruleBlock`
+  // first, and a gap read from that rule would be undefined.
+  const flexAt = CSS.indexOf('.surfaces-link {\n  position: relative;');
+  const baseRow = flexAt < 0 ? '' : flat(CSS.slice(flexAt, CSS.indexOf('}', flexAt)));
+  const gap = Number((baseRow.match(/gap:\s*(\d+)px/) || [])[1]);
+  const slotWidth = Number((slot.match(/flex:\s*0\s+0\s+(\d+)px/) || [])[1]);
+  const content = width - 2 * Number(sectionPad && sectionPad[1]) - 2 * Number(rowPad && rowPad[1]);
+  const need = icon + gap + slotWidth;
+  check('RAILW the collapsed width holds icon + gap + badge slot',
+    Number.isFinite(width) && Number.isFinite(need) && content >= need,
+    'rail=' + width + 'px content=' + content + 'px need=' + need +
+      'px (icon ' + icon + ' + gap ' + gap + ' + slot ' + slotWidth + ')');
+}
+
+// The owner's 2026-11-18 ruling: "error messages need a way to be dismissed
+// and if they are due to a misconfiguration of settings a way to use the
+// self-healing properties of fleet to fix them, give the user a fix action
+// button to do so." Both halves are pinned here: a failing check offers the
+// press the SERVER named (and a passing one offers none), the press calls
+// that endpoint, and a notice can be put away.
+async function anErrorOffersItsFixAndCanBeDismissed() {
+  const checks = [
+    { check: 'home', ok: true, why: 'home ok writable' },
+    { check: 'credentials', ok: false, why: 'DEEPSEEK_API_KEY is not set',
+      fix: { label: 'add a key', action: '#/settings/models',
+        note: 'Opens the settings where the account\u2019s key is set.' } },
+    { check: 'corpus', ok: false, why: 'the corpus has moved since its last sync',
+      fix: { label: 'sync the memory', action: '/api/corpus/sync',
+        note: 'Pulls the shared memory from its remote.' } },
+    // A failure nothing can fix from here: the reason stands, no press.
+    { check: 'mystery', ok: false, why: 'nobody knows' },
+  ];
+  const page = boot({
+    documents: {
+      doctor: { type: 'doctor', checks },
+      sessions: { type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
+        sessions: [] },
+      // A conversation with history, so the transcript is the surface a
+      // notice lands in rather than the answer strip.
+      state: (asked) => ({
+        ...emptyState(asked),
+        session: asked,
+        events: [
+          { type: 'message', role: 'owner', text: 'pick this up' },
+          { type: 'message', role: 'assistant', text: 'on it' },
+        ],
+      }),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  // The health lens keeps each check on its own section, and the
+  // doctor's is where a failing check's press lands.
+  page.hash('#/second-brain/doctor');
+  await flush(260);
+
+  const presses = page.rows('.doctor-fix-press');
+  // Two failing-and-fixable checks, and nothing for the passing one or the
+  // unfixable one.
+  check('FIX only a fixable failure offers a press', presses.length === 2,
+    'presses=' + presses.length + ' ' + presses.map((p) => p.textContent).join(' | '));
+  check('FIX the press says what it will DO, in plain words',
+    presses.some((p) => p.textContent === 'add a key') &&
+      presses.some((p) => p.textContent === 'sync the memory'),
+    presses.map((p) => p.textContent).join(' | '));
+  check('FIX no internal noun reaches the press',
+    !presses.some((p) => /\b(lane|face|seat|surface|rail)\b/i.test(p.textContent)),
+    presses.map((p) => p.textContent).join(' | '));
+
+  // The endpoint press really calls the self-healing route.
+  const before = page.calls.filter((c) => c.url.startsWith('/api/corpus/sync')).length;
+  const sync = presses.find((p) => p.textContent === 'sync the memory');
+  sync.click();
+  await flush(120);
+  check('FIX the press posts to the self-healing route',
+    page.calls.filter((c) => c.url.startsWith('/api/corpus/sync')).length > before,
+    'calls=' + page.calls.filter((c) => c.url.startsWith('/api/corpus/sync')).length);
+
+  // A message carries its own way out (the owner's 2026-11-18 ruling:
+  // "error messages need a way to be dismissed"). A slash command with no
+  // argument raises one through the app's own notice path, which is the
+  // route every refused act takes.
+  // The transcript must be showing: a notice lands in the conversation when
+  // it is, and in the answer strip when it is not — both are pinned below,
+  // but the dismiss press is the conversation's.
+  page.hash('#/sessions/20261118T000000Z-abcdef');
+  await flush(200);
+  page.IDS.task.value = '/rename';
+  page.IDS.task.fire('keydown', { key: 'Enter', shiftKey: false });
+  await flush(200);
+  const raised = page.rows('.notice-dismiss');
+  check('DISMISS a message the app raises carries the press that puts it away',
+    raised.length > 0,
+    'dismiss presses=' + raised.length +
+      ' notices=' + page.rows('.card-row[data-kind="notice"]').length +
+      ' calls=' + page.calls.map((c) => c.url).join(','));
+  // The press takes its own message out of the page, and leaves the rest.
+  const before2 = page.rows('.card-row').length;
+  let dismissed = false;
+  if (raised.length) {
+    raised[0].click();
+    await flush(120);
+    dismissed = page.rows('.notice-dismiss').length === raised.length - 1;
+  }
+  check('DISMISS the press removes that message and nothing else',
+    dismissed && page.rows('.card-row').length === before2 - 1,
+    'dismissed=' + dismissed + ' rows ' + before2 + '->' + page.rows('.card-row').length);
 }
 
 // The project-centered workspace plan (P4): the Advanced surfaces are
@@ -14654,8 +15464,8 @@ async function theOwnerApprovedActionsAreOnTheCards() {
   await flush();
   lanes.open();
   await flush();
-  check('HEAL a down lane offers the rebuild press',
-    lanes.text('svc-down').includes('Rebuild the lanes'), lanes.text('svc-down'));
+  check('HEAL a down service offers the rebuild press',
+    lanes.text('svc-down').includes('Rebuild the services'), lanes.text('svc-down'));
 }
 
 // Freshness (the owner's dead-button review, 2026-11-17): every button the
@@ -14679,7 +15489,19 @@ async function theOwnerApprovedActionsAreOnTheCards() {
 //     and allowed by label, each with the reason, rather than waived.
 const SWEEP_STILL = {
   'fit': 'fits to the board scale it is already at — it moves once zoomed away',
-  'Waiting · 0': 're-pressing the tab that is already current; nothing to change',
+  'Waiting \u00b7 0': 're-pressing the tab that is already current; nothing to change',
+  // The conversations state filter (the owner's 2026-11-17 consolidation:
+  // threads + archive collapsed into one lens with a live/archived/all
+  // filter). The sweep presses every button in turn on ONE page, so the
+  // first press selects and the later presses are legitimately re-presses
+  // of a state already chosen by an earlier button. A fresh page changes
+  // the sentence on every one of the three — proven by hand: pressed on a
+  // clean boot, `live` reads "No conversation here is live", `archived`
+  // reads "No conversation here has been archived yet", `all` reads "This
+  // home holds no conversations at all".
+  'active0': 'selects the state already current in this sweep\u2019s own sequence',
+  'archived0': 'selects the state already current in this sweep\u2019s own sequence',
+  'all0': 'selects the state already current in this sweep\u2019s own sequence',
 };
 
 async function everyButtonOnEveryLensDoesSomething() {
@@ -15277,7 +16099,7 @@ async function everyButtonOnAnOwnerActionSurfaceDoesSomething() {
   for (const [label, url] of [
     ['Repair', '/api/repair/layerfs'],
     ['Install kiri and start the container', '/api/repair/install-runtime'],
-    ['Rebuild the lanes', '/api/repair/lanes'],
+    ['Rebuild the services', '/api/repair/lanes'],
   ]) {
     const page = booted(down, '#/chat');
     await flush(60);
@@ -15478,6 +16300,18 @@ const cases = [
   ['PWS the desk is projects, work and a thread', theDeskOrganisesByProjectAndThread],
   ['P1 the desk reaches design deliverables', theDeskReachesDesignDeliverables],
   ['P2 the health lens is visible and findable', theHealthLensIsVisibleAndFindable],
+  ['FIX an error offers its fix and can be dismissed', anErrorOffersItsFixAndCanBeDismissed],
+  ['RAILW the collapsed rail aligns right and fits its badge',
+    theCollapsedRailAlignsOnOneRightEdgeAndFitsItsBadge],
+  ['BOARD the board shows queued work with its assignment',
+    theBoardShowsQueuedWorkWithItsAssignment],
+  ['ICON the pane icon opens the contextual view', thePaneIconOpensTheContextualView],
+  ['PASTE ⌘V puts every image on the composer', pastePutsEveryImageOnTheComposer],
+  ['D3 a finished delegation updates the execution view',
+    aFinishedDelegationUpdatesTheExecutionView],
+  ['TREE the pane carries the delegation tree', thePaneCarriesTheDelegationTree],
+  ['CTX the pane is rooted at the conversation\u2019s project',
+    thePaneIsRootedAtTheConversationsProject],
   ['P4 the advanced surfaces are findable by their plain names', theAdvancedSurfacesAreFindableByTheirPlainNames],
   ['EXP the expert switch reveals the subsystem names', theExpertSwitchRevealsTheSubsystemNames],
   ['DESK the landing is project-centric', theDeskLandingIsProjectCentric],
@@ -15574,7 +16408,28 @@ const cases = [
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));
-for (const [name, run] of cases) {
+// The narrowing filter. The suite is 197 cases and ~17s, which is fine as
+// a gate and far too slow as a keystroke: while ITERATING on one surface,
+// `FACE_ONLY=ICONS` runs just the cases whose name contains it.
+//
+// The filter is deliberately one-way. Anything that could let the GATE
+// run a subset — an env var set in the gate's own shell, a default, a
+// config file — would be a gate that reports green about cases it never
+// ran. `cargo test` and scripts/release.sh never set FACE_ONLY, so the
+// gate is unchanged; and the run says out loud that it was narrowed.
+const only = process.env.FACE_ONLY ? String(process.env.FACE_ONLY) : '';
+const selected = only
+  ? cases.filter(([name]) => name.toLowerCase().includes(only.toLowerCase()))
+  : cases;
+if (only) {
+  if (!selected.length) {
+    console.error('face: FACE_ONLY=' + only + ' matched no case out of ' + cases.length);
+    process.exit(2);
+  }
+  console.log('face: NARROWED to ' + selected.length + ' of ' + cases.length +
+    ' cases by FACE_ONLY=' + only + ' — this is a dev loop, not the gate');
+}
+for (const [name, run] of selected) {
   try {
     await run();
   } catch (error) {
@@ -15587,4 +16442,4 @@ if (failures.length) {
   for (const failure of failures) console.error('  ' + failure);
   process.exit(1);
 }
-console.log('face: ' + pass.length + ' checks passed across ' + cases.length + ' cases');
+console.log('face: ' + pass.length + ' checks passed across ' + selected.length + ' cases');

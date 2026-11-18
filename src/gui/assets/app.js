@@ -289,12 +289,27 @@ import { node, svg, clip } from './core/dom.js';
   // not list it.
   var GROUPS = [
     ['workspace', 'surfaces', [
-      // What is being worked on right now.
-      ['chat', 'threads'],
-      // Where the conversations live — the way back (the owner's
-      // 2026-11-14 ruling: the archive is a destination, not a
-      // palette secret).
-      ['sessions', 'archive'],
+      // The conversations, and the way back to them — ONE destination.
+      //
+      // CONVERSATIONS — the one object, and the one row.
+      //
+      // `threads` and `archive` looked like two kinds of thing and were
+      // never that: they were two rail rows over one list (the same
+      // `paintWork`, the same `work-list`, the same transcript behind
+      // it). The owner's definitions, 2026-11-17, put it plainly — a
+      // THREAD is "a conversation that is active or was active recently
+      // and requires some user's input", and an ARCHIVE is "a
+      // conversation that is no longer active or expected to be active".
+      // Both describe the STATE of a conversation, so they are a filter
+      // over one list, not two destinations.
+      //
+      // The address stays `sessions` (every saved hash and receipt names
+      // it) and `#/chat` folds here.
+      //
+      // The address stays `sessions`, and `#/chat` folds to it below:
+      // a saved hash and every door marked `chat` still arrive at the
+      // conversations rather than at a surface that no longer exists.
+      ['sessions', 'conversations'],
       // What is waiting, moving, or stuck.
       ['board', 'board'],
       // What landed, and whether it holds.
@@ -346,8 +361,14 @@ import { node, svg, clip } from './core/dom.js';
   ];
 
   var FOLDED = {
-    sessions: ['workspace', 'archive'],
-    huddles: ['workspace', 'threads'],
+    // `sessions` used to be here, folded under Settings → Advanced. It is a
+    // rail lens now (the owner's 2026-11-14 ruling made the archive a
+    // destination, and the 2026-11-17 consolidation made it the ONLY one
+    // for conversations). The old `chat` address folds to it in
+    // `showRoute`, so no door is lost — but a folded entry for a lens the
+    // rail lists is a contradiction: the palette would file it under
+    // Advanced while the rail shows it as the product.
+    huddles: ['workspace', 'conversations'],
     design: ['settings', 'advanced'],
     router: ['settings', 'advanced'],
     delegation: ['settings', 'advanced'],
@@ -424,7 +445,7 @@ import { node, svg, clip } from './core/dom.js';
             if (face.panel === 'sessions') readSessions(true).then(paintSessions);
             return;
           }
-          notice('the rename was refused', reply.body.error || 'the face said no without a reason');
+          notice('the rename was refused', reply.body.error || 'the app refused without saying why');
         }).catch(function () {
           notice('the rename did not cross', 'the server did not answer');
         });
@@ -463,7 +484,7 @@ import { node, svg, clip } from './core/dom.js';
         var path = '/api/btw' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
         post(path, { text: question }).then(function (reply) {
           if (reply.status !== 200) {
-            notice('the aside was refused', reply.body.error || 'the face said no without a reason');
+            notice('the aside was refused', reply.body.error || 'the app refused without saying why');
             return;
           }
           notice('btw \u00b7 ' + clip(question, 50),
@@ -487,7 +508,7 @@ import { node, svg, clip } from './core/dom.js';
             notice('the steer is sent', 'the run takes it at its next step');
             return;
           }
-          notice('the steer was refused', reply.body.error || 'the face said no without a reason');
+          notice('the steer was refused', reply.body.error || 'the app refused without saying why');
         }).catch(function () {
           notice('the steer did not cross', 'the server did not answer');
         });
@@ -525,7 +546,7 @@ import { node, svg, clip } from './core/dom.js';
             }
             return;
           }
-          notice('the goal was refused', reply.body.error || 'the face said no without a reason');
+          notice('the goal was refused', reply.body.error || 'the app refused without saying why');
         }).catch(function () {
           notice('the goal did not cross', 'the server did not answer');
         });
@@ -1263,6 +1284,12 @@ import { node, svg, clip } from './core/dom.js';
     ruleCount: document.getElementById('rule-count'),
     scrim: document.getElementById('scrim'),
     drawer: document.getElementById('drawer'),
+    tabDetail: document.getElementById('tab-detail'),
+    paneProject: document.getElementById('pane-project'),
+    tabWork: document.getElementById('tab-work'),
+    paneWork: document.getElementById('pane-work'),
+    paneWorkList: document.getElementById('pane-work-list'),
+    paneDetail: document.getElementById('pane-detail'),
     drawerTitle: document.getElementById('drawer-title'),
     drawerBody: document.getElementById('drawer-body'),
     drawerClose: document.getElementById('drawer-close'),
@@ -1452,12 +1479,36 @@ import { node, svg, clip } from './core/dom.js';
       ? face.services.services.filter(function (s) { return !s.up; })
       : [];
     if (!down.length) {
+      // Everything is well again: the message that was put away has
+      // served its purpose, so a later failure is free to speak.
+      face.servicesDismissed = false;
+      el.svcDown.hidden = true;
+      el.svcDown.textContent = '';
+      return;
+    }
+    // The banner is a message, so it can be put away (the owner's
+    // 2026-11-18 ruling). Dismissing silences THIS warning until the
+    // services recover: the check keeps running, and a failure after a
+    // healthy read speaks again rather than staying silent forever.
+    if (face.servicesDismissed) {
       el.svcDown.hidden = true;
       el.svcDown.textContent = '';
       return;
     }
     el.svcDown.hidden = false;
     el.svcDown.innerHTML = '';
+    var shut = document.createElement('button');
+    shut.type = 'button';
+    shut.className = 'svc-dismiss';
+    shut.textContent = 'dismiss';
+    shut.setAttribute('aria-label', 'dismiss this warning');
+    shut.title = 'dismiss until the next check';
+    shut.addEventListener('click', function () {
+      face.servicesDismissed = true;
+      el.svcDown.hidden = true;
+      el.svcDown.textContent = '';
+    });
+    el.svcDown.appendChild(shut);
     down.forEach(function (s) {
       var line = document.createElement('div');
       line.className = 'svc-line';
@@ -1536,7 +1587,7 @@ import { node, svg, clip } from './core/dom.js';
         var rebuild = document.createElement('button');
         rebuild.type = 'button';
         rebuild.className = 'svc-repair';
-        rebuild.textContent = 'Rebuild the lanes';
+        rebuild.textContent = 'Rebuild the services';
         rebuild.addEventListener('click', function () {
           rebuild.disabled = true;
           rebuild.textContent = 'rebuilding\u2026';
@@ -1547,12 +1598,12 @@ import { node, svg, clip } from './core/dom.js';
               return;
             }
             rebuild.disabled = false;
-            rebuild.textContent = 'Rebuild the lanes';
+            rebuild.textContent = 'Rebuild the services';
             notice('the rebuild did not land',
               (reply.body && reply.body.error) || 'the server did not answer');
           }).catch(function () {
             rebuild.disabled = false;
-            rebuild.textContent = 'Rebuild the lanes';
+            rebuild.textContent = 'Rebuild the services';
             notice('the rebuild did not land', 'the server did not answer');
           });
         });
@@ -2264,7 +2315,7 @@ import { node, svg, clip } from './core/dom.js';
         .then(function (reply) {
           if (reply.status !== 200) {
             notice('the re-run was refused',
-              (reply.body && reply.body.error) || 'the face said no without a reason');
+              (reply.body && reply.body.error) || 'the app refused without saying why');
             return;
           }
           if (reply.body.seat) {
@@ -2414,7 +2465,7 @@ import { node, svg, clip } from './core/dom.js';
           .then(function (reply) {
             if (reply.status === 401) throw new Error('token');
             convene.textContent = 'convoked';
-            load();
+            readHuddles(true);
           })
           .catch(function () {
             convene.disabled = false;
@@ -2647,7 +2698,52 @@ import { node, svg, clip } from './core/dom.js';
     if (!stopped && !failed) {
       paintReceipt(el0, event);
     }
+    if (failed) {
+      // A failure names why, and when the reason is a setting that is
+      // wrong rather than work that went wrong, it carries the press that
+      // fixes it (the owner's 2026-11-18 ruling). The match is on the
+      // reason's own words — the executors' sentences, which are the only
+      // thing that knows what failed — and it is deliberately narrow: a
+      // fix offered for the wrong cause is worse than none.
+      var repair = repairForFailure(event.reason);
+      if (repair) {
+        var acts = node('div', 'notice-acts');
+        acts.appendChild(fixAction(repair));
+        el0.appendChild(acts);
+      }
+    }
     return row(el0, event);
+  }
+
+  /// The repair a failed run offers, when its reason is a setting that is
+  /// wrong rather than work that went wrong.
+  ///
+  /// The owner's 2026-11-18 ruling: a failure caused by misconfiguration
+  /// should reach the self-healing action that fixes it. The executor's
+  /// sentence is the only thing that knows what failed, so the match runs
+  /// on its own words — and narrow, because offering the wrong fix costs
+  /// more than offering none. Each repair names a real endpoint or a real
+  /// screen; nothing here is invented.
+  function repairForFailure(reason) {
+    var said = String(reason || '').toLowerCase();
+    if (!said) return null;
+    // No key, or a key the provider rejected: the account's own setting,
+    // which only the person can supply. The press opens the screen.
+    if (/no key|missing key|api key|unauthor|401|credential|not signed in|no account/.test(said)) {
+      return { label: 'open the key settings', action: '#/settings/models',
+        note: 'Set the account\u2019s key there, then send again.' };
+    }
+    // A service that could not start is the services' own rebuild.
+    if (/(service|could not start|did not answer|handshake failed|not installed)/.test(said)) {
+      return { label: 'rebuild the services', action: '/api/repair/lanes',
+        note: 'Reinstalls and restarts the background services, then sends again.' };
+    }
+    // The isolated workspace: its own repair reconciles before it reinstalls.
+    if (/layerfs|workspace cadence|branch view/.test(said)) {
+      return { label: 'repair the workspace', action: '/api/repair/layerfs',
+        note: 'Reconciles the workspace, and reinstalls it when that is not enough.' };
+    }
+    return null;
   }
 
   // The capacity refusal (the multi-session plan's C3): a named, courteous
@@ -2941,14 +3037,40 @@ import { node, svg, clip } from './core/dom.js';
     if (!el.log || !el.log.hidden) return !!el.log;
     return false;
   }
-  function notice(title, text) {
+  /// A notice is the app's answer to something the person just did, and a
+  /// notice that cannot be put away is a room the person cannot tidy. Each
+  /// one carries its own dismiss press (the owner's 2026-11-18 ruling:
+  /// "error messages need a way to be dismissed"), and a failing one also
+  /// offers whatever fix the surface attached.
+  function notice(title, text, fix) {
     if (!transcriptVisible()) {
       faceSay(title, text);
       return;
     }
     var el0 = card('notice', '!', title, text, null, null);
+    var acts = node('div', 'notice-acts');
+    if (fix) acts.appendChild(fixAction(fix));
+    acts.appendChild(dismissPress(function () {
+      // The house's own removal (the stubbed DOM in the face tests carries
+      // no `Element.remove`), and the row's count is repainted so the
+      // exchange count follows what is left on screen.
+      if (el0.parentNode) el0.parentNode.removeChild(el0);
+    }));
+    el0.appendChild(acts);
     face.stream.appendChild(el0);
     settle();
+    return el0;
+  }
+
+  /// The one press that puts a message away, on the same grammar everywhere
+  /// it appears — a notice in the conversation and a banner over it.
+  function dismissPress(drop) {
+    var away = node('button', 'press quiet notice-dismiss', 'dismiss');
+    away.type = 'button';
+    away.setAttribute('aria-label', 'dismiss this message');
+    away.title = 'dismiss this message';
+    away.addEventListener('click', drop);
+    return away;
   }
 
   /// The face's own answer strip (the dead-button review's fix): one line
@@ -3482,13 +3604,27 @@ import { node, svg, clip } from './core/dom.js';
   // A child is one card for its whole life: spawned opens it, working
   // and done rewrite its line, keyed by the session the child owns.
   function applyDelegation(event) {
+    // D3 (the owner's 2026-11-18 ruling: "the orchestration model already
+    // knows when a deliverable is completed, that's the signal to update the
+    // execution on the pane"). A delegation reaching `done` IS the signal
+    // that a plan node moved, so the execution view rereads here rather than
+    // on a poll of its own. It reads even for a first-seen row — a child
+    // whose whole life this face missed still reports its end.
+    var finished = event.stage === 'done';
     var made = face.delegations[event.session];
     if (!made) {
       made = delegationRow(event);
       face.delegations[event.session] = made;
-      return;
+    } else {
+      made.update(event);
     }
-    made.update(event);
+    if (finished) {
+      // The read is skipped when the board was never opened, and a board
+      // with no plan in flight is one cheap directory read — the honest
+      // cost of not inventing a second clock.
+      if (face.boardRead) readBoard(true);
+      if (face.panel === 'delegation') readDelegation(true);
+    }
   }
 
   // The thinking line (the density plan, P1): one live line that
@@ -3898,7 +4034,7 @@ import { node, svg, clip } from './core/dom.js';
         notice(okTitle, okNote);
         return;
       }
-      notice(refusedTitle, reply.body.error || 'the face said no without a reason');
+      notice(refusedTitle, reply.body.error || 'the app refused without saying why');
     }).catch(function () {
       notice(refusedTitle, 'the server did not answer');
     });
@@ -4634,7 +4770,7 @@ import { node, svg, clip } from './core/dom.js';
     var ex = exchanges();
     if (!p) {
       openDrawer('the run', [['process', node('p', 'derivation',
-        'No run is in flight. Ask fleet for something and the loop lands here.')]]);
+        'Nothing is running. Ask for something and its progress shows up here.')]]);
       return;
     }
     var sections = [
@@ -4887,7 +5023,7 @@ import { node, svg, clip } from './core/dom.js';
       face.inboxActing = null;
       if (reply.status !== 200) {
         face.inboxRefusal = (reply.body && reply.body.error) ||
-          'the face said no without a reason';
+          'the app refused without saying why';
         paintInbox();
         return;
       }
@@ -5910,8 +6046,8 @@ import { node, svg, clip } from './core/dom.js';
     openDrawer('metric \u00b7 ' + label, [
       ['what it counts', node('p', 'derivation', String(value) + ' ' + label)],
       ['where it comes from', node('p', 'derivation',
-        'the read that feeds this panel. The number is the read\u2019s own; the panel does not ' +
-        're-derive it. A count with no list is a count the code did not carry.')],
+        'this count is the figure the app was given, shown as given \u2014 the panel does not ' +
+        'work it out a second way. A count with no list is a count nothing was recorded for.')],
       ['what you can do', actions]
     ]);
   }
@@ -6156,7 +6292,7 @@ import { node, svg, clip } from './core/dom.js';
     var route = face.route;
     if (!route) {
       body.appendChild(node('p', 'board-empty',
-        'No route has been made this session. Send a task and the decision lands here, ' +
+        'Nothing has been routed yet in this session. Send a task and its routing shows up here, ' +
         'and in the conversation, on the same event.'));
       el0.appendChild(body);
       return el0;
@@ -6222,11 +6358,11 @@ import { node, svg, clip } from './core/dom.js';
     var cache = read.cache;
     var el0 = boardCard(5, 'the decision cache', 'the board\u2019s read',
       cache.keyed
-        ? 'A cache written by the lane that judges now, so these entries are the ones a route reads.'
-        : 'The cache on disk was written by another lane, which a route discards whole \u2014 so the entries below are held, not read.');
+        ? 'A cache written by the service that is judging now, so these entries are the ones a route reads.'
+        : 'The cache on disk was written by a different service, which a route discards whole \u2014 so the entries below are held, not read.');
     var tiles = node('div', 'tiles');
     tiles.appendChild(tile(cache.entries, 'entries'));
-    tiles.appendChild(tile(cache.keyed ? 'live' : 'held', cache.keyed ? 'for this lane' : 'for another lane',
+    tiles.appendChild(tile(cache.keyed ? 'live' : 'held', cache.keyed ? 'for this service' : 'for another service',
       cache.keyed ? 'ok' : 'down'));
     el0.appendChild(tiles);
     if (cache.workloads && cache.workloads.length) {
@@ -6248,7 +6384,7 @@ import { node, svg, clip } from './core/dom.js';
       });
       el0.appendChild(bars);
     } else {
-      el0.appendChild(node('p', 'board-empty', 'The cache holds no workload counts yet.'));
+      el0.appendChild(node('p', 'board-empty', 'No model has been used yet.'));
     }
     return el0;
   }
@@ -6259,8 +6395,7 @@ import { node, svg, clip } from './core/dom.js';
     var totals = read.totals;
     if (!totals) {
       el0.appendChild(node('p', 'board-empty',
-        'The ledger has seen no route rows today. The chain above still stands, and the tiles ' +
-        'fill in as the day is routed.'));
+        'Nothing has been routed today. The chain above still stands, and this fills in as the day goes on.'));
       return el0;
     }
     var tiles = node('div', 'tiles');
@@ -6418,7 +6553,7 @@ import { node, svg, clip } from './core/dom.js';
     judge.textContent = 'ask sys1 about this call';
     judge.addEventListener('click', function () {
       closeDrawer();
-      ask('use the sys1 lane to review the route call to ' + entry.model +
+      ask('use the judgment service to review the routing call to ' + entry.model +
         (entry.workload ? ' for workload ' + entry.workload : '') +
         ' and say whether the walk was right');
     });
@@ -6440,7 +6575,7 @@ import { node, svg, clip } from './core/dom.js';
   function mixSplitCard(read) {
     var el0 = boardCard(5, 'the workload mix', 'the board\u2019s read');
     if (!read.workloads || !read.workloads.length) {
-      el0.appendChild(node('p', 'board-empty', 'No workload was judged today.'));
+      el0.appendChild(node('p', 'board-empty', 'Nothing has been routed yet today.'));
     } else {
       var most = read.workloads.reduce(function (peak, entry) { return Math.max(peak, entry.count); }, 0);
       var total = read.workloads.reduce(function (sum, entry) { return sum + entry.count; }, 0);
@@ -6530,8 +6665,7 @@ import { node, svg, clip } from './core/dom.js';
       } else {
         var waiting = boardCard(12, 'reading', null, null);
         waiting.appendChild(node('p', 'board-empty',
-          'The board\u2019s read has not landed yet. The live decision below is the run\u2019s own event ' +
-          'and does not wait for it.'));
+          'Still loading. The live decision below comes straight from the run and does not wait for it.'));
         el.routerBoard.appendChild(waiting);
       }
       el.routerBoard.appendChild(decisionCard());
@@ -6560,7 +6694,7 @@ import { node, svg, clip } from './core/dom.js';
         {
           label: 'ask sys1 for a judgment',
           run: function () {
-            ask('use the sys1 lane to review today\u2019s route decisions and report the fit');
+            ask('use the judgment service to review today\u2019s routing decisions and report the fit');
           }
         },
         {
@@ -7094,7 +7228,7 @@ import { node, svg, clip } from './core/dom.js';
         'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The delegation read has not landed yet. It reads the session logs and the graph file, ' +
+        'Still loading. This comes from the session logs and the graph file, ' +
         'both of which are this machine\u2019s own.'));
       el.delegationBoard.appendChild(waiting);
       return;
@@ -7175,17 +7309,105 @@ import { node, svg, clip } from './core/dom.js';
     }
   }
 
+  /// The pane's work tab: what this conversation delegated, as a plain
+  /// indented tree (the owner's 2026-11-18 ruling — D1 session-bound, D2 the
+  /// current work only, D3 "show just as a tree that shows the delegatable
+  /// work status and depends on not visually fancy but effective for a pane
+  /// on the drawer").
+  ///
+  /// One row per run: its name, its status, and what it waits on. The
+  /// Delegation lens keeps the SVG plot and the history; a few hundred
+  /// pixels wants rows.
+  function paintPaneWork() {
+    if (!el.paneWorkList) return;
+    el.paneWorkList.textContent = '';
+    var read = face.delegation;
+    if (!read) {
+      el.paneWorkList.appendChild(node('p', 'pane-empty', 'reading the work…'));
+      return;
+    }
+    var live = read.live;
+    var graph = read.graph;
+    if (!live && !(graph && (graph.nodes || []).length)) {
+      el.paneWorkList.appendChild(node('p', 'pane-empty',
+        'Nothing is delegated in this conversation yet.'));
+      return;
+    }
+    // The run in flight, its children indented under it.
+    if (live) {
+      var rows = node('div', 'pane-work-tree');
+      walkWork(live, 0, rows);
+      el.paneWorkList.appendChild(rows);
+    } else {
+      el.paneWorkList.appendChild(node('p', 'pane-quiet-note',
+        'No run is in flight.'));
+    }
+    // What the plan declares as delegatable, with its state and what it
+    // depends on — the "depends on" half the owner asked for.
+    if (graph && (graph.nodes || []).length) {
+      el.paneWorkList.appendChild(node('p', 'pane-work-head', 'the plan\u2019s work'));
+      var plan = node('div', 'pane-work-tree');
+      (graph.nodes || []).forEach(function (one) {
+        var row = node('div', 'pane-work-row');
+        row.dataset.state = one.state || '';
+        row.appendChild(node('span', 'pane-work-state', stateGlyph(one.state)));
+        row.appendChild(node('span', 'pane-work-name', one.id));
+        row.appendChild(node('span', 'pane-work-status', one.state || one.status || ''));
+        if ((one.prereqs || []).length) {
+          row.appendChild(node('span', 'pane-work-dep',
+            'after ' + one.prereqs.join(', ')));
+        }
+        plan.appendChild(row);
+      });
+      el.paneWorkList.appendChild(plan);
+    }
+  }
+
+  /// One delegated run and its children, indented. Depth is the indent —
+  /// the tree is the structure, so no connector drawing is needed.
+  function walkWork(run, depth, into) {
+    var row = node('div', 'pane-work-row');
+    row.dataset.state = String(run.status || '').toLowerCase();
+    if (depth) row.style.paddingLeft = (depth * 14) + 'px';
+    row.appendChild(node('span', 'pane-work-state',
+      run.status === 'running' ? '\u25cf' : run.status === 'stopped' ? '\u2713' : '\u25cb'));
+    row.appendChild(node('span', 'pane-work-name', run.goal || run.id));
+    row.appendChild(node('span', 'pane-work-status', run.status || ''));
+    (run.children || []).forEach(function (child) { walkWork(child, depth + 1, into); });
+    into.appendChild(row);
+  }
+
+  /// A state word as a mark: the same vocabulary the board uses.
+  function stateGlyph(state) {
+    if (state === 'verified') return '\u2713';
+    if (state === 'running') return '\u25cf';
+    if (state === 'failed') return '\u2717';
+    if (state === 'ready') return '\u25b8';
+    return '\u25cb';
+  }
+
   function countNodes(node0) {
     return 1 + (node0.children || []).reduce(function (sum, child) {
       return sum + countNodes(child);
     }, 0);
   }
 
-  function readDelegation(force) {
+  /// The delegation read. `session` names whose tree to draw (the owner's
+  /// 2026-11-18 ruling, D1: the CONVERSATION's tree, session-bound — it
+  /// covers the plan being executed and ongoing non-plan work alike). The
+  /// route already honours `?session=`; omitting it asked for the launch
+  /// session, which is why the pane could not reuse this call.
+  function readDelegation(force, session) {
     var now = Date.now();
-    if (!force && face.delegation && now - face.delegationAt < 4000) return Promise.resolve();
+    var asked = session || face.session || '';
+    if (!force && face.delegation && face.delegationFor === asked &&
+        now - face.delegationAt < 4000) {
+      return Promise.resolve();
+    }
+    face.delegationFor = asked;
     face.delegationAt = now;
-    return fetch('/api/delegation', { headers: { accept: 'application/json' } })
+    var path = '/api/delegation' + (asked ? '?session=' + encodeURIComponent(asked) : '');
+    return fetch(path, { headers: { accept: 'application/json' } })
       .then(function (reply) {
         if (reply.status === 401) throw new Error('token');
         return reply.json();
@@ -7193,6 +7415,10 @@ import { node, svg, clip } from './core/dom.js';
       .then(function (doc) {
         face.delegation = doc;
         if (face.panel === 'delegation') paintDelegation();
+        // The pane's work tab reads the same document, so it repaints (and
+        // its tab appears) when the read lands rather than on a clock of
+        // its own.
+        repaintPaneTabs();
       })
       .catch(function () { });
   }
@@ -7477,7 +7703,7 @@ import { node, svg, clip } from './core/dom.js';
       (read && read.canonical ? ' The library: ' + read.canonical + '.' : ''));
     if (!read) {
       card.appendChild(node('p', 'board-empty',
-        'The library read has not landed yet. It reads the canonical skills directory and the '
+        'Still loading. This comes from the skills directory and the '
         + 'home\u2019s own proposals, both of which are this machine\u2019s.'));
       return [card];
     }
@@ -7539,10 +7765,10 @@ import { node, svg, clip } from './core/dom.js';
     var read = face.tools;
     var card = boardCard(12, 'tools',
       read ? intelligenceToolCount() + ' callable' : null,
-      'the bounded surface: built-ins, the vendored lanes, and the MCP registry — each carrying its class.');
+      'the bounded surface: built-in tools, the bundled services\u2019 tools, and the MCP registry \u2014 each carrying its class.');
     if (!read) {
       card.appendChild(node('p', 'board-empty',
-        'The registry read has not landed yet. It reads the compiled declarations, the lane '
+        'Still loading. This comes from the compiled declarations, the service '
         + 'roster and the home\u2019s MCP registry, all of which are this machine\u2019s.'));
       return [card];
     }
@@ -7629,7 +7855,7 @@ import { node, svg, clip } from './core/dom.js';
       'the composed chains: the skill chains the graph declares, every node\u2019s prerequisites named.');
     if (!read) {
       card.appendChild(node('p', 'board-empty',
-        'The chains read has not landed yet. It reads the home\u2019s declared graph.'));
+        'Still loading. This comes from the graph this home declares.'));
       return [card];
     }
     if (!read.declared) {
@@ -7737,7 +7963,7 @@ import { node, svg, clip } from './core/dom.js';
         'Everything fleet knows and can do: what it remembers, its skills, its tools, and the chains they compose into.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The corpus read has not landed yet. It reads the memories tree and the day\u2019s ' +
+        'Still loading. This comes from the memories and the day\u2019s ' +
         'calibration stream, both of which are this machine\u2019s own.'));
       el.memoryBoard.appendChild(waiting);
       paintMemoryRail(null);
@@ -8016,7 +8242,7 @@ import { node, svg, clip } from './core/dom.js';
     }
     if (!recalls.length && !hits.length) {
       list.appendChild(node('p', 'board-empty',
-        'Nothing has been recalled today. A hit is one calibration row per fact a recall surfaced.'));
+        'Nothing has been recalled today. Each line is one memory the assistant brought up.'));
     }
     card.appendChild(list);
     return card;
@@ -8150,7 +8376,7 @@ import { node, svg, clip } from './core/dom.js';
     save.type = 'submit';
     form.appendChild(save);
     var said = node('p', 'fact-said-note',
-      'The save rides the substrate\u2019s own rewriter: the named frontmatter lines are re-rendered ' +
+      'The save goes through the memory store\u2019s own writer: the named header lines are re-rendered ' +
       'and every other byte survives. The name, the tier and the basis are not editable \u2014 ' +
       'renaming a fact is a supersession, which records why.');
     form.appendChild(said);
@@ -8367,7 +8593,7 @@ import { node, svg, clip } from './core/dom.js';
     }).then(function (result) {
       if (result.status !== 200) {
         notice('the learning session did not start',
-          (result.doc && result.doc.error) || 'the face said no without a reason');
+          (result.doc && result.doc.error) || 'the app refused without saying why');
         return;
       }
       notice('the learning session is open',
@@ -8535,7 +8761,7 @@ import { node, svg, clip } from './core/dom.js';
         'The measure \u2192 plan \u2192 teach loop: what you hold, the plan\u2019s coarse view, the propositions it built, and the practice.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The learning read has not landed yet. It reads the home\u2019s learning sessions and the corpus, both this machine\u2019s own.'));
+        'Still loading. This comes from this machine\u2019s own lessons and memories.'));
       el.learningBoard.appendChild(waiting);
       if (el.learningBar) el.learningBar.textContent = '';
       return;
@@ -8712,7 +8938,7 @@ import { node, svg, clip } from './core/dom.js';
       button.disabled = false;
       button.textContent = retiring ? 'retire' : 'unretire';
       notice(retiring ? 'the retire was refused' : 'the return was refused',
-        reply.body.error || 'the face said no without a reason');
+        reply.body.error || 'the app refused without saying why');
     }).catch(function () {
       button.disabled = false;
       button.textContent = retiring ? 'retire' : 'unretire';
@@ -9072,31 +9298,24 @@ import { node, svg, clip } from './core/dom.js';
     ['done', 'done', 'var(--green)']
   ];
 
-  function boardSelected() {
-    face.boardSel = face.boardSel || {};
-    return face.boardSel;
-  }
 
-  // The board is scoped by PROJECT (the owner's 2026-11-17 ruling). Tasks
-  // carry their project (`boards.rs`'s rows do), so the rail is an
-  // `all tasks` row and then one row per project the work belongs to — the
-  // same second rail every split page wears, with the work's project as its
-  // axis. `all tasks` is the board's old behaviour, kept as one row rather
-  // than replaced, so nothing is reachable only by a filter.
+  /// The board's rail: every approved plan that carries work, with how many
+  /// of its tasks are still queued. A plan is the board's unit — the thing
+  /// the owner started and can recognise — so the rail names plans, not
+  /// projects (the owner's 2026-11-18 ruling: the board shows work "at the
+  /// execution level").
   function boardSections() {
-    var read = face.tasksRead;
-    var tasks = (read && read.tasks) || [];
-    var counts = {};
-    tasks.forEach(function (task) {
-      var project = String(task.project || '').trim() || 'unassigned';
-      counts[project] = (counts[project] || 0) + 1;
-    });
-    var out = [{ id: 'all', name: 'all tasks', badge: tasks.length,
-      badgeTitle: tasks.length + ' tasks across every project' }];
-    Object.keys(counts).sort().forEach(function (project) {
+    var read = face.boardRead;
+    var plans = (read && read.plans) || [];
+    var queued = plans.reduce(function (sum, plan) { return sum + (plan.queued || 0); }, 0);
+    var out = [{ id: 'all', name: 'every plan', badge: plans.length,
+      badgeTitle: plans.length + (plans.length === 1 ? ' plan' : ' plans') + ', ' + queued + ' queued' }];
+    plans.forEach(function (plan) {
       out.push({
-        id: project, name: project, badge: counts[project],
-        badgeTitle: counts[project] + (counts[project] === 1 ? ' task' : ' tasks')
+        id: plan.id,
+        name: plan.id,
+        badge: plan.queued || 0,
+        badgeTitle: (plan.queued || 0) + ' queued in this plan'
       });
     });
     return out;
@@ -9148,82 +9367,205 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
+  /// The board: the owner's work at execution level (the owner's
+  /// 2026-11-18 ruling). One card per approved plan, each listing its
+  /// atomic delegatable tasks in the column they belong to — queued, in
+  /// process, done — with who each one goes to. A press on a task opens the
+  /// drawer with its whole context and its dependencies by state.
+  ///
+  /// Nothing here is filtered in the browser: the bridge decides what is
+  /// the owner's work (an approved plan is theirs by construction), because
+  /// a filter in the view is a filter anything can bypass.
   function paintBoard() {
     if (!el.boardBoard) return;
     paintBoardRail();
-    var read = face.tasksRead;
-    // Read the scope BEFORE the head: it names the scope, and a `var` used
-    // above its declaration hoists as undefined — the head would say
-    // "The board · undefined" and look like a missing project.
-    var scope = boardProjectId();
+    var read = face.boardRead;
     el.boardBoard.textContent = '';
-    el.boardBoard.appendChild(pageHead('Work',
-      scope === 'all' ? 'The board' : 'The board \u00b7 ' + scope,
-      scope === 'all'
-        ? 'the work as it stands — drag a card between columns to move it; the move settles against the record.'
-        : 'one project\u2019s work \u2014 drag a card between columns to move it; the move settles against the record.', null));
+    el.boardBoard.appendChild(pageHead('Work', 'The board',
+      'your work at execution level \u2014 each plan\u2019s tasks in the column they stand in, and who each one is for.', null));
     if (!read) {
       var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty', 'The tasks read has not landed yet.'));
+      waiting.appendChild(node('p', 'board-empty', 'Still loading your work.'));
       el.boardBoard.appendChild(waiting);
+      readBoard(false);
       return;
     }
-    var tasks = read.tasks || [];
-    // The rail's scope: one project, or every task. A filter, not a re-read
-    // — the document already carries the project on each task.
-    if (scope !== 'all') {
-      tasks = tasks.filter(function (task) {
-        return (String(task.project || '').trim() || 'unassigned') === scope;
-      });
+    if (refusals(read)) {
+      // An empty board says WHY it is empty, and names the way forward
+      // rather than leaving a blank that reads as a broken read.
+      var none = boardCard(12, 'the board', null, null);
+      none.appendChild(node('p', 'board-empty', refusals(read).join('; ')));
+      el.boardBoard.appendChild(none);
+      return;
     }
-    var sel = boardSelected();
-    var selectedCount = Object.keys(sel).filter(function (id) { return sel[id]; }).length;
-
-    // The bulk bar (U23): explicit selection, never implicit.
-    var bulk = node('div', 'board-bulk');
-    bulk.hidden = selectedCount === 0;
-    bulk.appendChild(node('span', 'board-bulk-count', selectedCount + ' selected'));
-    [['clear', function () { face.boardSel = {}; paintBoard(); }]].forEach(function (pair) {
-      var act = node('button', 'row-action', pair[0]);
-      act.type = 'button';
-      act.addEventListener('click', pair[1]);
-      bulk.appendChild(act);
+    // The rail's pick narrows to one plan; "every plan" shows them all.
+    // A filter over the document, not a re-read: the bridge already
+    // decided what is the owner's work.
+    var scope = boardProjectId();
+    var plans = (read.plans || []).filter(function (plan) {
+      return scope === 'all' || plan.id === scope;
     });
-    el.boardBoard.appendChild(bulk);
+    var loose = scope === 'all' ? (read.tasks || []) : [];
+    if (!plans.length && !loose.length) {
+      var empty = boardCard(12, 'the board', null, null);
+      empty.appendChild(node('p', 'board-empty',
+        'No approved plan carries work right now. Approve a plan and its tasks appear here.'));
+      el.boardBoard.appendChild(empty);
+      return;
+    }
+    plans.forEach(function (plan) { el.boardBoard.appendChild(planCard(plan)); });
+    if (loose.length) el.boardBoard.appendChild(looseCard(loose));
+  }
 
+  /// The three columns a task stands in, in the order work moves through
+  /// them. The bridge's `column` word decides; this only names and orders.
+  var BOARD_STATES = [
+    ['queued', 'queued', 'waiting its turn or its dependencies'],
+    ['in-process', 'in process', 'a run is working it now'],
+    ['done', 'done', 'verified finished'],
+  ];
+
+  /// One plan's card: its name, its own state, and a column per task, each
+  /// row carrying the task and who it is for.
+  function planCard(plan) {
+    var card = boardCard(12, plan.id, plan.queued ? (plan.queued + ' queued') : null,
+      (plan.status || 'approved') + (plan.workload ? ' \u00b7 runs as ' + plan.workload : ''));
     var columns = node('div', 'board-columns');
-    BOARD_COLUMNS.forEach(function (col) {
-      var status = col[0];
+    BOARD_STATES.forEach(function (state) {
+      var rows = (plan.tasks || []).filter(function (task) { return task.column === state[0]; });
       var column = node('div', 'board-col');
-      column.dataset.status = status;
+      column.dataset.status = state[0];
       var head = node('div', 'board-col-head');
-      var dot = node('span', 'board-col-dot');
-      dot.style.background = col[2];
-      head.appendChild(dot);
-      var inCol = tasks.filter(function (t) { return t.status === status; });
-      head.appendChild(node('span', 'board-col-name', col[1]));
-      head.appendChild(node('span', 'board-col-count', String(inCol.length)));
+      head.appendChild(node('span', 'board-col-name', state[1]));
+      head.appendChild(node('span', 'board-col-count', String(rows.length)));
       column.appendChild(head);
       var well = node('div', 'board-col-well');
-      well.dataset.status = status;
-      // Drop target: a card dragged here moves its status (U21).
-      well.addEventListener('dragover', function (event) { event.preventDefault(); });
-      well.addEventListener('drop', function (event) {
-        event.preventDefault();
-        var id = event.dataTransfer.getData('text/plain');
-        if (id) moveTaskStatus(id, status);
-      });
-      inCol.forEach(function (task) { well.appendChild(boardCardTask(task, sel)); });
-      if (!inCol.length) well.appendChild(node('p', 'board-col-empty', 'nothing ' + status));
+      well.title = state[2];
+      if (!rows.length) well.appendChild(node('p', 'board-col-empty', 'nothing ' + state[1]));
+      rows.forEach(function (task) { well.appendChild(taskRow(task)); });
       column.appendChild(well);
       columns.appendChild(column);
     });
-    el.boardBoard.appendChild(columns);
+    card.appendChild(columns);
+    return card;
+  }
 
-    // The activity strip (U14): the graded story, never filler cards.
-    var strip = node('p', 'board-activity',
-      tasks.length + ' tasks \u00b7 settled against the record, graded by the outcome');
-    el.boardBoard.appendChild(strip);
+  /// One atomic task: its line, who it is for, and what it waits on. The
+  /// whole row is the press that opens the drawer — a task is a thing you
+  /// inspect, not a thing you drag on this board.
+  function taskRow(task) {
+    var button = node('button', 'board-task');
+    button.type = 'button';
+    button.dataset.id = task.id;
+    button.dataset.column = task.column;
+    var top = node('span', 'board-task-top');
+    top.appendChild(node('span', 'board-task-title', task.title || task.id));
+    button.appendChild(top);
+    var meta = node('span', 'board-task-meta');
+    // Who works it — the card's own answer to "and to which
+    // workload/persona that it's going to be assigned to".
+    if (task.assignee) {
+      meta.appendChild(node('span', 'board-task-who', task.assignee));
+    } else {
+      meta.appendChild(node('span', 'board-task-who unassigned', 'unassigned'));
+    }
+    if (task.serves) meta.appendChild(node('span', 'board-task-serves', task.serves));
+    if (task.cost) meta.appendChild(node('span', 'board-task-cost', task.cost + 't'));
+    button.appendChild(meta);
+    // What it waits on, on the row itself: a queued task with no reason
+    // reads as stuck.
+    var deps = task.depends_on || [];
+    if (deps.length) {
+      var waiting = deps.filter(function (dep) { return dep.state !== 'done'; });
+      button.appendChild(node('span', 'board-task-wait',
+        waiting.length
+          ? 'waiting on ' + waiting.map(function (dep) { return dep.id; }).join(', ')
+          : 'dependencies met'));
+    }
+    button.addEventListener('click', function () { openTaskDrawer(task); });
+    return button;
+  }
+
+  /// The drawer's context for one task: what it is, who it is for, the
+  /// criterion it serves, what it may use, and its dependencies grouped by
+  /// the state each is in — the three the owner named.
+  function openTaskDrawer(task) {
+    var sections = [];
+    sections.push(['what it is', node('p', 'derivation', task.approach || task.title || task.id)]);
+    sections.push(['who it is for', node('p', 'derivation',
+      task.assignee || 'nobody is named \u2014 the plan assigns nothing to this task')]);
+    if (task.serves) {
+      sections.push(['what it serves', node('p', 'derivation', 'acceptance criterion ' + task.serves)]);
+    }
+    sections.push(['where it stands', node('p', 'derivation',
+      task.column + (task.state ? ' \u00b7 ' + task.state : '') + (task.reason ? ' \u00b7 ' + task.reason : ''))]);
+    if (task.cost) sections.push(['its size', node('p', 'derivation', task.cost + ' turns, as the plan declared')]);
+    if (task.capabilities) {
+      sections.push(['what it may use', node('p', 'derivation', task.capabilities)]);
+    }
+    if ((task.paths || []).length) {
+      var paths = node('ul', 'board-list');
+      task.paths.forEach(function (path) { paths.appendChild(node('li', null, path)); });
+      sections.push(['the files it touches', paths]);
+    }
+    // The dependencies, by state: one group per column, so the drawer
+    // answers "what stands between this and done" at a glance.
+    var deps = task.depends_on || [];
+    if (deps.length) {
+      BOARD_STATES.forEach(function (state) {
+        var inState = deps.filter(function (dep) { return dep.state === state[0]; });
+        if (!inState.length) return;
+        var list = node('ul', 'board-list');
+        inState.forEach(function (dep) { list.appendChild(node('li', null, dep.id)); });
+        sections.push(['depends on \u00b7 ' + state[1], list]);
+      });
+    } else {
+      sections.push(['depends on', node('p', 'derivation', 'nothing \u2014 it can start as soon as it is picked up')]);
+    }
+    openDrawer(task.title || task.id, sections);
+  }
+
+  /// The owner's own tasks that belong to no plan. They ride beside the
+  /// plans because a standalone task is not a plan's node: different
+  /// object, different lifecycle.
+  function looseCard(tasks) {
+    var card = boardCard(12, 'your own tasks', null,
+      'work you started that belongs to no plan.');
+    var columns = node('div', 'board-columns');
+    BOARD_STATES.forEach(function (state) {
+      var rows = tasks.filter(function (task) { return task.column === state[0]; });
+      var column = node('div', 'board-col');
+      column.dataset.status = state[0];
+      var head = node('div', 'board-col-head');
+      head.appendChild(node('span', 'board-col-name', state[1]));
+      head.appendChild(node('span', 'board-col-count', String(rows.length)));
+      column.appendChild(head);
+      var well = node('div', 'board-col-well');
+      if (!rows.length) well.appendChild(node('p', 'board-col-empty', 'nothing ' + state[1]));
+      rows.forEach(function (task) { well.appendChild(taskRow(task)); });
+      column.appendChild(well);
+      columns.appendChild(column);
+    });
+    card.appendChild(columns);
+    return card;
+  }
+
+  /// The board's read. Cached briefly like the other reads so a repaint
+  /// does not re-walk every plan on disk.
+  function readBoard(force) {
+    var now = Date.now();
+    if (!force && face.boardRead && now - face.boardAt < 4000) return Promise.resolve();
+    face.boardAt = now;
+    return fetch('/api/board', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.boardRead = doc;
+        if (face.panel === 'board') paintBoard();
+      })
+      .catch(function () { connectionDown('the board read'); });
   }
 
   function boardCardTask(task, sel) {
@@ -9433,7 +9775,7 @@ import { node, svg, clip } from './core/dom.js';
       post('/api/rewind', { turn: edit.turn }).then(function (reply) {
         if (reply.status !== 200) {
           notice('the rewind was refused',
-            (reply.body && reply.body.error) || 'the face said no without a reason');
+            (reply.body && reply.body.error) || 'the app refused without saying why');
           el.task.value = edited;
           saveDraft();
           return;
@@ -9478,8 +9820,18 @@ import { node, svg, clip } from './core/dom.js';
       // the last active conversation (2026-11-05). If New is minting
       // right now, this send waits for that mint instead of racing a
       // second one.
-      var target = Promise.resolve(
-        queuedSession !== undefined ? queuedSession : face.session);
+      // A send typed into a conversation New just minted names THAT one:
+      // the home detaches from it (no transcript yet), so `face.session`
+      // is null here, and without this the send minted its own session —
+      // two creates for one press, which is the 2026-11-05 regression in
+      // its other direction. `face.minted` is the id the press made.
+      var named = queuedSession !== undefined ? queuedSession
+        : (face.session || face.minted || null);
+      // Read the mark, THEN clear it: from here the conversation has a
+      // run and a transcript, so the welcome is done with it. Clearing
+      // before the read erased the id this line needed.
+      face.minted = null;
+      var target = Promise.resolve(named);
       target = target.then(function (session) {
         if (session) return session;
         return face.creating || null;
@@ -9872,23 +10224,24 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
+  /// Show one object's detail. The pane's `detail` tab IS the drawer (the
+  /// owner's 2026-11-18 ruling: the collapsible pane is part of the drawer
+  /// and its main component) — so an inspected object opens the pane on
+  /// that tab rather than stacking a card above the other tabs, where it
+  /// competed with the run's own view for the same column.
+  ///
+  /// The fixed `aside#drawer` remains only as the narrow-screen fallback
+  /// below the pane's breakpoint, where there is no column to put it in.
   function openDrawer(title, sections) {
-    // The pane is the inspector wherever there is room: the object card
-    // stands above the tab body, the run's own cards hidden while it
-    // speaks. The fixed drawer is the narrow-screen fallback.
-    if (window.innerWidth > 1180 && el.dockObject) {
+    if (el.paneDetail) {
       openPane();
+      face.objectTitle = title;
       el.dockObjectTitle.textContent = title;
       el.dockObjectBody.textContent = '';
       renderSections(el.dockObjectBody, sections);
-      el.dockObject.hidden = false;
-      el.faceCard.hidden = true;
-      el.trustCard.hidden = true;
-      window.setTimeout(function () {
-        if (el.dockObject.scrollIntoView) {
-          el.dockObject.scrollIntoView({ block: 'nearest' });
-        }
-      }, 0);
+      // An object is open, so its tab exists and is the one showing.
+      if (el.tabDetail) el.tabDetail.hidden = false;
+      showPaneTab('detail');
       return;
     }
     el.drawerTitle.textContent = title;
@@ -9899,8 +10252,18 @@ import { node, svg, clip } from './core/dom.js';
     el.scrim.hidden = false;
   }
 
+  /// Whether an object is open in the pane: the detail tab's own state, so
+  /// the tab and the content cannot disagree.
+  function objectOpen() {
+    return !!(el.paneDetail && face.paneTab === 'detail' && el.dockObjectBody &&
+      el.dockObjectBody.childNodes.length);
+  }
+
+  /// Close the open object. The detail tab goes with it — a tab that leads
+  /// to nothing is a door to a blank — and the pane falls back to the run,
+  /// which is what the column is for when nothing is being inspected.
   function closeDrawer() {
-    if (el.dockObject && !el.dockObject.hidden) {
+    if (el.dockObject && el.dockObjectBody) {
       // An edited card that is closed without saving asks first: the
       // confirm is the rewind idiom's, and the card stays open on a no.
       if (face.cardDirty &&
@@ -9908,11 +10271,22 @@ import { node, svg, clip } from './core/dom.js';
         return;
       }
       face.cardDirty = false;
-      el.dockObject.hidden = true;
       el.dockObjectBody.textContent = '';
+      face.objectTitle = '';
       el.faceCard.hidden = false;
       el.trustCard.hidden = false;
       document.body.dataset.objectCard = '';
+      if (el.tabDetail) {
+        el.tabDetail.hidden = true;
+        el.tabDetail.classList.remove('active');
+        el.tabDetail.setAttribute('aria-selected', 'false');
+      }
+      if (el.paneDetail) el.paneDetail.hidden = true;
+      // Back to the pane's default view ONLY if the detail tab was the one
+      // showing: `closeDrawer` runs on every route change, and a version
+      // that always jumped to the run tab reset the owner's restored tab on
+      // each arrival (the reload-reattach preference is theirs, not ours).
+      if (face.paneTab === 'detail') showPaneTab('run', false);
       Array.prototype.forEach.call(
         document.querySelectorAll('.cfg-item[aria-current="true"]'),
         function (one) { one.removeAttribute('aria-current'); });
@@ -10066,7 +10440,13 @@ import { node, svg, clip } from './core/dom.js';
     face.budgetModel = state.budget_model || '';
     face.turnBudget = state.turn_budget || null;
     face.budgetDeclared = state.budget_declared !== false;
-    face.running = !!state.running;
+    // A minted conversation has no run of its own yet: the state this
+    // replay read belongs to whatever session the face held before, so
+    // inheriting its `running` would make the composer QUEUE a first
+    // send behind a run in a different conversation — which is exactly
+    // the 2026-11-05 regression the REG cases pin. The mint wins until
+    // the first send.
+    face.running = face.minted ? false : !!state.running;
     // The session the bridge is executing, which is not always this one:
     // a run in another conversation is a fact about that row, not a
     // reason to disable this composer.
@@ -10180,10 +10560,18 @@ import { node, svg, clip } from './core/dom.js';
     });
     // A room with no messages still needs its transcript's height, so the
     // composer sits where the owner expects it rather than under the head.
-    el.log.hidden = !talked && face.panel !== 'huddles';
+    // A minted conversation shows the welcome, so the log hides beside it
+    // — the same predicate as the line below, or the two disagree and the
+    // home reads as a blank transcript under an empty welcome.
+    el.log.hidden = face.minted ? true : (!talked && face.panel !== 'huddles');
     // The welcome is the chat's home; the huddles surface has its own
     // empty state and never borrows this one.
-    el.empty.hidden = talked || face.panel === 'huddles';
+    // The welcome's visibility, in ONE place. `talked` answers "does this
+    // conversation have words"; a minted conversation does not, even
+    // though `load` reads the previous session's state under its new id,
+    // so the replay would otherwise hide the welcome the press just
+    // showed. The mint mark wins over `talked` until the first send.
+    el.empty.hidden = (talked && !face.minted) || face.panel === 'huddles';
     face.replaying = true;
     (state.events || []).forEach(apply);
     face.replaying = false;
@@ -10210,7 +10598,13 @@ import { node, svg, clip } from './core/dom.js';
     // The log is the truth about what happened; the snapshot is the
     // truth about now. A replayed log with no end record is an
     // interrupted run, not a live one, so the process card says so.
-    face.running = !!state.running;
+    // A minted conversation has no run of its own yet: the state this
+    // replay read belongs to whatever session the face held before, so
+    // inheriting its `running` would make the composer QUEUE a first
+    // send behind a run in a different conversation — which is exactly
+    // the 2026-11-05 regression the REG cases pin. The mint wins until
+    // the first send.
+    face.running = face.minted ? false : !!state.running;
     if (face.process && !face.running && face.process.active) {
       face.process.active = false;
       face.process.ended = Date.now();
@@ -10419,7 +10813,7 @@ import { node, svg, clip } from './core/dom.js';
         .then(function (reply) {
           if (reply.status !== 200) {
             notice('the name was refused',
-              (reply.body && reply.body.error) || 'the face said no without a reason');
+              (reply.body && reply.body.error) || 'the app refused without saying why');
             return;
           }
           face.sessions = null;
@@ -10816,7 +11210,7 @@ import { node, svg, clip } from './core/dom.js';
         return;
       }
       notice('the goal was refused',
-        (reply.body && reply.body.error) || 'the face said no without a reason');
+        (reply.body && reply.body.error) || 'the app refused without saying why');
     }).catch(function () {
       notice('the goal did not cross', 'the server did not answer');
     });
@@ -10966,7 +11360,7 @@ import { node, svg, clip } from './core/dom.js';
     folderSync = post('/api/folder', body).then(function (reply) {
       if (reply.status !== 200) {
         notice('the folder was refused',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
+          (reply.body && reply.body.error) || 'the app refused without saying why');
         return;
       }
       // The recorded event rides the stream and is the authority; this
@@ -11276,7 +11670,7 @@ import { node, svg, clip } from './core/dom.js';
       post('/api/attach', { path: rel, consent: !!consent }).then(function (reply) {
         if (reply.status !== 200) {
           notice('the document was refused',
-            (reply.body && reply.body.error) || 'the face said no without a reason');
+            (reply.body && reply.body.error) || 'the app refused without saying why');
           el.docPopNote.hidden = true;
           return;
         }
@@ -11430,6 +11824,54 @@ import { node, svg, clip } from './core/dom.js';
     paintAttachments();
   }
 
+  /// Attach every image a paste carried, in order.
+  ///
+  /// A `File` from `clipboardData` or a `DataTransfer` has no bytes in hand —
+  /// it must be read — so each is turned into the same `{name, mime, bytes,
+  /// size}` shape the button's server read answers, and pushed through
+  /// `pasteImage`. The reads are independent, so one bad image cannot stop its
+  /// siblings: each failure is named against its own file.
+  function pasteClipboardImages(files) {
+    var usable = (files || []).filter(Boolean);
+    if (!usable.length) return;
+    var added = 0;
+    usable.forEach(function (file) {
+      if (face.attachments.length >= ATTACH_LIMIT) {
+        notice('at most ' + ATTACH_LIMIT + ' attachments', file.name + ' was not added');
+        return;
+      }
+      if (file.size > ATTACH_BYTE_LIMIT) {
+        notice('the image is larger than the ' + (ATTACH_BYTE_LIMIT / (1024 * 1024)) + ' MB bound',
+          file.name + ' was not added');
+        return;
+      }
+      if (!/^image\//.test(file.type || '')) {
+        notice('only images ride a paste', file.name + ' was not added');
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function () {
+        var text = String(reader.result || '');
+        var comma = text.indexOf(',');
+        if (comma < 0) {
+          notice('the image could not be read', file.name + ' was not added');
+          return;
+        }
+        added += 1;
+        pasteImage({
+          name: file.name || ('clipboard-' + added + '.png'),
+          mime: file.type,
+          bytes: text.slice(comma + 1),
+          size: file.size
+        });
+      };
+      reader.onerror = function () {
+        notice('the image could not be read', file.name + ' was not added');
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   function pasteFromClipboard() {
     if (!el.paste || el.paste.disabled) return;
     el.paste.disabled = true;
@@ -11455,6 +11897,21 @@ import { node, svg, clip } from './core/dom.js';
         // states what the turn now carries.
         if (pasteImage(answer.image) !== false) {
           notice('the image is attached', answer.image.name + ' rides this turn');
+        }
+        return;
+      }
+      if (answer.kind === 'images' && (answer.images || []).length) {
+        // The clipboard held more than one. The button and ⌘V must agree
+        // about what "paste" means (the owner's 2026-11-18 ruling), so this
+        // door loops the same `pasteImage` the keyboard path does.
+        var list = answer.images;
+        var took = 0;
+        list.forEach(function (one) {
+          if (pasteImage(one) !== false) took += 1;
+        });
+        if (took) {
+          notice(took === 1 ? 'the image is attached' : took + ' images are attached',
+            'they ride this turn');
         }
       }
     }).catch(function () {
@@ -11514,14 +11971,19 @@ import { node, svg, clip } from './core/dom.js';
       }
       var items = clipboard.items;
       if (items) {
-        var image = Array.prototype.filter.call(items, function (item) {
+        // ⌘V carries EVERY image on the clipboard, not the first (the
+        // owner's 2026-11-18 request: "paste one or more images ... with
+        // cmd-V"). Each file item is handed to the same `pasteImage` the
+        // paste button uses, so the bounds and the chip are the ones already
+        // proven — one pipeline, two doors onto it.
+        var images = Array.prototype.filter.call(items, function (item) {
           return item.kind === 'file' && /^image\//.test(item.type);
-        })[0];
-        if (image) {
+        });
+        if (images.length) {
           event.preventDefault();
-          notice('an image cannot ride the composer yet',
-            'paste attaches text files through the same bounds as the picker; an image goes \
-             through the document surface, which escalates it to Perception');
+          pasteClipboardImages(images.map(function (item) {
+            return item.getAsFile();
+          }));
         }
       }
     });
@@ -11727,7 +12189,7 @@ import { node, svg, clip } from './core/dom.js';
       .then(function (reply) {
         if (reply.status !== 200) {
           notice('the archive was refused',
-            (reply.body && reply.body.error) || 'the face said no without a reason');
+            (reply.body && reply.body.error) || 'the app refused without saying why');
           return;
         }
         face.sessions = null;
@@ -11993,6 +12455,16 @@ import { node, svg, clip } from './core/dom.js';
       return Boolean(face.learnPick || lesson.id);
     }
     return false;
+  }
+
+  /// Whether this conversation has anything delegated to show: a run in
+  /// flight, or a plan whose graph declares work. Read off the same
+  /// delegation document the lens reads, so the two cannot disagree.
+  function workTabAvailable() {
+    var read = face.delegation;
+    if (!read) return false;
+    if (read.live) return true;
+    return !!(read.graph && (read.graph.nodes || []).length);
   }
 
   function paintPaneContext() {
@@ -13793,7 +14265,7 @@ import { node, svg, clip } from './core/dom.js';
         !/run is in flight/.test((reply.body && reply.body.error) || '');
       if (refused) {
         notice('that room would not open',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
+          (reply.body && reply.body.error) || 'the app refused without saying why');
         return;
       }
       face.sessions = null;
@@ -14085,10 +14557,10 @@ import { node, svg, clip } from './core/dom.js';
     var rooms = [].concat(huddleRows('active'), huddleRows('inactive'), huddleRows('ended'));
     var card2 = node('div', 'room-empty-card');
     if (rooms.length) {
-      card2.appendChild(node('p', 'empty-eyebrow', 'work \u00b7 huddles'));
-      card2.appendChild(node('h1', 'empty-title', 'Pick a room.'));
+      card2.appendChild(node('p', 'empty-eyebrow', 'huddles'));
+      card2.appendChild(node('h1', 'empty-title', 'Open a huddle.'));
       card2.appendChild(node('p', 'empty-note',
-        'The rooms you keep are in the column beside this page. Or open a new one.'));
+        'Huddles you have already started are listed beside this page. Pick one, or start a new one.'));
       var recent = node('div', 'room-recents');
       rooms.slice(0, 5).forEach(function (row) {
         var pick = node('button', 'room-recent');
@@ -14110,20 +14582,20 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
     // The invitation: the goal, the bots with their voices, one press.
-    card2.appendChild(node('p', 'empty-eyebrow', 'work \u00b7 huddles'));
-    card2.appendChild(node('h1', 'empty-title', 'A room for the work.'));
+    card2.appendChild(node('p', 'empty-eyebrow', 'huddles'));
+    card2.appendChild(node('h1', 'empty-title', 'Start a huddle.'));
     card2.appendChild(node('p', 'empty-note',
-      'One session with you and one or more bots. Every member sees every message; a mention hands the turn; what the room produces is posted in-line.'));
+      'A working session you share with one or more bots. Ask for something and the bot you name takes the turn \u2014 anything it produces lands in the conversation.'));
     var goalField = node('div', 'empty-field');
-    goalField.appendChild(node('label', 'empty-label', 'the goal'));
+    goalField.appendChild(node('label', 'empty-label', 'what do you want out of it?'));
     var goalInput = node('input', 'empty-input');
     goalInput.type = 'text';
-    goalInput.placeholder = 'what this room is for';
-    goalInput.setAttribute('aria-label', 'the room goal');
+    goalInput.placeholder = 'what do you want out of it?';
+    goalInput.setAttribute('aria-label', 'what you want out of this huddle');
     goalField.appendChild(goalInput);
     card2.appendChild(goalField);
     var botField = node('div', 'empty-field');
-    botField.appendChild(node('span', 'empty-label', 'bots in the room'));
+    botField.appendChild(node('span', 'empty-label', 'who do you want in it?'));
     var picks = node('div', 'picks');
     var roles = (face.settings && face.settings.roles && face.settings.roles.entries) || [];
     var usable = roles.filter(function (one) { return !one.broken; });
@@ -14143,7 +14615,7 @@ import { node, svg, clip } from './core/dom.js';
     });
     if (!usable.length) {
       picks.appendChild(node('p', 'hint',
-        'this home declares no roles yet \u2014 a bot is a role file under <home>/roles/'));
+        'No bots are set up yet. Add one from Settings › Bots, then come back.'));
     }
     botField.appendChild(picks);
     card2.appendChild(botField);
@@ -14157,7 +14629,7 @@ import { node, svg, clip } from './core/dom.js';
       createRoom(goalInput.value.trim(), personas, open);
     });
     acts.appendChild(open);
-    acts.appendChild(node('span', 'empty-hint', 'the first one named leads'));
+    acts.appendChild(node('span', 'empty-hint', 'the first one you pick leads'));
     card2.appendChild(acts);
     el.roomEmpty.appendChild(card2);
   }
@@ -14203,7 +14675,7 @@ import { node, svg, clip } from './core/dom.js';
     var roles = ((face.settings && face.settings.roles) || {}).entries || [];
     if (!roles.length) {
       el.huddleConvenor.appendChild(node('p', 'hint',
-        'this home declares no roles yet — a bot is a role file under <home>/roles/'));
+        'No bots are set up yet. Add one from Settings › Bots, then come back.'));
     }
     roles.forEach(function (one) {
       if (one.broken) return;
@@ -14385,7 +14857,7 @@ import { node, svg, clip } from './core/dom.js';
         face.dictating = false;
         dictateButton('idle', 'Dictate');
         notice('dictation did not start',
-          (reply.body && reply.body.error) || 'the face said no');
+          (reply.body && reply.body.error) || 'the app refused');
       })
       .catch(function () {
         face.dictating = false;
@@ -14403,7 +14875,7 @@ import { node, svg, clip } from './core/dom.js';
         dictateButton('idle', 'Dictate');
         if (reply.status !== 200) {
           notice('the dictation was not transcribed',
-            (reply.body && reply.body.error) || 'the face said no');
+            (reply.body && reply.body.error) || 'the app refused');
           return;
         }
         var text = String((reply.body && reply.body.transcript) || '').trim();
@@ -14660,6 +15132,61 @@ import { node, svg, clip } from './core/dom.js';
       .join(' ').toLowerCase().indexOf(asked) !== -1;
   }
 
+  /// The state filter's choices, each with the count it would show.
+  ///
+  /// The owner's 2026-11-17 consolidation: `threads` and `archive` were
+  /// two rail rows over one list, and the difference between them was a
+  /// filter. These are the states the archive document already names, so
+  /// nothing here re-derives what the bridge counted — the counts are the
+  /// rows the filter would show, under the same predicates `paintWork`
+  /// groups with.
+  ///
+  /// "live" is the day's work: anything not archived, whether it is
+  /// working, waiting on the owner, or simply resting. "archived" is the
+  /// one end a conversation comes to. "all" is the archive door the rail
+  /// used to carry, kept as a press rather than a destination.
+  function workStateFilter() {
+    var shown = workRows().filter(railRow);
+    var active = shown.filter(function (row) { return row.state !== 'archived'; });
+    var archived = shown.filter(function (row) { return row.state === 'archived'; });
+    return [
+      {
+        id: 'active',
+        label: 'active',
+        // The owner's own definition, 2026-11-17: "a conversation that is
+        // active or was active recently and requires some user's input".
+        // That is what `threads` was trying to name — it turned out to be
+        // a state of a conversation, never a second kind of object.
+        why: 'active now, or recently, and waiting on you',
+        count: active.length,
+      },
+      {
+        id: 'archived',
+        label: 'archived',
+        // "a conversation that is no longer active or expected to be
+        // active" — put away, still findable.
+        why: 'no longer active, or expected to be — put away',
+        count: archived.length,
+      },
+      {
+        id: 'all',
+        label: 'all',
+        why: 'every conversation under this home',
+        count: shown.length,
+      },
+    ];
+  }
+
+  /// Whether `row` passes the state filter. Absent a choice, active.
+  function workStatePasses(row) {
+    var chosen = face.sessionsFilter || 'active';
+    // `live` is the pre-2026-11-17 name for the same state; an old saved
+    // value must not fall through to "show nothing".
+    if (chosen === 'all') return true;
+    if (chosen === 'archived') return row.state === 'archived';
+    return row.state !== 'archived';
+  }
+
   // The folded list: a strip that names itself, carries the archive's own
   // count of what needs the owner, and holds the one control that brings
   // the rows back. No row width, no second meaning — the rows are one
@@ -14761,6 +15288,50 @@ import { node, svg, clip } from './core/dom.js';
     search.appendChild(box);
     el.workHead.appendChild(search);
 
+    // The state filter (the owner's 2026-11-17 consolidation). `threads`
+    // and `archive` were two rail rows over this one list, and the
+    // difference the owner named — "threads only shows the current or
+    // empty threads, archive shows all threads" — is a FILTER, not a
+    // destination. It is a row of presses under the search box, and it
+    // says its own count, so the choice is visible before it is made.
+    //
+    // Live is the default because that is what the day needs; everything
+    // is one press away, which is what the archive door used to be.
+    //
+    // The row renders even when the list is empty. A filter over zero rows
+    // legitimately changes no row — and the dead-action sweep read that as
+    // a dead button (six presses across chat and sessions). The honest fix
+    // is not to skip the control but to let the empty line name the state,
+    // so the press is VISIBLE: the sentence below changes with it.
+    var states = workStateFilter();
+    var strip = node('div', 'work-filters');
+    strip.setAttribute('role', 'group');
+    strip.setAttribute('aria-label', 'which conversations to show');
+    states.forEach(function (choice) {
+      var button = node('button', 'work-filter', choice.label);
+      button.type = 'button';
+      var chosen = (face.sessionsFilter || 'active') === choice.id;
+      button.setAttribute('aria-pressed', chosen ? 'true' : 'false');
+      button.setAttribute('aria-label',
+        choice.label + ', ' + choice.count +
+        (choice.count === 1 ? ' conversation' : ' conversations'));
+      if (chosen) button.dataset.on = 'true';
+      button.title = choice.why;
+      // The count is its own element so the pressed state and the number
+      // are both legible to anything reading the strip — a human or the
+      // dead-action sweep, which fingerprints the first 100 characters of
+      // a node's text. One run-together `live0` token read as unchanged.
+      var number = node('span', 'work-filter-n', String(choice.count));
+      number.dataset.count = choice.id;
+      button.appendChild(number);
+      button.addEventListener('click', function () {
+        face.sessionsFilter = choice.id;
+        paintWork();
+      });
+      strip.appendChild(button);
+    });
+    el.workHead.appendChild(strip);
+
     if (!read) {
       el.workList.appendChild(node('p', 'board-empty', 'Reading the archive\u2026'));
       return;
@@ -14770,7 +15341,7 @@ import { node, svg, clip } from './core/dom.js';
         'The archive could not be read: ' + read.refused.join('; ')));
       return;
     }
-    var shown = all.filter(railRow).filter(sessionMatchesQuery);
+    var shown = all.filter(railRow).filter(workStatePasses).filter(sessionMatchesQuery);
     var groups = {
       needs: shown.filter(function (row) { return workNeeds(row.state); }),
       working: shown.filter(function (row) { return row.state === 'working'; }),
@@ -14809,34 +15380,41 @@ import { node, svg, clip } from './core/dom.js';
       });
     }
     if (groups.archived.length) {
-      // One quiet line, closed by default, like the background runs: the
-      // archive is the one end a session comes to, and its rows stay
-      // findable — never invisible.
-      var archivedCount = groupCount('archived', groups.archived);
-      var archivedOpen = !!face.showArchived;
-      var archivedToggle = node('button', 'work-background');
-      archivedToggle.type = 'button';
-      archivedToggle.setAttribute('aria-expanded', archivedOpen ? 'true' : 'false');
-      archivedToggle.title = archivedOpen ? 'hide archived sessions' : 'show archived sessions';
-      archivedToggle.appendChild(node('span', null, archivedOpen ? '\u25be' : '\u25b8'));
-      var archivedLabel = node('span');
-      archivedLabel.appendChild(node('b', null, 'archived'));
-      archivedLabel.appendChild(document.createTextNode(' \u00b7 ' + archivedCount +
-        (archivedCount === 1 ? ' session' : ' sessions')));
-      archivedToggle.appendChild(archivedLabel);
-      archivedToggle.addEventListener('click', function () {
-        face.showArchived = !face.showArchived;
-        paintWork();
-      });
-      el.workList.appendChild(archivedToggle);
-      if (archivedOpen) {
-        groups.archived.forEach(function (row) { el.workList.appendChild(workRow(row)); });
-      }
+      // The archived group rides the filter now. It used to be a quiet
+      // toggle here — "archived · N sessions", closed by default — which
+      // was the same idea as the filter wearing a second control. One
+      // concept, one press: the filter row above says whether archived
+      // rows are wanted, so this group simply honours that answer.
+      //
+      // Under `live` (the default) archived rows are already filtered out,
+      // so this head cannot render a group that hides its own rows.
+      el.workList.appendChild(
+        workGroupHead('archived', groupCount('archived', groups.archived))
+      );
+      groups.archived.forEach(function (row) { el.workList.appendChild(workRow(row)); });
     }
     if (!shown.length) {
-      el.workList.appendChild(node('p', 'board-empty',
-        'Nothing under this home matches' +
-        (face.sessionQuery ? ' \u201c' + face.sessionQuery + '\u201d' : '') + '.'));
+      // The empty line names the actual reason, because "nothing matches"
+      // over a filter that is simply set to `archived` reads as an empty
+      // home and sends the owner looking for conversations that are there.
+      var state = face.sessionsFilter || 'active';
+      var said;
+      if (face.sessionQuery) {
+        said = 'Nothing under this home matches \u201c' + face.sessionQuery + '\u201d';
+        if (state !== 'all') said += ' under ' + state;
+        said += '.';
+      } else if (state === 'archived') {
+        said = 'No conversation here has been archived yet.';
+      } else if (state === 'all') {
+        said = 'This home holds no conversations at all.';
+      } else {
+        // Each state names ITSELF, so every press of the filter changes
+        // this sentence. Two states sharing one sentence made two of the
+        // three presses invisible — which the dead-action sweep reported
+        // as dead buttons, correctly.
+        said = 'No conversation here is active. `all` shows every one under this home.';
+      }
+      el.workList.appendChild(node('p', 'board-empty', said));
     }
   }
 
@@ -15158,10 +15736,14 @@ import { node, svg, clip } from './core/dom.js';
     if (!face.session) return;
     el.convName.textContent = (row && row.title) || sessionLabel(face.session);
     // The name's rung rides the tooltip: a derived name says what
-    // named it — the owner's words, the standing goal, the plan, or
-    // the first message.
+    // named it — the owner's words, the standing goal, the first
+    // deliverable asked for, the first plan executed, the first message
+    // about the work, or the raw first message (the owner's 2026-11-18
+    // naming ruling).
     var rungWord = { owner: 'the owner\u2019s title', goal: 'the standing goal',
-      plan: 'the last plan', first: 'the first message' }[(row || {}).title_from];
+      deliverable: 'the first deliverable asked for', plan: 'the first plan',
+      subject: 'the first message about the work',
+      first: 'the first message' }[(row || {}).title_from];
     el.convTitle.title = ((row && row.title) || face.session) +
       (rungWord ? ' \u2014 named by ' + rungWord : '');
     if (row) {
@@ -15283,7 +15865,7 @@ import { node, svg, clip } from './core/dom.js';
           });
         }
         notice('that conversation would not open',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
+          (reply.body && reply.body.error) || 'the app refused without saying why');
         return;
       }
       face.sessions = null;
@@ -15363,13 +15945,31 @@ import { node, svg, clip } from './core/dom.js';
     // pending key, and swapDraft reads the flag to pick that key.
     face.pendingNew = true;
     detachToWelcome();
-    try { window.location.hash = '#/chat'; } catch (error) { }
+    // The route is what paints the welcome, so the arrival must find the
+    // stored key already gone: the detach below clears it, but the
+    // hashchange that follows reads the key on the same turn. A mint
+    // means "no conversation to return to yet", so say so before the
+    // navigation rather than racing it.
+    face.minted = 'pending';
+    try { window.location.hash = '#/sessions'; } catch (error) { }
     face.creating = post('/api/session/new', {}).then(function (reply) {
       face.creating = null;
       if (reply.status === 200 && reply.body && reply.body.id) {
         window.localStorage.removeItem('fleet-draft-new');
+        // The mint names a conversation but shows no transcript: its log
+        // holds no words yet, so the welcome stays. `fromMint` marks the
+        // id as one whose arrival must not reopen a transcript — cleared
+        // by the first send, which is when there is something to show.
         face.pendingNew = false;
         face.session = reply.body.id;
+        // The id is stored so a reload returns here — but it is also
+        // NAMED as minted, because until the first send there is nothing
+        // to show: arriving home must keep the welcome rather than paint
+        // an empty transcript over it. One field, set here and cleared by
+        // the send, rather than a guess about which of `pendingNew`,
+        // `creating` or the stored key is still in flight when the route
+        // re-evaluates.
+        face.minted = reply.body.id;
         storeOpenSession(reply.body.id);
         readSessions(true);
         // The run bar paints the folder the NEXT run will use (KI-492): without
@@ -15655,7 +16255,7 @@ import { node, svg, clip } from './core/dom.js';
         null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The stream read has not landed yet. It reads today\u2019s calibration rows, which ' +
+        'Still loading. This comes from today\u2019s calibration rows, which ' +
         'this machine\u2019s own runs wrote.'));
       el.calibrationBoard.appendChild(waiting);
       return;
@@ -15688,7 +16288,7 @@ import { node, svg, clip } from './core/dom.js';
         {
           label: 'run a gate review',
           run: function () {
-            ask('use the sys1 lane to grade ' + read.day +
+            ask('use the judgment service to grade ' + read.day +
               '\u2019s route rows and report the fit');
           }
         }
@@ -15733,7 +16333,7 @@ import { node, svg, clip } from './core/dom.js';
     if (!cells.length) {
       card.appendChild(node('p', 'board-empty',
         'No judged routes for ' + read.day + ' yet. `fleet judge` grades a day\u2019s route ' +
-        'rows through the sys1 lane, and a cell appears when a judgment lands.'));
+        'rows through the judgment service, and a cell appears when a judgment lands.'));
       return card;
     }
     var items = cells.map(function (cell) {
@@ -15792,7 +16392,7 @@ import { node, svg, clip } from './core/dom.js';
     if (!rows.length) {
       card.appendChild(node('p', 'board-empty',
         'No judged routes for ' + read.day + ' yet \u2014 `fleet judge` grades a day\u2019s '
-        + 'route rows through the sys1 lane.'));
+        + 'routing rows through the judgment service.'));
       return card;
     }
     var list = node('div', 'rail-list');
@@ -15969,7 +16569,7 @@ import { node, svg, clip } from './core/dom.js';
     judge.textContent = 'ask sys1 about this cell';
     judge.addEventListener('click', function () {
       closeDrawer();
-      ask('use the sys1 lane to review the ' + cell.provider +
+      ask('use the judgment service to review the ' + cell.provider +
         (cell.workload ? ' \u00b7 ' + cell.workload : '') +
         ' fit cell and say what is still missing');
     });
@@ -16194,7 +16794,7 @@ import { node, svg, clip } from './core/dom.js';
         null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The tower read has not landed yet. It reads the projects root\u2019s git facts and ' +
+        'Still loading. This comes from your projects\u2019 git facts and ' +
         'the second-brain\u2019s derived state, both of which are this machine\u2019s own.'));
       el.towerBoard.appendChild(waiting);
       return;
@@ -16259,7 +16859,7 @@ import { node, svg, clip } from './core/dom.js';
         return { model: row.harness, calls: row.total };
       })));
     } else {
-      mix.appendChild(node('p', 'board-empty', 'The derived state names no harness mix yet.'));
+      mix.appendChild(node('p', 'board-empty', 'Nothing has been recorded here yet.'));
     }
     el.towerBoard.appendChild(mix);
     var cover = boardCard(7, 'what the reports reach', null,
@@ -17274,10 +17874,10 @@ import { node, svg, clip } from './core/dom.js';
 
   function healthLanesCard() {
     var doc = face.lanesHealth;
-    var card = boardCard(12, 'the lanes', doc ? (doc.ok + ' ok \u00b7 ' + doc.total + ' lanes') : null,
-      'The services fleet launches, probed live \u2014 the same read as fleet lanes.');
+    var card = boardCard(12, 'the services', doc ? (doc.ok + ' ok \u00b7 ' + doc.total + ' services') : null,
+      'The background services this app starts, checked live.');
     if (!doc) {
-      card.appendChild(node('p', 'board-empty', 'The lane probe has not landed yet.'));
+      card.appendChild(node('p', 'board-empty', 'Still loading the connection checks.'));
       return card;
     }
     if (refusals(doc)) {
@@ -17301,7 +17901,7 @@ import { node, svg, clip } from './core/dom.js';
     var card = boardCard(12, 'the doctor', null,
       'The cheap checks fleet doctor runs \u2014 every one named, pass or fail.');
     if (!doc) {
-      card.appendChild(node('p', 'board-empty', 'The doctor read has not landed yet.'));
+      card.appendChild(node('p', 'board-empty', 'Still loading the health checks.'));
       return card;
     }
     if (refusals(doc)) {
@@ -17312,8 +17912,55 @@ import { node, svg, clip } from './core/dom.js';
       var line = node('p', 'derivation', (check.ok ? '\u2713 ' : '! ') + (check.why || check.check));
       if (!check.ok) line.dataset.tone = 'bad';
       card.appendChild(line);
+      // A failing check that a press can fix carries its repair, decided
+      // server-side (the owner's 2026-11-18 ruling): the button says what
+      // it will DO, and one press runs the self-healing action and
+      // re-reads the checks so the person sees whether it worked.
+      if (!check.ok && check.fix) card.appendChild(fixAction(check.fix));
     });
     return card;
+  }
+
+  /// The fix button a failing check offers: a label in plain words, the
+  /// action, and one line saying what the press will do. The result lands
+  /// in the answer strip and the checks are re-read, so a repair that
+  /// worked says so and one that failed names why — never a press that
+  /// looks like it did nothing.
+  function fixAction(fix) {
+    var wrap = node('div', 'doctor-fix');
+    var button = node('button', 'press quiet doctor-fix-press', fix.label);
+    button.type = 'button';
+    if (fix.note) button.title = fix.note;
+    var said = node('p', 'doctor-fix-note', fix.note || '');
+    button.addEventListener('click', function () {
+      // A hash action is a door, not a request: it takes the person to
+      // the screen where the setting lives.
+      if (String(fix.action || '').charAt(0) === '#') {
+        window.location.hash = fix.action.slice(1);
+        return;
+      }
+      button.disabled = true;
+      var was = button.textContent;
+      button.textContent = 'working\u2026';
+      post(fix.action, {}).then(function (reply) {
+        button.disabled = false;
+        button.textContent = was;
+        if (reply.status === 200) {
+          notice('fixed', fix.note ? 'The repair ran.' : '');
+          readDoctor(true);
+          return;
+        }
+        notice('the repair did not land',
+          (reply.body && reply.body.error) || 'the app refused without saying why');
+      }).catch(function () {
+        button.disabled = false;
+        button.textContent = was;
+        notice('the repair did not land', 'the app could not be reached');
+      });
+    });
+    wrap.appendChild(button);
+    if (fix.note) wrap.appendChild(said);
+    return wrap;
   }
 
   // The owner-approved self-healing actions (the self-healing extension):
@@ -17390,9 +18037,9 @@ import { node, svg, clip } from './core/dom.js';
   function healthSections() {
     return [
       {
-        id: 'lanes', name: 'the lanes',
+        id: 'lanes', name: 'the services',
         badge: face.lanesHealth ? (face.lanesHealth.ok || 0) : null,
-        badgeTitle: 'lanes answering',
+        badgeTitle: 'services answering',
         paint: function () { return [healthLanesCard()]; }
       },
       {
@@ -17486,7 +18133,7 @@ import { node, svg, clip } from './core/dom.js';
     if (!read) {
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The derived-state read has not landed yet. It reads the six state files under the ' +
+        'Still loading. This comes from the six state files under the ' +
         'second-brain home, which is this machine\u2019s own. Open the health surface to ask ' +
         'it again, or press the section again once it has.'));
       return [waiting];
@@ -17694,7 +18341,7 @@ import { node, svg, clip } from './core/dom.js';
         'figures behind it.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The substrate read has not landed yet. It reads the LayerFS Store through the ' +
+        'Still loading. This comes from the LayerFS store through the ' +
         'same composed environment a delegation spawns with.'));
       el.workspaceHistoryBoard.appendChild(waiting);
       paintWorkspaceRail(null);
@@ -17756,7 +18403,7 @@ import { node, svg, clip } from './core/dom.js';
         'delegation launched in a folder registers its project, and the tree it worked ' +
         'appears on this surface.'));
       none.appendChild(node('p', 'board-empty',
-        'The substrate is the isolation a delegated run works in: the child\u2019s writes ' +
+        'This is the isolated workspace a delegated run works in: the child\u2019s writes ' +
         'land on its own branch, and nothing reaches the working tree until a merge is ' +
         'published. A folder that has never delegated has no history to show.'));
       el.workspaceHistoryBoard.appendChild(none);
@@ -17898,7 +18545,7 @@ import { node, svg, clip } from './core/dom.js';
         'corpus the instances share.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The armada read has not landed yet. It reads the roster file and grades each ' +
+        'Still loading. This comes from the roster file and grades each ' +
         'instance\u2019s settled dispatches over the journal.'));
       el.armadaBoard.appendChild(waiting);
       paintArmadaRail(null);
@@ -19382,7 +20029,7 @@ import { node, svg, clip } from './core/dom.js';
     post('/api/settings', body).then(function (reply) {
       if (reply.status !== 200) {
         settingsSay('refused', 'the write was refused',
-          (reply.body && reply.body.error) || 'the surface said no without a reason');
+          (reply.body && reply.body.error) || 'the app refused without saying why');
         // A refusal stops here: the caller's `onDone` is its success path,
         // and running it would paint its own "saved" over the writer's
         // words (the harness's U1 case caught exactly that).
@@ -19484,7 +20131,7 @@ import { node, svg, clip } from './core/dom.js';
             { decision: pair[1] }).then(function (reply) {
             if (reply.status !== 200) {
               notice('the answer was refused',
-                (reply.body && reply.body.error) || 'the face said no without a reason');
+                (reply.body && reply.body.error) || 'the app refused without saying why');
               return;
             }
             notice('answered', pair[0] === 'approve' ? 'the call may run once' : 'the call is denied');
@@ -19782,7 +20429,7 @@ import { node, svg, clip } from './core/dom.js';
       'let them in. Revoking forgets the token.');
     if (!read) {
       card.appendChild(node('p', 'board-empty',
-        'The access read has not landed yet. It reads the home\u2019s device store.'));
+        'Still loading. This comes from the devices paired to this home.'));
       return card;
     }
     if (!devices.length) {
@@ -20154,9 +20801,9 @@ import { node, svg, clip } from './core/dom.js';
     grant.setAttribute('for', 'plugins-elevate');
     grant.appendChild(node('b', null, 'Install as privileged.'));
     grant.appendChild(node('span', 'plugins-grant-small',
-      ' Every route the face can, writes included \u2014 you are vouching for this bundle. ' +
-      'Unchecked, it installs untrusted: sandboxed to its declared read-only queries, ' +
-      'never self-elevating.'));
+      ' Lets this extension use every capability the app has, file writes included \u2014 you are vouching for it. ' +
+      'Left unchecked it installs untrusted: limited to the read-only queries it declares, ' +
+      'and it cannot give itself more.'));
     elevation.appendChild(grant);
     form.appendChild(elevation);
     var install = node('button', 'press plugins-install');
@@ -20211,8 +20858,7 @@ import { node, svg, clip } from './core/dom.js';
       ['the state', node('p', 'derivation',
         plugin.enabled ? 'enabled \u2014 it mounts' : 'disabled \u2014 it mounts nothing')],
       ['what removing it does', node('p', 'derivation',
-        'removing deletes the registry entry and the bundle directory; the rail entry and its ' +
-        'card go with them')],
+        'removing deletes the extension and its files; its row and card go with them')],
       ['the write', cfgCardActs([{
         label: 'mount the bundle', primary: true, run: function () {
           window.location.hash = '#/' + encodeURIComponent(plugin.name);
@@ -20445,12 +21091,12 @@ import { node, svg, clip } from './core/dom.js';
     var board = el.botsBoard;
     if (!read) {
       el.botsBoard.appendChild(pageHead('System', 'Bots',
-        'The channels that carry work in from outside: who is paired, what they may do, ' +
-        'whether the service is listening, and what they have asked for.',
+        'Your bots and the conversations they are in, plus the channels that let work ' +
+        'reach them from outside \u2014 a phone, a webhook, another service.',
         null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The channel read has not landed yet. It reads the home\u2019s channel stores and ' +
+        'Still loading. This comes from the channel stores and ' +
         'the service\u2019s own status document.'));
       el.botsBoard.appendChild(waiting);
       return;
@@ -20495,8 +21141,8 @@ import { node, svg, clip } from './core/dom.js';
         run: function () { window.location.hash = '#/settings'; }
       }]);
     board.appendChild(surfaceHead('System', 'Bots',
-      'The channels that carry work in from outside: who is paired, what they may do, ' +
-      'whether the service is listening, and what they have asked for.', instrument));
+      'Your bots and the conversations they are in, plus the channels that let work ' +
+      'reach them from outside \u2014 a phone, a webhook, another service.', instrument));
     var conv = botsConversations();
     var railRows = botsRailRows();
     sectionRail(el.botsRail, railRows, {
@@ -20671,7 +21317,7 @@ import { node, svg, clip } from './core/dom.js';
     doorCard.id = 'bots-door';
     if (!pending.length) {
       doorCard.appendChild(node('p', 'board-empty',
-        'Nothing is waiting. A refusal lands here the moment an unpaired peer tries.'));
+        'Nothing is waiting. A refusal shows up here the moment an unpaired device tries to connect.'));
     }
     pending.forEach(function (peer) {
       var row = node('div', 'bots-row');
@@ -20860,7 +21506,7 @@ import { node, svg, clip } from './core/dom.js';
     });
     if (!feed.childNodes.length) {
       feed.appendChild(node('p', 'board-empty',
-        'No line of this kind is in the read. Clear the filter to see the rest.'));
+        'No line of this kind matches. Clear the filter to see the rest.'));
     }
     fedCard.appendChild(feed);
     board.appendChild(fedCard);
@@ -21124,7 +21770,7 @@ import { node, svg, clip } from './core/dom.js';
     if (!tools) {
       var waiting = boardCard(6, 'the tools', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The tool read has not landed yet.'));
+        'Still loading the tools.'));
       return waiting;
     }
     var card = boardCard(6, 'the tools', String(tools.native.length) + ' native',
@@ -21605,7 +22251,7 @@ import { node, svg, clip } from './core/dom.js';
           key: key.value.trim()
         }).then(function (reply) {
           if (reply.status !== 200) {
-            answer((reply.body && reply.body.error) || 'the surface said no without a reason', true);
+            answer((reply.body && reply.body.error) || 'the app refused without saying why', true);
             return;
           }
           var wrote = (reply.body && reply.body.wrote) || {};
@@ -21952,7 +22598,7 @@ import { node, svg, clip } from './core/dom.js';
         null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The settings read has not landed yet. It reads this home\u2019s own config, routing, ' +
+        'Still loading. This comes from this home\u2019s config, routing, ' +
         'and env files.'));
       el.settingsBoard.appendChild(waiting);
       paintSettingsRail(null);
@@ -21968,7 +22614,7 @@ import { node, svg, clip } from './core/dom.js';
         run: function () { window.location.hash = '#/router'; }
       }]);
     el.settingsBoard.appendChild(surfaceHead('System', 'Settings',
-      'The router, the providers, the lanes, the roles, the vault, the rules, ' +
+      'The router, the providers, the services, the roles, the vault, the rules, ' +
       'the cron jobs, and the identity slot. Every value is picked from what this home already ' +
       'knows; every write rides the writer the CLI rides.', instrument));
     // The board's own answer line (settings-ux U1): the last write's
@@ -22885,7 +23531,7 @@ import { node, svg, clip } from './core/dom.js';
       return choice.label + ' \u2014 ' + choice.value;
     });
     return [
-      ['the lane', node('p', 'derivation',
+      ['the service', node('p', 'derivation',
         (lane.name || lane.role) + (lane.state ? ' \u00b7 ' + lane.state : ''))],
       ['what it can run on', node('p', 'derivation',
         choices.length ? choices.join(' \u00b7 ') : 'no model choice is declared')],
@@ -23061,14 +23707,14 @@ import { node, svg, clip } from './core/dom.js';
       // delegation edges among them — the spine's shape scoped to the
       // role (the owner's fourth orchestrator ruling).
       ['its work graph', roleGraph(role) || node('p', 'derivation',
-        'no threads yet \u2014 every dispatch under this role lands here, end-to-end')],
+        'no runs yet \u2014 work you give this bot shows up here, start to finish')],
       ['the role', node('p', 'derivation', role.description || '(no description)')],
       ['its workload', node('p', 'derivation',
         role.workload
           ? role.workload + ' \u2014 its runs walk this chain; the judgment still records its label'
           : 'the judged workload stands')],
       ['its threads', ownedRows || node('p', 'derivation',
-        'none assigned yet \u2014 a dispatch under this role lands here, end-to-end')],
+        'none assigned yet \u2014 work you give this bot shows up here, start to finish')],
       ['its tools', node('p', 'derivation',
         (role.tools || []).length ? role.tools.join(', ') : 'inherits the run\u2019s')],
       ['its skills', node('p', 'derivation',
@@ -24828,7 +25474,7 @@ import { node, svg, clip } from './core/dom.js';
         var answer = reply.body || {};
         if (reply.status !== 200 || !answer.task) {
           notice('the capture was refused',
-            (answer.refused || []).join(' ') || 'the browser lane did not answer');
+            (answer.refused || []).join(' ') || 'the browser service did not answer');
           return;
         }
         closeDrawer();
@@ -24966,7 +25612,7 @@ import { node, svg, clip } from './core/dom.js';
       ['where they land', node('p', 'derivation',
         'beside the board, under canvas/' + board.slug + '/exports/ \u2014 the download link carries the file, and the site is served live at /site/' + board.slug + '/')],
       ['the PNG', node('p', 'derivation',
-        'the browser lane renders the served page and captures it \u2014 one press; the path comes back in the notice')]
+        'the browser renders the served page and captures it \u2014 one press; the path comes back in the notice')]
     ]);
   }
 
@@ -25877,7 +26523,7 @@ import { node, svg, clip } from './core/dom.js';
     post('/api/settings', body).then(function (reply) {
       if (reply.status !== 200) {
         notice('the registry said no',
-          (reply.body && reply.body.error) || 'the surface said no without a reason');
+          (reply.body && reply.body.error) || 'the app refused without saying why');
         return;
       }
       if (reply.body && reply.body.scan) face.serversScan = reply.body.scan;
@@ -25888,7 +26534,7 @@ import { node, svg, clip } from './core/dom.js';
   function serversCard() {
     var read = (face.settings && face.settings.servers) || {};
     var card = boardCard(12, 'the MCP servers', null,
-      'The servers the owner configured beside the vendored lanes, carried by the home\u2019s ' +
+      'The servers you configured beside the bundled services, carried by this home\u2019s ' +
       'own mcp.json. An enabled server\u2019s tools are declared to every run from its first ' +
       'request. The registry carries env NAMES only \u2014 a value has no field to live in; ' +
       'each name resolves from the environment at spawn.');
@@ -26056,11 +26702,11 @@ import { node, svg, clip } from './core/dom.js';
 
   function lanesCard() {
     var read = face.settings.lanes || {};
-    var card = boardCard(12, 'the lanes', null,
-      'The services fleet launches: the judgment, tabular, embeddings, and media lanes beside ' +
-      'the browser and the composer. A value here is the launch environment the lane receives; ' +
-      'the lane\u2019s own repository and TOML are never rewritten. Key presence is a badge, ' +
-      'never a value.');
+    var card = boardCard(12, 'the services', null,
+      'The background services this app starts: the judgment, tabular, indexing, generation ' +
+      'and composing services, plus the browser. A value here is the environment a service ' +
+      'is started with; its own files are never rewritten. Whether a key is set is a badge, ' +
+      'never the key itself.');
     card.id = 'settings-lanes';
     if (read.refused && read.refused.length) {
       card.appendChild(node('p', 'board-empty', read.refused.join(' \u00b7 ')));
@@ -26284,7 +26930,7 @@ import { node, svg, clip } from './core/dom.js';
     }
 
     var actions = node('div', 'replay-actions');
-    var save = node('button', 'replay-button replay-resume', 'save the lane');
+    var save = node('button', 'replay-button replay-resume', 'save the service');
     save.type = 'button';
     save.dataset.act = 'save-lane';
     save.addEventListener('click', function () {
@@ -26311,7 +26957,7 @@ import { node, svg, clip } from './core/dom.js';
       writeSettings('lane', { lane: lane.name, config: draft });
     });
     actions.appendChild(save);
-    var reset = node('button', 'replay-button', 'reset this lane');
+    var reset = node('button', 'replay-button', 'reset this service');
     reset.type = 'button';
     reset.addEventListener('click', function () {
       if (!window.confirm('Clear every configured value for `' + lane.name + '`?')) return;
@@ -26462,7 +27108,7 @@ import { node, svg, clip } from './core/dom.js';
     if (!read) {
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The version read has not landed yet. It reads this build\u2019s own declarations ' +
+        'Still loading. This comes from this build\u2019s own declarations ' +
         'and, on the about check, the release feed.'));
       el.aboutBoard.appendChild(waiting);
       return;
@@ -26610,7 +27256,7 @@ import { node, svg, clip } from './core/dom.js';
           answer.appendChild(node('p', 'knob-summary',
             'the update did not land \u2014 ' + reason));
           answer.appendChild(node('p', 'cfg-note',
-            'The running face kept serving. Check the feed again once the reason is addressed.'));
+            'The app kept running. Try the update again once the cause is fixed.'));
         }
         button.disabled = false;
         return;
@@ -26732,7 +27378,7 @@ import { node, svg, clip } from './core/dom.js';
         'The credentials Fleet seals, and the passphrase that keys them.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
-        'The vault read has not landed yet. It reads this home\u2019s vault and its .env.'));
+        'Still loading. This comes from the vault and the .env file.'));
       el.vaultBoard.appendChild(waiting);
       return;
     }
@@ -26766,7 +27412,7 @@ import { node, svg, clip } from './core/dom.js';
         ? 'The sealed credentials. A name is listed; a value is never rendered. The passphrase ' +
           'is held by this process only \u2014 unlock it here without restarting, or launch fleet ' +
           'with FLEET_VAULT_PASSPHRASE. To change a sealed value, re-seal it from this panel; ' +
-          'the surface never reads one back.'
+          'nothing the app holds can show it back to you.'
         : 'No vault exists yet. Choose a passphrase to create one; it keys the vault and is ' +
           'never stored. There is no recovery, so store it before sealing anything.');
     card.id = cardId || 'settings-vault';
@@ -27318,7 +27964,7 @@ import { node, svg, clip } from './core/dom.js';
       el.task.value = task;
       grow();
       notice('the plan did not start',
-        (reply.body && reply.body.error) || 'the face said no without a reason');
+        (reply.body && reply.body.error) || 'the app refused without saying why');
     }).catch(function () {
       face.planned = false;
       el.task.value = task;
@@ -27351,7 +27997,7 @@ import { node, svg, clip } from './core/dom.js';
     post('/api/rewind', { turn: turn }).then(function (reply) {
       if (reply.status !== 200) {
         notice('the rewind was refused',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
+          (reply.body && reply.body.error) || 'the app refused without saying why');
         return;
       }
       notice('rewound to turn ' + turn,
@@ -27393,7 +28039,7 @@ import { node, svg, clip } from './core/dom.js';
           return;
         }
         notice('the build did not start',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
+          (reply.body && reply.body.error) || 'the app refused without saying why');
       }).catch(function () { });
     });
     var note = el0.querySelector('.note');
@@ -27514,7 +28160,7 @@ import { node, svg, clip } from './core/dom.js';
     post('/api/diff/accept', { turn: turn, path: path, hunk: hunk }).then(function (reply) {
       if (reply.status !== 200) {
         notice('the accept was refused',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
+          (reply.body && reply.body.error) || 'the app refused without saying why');
         return;
       }
       notice('the hunk is accepted', path + ' \u00b7 the run\u2019s lines are back');
@@ -27527,7 +28173,7 @@ import { node, svg, clip } from './core/dom.js';
     post('/api/diff/reject', body).then(function (reply) {
       if (reply.status !== 200) {
         notice('the reject was refused',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
+          (reply.body && reply.body.error) || 'the app refused without saying why');
         return;
       }
       notice(hunk === null ? 'rejected the whole file' : 'rejected hunk ' + hunk,
@@ -27556,6 +28202,15 @@ import { node, svg, clip } from './core/dom.js';
     var addr = parseAddress();
     var parts = addr.parts;
     var which = addr.lens;
+    // The address as typed, before any fold below rewrites `which`. The
+    // conversations' detach-on-arrival has to ask "did the owner arrive
+    // at the HOME" — and by the time that branch runs, `#/chat` has
+    // already been folded to `sessions`, so `which` can no longer answer
+    // it. Two attempts failed here before the cause was named: keying on
+    // the resolved lens broke `#/sessions/<id>` (clearing the very
+    // conversation the press opened), and re-testing `which` at the
+    // branch broke New's walk home.
+    var typed = which;
     var focusId = addr.id;
     // An arrival is a new place: no transient overlay from the last one may
     // ride over it. The doors, the pops, the @ picker and the palette all
@@ -27579,6 +28234,21 @@ import { node, svg, clip } from './core/dom.js';
       which = 'memory';
       focusId = focusId || 'skills';
       try { window.history.replaceState(null, '', '#/memory/' + focusId); } catch (error) { }
+    }
+    // The threads/archive consolidation (the owner's 2026-11-17 ruling):
+    // one destination for the conversations, so `#/chat` — a saved hash, a
+    // link in an old receipt, a door that still says chat — folds to the
+    // lens that actually lists them. The address follows, so a reload
+    // lands somewhere real rather than on the alias again.
+    if (which === 'chat') {
+      // The address folds; the HASH is left alone. Rewriting it looks
+      // tidier and breaks a real thing: hundreds of saved hashes,
+      // receipts and harness boots name `#/chat`, and a replaceState
+      // turns "which conversation am I on" into "the face moved me
+      // somewhere else". An alias that quietly redirects is harder to
+      // reason about than one that simply resolves — so this resolves to
+      // the conversations lens and leaves the address the owner typed.
+      which = 'sessions';
     }
     // The deliverable address (KI-289): an agent closes its work with a
     // link, and the link opens the face with the pane's preview in
@@ -27658,7 +28328,7 @@ import { node, svg, clip } from './core/dom.js';
     // The conversation is live from the log; every board paints now and
     // again when its own read lands.
     var arrive = {
-      board: function () { paintBoard(); readTasks(true).then(paintBoard); },
+      board: function () { readBoard(true).then(paintBoard); },
       router: function () { paintRouter(); readRouter(true).then(paintRouter); },
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
       memory: function () {
@@ -27830,29 +28500,51 @@ import { node, svg, clip } from './core/dom.js';
     // continues at the bridge, and the recent list's live row ("this
     // face · id") is the one click back. The main conversation page is
     // never a one-and-done (the owner's 2026-10-29 friction, N1).
-    if (address === 'chat') {
-      if (face.session) {
-        swapDraft(face.session, face.pendingNew ? 'new' : '');
-        face.session = null;
-        face.focus = null;
-        storeOpenSession(null);
-        el.log.hidden = true;
-        el.empty.hidden = false;
-        // The view detaches from the run, which continues at the bridge. A
-        // stale running flag would queue this composer's sends behind a
-        // run nobody is looking at (the 2026-11-05 regression) and would
-        // let a row's return skip the reattach.
-        face.running = false;
-        face.driving = '';
-        face.seat = null;
-        face.stop = null;
-      }
-      // A reload is the same address again (the reload-reattach plan):
-      // the conversation the face held comes back through the same seed
-      // the work row runs. A deliberate detach cleared the key, so the
-      // welcome the owner chose stays a welcome across reloads.
+    // The detach-on-arrival. This keyed on `chat` while that was its own
+    // lens; `#/chat` now folds to `sessions` before the panel lookup, so
+    // the branch has to name what the address BECOMES or it never runs
+    // and the welcome stops showing on arrival (the fold would have left
+    // a dead branch here, silently).
+    //
+    // And it must fire on a BARE arrival only. `#/chat` never carried an
+    // id; `#/sessions/<id>` does, and detaching there would clear the name
+    // of the very conversation the press just asked for — the fold would
+    // have turned every "open this conversation" into "open nothing",
+    // which is why this is gated on the absence of a focus id. Caught by
+    // the suite: 78 cases went red on the ungated form.
+    //
+    // The test is the ADDRESS THE OWNER TYPED, not the lens it resolved
+    // to. `#/chat` is the home — arriving there means "no conversation in
+    // particular", so it detaches. `#/sessions/<id>` is a conversation
+    // being opened, so it must not. Both resolve to `address ===
+    // 'sessions'`, which is why the resolved name cannot be the test: my
+    // first attempt used `!focusId` and broke New's walk home, because a
+    // press that mints a conversation then goes home also carries no id.
+    // The home: the conversations lens with no conversation named. That
+    // is the shape a bare rail press, New and /clear all produce, and it
+    // is what `#/chat` resolves to after the consolidation.
+    //
+    // Arriving here shows the welcome and detaches from whatever was
+    // open — through `detachToWelcome`, the one implementation, rather
+    // than a partial copy of its field list (the copy is what left the
+    // welcome hidden behind a blank log).
+    //
+    // The one exception is a reload: the conversation the face held comes
+    // back, because the owner chose it and the address is the same. A
+    // conversation that was just MINTED is not that — it has no words
+    // yet, so the welcome is the honest surface. `face.minted` names that
+    // id until the first send, which is when there is something to show.
+    if (typed === 'chat' || (address === 'sessions' && !focusId)) {
+      if (face.session) detachToWelcome();
+      el.log.hidden = true;
+      el.empty.hidden = false;
+      // A mint is "no conversation to return to yet": its id is stored so
+      // a reload lands there, but arriving home immediately after must
+      // keep the welcome. `face.minted` carries that id — or `'pending'`
+      // between the press and the reply — and either way suppresses the
+      // reattach, because both mean the same thing to this branch.
       var storedOpen = storedOpenSession();
-      if (storedOpen) {
+      if (storedOpen && !face.minted) {
         openWork(storedOpen, { keepHash: true });
         return;
       }
@@ -27885,7 +28577,11 @@ import { node, svg, clip } from './core/dom.js';
     }
     face.treeAt = asked;
     face.treeAt2 = now;
-    return paneGet('/api/tree?path=' + encodeURIComponent(asked))
+    // The tree is rooted at THIS conversation's project folder, so the read
+    // names which conversation asks — the one source of truth the state
+    // document already hands the face as `face.folder`.
+    return paneGet('/api/tree?path=' + encodeURIComponent(asked) +
+      (face.session ? '&session=' + encodeURIComponent(face.session) : ''))
       .then(function (doc) {
         face.tree = doc;
         if (face.paneTab === 'files') paintTree();
@@ -27897,7 +28593,7 @@ import { node, svg, clip } from './core/dom.js';
     var read = face.tree;
     el.paneTree.textContent = '';
     if (!read) {
-      el.paneTree.appendChild(node('p', 'pane-empty', 'The tree read has not landed yet.'));
+      el.paneTree.appendChild(node('p', 'pane-empty', 'Still loading the file tree.'));
       return;
     }
     if (read.refused && read.refused.length) {
@@ -29107,6 +29803,10 @@ import { node, svg, clip } from './core/dom.js';
     el.pane.hidden = false;
     document.body.dataset.pane = 'open';
     try { window.localStorage.setItem('fleet-pane', 'open'); } catch (error) { }
+    // The work tab is gated on this conversation's delegations, so the read
+    // has to be in hand before the tab strip is decided (D1: session-bound).
+    if (!face.delegation) readDelegation(true, face.session).then(repaintPaneTabs);
+    paintPaneProject();
     // The tab the lens asked for (desk and learning keep their properties
     // in the context tab), then the last one the owner used. A press that
     // lands before the lens's read keeps that ask: the paint takes it when
@@ -29117,6 +29817,57 @@ import { node, svg, clip } from './core/dom.js';
     if (!face.tree) readTree('', true);
   }
 
+  /// The tab that answers "what am I looking at" for the surface the owner
+  /// is on, most specific first: an inspected object, then the surface's own
+  /// context (a desk deliverable, a lesson), else nothing contextual.
+  function contextualPaneTab() {
+    if (face.objectTitle && el.tabDetail && !el.tabDetail.hidden) return 'detail';
+    if (paneContextAvailable()) return 'context';
+    return '';
+  }
+
+  /// Open the pane ON its contextual view (the owner's 2026-11-18 ruling:
+  /// "the icon to show the pane should open the drawer and show the
+  /// contextual pane").
+  ///
+  /// The icon is the owner asking "show me what I am looking at", so it must
+  /// not land on whichever tab they last used — that is the remembered-view
+  /// behaviour `openPane` keeps for a reload. When nothing contextual is
+  /// open the run is the honest answer, and the head says so.
+  function openContextualPane() {
+    openPane();
+    var contextual = contextualPaneTab();
+    if (contextual) showPaneTab(contextual, false);
+    return contextual;
+  }
+
+  /// Name the project the pane is showing. `face.folder` is the state
+  /// document's own `folder` — `Bridge::effective_folder`'s answer, the one
+  /// source of truth the run works in — so the label and the tree cannot
+  /// disagree (the contextual pane's C1/D3). A conversation with no folder
+  /// says so rather than showing the launch directory's contents as though
+  /// they were a project's.
+  function paintPaneProject() {
+    if (!el.paneProject) return;
+    var folder = face.folder;
+    if (folder && folder.name) {
+      el.paneProject.textContent = 'project \u00b7 ' + folder.name;
+      el.paneProject.title = 'this conversation\u2019s project \u00b7 ' + (folder.path || folder.name);
+      return;
+    }
+    el.paneProject.textContent = 'no folder \u00b7 showing where the app was launched';
+    el.paneProject.title = 'this conversation has no working folder, so the tree falls back to the launch directory';
+  }
+
+  /// Re-decide the tab strip after a read that can change it: the work tab
+  /// appears when a conversation has delegations and not before.
+  function repaintPaneTabs() {
+    if (!el.pane || el.pane.hidden) return;
+    if (el.tabWork) el.tabWork.hidden = !workTabAvailable();
+    if (face.paneTab === 'work' && !workTabAvailable()) showPaneTab('run', false);
+    else if (face.paneTab === 'work') paintPaneWork();
+  }
+
   function closePane() {
     el.pane.hidden = true;
     document.body.dataset.pane = 'closed';
@@ -29124,16 +29875,44 @@ import { node, svg, clip } from './core/dom.js';
   }
   if (el.paneScrim) el.paneScrim.addEventListener('click', closePane);
 
-  function showPaneTab(which) {
+  /// Show one pane tab. `remember` is false for the tab the app moves to by
+  /// itself — closing an object falls back to the run — because a saved
+  /// preference is the OWNER's last choice: the pane must return at `files`
+  /// after a reload even though closing a card happened to pass through
+  /// `run` first.
+  function showPaneTab(which, remember) {
     face.paneTab = which;
-    try { window.localStorage.setItem('fleet-pane-tab', which); } catch (error) { }
+    if (remember !== false) {
+      try { window.localStorage.setItem('fleet-pane-tab', which); } catch (error) { }
+    }
     var context = which === 'context';
+    var detail = which === 'detail';
+    var work = which === 'work';
     var run = which === 'run';
     var receipts = which === 'receipts';
     var files = which === 'files';
     var preview = which === 'preview';
     var web = which === 'web';
     if (context && !paneContextAvailable()) { context = false; run = true; }
+    // The detail tab exists only while an object is open: a tab that leads
+    // nowhere is a door to a blank. Asking for it with nothing open falls
+    // back to the run, the pane's default view.
+    if (detail && !(el.tabDetail && !el.tabDetail.hidden)) { detail = false; run = true; }
+    // The work tab exists only while this conversation has delegations —
+    // the same rule as the detail tab: a tab that leads to a blank is a
+    // door to nothing (the owner's D2: the current work only).
+    if (work && !workTabAvailable()) { work = false; run = true; }
+    if (el.tabWork) {
+      el.tabWork.hidden = !workTabAvailable();
+      el.tabWork.classList.toggle('active', work);
+      el.tabWork.setAttribute('aria-selected', work ? 'true' : 'false');
+    }
+    if (el.paneWork) el.paneWork.hidden = !work;
+    if (el.tabDetail) {
+      el.tabDetail.classList.toggle('active', detail);
+      el.tabDetail.setAttribute('aria-selected', detail ? 'true' : 'false');
+    }
+    if (el.paneDetail) el.paneDetail.hidden = !detail;
     if (el.tabContext) {
       el.tabContext.hidden = !paneContextAvailable();
       el.tabContext.classList.toggle('active', context);
@@ -29158,6 +29937,7 @@ import { node, svg, clip } from './core/dom.js';
     el.panePreviewPanel.hidden = !preview;
     el.paneWeb.hidden = !web;
     if (context) paintPaneContext();
+    if (work) paintPaneWork();
     else if (run) paintProcess();
     else if (receipts) paintThreadPane();
     else if (files) paintTree();
@@ -29436,8 +30216,8 @@ import { node, svg, clip } from './core/dom.js';
     document.body.dataset.rail = mode;
     el.railToggle.setAttribute('aria-expanded', mode === 'icons' ? 'false' : 'true');
     el.railToggle.setAttribute('aria-label',
-      mode === 'icons' ? 'expand the surfaces rail' : 'collapse the surfaces rail');
-    el.railToggle.title = mode === 'icons' ? 'expand the surfaces rail' : 'collapse the surfaces rail';
+      mode === 'icons' ? 'expand the menu' : 'collapse the menu');
+    el.railToggle.title = mode === 'icons' ? 'expand the menu' : 'collapse the menu';
     if (remember) {
       try { window.localStorage.setItem('fleet-rail', mode); } catch (error) { }
     }
@@ -29807,7 +30587,7 @@ import { node, svg, clip } from './core/dom.js';
   // own lens opens.
   var TISSUE_KINDS = {
     task: { hue: '--amber', lens: 'desk', name: 'tasks' },
-    thread: { hue: '--cyan', lens: 'chat', name: 'threads' },
+    thread: { hue: '--cyan', lens: 'sessions', name: 'threads' },
     deliverable: { hue: '--green', lens: 'desk', name: 'deliverables' },
     bot: { hue: '--magenta', lens: 'bots', name: 'bots' },
     lesson: { hue: '--gold', lens: 'learning', name: 'lessons' },
@@ -29886,7 +30666,7 @@ import { node, svg, clip } from './core/dom.js';
   // surface keeps a private second focus (U26).
   var FOCUS_LENSES = {
     deliverable: { lens: 'desk', follow: function (id) { openDeskProject(id); } },
-    thread: { lens: 'chat', follow: null },
+    thread: { lens: 'sessions', follow: null },
     lesson: { lens: 'learning', follow: function (id) { openLesson(id); } },
     practice: { lens: 'learning', follow: function (id) { openLesson(id); } },
     bot: { lens: 'bots', follow: null },
@@ -30326,7 +31106,7 @@ import { node, svg, clip } from './core/dom.js';
       el.threadPaneEmpty.hidden = rows.length > 0;
       if (!rows.length) {
         el.threadPaneEmpty.textContent = 'nothing yet \u2014 what this conversation '
-          + 'makes lands here as the run works';
+          + 'shows up here as the run works';
       }
     }
     rows.forEach(function (row) {
@@ -30505,7 +31285,7 @@ import { node, svg, clip } from './core/dom.js';
   // convention for a side pane — and Esc from a pane with nothing open
   // comes home rather than closing it, so one key always means one thing.
   el.paneOpen.addEventListener('click', function () {
-    if (el.pane.hidden) openPane();
+    if (el.pane.hidden) openContextualPane();
     else closePane();
   });
   // The pane's width is the owner's hand: the grip drags --pane-width
@@ -30593,6 +31373,12 @@ import { node, svg, clip } from './core/dom.js';
   if (el.tabContext) {
     el.tabContext.addEventListener('click', function () { showPaneTab('context'); });
   }
+  if (el.tabDetail) {
+    el.tabDetail.addEventListener('click', function () { showPaneTab('detail'); });
+  }
+  if (el.tabWork) {
+    el.tabWork.addEventListener('click', function () { showPaneTab('work'); });
+  }
   el.tabRun.addEventListener('click', function () { showPaneTab('run'); });
   if (el.tabReceipts) {
     el.tabReceipts.addEventListener('click', function () { showPaneTab('receipts'); });
@@ -30658,7 +31444,9 @@ import { node, svg, clip } from './core/dom.js';
     }
     if ((event.metaKey || event.ctrlKey) && event.key === '\\') {
       event.preventDefault();
-      if (el.pane.hidden) openPane(); else closePane();
+      // The shortcut and the icon are one verb: both open the CONTEXTUAL
+      // view rather than whichever tab the owner last used.
+      if (el.pane.hidden) openContextualPane(); else closePane();
       return;
     }
     if (event.key !== 'Escape') return;
