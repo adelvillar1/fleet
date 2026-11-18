@@ -1,12 +1,17 @@
 //! The clipboard, read on the owner's gesture.
 //!
-//! The composer's Cmd+V works for text and does nothing for an image.
-//! That is not a bug in the handler: a webview does not hand an image to
-//! the page at all, so the `paste` event either never fires or arrives
-//! with an empty `clipboardData`. The only way to read what the owner
-//! copied is to ask the system clipboard from the process that owns a
-//! window — which is this one — and hand the result to the page over the
-//! server the page already talks to.
+//! Two doors onto one pipeline, and their scopes differ. **⌘V** is the
+//! primary: the page's own `paste` handler reads `clipboardData.items` and
+//! attaches every image the event carries, with no server round trip. This
+//! module is the SECOND door — the paste button — for a shell whose webview
+//! refuses to hand an image to the page, which was the reason it was built.
+//! The page's handler is the measurement that decides which is load-bearing
+//! (the 2026-11-18 plan's C8): the handler demonstrably receives image items,
+//! so a Chromium-backed webview does hand them over.
+//!
+//! Either way the reply shape is one list, because "paste one or more images"
+//! is the requirement: a single image and a list of them feed the identical
+//! chip, and the surface never special-cases a count.
 //!
 //! This module is that read and nothing else. It deliberately does not
 //! decide what an image is *for*: the caller attaches it to a turn, and
@@ -18,6 +23,8 @@
 //! such — a locked session, a headless process with no window — rather
 //! than returned as an empty string that reads like "you copied
 //! nothing".
+
+use std::path::PathBuf;
 
 /// What the clipboard holds, as this surface can carry it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,8 +41,25 @@ pub enum Clip {
         /// The bytes, exactly as the pasteboard held them.
         bytes: Vec<u8>,
     },
+    /// The clip holds SEVERAL images (the owner's 2026-11-18 request: "paste
+    /// one or more images"). Each entry is the same shape one image uses, so
+    /// the surface loops one pipeline rather than special-casing a list.
+    Images(Vec<Image>),
     /// The clipboard holds neither, and saying so is the whole reply.
     Empty,
+}
+
+/// One image off the pasteboard: the same four fields whichever route found
+/// it, so a list and a single image feed the identical attachment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    /// A file name the attachment can carry, built from the type or the
+    /// source file's own name.
+    pub name: String,
+    /// The media type the pasteboard declared (or sniffed from the bytes).
+    pub mime: String,
+    /// The bytes, exactly as the pasteboard or the file held them.
+    pub bytes: Vec<u8>,
 }
 
 /// What the pasteboard handed back for an image: the raw bytes it holds
@@ -52,6 +76,17 @@ pub trait Backend {
     /// The clip holds an image: its bytes and the type the pasteboard
     /// declared, when it declared one.
     fn image(&mut self) -> Result<Option<RawImage>, String>;
+
+    /// The files the pasteboard holds, when it holds a LIST of them.
+    ///
+    /// A Finder copy of several images is a URL list, not an aggregate
+    /// picture — `arboard`'s `image()` reads the pasteboard's ONE TIFF item,
+    /// which is why a multi-file copy could not be read as images before.
+    /// The default is empty so a backend that cannot answer a list (and every
+    /// fixture written before this) keeps working unchanged.
+    fn files(&mut self) -> Result<Vec<PathBuf>, String> {
+        Ok(Vec::new())
+    }
 }
 
 /// The system clipboard, through `arboard`.
@@ -93,6 +128,31 @@ impl Backend for System {
                 Ok(Some((encoded, Some("image/png".to_string()))))
             }
             Err(arboard::Error::ContentNotAvailable) => Ok(None),
+            Err(e) => Err(format!("the clipboard could not be read: {e}")),
+        }
+    }
+
+    /// The files the pasteboard lists — the multi-image route.
+    ///
+    /// A Finder copy of several images is a URL list on the pasteboard, NOT
+    /// an aggregate picture: `arboard`'s `image()` reads the pasteboard's one
+    /// TIFF item, which is exactly why one image was all this could ever
+    /// carry. `file_list()` reads `NSPasteboardURLReadingFileURLsOnlyKey` on
+    /// macOS and the equivalent elsewhere, so a copy of six PNGs arrives as
+    /// six paths.
+    ///
+    /// A pasteboard that holds no file list is `ContentNotAvailable`, which
+    /// is an answer ("this clip is not a file copy"), not a failure.
+    fn files(&mut self) -> Result<Vec<PathBuf>, String> {
+        match self.inner.get().file_list() {
+            Ok(paths) => Ok(paths),
+            Err(arboard::Error::ContentNotAvailable) => Ok(Vec::new()),
+            // The platform may refuse the file-list question outright (a
+            // build without the feature, a surface that will not answer).
+            // That is "no list", not a broken clipboard: the single-image
+            // and text arms still run, so the paste degrades rather than
+            // failing.
+            Err(arboard::Error::ConversionFailure) => Ok(Vec::new()),
             Err(e) => Err(format!("the clipboard could not be read: {e}")),
         }
     }
@@ -138,25 +198,116 @@ fn encode_png(data: &arboard::ImageData) -> Result<Vec<u8>, String> {
 /// because text is what the composer can edit. An image is the answer
 /// only when there is no text to carry.
 pub fn read(backend: &mut dyn Backend) -> Result<Clip, String> {
-    if let Some(text) = backend.text()? {
-        return Ok(Clip::Text(text));
+    // IMAGES FIRST, and this order is the ruling rather than a preference
+    // (the owner's 2026-11-18 request). A Finder copy hands the pasteboard
+    // BOTH a file list and the names as text, so asking for text first pasted
+    // `screenshot.png` instead of the picture. A person who copies an image
+    // wants the image; the name is a representation, not the thing.
+    let listed = read_files(backend)?;
+    if !listed.is_empty() {
+        if listed.len() == 1 {
+            return Ok(Clip::Image {
+                name: listed[0].name.clone(),
+                mime: listed[0].mime.clone(),
+                bytes: listed[0].bytes.clone(),
+            });
+        }
+        return Ok(Clip::Images(listed));
     }
     if let Some((bytes, declared)) = backend.image()? {
         let mime = declared.unwrap_or_else(|| "image/png".to_string());
-        let ext = match mime.as_str() {
-            "image/jpeg" => "jpg",
-            "image/gif" => "gif",
-            "image/webp" => "webp",
-            "image/svg+xml" => "svg",
-            _ => "png",
-        };
         return Ok(Clip::Image {
-            name: format!("clipboard.{ext}"),
+            name: format!("clipboard.{}", extension_for(&mime)),
             mime,
             bytes,
         });
     }
+    // Text last: with no image anywhere, the ordinary office paste.
+    if let Some(text) = backend.text()? {
+        return Ok(Clip::Text(text));
+    }
     Ok(Clip::Empty)
+}
+
+/// The images a file list names, each read and typed by its bytes.
+///
+/// A copied PDF beside two PNGs attaches the two and skips the third: the
+/// file list is what the OS offers, not what the composer can carry, so a
+/// non-image is passed over here rather than surfacing as a broken chip. The
+/// bytes decide the type — an extension is a name, and the server re-checks
+/// the declared type against the bytes anyway.
+fn read_files(backend: &mut dyn Backend) -> Result<Vec<Image>, String> {
+    let mut out: Vec<Image> = Vec::new();
+    for path in backend.files()? {
+        if path.is_dir() {
+            continue;
+        }
+        let Some(mime) = sniff_type(&path) else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if bytes.is_empty() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("clipboard.{}", extension_for(mime)));
+        out.push(Image {
+            name,
+            mime: mime.to_string(),
+            bytes,
+        });
+    }
+    Ok(out)
+}
+
+/// One path's media type by its FIRST BYTES, not its extension.
+fn sniff_type(path: &std::path::Path) -> Option<&'static str> {
+    use std::io::Read;
+    let mut head = [0u8; 12];
+    let mut file = std::fs::File::open(path).ok()?;
+    let read = file.read(&mut head).ok()?;
+    let head = &head[..read];
+    if head.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+    if head.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if head.starts_with(b"GIF87a") || head.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    None
+}
+
+/// One image as the page's attachment shape: its name, type, base64 bytes and
+/// size. One function, so a single image and a list entry cannot drift.
+pub fn encoded(name: &str, mime: &str, bytes: &[u8]) -> serde_json::Value {
+    use base64::Engine;
+    serde_json::json!({
+        "name": name,
+        "mime": mime,
+        "bytes": base64::engine::general_purpose::STANDARD.encode(bytes),
+        "size": bytes.len(),
+    })
+}
+
+/// The file extension a media type maps to.
+fn extension_for(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        _ => "png",
+    }
 }
 
 #[cfg(test)]
@@ -167,6 +318,8 @@ mod tests {
     struct Fixture {
         text: Option<String>,
         image: Option<(Vec<u8>, Option<String>)>,
+        /// The paths a file-list copy names. Empty is "not a file copy".
+        files: Vec<std::path::PathBuf>,
     }
 
     impl Backend for Fixture {
@@ -176,12 +329,16 @@ mod tests {
         fn image(&mut self) -> Result<Option<(Vec<u8>, Option<String>)>, String> {
             Ok(self.image.clone())
         }
+        fn files(&mut self) -> Result<Vec<std::path::PathBuf>, String> {
+            Ok(self.files.clone())
+        }
     }
 
     fn holding(text: Option<&str>, image: Option<(Vec<u8>, Option<&str>)>) -> Fixture {
         Fixture {
             text: text.map(str::to_string),
             image: image.map(|(bytes, mime)| (bytes, mime.map(str::to_string))),
+            files: Vec::new(),
         }
     }
 
@@ -241,12 +398,72 @@ mod tests {
     }
 
     #[test]
-    fn text_wins_over_an_image_because_text_is_what_the_composer_edits() {
-        let mut clip = holding(Some("words"), Some((vec![9], Some("image/png"))));
+    fn an_image_wins_over_text_because_text_is_the_image_s_name() {
+        // The precedence FLIPPED on the owner's 2026-11-18 ruling. A Finder
+        // copy puts both the file list and the names on the pasteboard, so
+        // asking for text first pasted `screenshot.png` instead of the
+        // picture. A person who copies an image wants the image; the name is
+        // a representation, not the thing.
+        let mut clip = holding(Some("screenshot.png"), Some((vec![9], Some("image/png"))));
         assert_eq!(
             read(&mut clip).expect("a readable clip"),
-            Clip::Text("words".to_string())
+            Clip::Image {
+                name: "clipboard.png".to_string(),
+                mime: "image/png".to_string(),
+                bytes: vec![9],
+            }
         );
+        // With no image anywhere, the ordinary office paste still wins.
+        let mut text_only = holding(Some("a pasted paragraph"), None);
+        assert_eq!(
+            read(&mut text_only).expect("a readable clip"),
+            Clip::Text("a pasted paragraph".to_string())
+        );
+    }
+
+    #[test]
+    fn a_file_list_becomes_every_image_it_names() {
+        // The multi-image route: a Finder copy of several PNGs is a URL list,
+        // not an aggregate picture (which is why one image was all this could
+        // ever carry). Real files on disk, because the reader sniffs their
+        // bytes rather than trusting an extension.
+        let dir = std::env::temp_dir().join(format!("fleet-clip-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = |name: &str, tail: u8| {
+            let path = dir.join(name);
+            let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+            bytes.extend_from_slice(&[tail; 8]);
+            std::fs::write(&path, &bytes).unwrap();
+            path
+        };
+        let a = png("a.png", 1);
+        let b = png("b.png", 2);
+        // A non-image in the same copy: named by nobody, attached by nobody.
+        let note = dir.join("notes.txt");
+        std::fs::write(&note, b"just text").unwrap();
+
+        let mut clip = holding(None, None);
+        clip.files = vec![a, b, note];
+        let read_back = read(&mut clip).expect("a readable clip");
+        match read_back {
+            Clip::Images(images) => {
+                assert_eq!(images.len(), 2, "the two PNGs, not the txt: {images:?}");
+                assert_eq!(images[0].name, "a.png");
+                assert_eq!(images[0].mime, "image/png");
+                assert_eq!(images[1].name, "b.png");
+            }
+            other => panic!("expected a list, got {other:?}"),
+        }
+        // One file is the SINGLE image shape, so the surface keeps one path
+        // for the common case and the list is the many case.
+        let mut one = holding(None, None);
+        one.files = vec![png("only.png", 3)];
+        assert!(matches!(
+            read(&mut one).expect("a readable clip"),
+            Clip::Image { .. }
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
