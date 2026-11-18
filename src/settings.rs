@@ -93,6 +93,20 @@ pub const SETTINGS: &[Setting] = &[
         summary: "The provider every workload walks first. Empty is no pin.",
     },
     Setting {
+        // The browser engine (the owner's 2026-11-18 ruling: obscura first,
+        // Chrome as the provider of last resort, "if the owner of the local
+        // instance refuses it"). A CHOICE, not a hidden flag: refusing
+        // obscura is a decision the owner makes on the Settings surface, and
+        // this declaration is what gives that surface the row. `obscura` is
+        // the default when unset — the lane reads it from here and never
+        // guesses, so Chrome cannot start by accident.
+        key: "browser.engine",
+        kind: Kind::Choice(&["obscura", "chrome"]),
+        file: File::Config,
+        summary: "Which browser the browse tool drives. `obscura` is the default; `chrome` is \
+                  the last resort, and only when you choose it here.",
+    },
+    Setting {
         key: "approvals",
         kind: Kind::Choice(&["ask", "yes", "yes-guarded"]),
         file: File::Config,
@@ -778,6 +792,26 @@ pub fn states_with(home: &Path, process: &dyn Fn(&str) -> Option<String>) -> Vec
             }
         })
         .collect()
+}
+
+/// One declared setting's stored value, as its own JSON leaf.
+///
+/// The read a caller outside this module needs — the browser engine is the
+/// first — so it does not re-implement the dotted lookup and drift from the
+/// writer. An undeclared key is `None` rather than a guess: the registry is
+/// the vocabulary, and a name outside it is not a setting.
+pub fn read_value(home: &Path, key: &str) -> Option<Value> {
+    let setting = find(key)?;
+    let (config_path, routing_path, _env_path) = paths(home);
+    let document = match setting.file {
+        File::Config => read_json(&config_path).ok()?,
+        File::Routing => read_json(&routing_path).ok()?,
+        // An env-file setting is not a JSON leaf; its readers use
+        // `resolve_setting`, and answering a string here would be a second
+        // spelling of the same precedence.
+        File::Env => return None,
+    };
+    lookup(&document, key)
 }
 
 /// One dotted key's value out of a JSON document, or `None` when the
@@ -5271,4 +5305,30 @@ pub fn forget_tool(home: &Path, rule: &crate::approvals::Rule) -> Result<(), Str
         &path,
         &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
     )
+}
+
+#[cfg(test)]
+mod browser_engine_tests {
+    use super::*;
+
+    #[test]
+    fn the_browser_engine_is_a_choice_the_owner_sets_and_defaults_to_obscura() {
+        // C3b: the engine the lane runs is `browser.engine`, read from the
+        // settings document. `obscura` when unset — the owner's 2026-11-18
+        // ruling: Chrome is the last resort, so it can never be the default.
+        let setting = find("browser.engine").expect("browser.engine is a declared setting");
+        assert_eq!(
+            setting.kind,
+            Kind::Choice(&["obscura", "chrome"]),
+            "the engine is a closed set, so an unknown word is refused by name"
+        );
+        assert_eq!(setting.file, File::Config);
+        // The write nests under a `browser` section, which is exactly where
+        // the lane's own read looks.
+        assert_eq!(segments("browser.engine"), vec!["browser", "engine"]);
+        // An undeclared word is refused rather than stored.
+        assert!(validate(setting, "chromium").is_err(), "no third engine");
+        assert!(validate(setting, "obscura").is_ok());
+        assert!(validate(setting, "chrome").is_ok());
+    }
 }
