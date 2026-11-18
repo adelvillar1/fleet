@@ -10,7 +10,7 @@ phrases: [if we fix something and a new build is created we bump the number, 0.6
 missing: []
 premises: []
 recall-count: 2
-superseded-by:
+superseded-by: a-cut-is-for-what-is-worth-distributing
 valid-until:
 source:
 ---
