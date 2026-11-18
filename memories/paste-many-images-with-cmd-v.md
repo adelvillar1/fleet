@@ -9,7 +9,7 @@ shape: [rendering, drops-the-row, resolved]
 phrases: [paste one or more images from the clipboard, with cmd-V on the keyboard, pasteClipboardImages, Clip::Images, arboard file_list, an image cannot ride the composer yet]
 missing: []
 premises: []
-recall-count: 0
+recall-count: 1
 superseded-by:
 valid-until:
 source:
