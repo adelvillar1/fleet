@@ -12,6 +12,85 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.16 — 2026-11-18
+
+The browser works, the board shows your work, and the harness writes to you.
+
+**The browse lane runs on obscura.** It was a hand-rolled CDP client whose
+`session_id` was declared, reset and never assigned: every page-domain call
+went out sessionless and both engines answered `No page for session`, so the
+only thing that ever worked was a no-op. The repair was unreachable — obscura
+has no attach path, so the code that would have fixed Chrome could not be
+validated against the engine you actually want. The lane stopped having a CDP
+implementation: it is now a stdio proxy to `obscura mcp`, publishing **39
+tools** — its three historical names aliased onto obscura's, the other 36 by
+their own names. `browser_read` maps to `browser_snapshot`, and
+`browser_screenshot` is translated, because obscura answers image content and
+takes no path while the lane answers a path its callers hand to a vision model.
+
+**Chrome is the last resort, and only on your word.** `browser.engine` is a
+setting, `obscura` when unset. A host without obscura gets a failing check
+carrying an **install obscura** press — from its GitHub release, both binaries
+— with one line naming what Chrome would cost. The release is checked against
+the published tag (current / behind / ahead, and *unknown* that never reads as
+current), one bounded request cached for a day.
+
+**A plan node finishes when its work does.** The completion branch returned
+`None` and did nothing, so every node stayed `Running` forever: the board showed
+the first task active and nothing after it ever moved. A completed child now
+settles its node strictly — the declared gates run against the artifact — and a
+node that does not verify becomes a named decision rather than a silent state,
+because a node left running blocks every dependent and marking it failed blocks
+them just the same.
+
+**The board is your work at execution level.** One card per approved plan, each
+atomic delegatable task in its queued / in-process / done column with the persona
+it is assigned to, and a press that opens the drawer with its whole context and
+its dependencies by state. Only an approved plan generates a graph, so a cron
+run, a delegated child, an eval run and a probe cannot appear on it.
+
+**The pane is contextual, and it is the drawer.** `files` reads the
+conversation's own project folder instead of the directory the binary was
+launched from, `work` shows this session's delegation as plain rows, and the
+drawer became a pane tab *and its main component* — opening an object no longer
+blanks the pane it just emptied.
+
+**Sessions are named by their work.** The ladder is your rename, the standing
+goal, the **first deliverable asked for**, the **first plan executed**, the first
+message about the work, then the raw first message. The plan rung was reversed:
+a later plan is the middle of the work, never its name. And 42% of this archive's
+sessions opened with a harness instruction, so a subject rung now falls past a
+smoke test to what the conversation went on to be about.
+
+**Empty conversations belong to nobody.** A New press that never sent anything,
+and a log whose every message names the machinery, are their own classes now —
+derived from the log, not hand-marked — kept off your list and still countable.
+
+**Core tools never ask.** Only the destructive class interrupts: `rm -rf`, a
+forced overwrite, `write_file`, move and delete. Reading, searching, running the
+suite and looking at an image run without a prompt, in `ask` as in
+`yes-guarded`. The face also honours the `approvals` setting now — it had
+hard-coded `ask` and ignored it.
+
+**Paste one or more images with ⌘V.** The handler refused images outright. It
+now attaches every image the paste carries, and the button attaches a list too.
+A Finder copy no longer pastes the filename instead of the picture: images take
+precedence over text, and a file's type is sniffed from its bytes.
+
+**Vision answers.** It was the crate's only blocking routed caller, and the
+blocking path never consulted the router — an empty base URL, a host-less
+request, `RelativeUrlWithoutBase`. It rides the routed stream now, which also
+gives it the walk's failover.
+
+**Errors can be dismissed, and fixed.** Every message carries a dismiss press,
+and a failing check that a press can fix carries it — the action mapped
+server-side to a real endpoint, never guessed by the surface.
+
+**The copy is written for you, not for the codebase.** The compiled prompt
+carries the rule: say "service" not "lane", "the app" not "the face",
+"approval" not "seat". The pages follow it — "the X read has not landed" is
+"still loading", and a huddle says what a huddle is.
+
 ## v0.8.15 — 2026-11-17
 
 Reviews and health stop wearing the same mark.
