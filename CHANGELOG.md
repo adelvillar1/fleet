@@ -12,6 +12,35 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.17 — 2026-11-18
+
+The search reads the logs, and the queue drags.
+
+**A typed query now asks the server.** The work list's box filtered the
+titles, projects and models the page already held, so a conversation whose
+BODY said the words could not be found by typing them. The server has
+implemented `q=` since D9 — literal, bounded to the newest 200 logs, a
+`matched` line per hit — and the face rendered that line while never sending a
+query, which is why the two halves looked wired and did nothing. Measured live
+against a real home in obscura: `q=warmup` returned 177 rows with 26 matched
+and showed every one of them, and typing in the box sent no request at all.
+Now typing sends the words, a row survives on the server's answer or its own
+metadata, and the counts answer the search instead of the archive — 27 rows
+become 2, with `2 matches for "warmup"` in the head, `earlier 2` on the group
+and `active 2` on the filter. A match line counts only for the query it
+answered, a miss names the 200 logs it read, and the head says "looking
+for ..." while a newer ask is still on the wire.
+
+**A queued message dragged to a new place lands there.** The row's label was
+selectable while the whole row is `draggable`, so pressing on the text began a
+native text-drag carrying the row's words; the drop handler parsed that as an
+index, read `NaN`, and returned — the row followed the cursor and never
+landed. The label is part of the handle now. Beside it, the desktop window
+opened with Tauri's own drop handler at its default on, which claims an
+in-page drag for the webview before the page sees it; the window now calls
+`disable_drag_drop_handler()`, which costs nothing the face uses, since the
+only `drop` and `dragover` listeners in the app belong to the queue row.
+
 ## v0.8.16 — 2026-11-18
 
 The browser works, the board shows your work, and the harness writes to you.
