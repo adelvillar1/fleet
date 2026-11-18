@@ -29,6 +29,47 @@ Rules:
   status line and the boxes cannot disagree in a commit — enable it once per clone with
   `git config core.hooksPath .githooks`.
 
+## The execution declaration
+
+An `active` plan may carry a fenced `graph` block: the machine-readable
+contract beside the human one. Only an approved (`active`) plan generates a
+graph — `draft` and `completed` generate none, which is why the board shows a
+plan's tasks exactly while the plan is being executed.
+
+````text
+```graph
+{
+  "nodes": [
+    {
+      "id": "read-the-thing",
+      "cost": 2,
+      "approach": "what this node does, in one line",
+      "serves": "C1",
+      "assignee": "scholar",
+      "prereqs": [],
+      "paths": ["src/thing.rs"],
+      "capabilities": { "tools": ["bash"], "skills": [], "workflows": [], "loops": [] }
+    }
+  ]
+}
+```
+````
+
+Each node is one **atomic delegatable task**. `prereqs` names the nodes that
+must verify first; `serves` is the acceptance criterion it answers; `paths` are
+the files it admits (two nodes naming one path never run concurrently).
+
+`assignee` is optional and names the role or persona that works the node —
+what the board's card shows as "who it is for". A node that names nobody
+inherits the plan's own workload (its frontmatter `execution:` verdict:
+`single`, `mixture` or `swarm`). A plan that says nothing about assignment
+produces honestly unassigned cards rather than an invented owner.
+
+The declaration is the contract for the harness; the prose above it stays the
+contract for humans. Update the acceptance criteria first, then the
+declaration — a plan edited after its graph was generated carries a digest
+mismatch, which is named with both versions rather than silently mismapped.
+
 Inherited records (copied byte-identical from the DeepSeek Harness fork when Fleet became its own repository):
 
 - `2026-10-12-fleet-native-app.md` — slice 1 design record; still `active` (C3 waits on account balance; slices 2+ unplanned).
