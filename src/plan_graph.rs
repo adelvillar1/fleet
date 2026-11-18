@@ -561,7 +561,8 @@ impl PlanGraph {
                         .with_prereqs(declared.prereqs.clone())
                         .with_paths(declared.paths.clone())
                         .with_capabilities(Capabilities::from(&declared.capabilities))
-                        .with_approach(declared.approach.clone()),
+                        .with_approach(declared.approach.clone())
+                        .with_assignee(declared.assignee.clone()),
                 )
                 .map_err(|error| PlanError::Graph(error.to_string()))?;
             if !declared.serves.trim().is_empty() {
@@ -1393,6 +1394,7 @@ mod tests {
                 approach: "the first half".to_string(),
                 serves: "C1".to_string(),
                 summary: false,
+                assignee: String::new(),
             },
             DeclaredNode {
                 id: "half-b".to_string(),
@@ -1403,6 +1405,7 @@ mod tests {
                 approach: "the second half".to_string(),
                 serves: "C1".to_string(),
                 summary: false,
+                assignee: String::new(),
             },
         ];
         let added =
@@ -1460,6 +1463,7 @@ mod tests {
             approach: String::new(),
             serves: String::new(),
             summary: false,
+            assignee: String::new(),
         }];
         let error = merge_declared(&mut plan_graph.graph, "group", &ghost)
             .expect_err("the unknown prerequisite is refused");
@@ -1486,6 +1490,7 @@ mod tests {
                 approach: String::new(),
                 serves: String::new(),
                 summary: false,
+                assignee: String::new(),
             },
             DeclaredNode {
                 id: "y".to_string(),
@@ -1496,6 +1501,7 @@ mod tests {
                 approach: String::new(),
                 serves: String::new(),
                 summary: false,
+                assignee: String::new(),
             },
         ];
         assert!(merge_declared(&mut plan_graph.graph, "group", &cyclic).is_err());
@@ -1511,6 +1517,7 @@ mod tests {
             approach: String::new(),
             serves: String::new(),
             summary: false,
+            assignee: String::new(),
         }];
         let error = merge_declared(&mut plan_graph.graph, "group", &itself).unwrap_err();
         assert!(error.contains("its own child"), "{error}");
@@ -1575,6 +1582,7 @@ mod tests {
                         approach: "the first half".to_string(),
                         serves: String::new(),
                         summary: false,
+                        assignee: String::new(),
                     }],
                 },
             )

@@ -401,6 +401,42 @@ pub fn projects(home: &Path) -> Vec<DeskProject> {
     all
 }
 
+/// The first deliverable each conversation asked for, keyed by session id.
+///
+/// The owner's 2026-11-18 naming ruling: a conversation is named by "the
+/// first deliverable that was requested" before any plan it executed, so
+/// the archive needs this edge in one read rather than one desk scan per
+/// row. A desk names the conversation it is worked in (`session`), and
+/// `created` is the stamp that orders them — the FIRST deliverable is the
+/// oldest by that stamp, not by slug and not by last write, because a
+/// deliverable edited today did not thereby become the one the
+/// conversation was opened for.
+///
+/// A conversation with no bound deliverable is absent from the map: no
+/// invented name, the ladder simply falls to its next rung.
+pub fn first_by_session(home: &Path) -> std::collections::HashMap<String, String> {
+    let mut out: std::collections::HashMap<String, (String, String)> = Default::default();
+    for desk in projects(home) {
+        let (Some(session), name) = (desk.session.clone(), desk.name.trim()) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let stamp = desk.created.clone();
+        out.entry(session)
+            .and_modify(|held| {
+                if stamp < held.0 {
+                    *held = (stamp.clone(), name.to_string());
+                }
+            })
+            .or_insert((stamp, name.to_string()));
+    }
+    out.into_iter()
+        .map(|(session, (_, name))| (session, name))
+        .collect()
+}
+
 /// One shelf row's state, by slug: the project itself, or the slug and
 /// the reason it could not be read. A corrupt project is a named row on
 /// the shelf, never a silent absence — `projects()` folds it away with
@@ -1928,6 +1964,50 @@ mod tests {
             vec![0.924, 4180.0, 12.0, 0.924, 90.0],
             "{numbers:?}"
         );
+    }
+
+    #[test]
+    fn first_by_session_names_the_oldest_bound_deliverable() {
+        // The naming ladder's deliverable rung (the owner's 2026-11-18
+        // ruling): a conversation is named by "the first deliverable that
+        // was requested". First is by `created`, not by `updated` and not
+        // by slug — a deliverable edited today did not thereby become the
+        // one the conversation was opened for.
+        let home = temp_home("first-by-session");
+        let mut older = sample();
+        older.slug = "zzz-the-first-asked".to_string();
+        older.name = "The first thing asked for".to_string();
+        older.session = Some("the-thread".to_string());
+        older.created = "2026-11-01T00:00:00Z".to_string();
+        // Newer by `updated` than the other one, older by `created`: a
+        // reader that ordered on `updated` would pick it wrongly.
+        older.updated = "2026-11-30T00:00:00Z".to_string();
+        save(&home, &older).unwrap();
+        let mut newer = sample();
+        newer.slug = "aaa-the-later-asked".to_string();
+        newer.name = "The later thing asked for".to_string();
+        newer.session = Some("the-thread".to_string());
+        newer.created = "2026-11-15T00:00:00Z".to_string();
+        newer.updated = "2026-11-15T00:00:00Z".to_string();
+        save(&home, &newer).unwrap();
+        // An unbound deliverable names nobody, and must not leak a row.
+        let mut unbound = sample();
+        unbound.slug = "unbound".to_string();
+        unbound.name = "Nobody's deliverable".to_string();
+        unbound.session = None;
+        save(&home, &unbound).unwrap();
+        let named = first_by_session(&home);
+        assert_eq!(
+            named.get("the-thread").map(String::as_str),
+            Some("The first thing asked for"),
+            "the FIRST deliverable names the conversation: {named:?}"
+        );
+        assert_eq!(
+            named.len(),
+            1,
+            "an unbound desk names no conversation: {named:?}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

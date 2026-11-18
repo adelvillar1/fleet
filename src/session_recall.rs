@@ -235,6 +235,120 @@ pub(crate) fn is_house_word(text: &str) -> bool {
     )
 }
 
+/// Whether a message names no SUBJECT — it is a direction about the
+/// machinery, not a statement of what the work is about.
+///
+/// The naming problem this closes: 42% of this archive's owner sessions
+/// open with a harness instruction ("Reply with exactly the single word:
+/// done", "Call the subagent tool exactly once…"), and the ladder's
+/// fallback is the first message — so the row is named by a smoke test
+/// and the owner cannot recognise their own conversation. The worst case
+/// is a real conversation that BEGAN with one (a probe, then twenty turns
+/// of work): it sat titled by the probe forever.
+///
+/// The rule is deliberately narrow. A message names no subject when its
+/// first line is an imperative about the harness ITSELF — a directive verb
+/// followed by machinery vocabulary (a tool, a subagent, "the single
+/// word"). Two guards keep real instructions out:
+///
+/// - A question always names something (`?`), so it is never skipped.
+/// - The machinery vocabulary must be present, so "Use only this supplied
+///   corpus and cite the line numbers" — a real task that happens to open
+///   with "Use" — keeps naming its row.
+///
+/// A house word is the same shape one step earlier and is already named
+/// by [`is_house_word`]; this asks the second question, and the ladder's
+/// caller falls past both.
+pub(crate) fn names_no_subject(text: &str) -> bool {
+    let line = text
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    if line.is_empty() {
+        return true;
+    }
+    // A question names what it asks about — but only a question the
+    // OWNER is asking. A `?` inside a tool argument is the machinery
+    // talking: "Call the vision tool ... with question='Are they the same
+    // shape?'" asks nothing of the harness and names no work, and the
+    // naive check let that whole row through as a conversation.
+    //
+    // So the directive test runs first: an opener about the machinery is
+    // a direction about the machinery whatever punctuation it carries.
+    const DIRECTIVE: &[&str] = &[
+        "call", "use", "run", "invoke", "reply", "respond", "say", "print", "delegate", "repeat",
+        "send", "execute",
+    ];
+    let opener = line
+        .trim_start_matches(|c: char| !c.is_alphanumeric() && c != '\'')
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .next()
+        .unwrap_or("");
+    if !DIRECTIVE.contains(&opener) {
+        // Not a directive at all. A question still names something.
+        return false;
+    }
+    // The harness's own vocabulary: the words that make an instruction
+    // about the machinery rather than about the work.
+    const MACHINERY: &[&str] = &[
+        "tool",
+        "subagent",
+        "bash",
+        "read_file",
+        "write_file",
+        "list_dir",
+        "edit tool",
+        "vision",
+        "computer_use",
+        "send_file",
+        "deck",
+        "skill",
+        "exactly once",
+        "single word",
+        "one word",
+        "follow what it says",
+    ];
+    if !MACHINERY.iter().any(|word| line.contains(word)) {
+        return false;
+    }
+    true
+}
+
+/// Whether a message moves the conversation on without saying anything
+/// about it: "continue", "go on", "ok". These are directions to proceed,
+/// not subjects — a conversation whose only non-machinery message is one
+/// of these has no subject of its own, and naming it by that word would
+/// be no better than naming it by a probe.
+pub(crate) fn is_continuation(text: &str) -> bool {
+    let line = text
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    let line = line.trim_end_matches(['.', '!', ',']).trim();
+    matches!(
+        line,
+        "continue"
+            | "continue please"
+            | "go on"
+            | "go ahead"
+            | "keep going"
+            | "carry on"
+            | "proceed"
+            | "ok"
+            | "okay"
+            | "yes"
+            | "yeah"
+            | "sure"
+            | "next"
+    )
+}
+
 /// The session's task: the first substantive `user` record's content,
 /// bounded to the description bound the facts writer enforces. House
 /// words are fallen past — a greeting names no task, so the first real
@@ -1221,6 +1335,56 @@ mod tests {
     }
 
     #[test]
+    fn a_machinery_directive_names_no_subject() {
+        // The 42%: these open sessions all over the archive, and each one
+        // names the machinery rather than the work. Naming a row by any
+        // of them is naming it by a smoke test.
+        for opener in [
+            "Reply with exactly the single word: done",
+            "Reply with the single word ok",
+            "Call the subagent tool exactly once with role \"probe\"",
+            "Call the vision tool exactly once, as your very first action",
+            "Use the web tool exactly once: query 'x', fetch true",
+            "Call send_file with path docs/README-placeholder.md and note x",
+            "use the skill harness-orientation and follow what it says",
+            "Delegate this to a subagent. The subagent's entire task: call write_file",
+        ] {
+            assert!(names_no_subject(opener), "{opener}");
+        }
+        // A KNOWN LIMIT, named rather than papered over: a bare shell
+        // command that mentions no tool ("run pwd and then run ls") is
+        // not caught, because the rule needs the harness vocabulary and
+        // shell builtins are open-ended. Widening the list to every
+        // command name would start skipping real instructions, which is
+        // the worse failure — a row named by a command beats a row named
+        // by nothing.
+        assert!(!names_no_subject("run pwd and then run ls -1 | head -3"));
+        // A subject is KEPT, including instructions that happen to open
+        // with a directive verb — the guard that keeps real work named.
+        for kept in [
+            "reviews and health are still having the same icons on the main rail",
+            "Use only this supplied corpus and cite the line numbers you rely on",
+            "Build a one-frame infographic about this repository",
+            "let's fix it and address the fact that threads and archive make no sense",
+            // A question names what it asks about, whatever else it says.
+            "what do you mean no vision tool if the router even has a vision workload?",
+            // The machinery word is here, but the opener is not a directive.
+            "the tool is broken and I cannot tell why",
+        ] {
+            assert!(!names_no_subject(kept), "{kept}");
+        }
+    }
+
+    #[test]
+    fn a_bare_continuation_is_not_a_subject() {
+        for word in ["continue", "Continue.", "go on", "ok", "yes", "proceed"] {
+            assert!(is_continuation(word), "{word}");
+        }
+        assert!(!is_continuation("continue building the rail"));
+        assert!(!is_continuation("yes but the archive still lies"));
+    }
+
+    #[test]
     fn facts_from_sessions_derives_the_task_the_bounded_digest_and_the_successful_phrases() {
         let home = scratch("derive");
         let dir = crate::home::ensure_sessions_dir(&home).unwrap();
@@ -1835,7 +1999,10 @@ mod tests {
     fn row(id: &str, workspace: Option<&str>) -> crate::session::SessionSummary {
         crate::session::SessionSummary {
             first_text: None,
-            last_plan: None,
+            subject: None,
+            machinery_only: false,
+            empty: false,
+            first_plan: None,
             personas: Vec::new(),
             id: id.to_string(),
             model: "deepseek-flash".to_string(),

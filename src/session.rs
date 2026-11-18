@@ -1078,6 +1078,64 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
                 .to_string()
         })
         .filter(|text| !text.is_empty());
+    // The message that names the conversation: the first owner message
+    // whose first line is a SUBJECT rather than a direction about the
+    // machinery. The fallback above is the first message, and for 42% of
+    // this archive's sessions that is a harness instruction ("Reply with
+    // exactly the single word: done"), which names nothing the owner can
+    // recognise. The worst case is a real conversation that OPENED with
+    // one — a probe, then twenty turns of work — which sat titled by the
+    // probe forever.
+    //
+    // House words, machinery directives and bare continuations are all
+    // fallen past, in that order of cheapness; a conversation with
+    // nothing else keeps its first message, because a row named by
+    // *something* beats a row with no name at all, and the surface can
+    // still mark it derived. `None` only when the log has no owner
+    // message at all.
+    let subject = text
+        .lines()
+        .filter_map(|line| match serde_json::from_str::<Record>(line.trim()) {
+            Ok(Record::User { content }) => Some(content),
+            _ => None,
+        })
+        .find(|content| {
+            !crate::session_recall::is_house_word(content)
+                && !crate::session_recall::names_no_subject(content)
+                && !crate::session_recall::is_continuation(content)
+        })
+        .map(|content| {
+            content
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
+        .filter(|text| !text.is_empty());
+    // How many owner messages the log carries, and whether ANY of them
+    // names a subject. A log whose every message is a house word, a
+    // machinery directive or a bare continuation is verification
+    // traffic: it runs the harness, it never says what the work is
+    // about. That is the derived half of the owner's 2026-11-18 ruling
+    // ("most of these sessions were not user initiated... they don't
+    // belong in the threads or conversation history") — derived from the
+    // log rather than hand-marked in a sidecar, so it stays true as new
+    // probes land.
+    let owner_messages = text
+        .lines()
+        .filter(|line| {
+            matches!(
+                serde_json::from_str::<Record>(line.trim()),
+                Ok(Record::User { .. })
+            )
+        })
+        .count();
+    let machinery_only = owner_messages > 0 && subject.is_none();
+    // Empty is its own fact, read from the record count rather than
+    // inferred from an absent first message: a conversation whose runs
+    // wrote answers but no owner message is still a conversation.
+    let empty = text.lines().filter(|line| !line.trim().is_empty()).count() <= 1;
     // How many times the conversation was folded: the freshness measure
     // the surfaces read, where the turn count only counts the loop's
     // iterations (the owner's 2026-10-31 review). A conversation folded
@@ -1093,17 +1151,19 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         }
     }
     let compacted = compactions > 0;
-    // The last plan-mode record's first meaningful line: the dynamic
-    // title ladder's plan rung — what the run was building when the
-    // plan was written. The LAST one, not the first: a conversation
-    // that planned twice is named by where it landed.
-    let last_plan = text
+    // The FIRST plan-mode record's first meaningful line: the dynamic
+    // title ladder's plan rung — what the run set out to build. The
+    // owner's 2026-11-18 ruling: a conversation is named by "the first
+    // plan that was executed", not by where it landed. A conversation
+    // that planned twice is named by what it took on; a later plan is
+    // the middle of the work, never its name.
+    let first_plan = text
         .lines()
         .filter_map(|line| match serde_json::from_str::<Record>(line.trim()) {
             Ok(Record::Plan { text }) => Some(text),
             _ => None,
         })
-        .next_back()
+        .next()
         .map(|plan| {
             plan.lines()
                 .map(str::trim)
@@ -1161,7 +1221,10 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         id,
         model,
         first_text,
-        last_plan,
+        subject,
+        machinery_only,
+        empty,
+        first_plan,
         created,
         ended,
         resumed: saw_resume && !ended,
@@ -1264,10 +1327,32 @@ pub struct SessionSummary {
     /// the session. Read from the log already in hand, never a model
     /// call.
     pub first_text: Option<String>,
-    /// The last plan-mode record's first meaningful line — the dynamic
+    /// The first owner message that NAMES the conversation — a subject
+    /// rather than a house word, a harness directive or a bare
+    /// continuation. The ladder's last *derived* rung before the raw
+    /// first message, so a conversation that opened with a smoke test is
+    /// named by what it went on to be about.
+    pub subject: Option<String>,
+    /// True when NO owner message in the log names a subject: every one
+    /// is a house word, a machinery directive or a bare continuation.
+    /// This is the derived form of "verification traffic" — a log whose
+    /// every word is about the harness rather than about the work — and
+    /// it is what lets the archive keep those runs out of the owner's
+    /// conversation list without anyone hand-marking them. `false` on a
+    /// log with no owner message: an empty conversation is its own,
+    /// narrower word.
+    pub machinery_only: bool,
+    /// True when the log holds nothing but its `start` record — a New
+    /// press that never sent a message, or a face that opened a
+    /// conversation and walked away. Distinct from `first_text` being
+    /// absent, which also describes a conversation whose runs wrote
+    /// answers but no owner message (a seeded or scripted one): those are
+    /// conversations and stay on the list, empty ones are not.
+    pub empty: bool,
+    /// The first plan-mode record's first meaningful line — the dynamic
     /// title ladder's plan rung. `None` when the log carries no plan
     /// record. Read from the log already in hand, never a model call.
-    pub last_plan: Option<String>,
+    pub first_plan: Option<String>,
     pub created: String,
     /// True when the log's last record is `end`. A record after it —
     /// a `resume` above all — clears this, so a conversation the owner
@@ -1443,7 +1528,10 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     id,
                     model: "unreadable".to_string(),
                     first_text: None,
-                    last_plan: None,
+                    subject: None,
+                    machinery_only: false,
+                    empty: true,
+                    first_plan: None,
                     compactions: None,
                     personas: Vec::new(),
                     created: String::new(),
@@ -2109,11 +2197,85 @@ mod tests {
     /// record — and a log that cannot be summarized reads as `None`
     /// rather than as a wrong summary.
     #[test]
-    fn the_summary_carries_the_last_plan() {
-        // The dynamic title ladder's plan rung: the last plan-mode
+    fn the_summary_names_the_conversation_by_its_subject() {
+        // The case that motivated the rung, in its real shape: a
+        // conversation that OPENED with a probe and then spent twenty
+        // turns on real work. Its first message names the machinery, so
+        // the subject rung names it by the first message that is about
+        // the work — the row the owner could not recognise.
+        let home = temp_home("summarize-subject");
+        let mut session = Session::create(&home, "m").unwrap();
+        session
+            .record(&Record::User {
+                content: "Call the subagent tool exactly once with role \"probe\" and task \"Reply with the single word ok\"."
+                    .into(),
+            })
+            .unwrap();
+        session
+            .record(&Record::User {
+                content: "reviews and health are still having the same icons on the main rail"
+                    .into(),
+            })
+            .unwrap();
+        session
+            .record(&Record::User {
+                content: "continue".into(),
+            })
+            .unwrap();
+        let summary = summarize(session.path()).expect("the summary reads");
+        // The raw first message still rides (it is the fallback of last
+        // resort and the surface can say so)...
+        assert!(
+            summary
+                .first_text
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("Call the subagent tool"),
+            "{summary:?}"
+        );
+        // ...but the subject is what the ladder names the row by.
+        assert_eq!(
+            summary.subject.as_deref(),
+            Some("reviews and health are still having the same icons on the main rail"),
+            "{summary:?}"
+        );
+        // A conversation whose ONLY messages name the machinery has no
+        // subject: the ladder keeps its first words rather than inventing
+        // a name, and this field is honest about it.
+        let mut probe_only = Session::create(&home, "m").unwrap();
+        probe_only
+            .record(&Record::User {
+                content: "Reply with exactly the single word: done".into(),
+            })
+            .unwrap();
+        let summary = summarize(probe_only.path()).unwrap();
+        assert_eq!(summary.subject, None, "{summary:?}");
+        // House words are fallen past too, on the same rung.
+        let mut warm = Session::create(&home, "m").unwrap();
+        warm.record(&Record::User {
+            content: "warmup".into(),
+        })
+        .unwrap();
+        warm.record(&Record::User {
+            content: "let's work on the resource contracts".into(),
+        })
+        .unwrap();
+        let summary = summarize(warm.path()).unwrap();
+        assert_eq!(
+            summary.subject.as_deref(),
+            Some("let's work on the resource contracts"),
+            "{summary:?}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_summary_carries_the_first_plan() {
+        // The dynamic title ladder's plan rung: the FIRST plan-mode
         // record's first meaningful line, read from the log already in
-        // hand. The LAST plan, not the first — a conversation that
-        // planned twice is named by where it landed.
+        // hand. The owner's 2026-11-18 ruling — a conversation is named
+        // by "the first plan that was executed", not by where it
+        // landed, because a later plan is the middle of the work.
         let home = temp_home("summarize-plan");
         let mut session = Session::create(&home, "m").unwrap();
         session
@@ -2133,9 +2295,9 @@ mod tests {
             .unwrap();
         let summary = summarize(session.path()).expect("the summary reads");
         assert_eq!(
-            summary.last_plan.as_deref(),
-            Some("the landing plan: the greet and the head"),
-            "{summary:?}"
+            summary.first_plan.as_deref(),
+            Some("the first plan"),
+            "the FIRST plan names the conversation, not the landing one: {summary:?}"
         );
         // A log with no plan record answers None — the ladder falls to
         // its next rung.
@@ -2146,7 +2308,7 @@ mod tests {
             })
             .unwrap();
         let summary = summarize(plain.path()).unwrap();
-        assert_eq!(summary.last_plan, None);
+        assert_eq!(summary.first_plan, None);
         let _ = std::fs::remove_dir_all(&home);
     }
 

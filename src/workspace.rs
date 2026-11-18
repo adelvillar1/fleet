@@ -440,7 +440,7 @@ pub fn view(home: &Path, filter: Option<Kind>) -> Vec<ViewRow> {
                     entry: json!({
                         "id": summary.id,
                         "title": summary
-                            .last_plan
+                            .first_plan
                             .clone()
                             .or(summary.first_text.clone())
                             .unwrap_or_default(),

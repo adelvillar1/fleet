@@ -101,6 +101,12 @@ pub struct DeclaredNode {
     /// the plan's own criteria table the progress surface.
     #[serde(default)]
     pub serves: String,
+    /// Who works this node: a role or persona this home keeps (the
+    /// board's assignment column). Optional, because a plan may say
+    /// nothing about assignment — and an absent name is honestly
+    /// unassigned rather than defaulted to a guess.
+    #[serde(default)]
+    pub assignee: String,
     /// A summary node has children and no work of its own: its cost is
     /// forced to zero and it cannot start until they verify. P6 builds
     /// the expansion that produces them; P3 parses and honours the flag.
@@ -265,6 +271,14 @@ pub struct Node {
     /// finds a better route is deviating from a suggestion rather than
     /// disobeying an order.
     pub approach: String,
+    /// WHO works this node: a role or persona name the plan names, empty
+    /// when the declaration names none (the plan's own workload then
+    /// answers, decided at the surface). What makes the board able to
+    /// say "this atomic task goes to the auditor" before anything runs
+    /// (the owner's 2026-11-18 ruling: a card shows each delegatable
+    /// task "and to which workload/persona that it's going to be
+    /// assigned to").
+    pub assignee: String,
     /// The delta this node's run reported: the angle between the
     /// approach it was handed and the one it executed, with the reason
     /// category and — on a deviation that the child's own log
@@ -298,6 +312,7 @@ impl Node {
             paths: Vec::new(),
             capabilities: Capabilities::default(),
             approach: String::new(),
+            assignee: String::new(),
             delta: None,
             status: Status::Pending,
             peak: 0,
@@ -341,6 +356,14 @@ impl Node {
     /// The brief's approach.
     pub fn with_approach(mut self, approach: impl Into<String>) -> Self {
         self.approach = approach.into();
+        self
+    }
+
+    /// Name who works this node. Empty is the honest default: a plan that
+    /// says nothing about assignment has not assigned it, and the surface
+    /// decides rather than the graph inventing an owner.
+    pub fn with_assignee(mut self, assignee: impl Into<String>) -> Self {
+        self.assignee = assignee.into();
         self
     }
 
@@ -2289,6 +2312,11 @@ pub struct NodeFile {
     pub capabilities: Capabilities,
     #[serde(default)]
     pub approach: String,
+    /// Who works this node, when the plan named anyone. `serde(default)`
+    /// keeps a pre-assignee runtime file readable: it reads back as
+    /// unassigned rather than refusing the load.
+    #[serde(default)]
+    pub assignee: String,
     /// The delta this node's run reported, when one has landed. It
     /// rides the file because the diff score is derived from the
     /// nodes: a graph that lost its deltas on save would read back as
@@ -2343,6 +2371,7 @@ impl Graph {
                     paths: node.paths.clone(),
                     capabilities: node.capabilities.clone(),
                     approach: node.approach.clone(),
+                    assignee: node.assignee.clone(),
                     delta: node.delta.clone(),
                     status: node.status,
                     dispatches: node.dispatches,
@@ -2369,7 +2398,8 @@ impl Graph {
                         .with_prereqs(node.prereqs)
                         .with_paths(node.paths)
                         .with_capabilities(node.capabilities)
-                        .with_approach(node.approach),
+                        .with_approach(node.approach)
+                        .with_assignee(node.assignee),
                 )
                 .map_err(|error| error.to_string())?;
             // The state rides the file. A load that reset every node to
