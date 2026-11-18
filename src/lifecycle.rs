@@ -85,7 +85,7 @@ pub fn is_protected(name: &str) -> bool {
     if name.starts_with(crate::tools::MCP_NAMESPACE) {
         return true;
     }
-    protected_native().iter().any(|one| *one == name)
+    protected_native().contains(&name)
 }
 
 /// When each native tool was introduced, backfilled from the git

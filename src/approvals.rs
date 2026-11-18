@@ -44,13 +44,17 @@ use crate::api::ToolCall;
 
 /// How a run answers "may this tool call execute?".
 ///
-/// [`Mode::Ask`] is the default and the only mode that ever prompts.
+/// [`Mode::Ask`] is the default. It prompts for the destructive class and
+/// nothing else, so a run of ordinary work never stops — and the one thing
+/// that does stop it is the thing that cannot be undone.
 /// [`Mode::Yes`] is the run-scoped latch `--yes` buys. [`Mode::YesGuarded`]
 /// is the unattended middle: everything but the destructive class runs
 /// without a prompt, and the destructive class still asks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Prompt for every call; the console or the keyboard answers.
+    /// Stop only at the destructive class; everything else runs. The owner's
+    /// 2026-11-18 ruling — "core tools should never require approval, the only
+    /// ones that require approval are for destructive tool calls".
     Ask,
     /// Approve every call, destructive ones included. This is what
     /// `--yes` has always meant, and it stays available on purpose —
@@ -279,12 +283,28 @@ impl Gate {
 
     /// Whether the mode lets this call through without a prompt.
     ///
-    /// [`Mode::Ask`] approves nothing — that is the whole of its
-    /// meaning. [`Mode::Yes`] approves everything. [`Mode::YesGuarded`]
-    /// approves everything except the destructive class, which falls
-    /// through to the ordinary prompt rather than to a denial: the
-    /// owner is AFK, not absent, and the run resumes the moment they
-    /// answer.
+    /// The owner's 2026-11-18 ruling: "core tools should never require
+    /// approval, the only ones that require approval are for destructive tool
+    /// calls." So `ask` no longer means "prompt for everything" — it means
+    /// "run the core work, and stop at the destructive class", which is the
+    /// same class [`Mode::YesGuarded`] measures against. Reading a file,
+    /// searching, running the suite, looking at an image: none of those have a
+    /// blast radius, and asking about them taught the owner to approve without
+    /// looking.
+    ///
+    /// What still asks, in EVERY mode including `yes`:
+    /// - the destructive class ([`Gate::is_destructive`]) — `rm -rf`, a
+    ///   forced overwrite, a `move`/`delete` file change, a `write_file`;
+    /// - [`ALWAYS_ASK_TOOLS`] (`computer_use`), whose blast radius is the
+    ///   machine itself;
+    /// - a server's destructive hint, which can only ever raise the bar.
+    ///
+    /// `yes` differs from the other two only in that it waives the destructive
+    /// class as well; it has never waived the always-ask one, and it still
+    /// does not. `ask` and `yes-guarded` are the same gate now, and that is
+    /// deliberate rather than a redundant mode: the two words are the config's
+    /// vocabulary, and a surface that shows `ask` is telling the owner that
+    /// nothing beyond the destructive class will interrupt them.
     pub fn approves_without_asking(&self, call: &ToolCall) -> bool {
         // A server's destructive hint sits with the always-ask class:
         // the hint came from the server, so it can only raise the bar.
@@ -298,9 +318,12 @@ impl Gate {
             return false;
         }
         match self.mode {
-            Mode::Ask => false,
+            // The destructive class is the one thing `ask` stops at. The
+            // ruling names it as the ONLY reason to interrupt.
+            Mode::Ask | Mode::YesGuarded => !Gate::is_destructive(call),
+            // `yes` is the unguarded latch: it waives the destructive class
+            // too, which is what the flag has always meant.
             Mode::Yes => true,
-            Mode::YesGuarded => !Gate::is_destructive(call),
         }
     }
 
@@ -739,11 +762,53 @@ mod tests {
     }
 
     #[test]
-    fn ask_approves_nothing_without_asking() {
+    fn ask_stops_only_at_the_destructive_class() {
+        // The owner's 2026-11-18 ruling: "core tools should never require
+        // approval, the only ones that require approval are for destructive
+        // tool calls." So ordinary work — a search, a read, a suite, looking
+        // at an image — crosses without a prompt even under `ask`, and the
+        // destructive class is the one thing that stops.
         let gate = Gate::new(Mode::Ask);
-        assert!(!gate.approves_without_asking(&bash("grep -rn fleet src")));
+        // Core work: no prompt.
+        assert!(gate.approves_without_asking(&bash("grep -rn fleet src")));
+        assert!(gate.approves_without_asking(&bash("cargo test -p fleet --lib")));
+        assert!(gate.approves_without_asking(&call("read_file", r#"{"path":"src/lib.rs"}"#)));
+        assert!(gate.approves_without_asking(&call(
+            "vision",
+            r#"{"question":"what is this","images":["tmp/x.png"]}"#
+        )));
+        assert!(gate.approves_without_asking(&call("list_dir", r#"{"path":"src"}"#)));
+        // The destructive class: still asks, and that is the whole point.
         assert!(!gate.approves_without_asking(&bash("rm -rf /tmp/x")));
-        assert!(!gate.approves_without_asking(&call("write_file", r#"{"path":"/tmp/x"}"#)));
+        assert!(!gate
+            .approves_without_asking(&call("write_file", r#"{"path":"/tmp/x","content":"y"}"#)));
+        // And the always-ask class sits above every mode, `ask` included.
+        assert!(!gate
+            .approves_without_asking(&call("computer_use", r#"{"action":"click","x":1,"y":2}"#)));
+    }
+
+    #[test]
+    fn ask_and_yes_guarded_measure_the_same_class() {
+        // They are the same gate now, by the ruling. A surface showing either
+        // word is telling the owner that only the destructive class will
+        // interrupt them; `yes` remains the one mode that waives it.
+        let ask = Gate::new(Mode::Ask);
+        let guarded = Gate::new(Mode::YesGuarded);
+        for probe in [
+            bash("grep -rn fleet src"),
+            bash("rm -rf /tmp/x"),
+            call("read_file", r#"{"path":"src/lib.rs"}"#),
+            call("write_file", r#"{"path":"/tmp/x","content":"y"}"#),
+        ] {
+            assert_eq!(
+                ask.approves_without_asking(&probe),
+                guarded.approves_without_asking(&probe),
+                "ask and yes-guarded disagree on `{}`",
+                probe.function.name
+            );
+        }
+        // `yes` is the unguarded latch: the destructive class crosses too.
+        assert!(Gate::new(Mode::Yes).approves_without_asking(&bash("rm -rf /tmp/x")));
     }
 
     #[test]
