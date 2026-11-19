@@ -11545,10 +11545,6 @@ body[data-motion="off"] .thread-row.fresh { animation: none; }
 }
 .console-sep { flex: 0 0 auto; width: 1px; height: 18px; background: var(--dsw-alias-hairline); }
 
-/* Density (U12): compact tightens the card padding and the type scale. */
-body[data-density="compact"] { --card-pad: 12px; --card-value: 21px; --gap: 9px; }
-body[data-density="compact"] .stage-board { padding: 18px 20px 40px; }
-
 /* Labels (U12): hide the graph labels, keep the nodes. */
 body[data-labels="off"] .tissue-node-label { display: none; }
 

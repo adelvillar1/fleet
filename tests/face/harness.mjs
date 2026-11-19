@@ -14451,12 +14451,15 @@ async function theConsoleControlsApplyLive() {
   const page = boot({ documents: { state: (asked) => emptyState(asked) }, hash: '#/chat' });
   page.open();
   await flush(80);
-  page.IDS['ctl-density'].click();
-  await flush(40);
-  check('S3 density applies live and is remembered',
-    page.body.dataset.density === 'compact' &&
-      page.window.localStorage.getItem('fleet-density') === 'compact',
-    'density=' + page.body.dataset.density);
+  // The density control was dropped (the owner's 2026-11-19 ruling): its
+  // entire reach was two dashboard rules, and the conversation — the surface
+  // the control sat beside — had no compact mode at all. A toggle that
+  // changes nothing where the owner is looking is not a control.
+  check('S3 the density control is gone',
+    !page.IDS['ctl-density'] &&
+      String(page.body.outerHTML || '').indexOf('ctl-density') === -1 &&
+      page.body.dataset.density === undefined,
+    'density=' + String(page.body.dataset.density));
   page.IDS['ctl-connections'].click();
   await flush(40);
   check('S3 the connections toggle hides the graph column',

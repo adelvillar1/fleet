@@ -1228,7 +1228,6 @@ import { node, svg, clip } from './core/dom.js';
     send: document.getElementById('send'),
     dispatch: document.getElementById('dispatch'),
     chromeSearch: document.getElementById('chrome-search-input'),
-    ctlDensity: document.getElementById('ctl-density'),
     ctlConnections: document.getElementById('ctl-connections'),
     tissueCollapse: document.getElementById('tissue-collapse'),
     tissueReveal: document.getElementById('tissue-reveal'),
@@ -10985,13 +10984,10 @@ import { node, svg, clip } from './core/dom.js';
     catch (error) { return fallback; }
   }
   function paintConsole() {
-    document.body.dataset.density = consoleSetting('density', 'comfortable');
     document.body.dataset.tissue = consoleSetting('connections', 'on');
     document.body.dataset.labels = consoleSetting('labels', 'on');
     document.body.dataset.armada = consoleSetting('armada', 'off');
     document.body.dataset.expert = consoleSetting('expert', 'off');
-    if (el.ctlDensity) el.ctlDensity.setAttribute('aria-pressed',
-      String(document.body.dataset.density === 'compact'));
     if (el.ctlConnections) el.ctlConnections.setAttribute('aria-pressed',
       String(document.body.dataset.tissue === 'on'));
     // The collapse doors sync off the same state: the head chevron's
@@ -11010,16 +11006,13 @@ import { node, svg, clip } from './core/dom.js';
     // Read the applied state, not the storage fallback: the default for
     // connections/labels is on, so a fallback of off would flip the first
     // press the wrong way.
-    var attr = { density: 'density', connections: 'tissue', labels: 'labels', armada: 'armada', expert: 'expert' }[key];
+    var attr = { connections: 'tissue', labels: 'labels', armada: 'armada', expert: 'expert' }[key];
     var now = document.body.dataset[attr] || offValue;
     try { window.localStorage.setItem('fleet-' + key, now === onValue ? offValue : onValue); }
     catch (error) { }
     paintConsole();
     if (after) after();
   }
-  if (el.ctlDensity) el.ctlDensity.addEventListener('click', function () {
-    consoleToggle('density', 'compact', 'comfortable');
-  });
   if (el.ctlConnections) el.ctlConnections.addEventListener('click', function () {
     consoleToggle('connections', 'on', 'off');
   });
