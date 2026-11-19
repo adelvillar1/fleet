@@ -9,7 +9,7 @@ shape: [rendering, drops-the-row, resolved]
 phrases: [MEMORY_SECTION_ICONS fallback dot, every rendered rail row gets its own drawing, CALIBRATION_OPS shared verify, rasterise the path to a 17x17 grid and read it, tools was a chevron not a wrench, key regex needs the underscore for route_judged]
 missing: []
 premises: []
-recall-count: 18
+recall-count: 20
 superseded-by:
 valid-until:
 source:

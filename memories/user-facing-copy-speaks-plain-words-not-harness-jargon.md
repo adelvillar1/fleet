@@ -9,7 +9,7 @@ shape: [rendering, docs, resolved]
 phrases: ["things like face, seat, etc bear no meaning to a real user", the harness itself should avoid that jargon on user facing messages in the chat, lanes should be replaced with services, A huddle is a working session with a bot or bots, read has not landed, the face said no without a reason]
 missing: []
 premises: []
-recall-count: 2
+recall-count: 4
 superseded-by:
 valid-until:
 source:
