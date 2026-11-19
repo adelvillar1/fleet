@@ -30,6 +30,13 @@
 #      hygiene.md;
 #   6. the plan-worktree sweep — dry-run by default: --live stays the
 #      owner's explicit act, which is the sweep's own rule;
+#   11. the disk guard (scripts/disk-guard.sh) — the data volume's
+#       thresholds and the Kiri VM disk's self-defense: prune the
+#       owner-ruled prunables (buildkit builders, unused images) below
+#       25 GiB free, rebuild the never-trimming Kiri disk sparse (dump
+#       pampa, restore) below 15. The 2026-11-19 incident's standing
+#       fix: 61 GiB of stale VM build cache beside sweeps that only
+#       watched their own stores;
 #   8. the build lanes — /tmp's gate and lane target dirs, kept while warm
 #      and cleaned whole when cold (2026-11-09: 80 GiB of lanes on a drive
 #      with 1.6 GiB free);
@@ -174,6 +181,14 @@ if [ -d /private/tmp/fleet-release-gate ] &&
    ! git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -q 'fleet-release-gate'; then
     git -C "$REPO" worktree prune >>"$LOG" 2>&1
     say "  a stale release-gate worktree is present: /private/tmp/fleet-release-gate (named, not removed)"
+fi
+
+# 11. the disk guard — remediation before the footprint records the
+#     state it left behind (scripts/disk-guard.sh: thresholds on the
+#     data volume, the kiri inner prune, the kiri disk rebuild).
+if [ -x "$REPO/scripts/disk-guard.sh" ]; then
+    say "— disk guard —"
+    "$REPO/scripts/disk-guard.sh" >>"$LOG" 2>&1 || say "  the disk guard failed; tomorrow retries"
 fi
 
 # 9. the footprint — the budget table, measured and recorded. This is the
