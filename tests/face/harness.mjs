@@ -15521,26 +15521,51 @@ async function theAdvancedSurfacesAreFindableByTheirPlainNames() {
     (await search('versions')).includes('workspace-history'));
 }
 
-// The expert switch (U45): it flipped body[data-expert] but nothing wore
-// expert-only, so it did nothing. Now the rail wears the subsystem names
-// the switch reveals.
+// The expert switch (U45, revised 2026-11-19): OFF is the plain register —
+// the nine lenses. ON is the full census: every surface the build carries on
+// the rail, filed in its home group, wearing its subsystem name beside its
+// plain label — with the palette carrying the same vocabulary.
 async function theExpertSwitchRevealsTheSubsystemNames() {
   const page = boot({ documents: {} });
   page.open();
   await flush();
+  const railed = () => page.rows('.surfaces-link').map((one) => one.dataset.address);
   check('EXP expert is off by default', page.body.dataset.expert !== 'on', page.body.dataset.expert);
+  const plain = railed();
+  check('EXP the plain rail lists the lenses, not the census',
+    plain.includes('sessions') && !plain.includes('router') &&
+      !plain.includes('vault') && !plain.includes('workspace-history'),
+    plain.join(','));
   page.IDS['ctl-expert'].click();
   await flush();
   check('EXP the switch turns the expert register on',
     page.body.dataset.expert === 'on', page.body.dataset.expert);
+  const census = railed();
+  const censusMissing = ['router', 'delegation', 'bots', 'vault', 'plugins',
+    'design', 'workspace-history', 'about'].filter((a) => !census.includes(a));
+  check('EXP ON lists the folded surfaces beside their groups',
+    censusMissing.length === 0, 'missing: ' + censusMissing.join(','));
   const annotations = page.rows('.surfaces-expert');
   check('EXP the rail wears the subsystem names',
     annotations.some((a) => a.textContent === 'corpus') &&
-    annotations.some((a) => a.textContent === 'calibration'),
+    annotations.some((a) => a.textContent === 'calibration') &&
+    annotations.some((a) => a.textContent === 'layerfs') &&
+    annotations.some((a) => a.textContent === 'route::select'),
     annotations.map((a) => a.textContent).join(','));
+  const routerRow = page.rows('.surfaces-link')
+    .find((one) => one.dataset.address === 'router');
+  const inAdvanced = routerRow &&
+    routerRow.closest('.surfaces-section') &&
+    routerRow.closest('.surfaces-section').dataset.group === 'advanced';
+  check('EXP a folded surface stands in its home group',
+    !!inAdvanced, 'the router row is not in the advanced section');
   page.IDS['ctl-expert'].click();
   await flush();
   check('EXP the switch turns it back off', page.body.dataset.expert === 'off', page.body.dataset.expert);
+  const afterOff = railed();
+  check('EXP off returns the plain register',
+    !afterOff.includes('router') && afterOff.includes('sessions'),
+    afterOff.join(','));
 }
 
 // The desk landing is project-centric: a project's work (briefs and design

@@ -11030,7 +11030,14 @@ import { node, svg, clip } from './core/dom.js';
     consoleToggle('labels', 'on', 'off');
   });
   if (el.ctlExpert) el.ctlExpert.addEventListener('click', function () {
-    consoleToggle('expert', 'on', 'off');
+    // The expert census rebuilds what it changes: the rail's row set and
+    // the palette's are both derived from the switch, so a flip repaints
+    // both — the armada switch already works this way.
+    consoleToggle('expert', 'on', 'off', function () {
+      buildRail();
+      paintRailCounts();
+      if (el.palette && !el.palette.hidden) paintPalette();
+    });
   });
   if (el.ctlMotion) el.ctlMotion.addEventListener('click', function () {
     try { window.localStorage.setItem('fleet-motion', motionOn() ? 'off' : 'on'); }
@@ -30124,8 +30131,21 @@ import { node, svg, clip } from './core/dom.js';
     inbox: 'owner-inbox', 'second-brain': 'tower', armada: 'armada',
     settings: 'config', router: 'route::select', delegation: 'delegate',
     bots: 'channels', vault: 'vault.json', plugins: 'bundles', design: 'canvas',
-    'workspace-history': 'layerfs', about: 'version'
+    'workspace-history': 'layerfs', about: 'version', skills: 'skills',
+    huddles: 'huddles'
   };
+
+  // The expert register (U45, revised 2026-11-19): the subsystem name
+  // behind EVERY surface's plain label — the rail's lenses and the 11
+  // folded surfaces alike, on the rail and in the palette. The switch
+  // ON reveals both registers; off, plain names only and the nine
+  // lenses. Two registers, because they answer different questions:
+  //
+  // - EXPERT is the SUBSYSTEM name: what the code, the log and the API
+  //   call the thing. `sessions` beside Conversations, `corpus` beside
+  //   Intelligence.
+  // - ALL is the census: every surface the build carries, nothing folded
+  //   away. On, the rail lists all of them; off, the nine lenses.
 
   // The address-to-mark map, for the one address whose mark is not its own
   // name. `second-brain` is both the Health rail lens AND the Intelligence
@@ -30186,6 +30206,28 @@ import { node, svg, clip } from './core/dom.js';
         paintRailCounts();
       });
       section.appendChild(head);
+      // The expert census (2026-11-19): with the switch on, every route this
+      // build carries joins its home section — the folded surfaces are not
+      // gone, they are filed beside their group in the plain register. The
+      // census lists them once, deduplicated against the section's own rows.
+      if (document.body.dataset.expert === 'on') {
+        var present = {};
+        items.forEach(function (item) { present[item[0]] = true; });
+        ROUTES.forEach(function (route) {
+          var address = route[0], name = route[1];
+          if (present[address]) return;
+          // A folded surface's home GROUP is FOLDED's second element: the
+          // map's rows are [breadcrumb-group, section-id], and the section
+          // id is what a rail section is keyed by (`advanced`, not
+          // `settings`). A row stands in the section it belongs to, never
+          // in a second one — and the census is not a second tier: it is
+          // the same flat list, more of it visible.
+          var home = FOLDED[address] ? FOLDED[address][1] : null;
+          if (home !== id) return;
+          items.push([address, name]);
+          present[address] = true;
+        });
+      }
       items.forEach(function (item) {
         var address = item[0], name = item[1];
         // U44: the fleet lens exists only where there is a fleet.
@@ -30375,8 +30417,16 @@ import { node, svg, clip } from './core/dom.js';
     // only the subsystem's own label.
     var advancedNames = {};
     ADVANCED.forEach(function (entry) { advancedNames[entry[0]] = entry[1] + ' ' + entry[2]; });
+    // The expert census rides the palette too (2026-11-19): with the switch
+    // on, every surface the build carries is ON the advanced group rather
+    // than only the ones the plain rail folds — so the palette and the rail
+    // agree about what exists, and the census is searchable the way it is
+    // clickable. Off, the folded rows are the plain register's (the ones
+    // the rail does not already show).
+    var expertOn = document.body.dataset.expert === 'on';
     var folded = ROUTES
-      .filter(function (route) { return !railed[route[0]] && route[0] !== 'skills'; })
+      .filter(function (route) { return !railed[route[0]] && route[0] !== 'skills' &&
+        (expertOn || FOLDED[route[0]]); })
       .map(function (route) { return [route[0], route[1], advancedNames[route[0]] || '']; });
     var all = GROUPS.slice();
     if (folded.length) all.push(['advanced', 'advanced', folded]);
@@ -30409,10 +30459,16 @@ import { node, svg, clip } from './core/dom.js';
         mark.appendChild(icon(markFor(item[0])));
         row.appendChild(mark);
         row.appendChild(node('span', 'palette-row-name', item[1]));
-        // Whether the surface is live is on the row, not hidden: a later
-        // increment says so here rather than opening to a surprise.
-        row.appendChild(node('span', 'palette-row-hint',
-          BUILT.indexOf(item[0]) === -1 ? 'later' : 'open'));
+        // With the expert switch on, the subsystem name rides the row, the
+        // same register the rail wears — one vocabulary, two surfaces.
+        if (document.body.dataset.expert === 'on' && EXPERT_NAMES[item[0]]) {
+          row.appendChild(node('span', 'palette-row-hint', EXPERT_NAMES[item[0]]));
+        } else {
+          // Whether the surface is live is on the row, not hidden: a later
+          // increment says so here rather than opening to a surprise.
+          row.appendChild(node('span', 'palette-row-hint',
+            BUILT.indexOf(item[0]) === -1 ? 'later' : 'open'));
+        }
         row.addEventListener('click', function () { choosePalette(item[0]); });
         if (!first) first = row;
         shown += 1;
