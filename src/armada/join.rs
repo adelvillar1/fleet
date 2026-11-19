@@ -48,11 +48,25 @@ pub const FLEET_SID_ENV: &str = "FLEET_SID";
 /// healthy instance look dead.
 pub const HEARTBEAT_SECS_ENV: &str = "FLEET_HEARTBEAT_SECS";
 
+/// The shared SKILLS library's git remote. Optional but load-bearing: the
+/// owner's ruling (2026-11-19) is that an instance must be "as smart as the
+/// other ones" out of the gate, and the canonical skills library is where
+/// that intelligence lives — 460+ skills, its own git repo, 3287 tracked
+/// files. An instance that boots without it is a capable agent with none of
+/// the house's procedural knowledge, which is the difference between a new
+/// machine joining the fleet and a new machine merely existing.
+pub const SKILLS_REMOTE_ENV: &str = "FLEET_SKILLS_REMOTE";
+
 /// What the boot found in its environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinSpec {
     /// The shared corpus's git remote.
     pub corpus_remote: String,
+    /// The shared skills library's git remote, when one is configured. `None`
+    /// is an explicit "this fleet shares facts only": the boot then reports
+    /// that the instance is running on its own skills rather than pretending
+    /// it inherited the house's.
+    pub skills_remote: Option<String>,
     /// This install's sid on the roster.
     pub sid: String,
     /// The heartbeat interval.
@@ -68,6 +82,12 @@ pub struct JoinReport {
     pub sid: String,
     /// Whether the corpus was cloned by this boot (false on a restart).
     pub corpus_cloned: bool,
+    /// Whether the skills library was cloned by this boot (false on a
+    /// restart, or when no skills remote is configured).
+    pub skills_cloned: bool,
+    /// How many skills the instance can load after the boot — the number the
+    /// "as smart as the others" claim is measured by.
+    pub skills_loaded: usize,
     /// The roster row's registered-at stamp.
     pub registered_at: u64,
 }
@@ -113,8 +133,13 @@ pub fn read_env(lookup: &dyn Fn(&str) -> Option<String>) -> Result<JoinSpec, Str
              heartbeats (D44)"
         ));
     }
+    // The skills remote is optional but its ABSENCE is reported, not hidden:
+    // an instance with no skills library is less capable than its siblings,
+    // and the boot line says so.
+    let skills_remote = read(SKILLS_REMOTE_ENV);
     Ok(JoinSpec {
         corpus_remote,
+        skills_remote,
         sid,
         heartbeat_secs,
     })
@@ -142,6 +167,28 @@ pub fn join(home: &Path, joining: &JoinSpec, now_secs: u64) -> Result<JoinReport
     };
     // 3. The identity: read-or-mint, never re-mint (D7).
     let install_id = identity::install(home).map_err(|error| format!("the install-id: {error}"))?;
+    // 3b. The SKILLS library (the owner's ruling, 2026-11-19). The canonical
+    //     library is its own git repo, so an instance inherits the house's
+    //     procedural knowledge the same way it inherits the facts — by
+    //     cloning. The destination is the path fleet already resolves
+    //     (`$FLEET_SKILLS_DIR`, else `<user home>/.agents/skills`), so no
+    //     second discovery rule is invented for containers.
+    let skills_cloned = match joining.skills_remote.as_deref() {
+        Some(remote) if !remote.trim().is_empty() => {
+            let dest = skills_dir(home);
+            if dest.join(".git").exists() {
+                // A restart: the library is this instance's own now, and
+                // re-cloning would discard any local authoring.
+                false
+            } else {
+                clone_skills(remote, &dest)?;
+                true
+            }
+        }
+        _ => false,
+    };
+    let skills_loaded = crate::skills::load(&skills_dir(home)).len();
+
     // 4. The roster row. Registration earns a place, never autonomy (D49):
     //    `roster::register` reports the instance un-calibrated until it
     //    settles (D44's grade reads the journal).
@@ -159,8 +206,54 @@ pub fn join(home: &Path, joining: &JoinSpec, now_secs: u64) -> Result<JoinReport
         install_id: install_id.as_str().to_string(),
         sid: joining.sid.clone(),
         corpus_cloned,
+        skills_cloned,
+        skills_loaded,
         registered_at: instance.registered_at,
     })
+}
+
+/// Where the skills library lives for this home: `$FLEET_SKILLS_DIR` when the
+/// operator names one, else the same path `skills::resolve_skills_dir` reads —
+/// `<user home>/.agents/skills`. One rule, so a container and a laptop agree
+/// about where a skill comes from.
+pub fn skills_dir(home: &Path) -> PathBuf {
+    if let Ok(named) = std::env::var("FLEET_SKILLS_DIR") {
+        let named = named.trim();
+        if !named.is_empty() {
+            return PathBuf::from(named);
+        }
+    }
+    let user_home = std::env::var("HOME").unwrap_or_else(|_| {
+        home.to_string_lossy().into_owned()
+    });
+    PathBuf::from(user_home).join(".agents").join("skills")
+}
+
+/// Clone the shared skills library. Refused by name on failure, and a
+/// partial clone is removed rather than left as a half-library the loader
+/// would silently read.
+fn clone_skills(remote: &str, dest: &Path) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("the skills home: {error}"))?;
+    }
+    let output = std::process::Command::new("git")
+        .arg("clone")
+        .arg("--quiet")
+        .arg(remote)
+        .arg(dest)
+        .output()
+        .map_err(|error| format!("the skills clone could not run: {error}"))?;
+    if !output.status.success() {
+        let said = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let _ = std::fs::remove_dir_all(dest);
+        return Err(format!(
+            "the skills library could not be cloned from `{remote}`: {said} — an instance \
+             with no skills is less capable than its siblings, so this is refused rather \
+             than booted past"
+        ));
+    }
+    Ok(())
 }
 
 /// Beat once. Split from the loop so a test drives one beat without a
@@ -172,10 +265,21 @@ pub fn beat(home: &Path, sid: &str, now_secs: u64) -> Result<(), String> {
 /// The boot's log line, printed by the CLI so the operator's `docker logs`
 /// answers "is it joined, and did it re-clone?" without a second command.
 pub fn report(joined: &JoinReport) -> String {
+    let skills = if joined.skills_cloned {
+        format!("skills_cloned=true ({} loaded)", joined.skills_loaded)
+    } else if joined.skills_loaded > 0 {
+        format!("skills_cloned=false ({} already local)", joined.skills_loaded)
+    } else {
+        "skills=0 — this instance runs on its own skills, not the fleet's".to_string()
+    };
     format!(
-        "armada join: sid={} install={} corpus_cloned={} registered_at={} — un-calibrated until \
-         it settles dispatches",
-        joined.sid, joined.install_id, joined.corpus_cloned, joined.registered_at
+        "armada join: sid={} install={} corpus_cloned={} {} registered_at={} — un-calibrated \
+         until it settles dispatches",
+        joined.sid,
+        joined.install_id,
+        joined.corpus_cloned,
+        skills,
+        joined.registered_at
     )
 }
 
@@ -297,6 +401,7 @@ mod tests {
         let instance = scratch("instance");
         let spec = JoinSpec {
             corpus_remote: remote.to_str().unwrap().to_string(),
+            skills_remote: None,
             sid: "box-1".to_string(),
             heartbeat_secs: 60,
         };
@@ -322,6 +427,112 @@ mod tests {
         assert!(roster::load(&instance).instances["box-1"].live(260));
         std::fs::remove_dir_all(&home).ok();
         std::fs::remove_dir_all(&instance).ok();
+    }
+
+    #[test]
+    fn a_join_clones_the_shared_skills_library_and_counts_what_it_got() {
+        let home = scratch("skills-home");
+        // A corpus remote (the join needs one) and a skills remote (the point
+        // of this test), both real bare repos with real commits.
+        let seed = |name: &str, file: &str, body: &str| -> PathBuf {
+            let work = home.join(format!("{name}-seed"));
+            std::fs::create_dir_all(&work).unwrap();
+            let bare = home.join(format!("{name}.git"));
+            let run = |args: &[&str], cwd: &Path| {
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(cwd)
+                    .output()
+                    .expect("git runs")
+            };
+            run(&["init", "--bare", "-q", bare.to_str().unwrap()], &home);
+            run(&["init", "-q"], &work);
+            std::fs::write(work.join(file), body).unwrap();
+            run(&["add", "."], &work);
+            run(
+                &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"],
+                &work,
+            );
+            run(&["remote", "add", "origin", bare.to_str().unwrap()], &work);
+            run(&["push", "-q", "origin", "HEAD:master"], &work);
+            bare
+        };
+        let corpus = seed("corpus", "a-fact.md", "---\nname: a-fact\n---\n\nx\n");
+        // A skill is a DIRECTORY with a SKILL.md — the loader's own shape.
+        let skills_work = home.join("skills-seed");
+        std::fs::create_dir_all(skills_work.join("a-skill")).unwrap();
+        std::fs::write(
+            skills_work.join("a-skill").join("SKILL.md"),
+            "---\nname: a-skill\ndescription: a skill the fleet shares\n---\n\nbody\n",
+        )
+        .unwrap();
+        let skills_bare = home.join("skills.git");
+        let run = |args: &[&str], cwd: &Path| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .output()
+                .expect("git runs")
+        };
+        run(&["init", "--bare", "-q", skills_bare.to_str().unwrap()], &home);
+        run(&["init", "-q"], &skills_work);
+        run(&["add", "."], &skills_work);
+        run(
+            &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"],
+            &skills_work,
+        );
+        run(&["remote", "add", "origin", skills_bare.to_str().unwrap()], &skills_work);
+        run(&["push", "-q", "origin", "HEAD:master"], &skills_work);
+
+        let instance = scratch("skills-instance");
+        let dest = instance.join("skills-canonical");
+        // SAFETY: this test owns the variable for its duration and names a
+        // path unique to its own scratch home.
+        unsafe { std::env::set_var("FLEET_SKILLS_DIR", &dest) };
+        let spec = JoinSpec {
+            corpus_remote: corpus.to_str().unwrap().to_string(),
+            skills_remote: Some(skills_bare.to_str().unwrap().to_string()),
+            sid: "box-smart".to_string(),
+            heartbeat_secs: 60,
+        };
+        let joined = join(&instance, &spec, 500).expect("joined");
+        unsafe { std::env::remove_var("FLEET_SKILLS_DIR") };
+
+        assert!(joined.skills_cloned, "the boot cloned the shared library");
+        assert_eq!(joined.skills_loaded, 1, "the instance can load the skill: {}", report(&joined));
+        assert!(
+            report(&joined).contains("skills_cloned=true"),
+            "the boot line says the instance is as smart as its siblings: {}",
+            report(&joined)
+        );
+        assert!(dest.join("a-skill").join("SKILL.md").exists());
+
+        // A restart must NOT re-clone: the library is local authoring now.
+        unsafe { std::env::set_var("FLEET_SKILLS_DIR", &dest) };
+        let again = join(&instance, &spec, 600).expect("rejoined");
+        unsafe { std::env::remove_var("FLEET_SKILLS_DIR") };
+        assert!(!again.skills_cloned, "a restart keeps its library");
+        assert_eq!(again.skills_loaded, 1, "and still loads it");
+
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::remove_dir_all(&instance).ok();
+    }
+
+    #[test]
+    fn a_boot_with_no_skills_remote_says_so_rather_than_implying_it_inherited() {
+        let joined = JoinReport {
+            install_id: "abc".to_string(),
+            sid: "box-alone".to_string(),
+            corpus_cloned: true,
+            skills_cloned: false,
+            skills_loaded: 0,
+            registered_at: 1,
+        };
+        let said = report(&joined);
+        assert!(
+            said.contains("runs on its own skills, not the fleet's"),
+            "the absence is named: {said}"
+        );
     }
 
     #[test]

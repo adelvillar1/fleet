@@ -187,17 +187,43 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// What the shared mind carries (owner ruling 2026-11-19): the classes two
-/// instances must agree about. Each is a path RELATIVE TO THE HOME, and only
-/// `memories` sits inside the git work tree the corpus syncs today — the
-/// rest live beside it, which is why `class_status` reports them per class
-/// rather than pretending one `git add -A` moves them all.
+/// The classes the shared mind distributes, and where each one's transport
+/// stands. The list is the DIRECTION NOTE's (armada §4: memories, skills,
+/// tools), not a second design — and it records the truth rather than an
+/// aspiration: `memories` travels through this module's sync today, `skills`
+/// is its own git repo that an instance clones at boot (L4.5, `armada join`),
+/// and `mcp.json` still travels nowhere.
 ///
-/// **Tracked.** `memories/` (the facts), `skills/` (the library and its
-/// proposals), `mcp.json` (the tool registrations), `workflows/` (the
-/// learned chains), and `work/` (the in-flight index — what is running and
-/// what it is for, never the raw transcripts).
-pub const TRACKED: &[&str] = &["memories", "skills", "mcp.json", "workflows", "work"];
+/// It lives here as data so a surface can report the whole picture honestly.
+/// The RULE for what may not travel is not re-stated here: L4's C6 owns the
+/// fact tree's never-sync set, and duplicating it is how two rules drift.
+pub const CLASSES: &[(&str, Transport)] = &[
+    ("memories", Transport::CorpusSync),
+    ("skills", Transport::OwnRepo),
+    ("mcp.json", Transport::LocalOnly),
+];
+
+/// How a shared class reaches another instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// Through this module's `sync` (the fact tree, L4).
+    CorpusSync,
+    /// Through its own git repository, cloned at boot (skills, L4.5).
+    OwnRepo,
+    /// Nowhere yet: the class is home-local and an instance starts without it.
+    LocalOnly,
+}
+
+impl Transport {
+    /// The word a surface shows.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Transport::CorpusSync => "synced with the corpus",
+            Transport::OwnRepo => "its own repo, cloned at boot",
+            Transport::LocalOnly => "local only — no transport yet",
+        }
+    }
+}
 
 /// What a home must NEVER share, named so a mistake is a refusal rather than
 /// a leak. The boundary is the security one: a shared grant store would be a
@@ -217,70 +243,6 @@ pub const PRIVATE: &[&str] = &[
     "devices.json",
 ];
 
-/// Where one tracked class stands: the honest per-class answer the owner
-/// asked for (a whole-repo "synced" that hides a class which never moved is
-/// the failure this exists to prevent).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClassStatus {
-    /// The class's name, as `TRACKED` spells it.
-    pub class: &'static str,
-    /// Whether the class exists in this home at all.
-    pub present: bool,
-    /// Whether it is inside the corpus work tree (and therefore moves with
-    /// `sync`) or sits beside it (and does not yet).
-    pub in_corpus_tree: bool,
-}
-
-/// Report every tracked class's status. A class that is absent is reported
-/// absent rather than skipped: "the fleet shares skills" is a claim an
-/// operator should be able to check.
-pub fn class_status(home: &Path) -> Vec<ClassStatus> {
-    let root = corpus_root(home);
-    TRACKED
-        .iter()
-        .map(|class| {
-            let at_home = home.join(class);
-            let in_tree = root.join(class).exists() || class == &"memories";
-            ClassStatus {
-                class,
-                present: at_home.exists() || root.join(class).exists(),
-                in_corpus_tree: in_tree,
-            }
-        })
-        .collect()
-}
-
-/// The one-line summary the CLI prints: what the shared mind actually moves.
-pub fn class_summary(home: &Path) -> String {
-    let statuses = class_status(home);
-    let moved: Vec<&str> = statuses
-        .iter()
-        .filter(|status| status.present && status.in_corpus_tree)
-        .map(|status| status.class)
-        .collect();
-    let stranded: Vec<&str> = statuses
-        .iter()
-        .filter(|status| status.present && !status.in_corpus_tree)
-        .map(|status| status.class)
-        .collect();
-    let absent: Vec<&str> = statuses
-        .iter()
-        .filter(|status| !status.present)
-        .map(|status| status.class)
-        .collect();
-    let mut said = format!("the shared mind syncs: {}", moved.join(", "));
-    if !stranded.is_empty() {
-        said.push_str(&format!(
-            " — present but NOT in the corpus tree yet: {}",
-            stranded.join(", ")
-        ));
-    }
-    if !absent.is_empty() {
-        said.push_str(&format!(" — absent here: {}", absent.join(", ")));
-    }
-    said
-}
-
 /// Whether a path would leak a private class if it were tracked. A refusal
 /// names the class, because "refused" alone teaches nothing.
 pub fn refuse_private(path: &str) -> Result<(), String> {
@@ -289,11 +251,19 @@ pub fn refuse_private(path: &str) -> Result<(), String> {
         return Err(format!(
             "refused: `{head}` is private to a home — sharing it would carry an identity, a \
              grant, a credential or a transcript across instances, and none of those is the \
-             fleet's to share (the tracked set is {})",
-            TRACKED.join(", ")
+             fleet's to share"
         ));
     }
     Ok(())
+}
+
+/// Every shared class and where its transport stands, for the surface's line.
+pub fn class_summary() -> String {
+    CLASSES
+        .iter()
+        .map(|(class, transport)| format!("{class}: {}", transport.as_str()))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The corpus root for a home: the home's `memories` dir (the tracked fact
@@ -628,59 +598,26 @@ mod tests {
     }
 
     #[test]
-    fn the_tracked_and_private_sets_do_not_overlap() {
-        for tracked in TRACKED {
-            assert!(
-                !PRIVATE.contains(tracked),
-                "`{tracked}` is in both sets — one of them is wrong"
-            );
+    fn every_shared_class_names_its_transport_honestly() {
+        // The direction note's three (armada §4): memories, skills, tools.
+        let names: Vec<&str> = CLASSES.iter().map(|(class, _)| *class).collect();
+        assert!(names.contains(&"memories"), "{names:?}");
+        assert!(names.contains(&"skills"), "{names:?}");
+        assert!(names.contains(&"mcp.json"), "{names:?}");
+        // And each says where it actually stands — no class claims a
+        // transport it does not have.
+        let summary = class_summary();
+        assert!(summary.contains("memories: synced with the corpus"), "{summary}");
+        assert!(summary.contains("skills: its own repo"), "{summary}");
+        assert!(summary.contains("mcp.json: local only"), "{summary}");
+        // Nothing in the shared set may be private.
+        for class in &names {
+            assert!(!PRIVATE.contains(class), "`{class}` is both shared and private");
         }
-        // The security-critical names must be present: an entry quietly
-        // dropped from PRIVATE is how a vault ends up shared.
         for must in ["grants.json", "vault.json", "identity.json", "sessions"] {
-            assert!(
-                PRIVATE.contains(&must),
-                "`{must}` must stay private and is missing from the set"
-            );
+            assert!(PRIVATE.contains(&must), "`{must}` must stay private");
         }
     }
 
-    #[test]
-    fn the_class_summary_names_what_travels_and_what_is_stranded() {
-        let home = std::env::temp_dir().join(format!(
-            "fleet-classes-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(home.join("memories")).unwrap();
-        // A tracked class that sits OUTSIDE the corpus tree (the real shape
-        // of `skills` and `mcp.json` in a home today).
-        std::fs::create_dir_all(home.join("skills")).unwrap();
-        std::fs::write(home.join("mcp.json"), "{}").unwrap();
-        let summary = class_summary(&home);
-        assert!(
-            summary.contains("syncs: memories"),
-            "memories is in the tree: {summary}"
-        );
-        assert!(
-            summary.contains("NOT in the corpus tree yet"),
-            "the stranded classes are named: {summary}"
-        );
-        assert!(summary.contains("skills"), "{summary}");
-        assert!(summary.contains("mcp.json"), "{summary}");
-        assert!(
-            summary.contains("absent here"),
-            "classes that do not exist are named as such: {summary}"
-        );
-        // Every tracked class is accounted for somewhere in the sentence:
-        // nothing is silently dropped.
-        for class in TRACKED {
-            assert!(summary.contains(class), "`{class}` vanished from the summary: {summary}");
-        }
-        std::fs::remove_dir_all(&home).ok();
-    }
 
 }

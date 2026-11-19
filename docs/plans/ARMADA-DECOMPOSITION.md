@@ -78,6 +78,7 @@ choices that span atoms are noted in the layer header.
 | L4.2 | the recall-count merge rule (sum/delta) | L4.1 | D24 | done |
 | L4.3 | distributed supersede / serial-collision rule | L4.1 | D25, D26 | done |
 | L4.4 | the RemoteInstance feeder over Source | L4.1, L4.2, L4.3 | D27 | done |
+| L4.5 | the shared SKILLS library as a tracked class: an instance inherits the house's procedural knowledge at boot (the direction note §4's "skills and tools sync the same way"; L4 deferred it as "a later atom") | L4.1 | D61 | building |
 
 ### L5 Communication — plan `2026-11-11-armada-l5-communication.md` · contract §6
 *Layer-level choices: D35 (dispatch graded), D36 (relay is a channel).*

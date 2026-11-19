@@ -73,9 +73,14 @@ COPY services /opt/fleet/services
 # The bundled skills the prompt assembles from.
 COPY --from=build /src/docs /opt/fleet/docs
 
+# The skills library lives at `$FLEET_SKILLS_DIR`, else `<user home>/.agents/
+# skills`. An instance pins it under the VOLUME, so the shared intelligence
+# survives a container replacement exactly as the corpus does — a redeploy
+# that re-cloned 118 MB of skills every time would be both slow and pointless.
 ENV PATH=/opt/fleet:$PATH \
     FLEET_HOME=/data \
-    FLEET_SERVICES_ROOT=/opt/fleet/services
+    FLEET_SERVICES_ROOT=/opt/fleet/services \
+    FLEET_SKILLS_DIR=/data/skills-canonical
 
 # All state lives here: sessions, the corpus, grants, identity, the roster,
 # the journal, the vault. One named volume at /data is the whole
@@ -98,6 +103,8 @@ WORKDIR /data
 RUN git config --file /home/fleet/.gitconfig --add safe.directory /corpus.git \
  && git config --file /home/fleet/.gitconfig --add safe.directory /data \
  && git config --file /home/fleet/.gitconfig --add safe.directory /data/memories \
+ && git config --file /home/fleet/.gitconfig --add safe.directory /skills.git \
+ && git config --file /home/fleet/.gitconfig --add safe.directory /data/skills-canonical \
  && cat /home/fleet/.gitconfig
 
 # `tini` reaps the children fleet spawns (the service lanes, git, the

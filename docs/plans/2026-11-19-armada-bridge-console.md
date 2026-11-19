@@ -240,6 +240,37 @@ owner wildcard behaves byte-for-byte as 0.8.20, and the full gate proves it.
 - [ ] C11 (PARTIALLY DONE — the report and the boundary land, the class migration is a follow-on): the shared mind's transport closes the three classes that have none (owner ruling 2026-11-19: *"gitriver for keeping multiple instances of fleet in sync in terms of the corpus of memories, skills, tools, workflows, in-flight work"*). Measured: `memories/`, `roles/` and `plugins/` are ALREADY git-tracked in the repo (681 / 7 / 4 files) and a home holds only its own private state — so the transport is real, not aspirational. What has none: the canonical skill library (467 skills at the user home, not a git repo), `mcp.json` (the tool registrations, home-only), and workflows (no store). The work is therefore: a declared `Tracked`/`Private` split in `corpus` with `refuse_private` naming the class it refuses; the canonical skills library becomes a tracked class (submodule or a synced subtree, chosen by whether the library is the owner's cross-harness one or fleet's own); `mcp.json` joins the tracked set; a sync reports per class, so a class that could not move is named rather than hidden inside a whole-repo success; the exclusion (identity, grants, vault, roster, sessions, cron, devices) is pinned by a test that asserts a private path is refused by name; and GitRiver is the documented host — a self-hosted Rust git platform that also carries an OCI registry, which is what a container instance needs — with plain GitHub or any git remote working unchanged because the contract is git, not a vendor.
 - [x] C10: `docs/features/armada.md` describes the console, the templates and the container contract as built; the armada ledgers carry D58/D60/D59 and the refreshed atoms; `TECHNICAL-DOCUMENTATION.md`'s identity/security/armada sections match the shipped seams; the harness pins the console and the lib tests pin authority, admission, deployment and joins.
 
+## C11 — the prior work this lands on (read before judging the code)
+
+The owner's correction, and it was right: **a lot of this was already
+designed and mostly built.** Recording what I found, because I re-derived it
+before reading it:
+
+- `docs/architecture/2026-11-11-armada-direction.md` §4 names the three
+  sync-ready artifacts outright: *"Skills (already a shared library at
+  `~/.agents/skills`) and tools (the MCP registry) sync the same way. Bulk
+  knowledge rides git, not the control tunnel."* The intent was never in
+  question.
+- `docs/plans/2026-11-11-armada-l4-corpus.md` built the transport and
+  **deliberately deferred** exactly this: its Out of scope says *"Skills /
+  `mcp.json` sync (the direction note's other sync-ready artifacts) — a later
+  atom; the retire list stays per-install (KI-215)."* Its C6 ships the
+  never-sync rule for the fact tree, and C5 ships the `RemoteInstance` feeder.
+- The canonical library is **already its own git repo with a remote**
+  (`git@github.com:adelvillar1/skills-meta-20260830.git`, 3287 tracked files,
+  clean) — so nothing needed creating, and my earlier claim that it was
+  "untracked" was wrong: I checked `~/.agents` instead of
+  `~/.agents/skills`.
+- `ARMADA-DECOMPOSITION.md` had **no atom** for skills sync. That is the real
+  gap, and it is now L4.5.
+
+So C11's implementation is the deferred atom, not a new idea: `fleet armada
+join` clones the shared skills library into the path fleet already resolves
+(`$FLEET_SKILLS_DIR`, else `<user home>/.agents/skills`), reports how many
+skills the instance can load, and names the case where it inherited none. The
+image pins the destination under the volume (`/data/skills-canonical`) so a
+container replacement does not re-clone 118 MB of knowledge.
+
 ## C11 — what landed, and the honest remainder
 
 **Landed and tested.** `corpus::TRACKED` and `corpus::PRIVATE` declare the
