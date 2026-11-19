@@ -304,42 +304,117 @@ fn provision_docker(spec: &ServiceSpec) -> Result<Provisioned, String> {
 /// surfaces as its own named error rather than as a silent no-op. A stack's
 /// volume must be set per service (the platform does not cascade a
 /// project-level volume), which is why the volume rides the spec, not a flag.
+/// The OpenShip leg: the CLI is the adapter, and its verbs were READ rather
+/// than guessed (2026-11-19 — the first version of this function called
+/// `openship deploy --image … --name … --volume …`, flags that do not exist,
+/// so the leg could never have worked).
+///
+/// The real sequence on a stack project:
+///
+/// 1. `service create <name> --project <p> --image <ref> --env K=V …` — the
+///    container definition. A stack's volume does NOT cascade from the
+///    project, so it is set on the service itself.
+/// 2. `service update <name> --project <p> <patch.json>` — the shared
+///    service contract, where `volumes` lives.
+/// 3. `deploy --project <p>` — the deployment that actually pulls and runs.
+///
+/// Each step is reported, so a failure names the step rather than "the
+/// deploy failed". `OPENSHIP_PROJECT` names the stack; without it the leg
+/// refuses by name, because `deploy` would otherwise use whatever project
+/// the cwd happens to link.
 fn provision_openship(spec: &ServiceSpec) -> Result<Provisioned, String> {
+    let project = std::env::var("OPENSHIP_PROJECT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "the openship leg needs OPENSHIP_PROJECT — the stack this instance joins, as a \
+             project id, slug or name; without it `openship deploy` would use whatever \
+             project the working directory happens to link"
+                .to_string()
+        })?;
     let run = |args: &[&str]| -> Result<String, String> {
         let output = std::process::Command::new("openship")
             .args(args)
             .output()
             .map_err(|error| format!("openship could not run: {error}"))?;
         if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+            let said = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            return Err(if said.is_empty() { out } else { said });
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     };
-    let volume = format!("{}:{}", spec.volume, spec.mount);
-    let mut env_args: Vec<String> = Vec::new();
-    for (key, value) in &spec.env {
-        env_args.push(format!("{key}={value}"));
-    }
-    let mut args: Vec<String> = vec![
-        "deploy".into(),
+    let mut steps: Vec<(String, String)> = Vec::new();
+
+    // 1. The service definition.
+    let mut create: Vec<String> = vec![
+        "service".into(),
+        "create".into(),
+        spec.name.clone(),
+        "--project".into(),
+        project.clone(),
         "--image".into(),
         spec.image.clone(),
-        "--name".into(),
-        spec.name.clone(),
-        "--volume".into(),
-        volume,
     ];
-    for pair in &env_args {
-        args.push("--env".into());
-        args.push(pair.clone());
+    for (key, value) in &spec.env {
+        create.push("--env".into());
+        create.push(format!("{key}={value}"));
     }
-    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    let borrowed: Vec<&str> = create.iter().map(String::as_str).collect();
     match run(&borrowed) {
-        Ok(handle) => Ok(Provisioned {
-            handle: handle.clone(),
-            steps: vec![("deploy".to_string(), format!("openship {handle}"))],
-        }),
-        Err(refusal) => Err(format!("the openship deploy was refused: {refusal}")),
+        Ok(_) => steps.push((
+            "service-create".to_string(),
+            format!("{} defined in {project}", spec.name),
+        )),
+        Err(refusal) => {
+            steps.push(("service-create".to_string(), format!("refused: {refusal}")));
+            return Err(format!("the service definition was refused: {refusal}"));
+        }
+    }
+
+    // 2. The volume, through the shared service contract (the platform does
+    //    not cascade a project-level volume into a stack's services).
+    let patch = json!({ "volumes": [format!("{}:{}", spec.volume, spec.mount)] });
+    let patch_path = std::env::temp_dir().join(format!(
+        "fleet-openship-{}-{}.json",
+        spec.name,
+        std::process::id()
+    ));
+    std::fs::write(&patch_path, patch.to_string())
+        .map_err(|error| format!("the service patch could not be written: {error}"))?;
+    let patch_arg = patch_path.to_string_lossy().into_owned();
+    let update = [
+        "service",
+        "update",
+        spec.name.as_str(),
+        "--project",
+        project.as_str(),
+        patch_arg.as_str(),
+    ];
+    let updated = run(&update);
+    let _ = std::fs::remove_file(&patch_path);
+    match updated {
+        Ok(_) => steps.push((
+            "service-volume".to_string(),
+            format!("{} at {}", spec.volume, spec.mount),
+        )),
+        Err(refusal) => {
+            steps.push(("service-volume".to_string(), format!("refused: {refusal}")));
+            return Err(format!("the volume step was refused: {refusal}"));
+        }
+    }
+
+    // 3. The deployment.
+    match run(&["deploy", "--project", project.as_str()]) {
+        Ok(handle) => {
+            steps.push(("deploy".to_string(), format!("triggered for {project}")));
+            Ok(Provisioned { handle, steps })
+        }
+        Err(refusal) => {
+            steps.push(("deploy".to_string(), format!("refused: {refusal}")));
+            Err(format!("the deployment was refused: {refusal}"))
+        }
     }
 }
 
@@ -614,6 +689,59 @@ mod tests {
             journal.replay(0).unwrap().iter().all(|e| e.kind != "provision"),
             "a dry run journaled a step"
         );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn an_openship_deploy_without_a_project_is_refused_by_name() {
+        // SAFETY: this test owns the variable for its duration.
+        unsafe { std::env::remove_var("OPENSHIP_PROJECT") };
+        let spec = service_spec(
+            Provider::OpenShip,
+            "box-os",
+            "ghcr.io/fleet/instance:1",
+            "git@h:m.git",
+            None,
+        )
+        .unwrap();
+        let home = scratch("openship-noproj");
+        let refused = provision(&home, &spec, false).expect_err("refused");
+        assert!(refused.contains("needs OPENSHIP_PROJECT"), "{refused}");
+        assert!(
+            refused.contains("would use whatever project the working directory"),
+            "the refusal names the hazard: {refused}"
+        );
+        assert!(
+            refused.contains("OPENSHIP_PROJECT"),
+            "and names the fix: {refused}"
+        );
+        // Nothing ran, so nothing was journaled.
+        let journal = crate::journal::Journal::open(&home).unwrap();
+        assert!(
+            journal.replay(0).unwrap().iter().all(|e| e.kind != "provision"),
+            "a refused deploy journaled a step"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_dry_run_never_reaches_a_provider() {
+        // A dry run short-circuits before the provider match, so it answers
+        // even for openship with no project and no CLI on PATH: the preview
+        // is data, not an execution.
+        let spec = service_spec(
+            Provider::OpenShip,
+            "box-dry",
+            "ghcr.io/fleet/instance:1",
+            "git@h:m.git",
+            None,
+        )
+        .unwrap();
+        let home = scratch("openship-dry");
+        unsafe { std::env::remove_var("OPENSHIP_PROJECT") };
+        let provisioned = provision(&home, &spec, true).expect("a dry run answers");
+        assert_eq!(provisioned.handle, "(dry run)");
+        assert!(provisioned.steps[0].1.contains("would deploy"));
         std::fs::remove_dir_all(&home).ok();
     }
 
