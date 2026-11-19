@@ -351,6 +351,43 @@ changes, `learn` from the settles).
   corpus syncs over git, live control resumes on return.** Rationale: the
   failsafe ruling at armada scale (§8.6). *Constrains:* degradation behavior.
 
+
+### Settled 2026-11-19 — the container turn (plan `2026-11-19-armada-bridge-console.md`)
+
+- **D58 — no second binary; the flagship is a role and a configuration.**
+  The "standalone armada app" ambition resolves as the flagship's control
+  plane surfaced through fleet's existing interface, the CLI, a served MCP
+  endpoint, and the relay — one implementation, four surfaces (§9.3's own
+  rule). An instance and a flagship differ by role and config, never by a
+  fork, so a future carrier (a plugin bundle, a second tauri target) changes
+  packaging and nothing else. *Constrains:* packaging, the surface list, any
+  future "split the binary" proposal.
+- **D60 — the instance is a container, and ssh command-drops are retired.**
+  A fleet instance ships as an OCI image (binary + service lanes + runtime +
+  one volume at `FLEET_HOME`), deployed by armada through a provider adapter
+  (docker, OpenShip; later any container host). "Ready to be used" means the
+  corpus is cloned, the install-id minted once, the instance registered
+  un-calibrated, and heartbeating. The `vps_commands` print-only path is
+  gone: it returned ssh strings nobody executed, which read as deployment
+  without being any. *Constrains:* `deploy.rs`, the image, the join, the
+  provider seam, L9's whole row.
+- **D59 — the control vocabulary is SERVED over MCP.** `fleet armada mcp`
+  exposes D46's ten verbs as MCP tools on stdio, and every call passes the
+  same guard as a relayed frame (`admit_local` shares `admit_principal` with
+  `admit`). fleet was an MCP client only, so no agent could command a fleet;
+  §10.1 borrows exactly this pattern from muxin. *Constrains:* the endpoint,
+  the guard's single path, any future tool surface.
+- **D61 — the shared mind's tracked/private split is declared, not implied.**
+  `corpus::TRACKED` (`memories`, `skills`, `mcp.json`, `workflows`, `work`)
+  and `corpus::PRIVATE` (`identity.json`, `grants.json`, `vault.json`,
+  `install-id`, `roster.json`, `sessions`, `cron`, `devices.json`) are code
+  constants, and `refuse_private` names the class it refuses. The boundary is
+  the security one: a shared grant store is a cross-instance escalation and a
+  shared vault is every credential in every instance. GitRiver is documented
+  as the host (self-hosted Rust git + OCI registry); the contract stays plain
+  git, so any remote works. *Constrains:* corpus sync, the image's join, the
+  C11 work that closes the three classes still without transport.
+
 ## L9 — Deployment + surfaces
 
 *Proposed by `2026-11-11-armada-l9-deployment.md` (draft).*

@@ -188,8 +188,10 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 /// What the shared mind carries (owner ruling 2026-11-19): the classes two
-/// instances must agree about. Each is a path RELATIVE to the corpus root,
-/// so the repo has one shape whatever home it lives in.
+/// instances must agree about. Each is a path RELATIVE TO THE HOME, and only
+/// `memories` sits inside the git work tree the corpus syncs today — the
+/// rest live beside it, which is why `class_status` reports them per class
+/// rather than pretending one `git add -A` moves them all.
 ///
 /// **Tracked.** `memories/` (the facts), `skills/` (the library and its
 /// proposals), `mcp.json` (the tool registrations), `workflows/` (the
@@ -214,6 +216,70 @@ pub const PRIVATE: &[&str] = &[
     "cron",
     "devices.json",
 ];
+
+/// Where one tracked class stands: the honest per-class answer the owner
+/// asked for (a whole-repo "synced" that hides a class which never moved is
+/// the failure this exists to prevent).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassStatus {
+    /// The class's name, as `TRACKED` spells it.
+    pub class: &'static str,
+    /// Whether the class exists in this home at all.
+    pub present: bool,
+    /// Whether it is inside the corpus work tree (and therefore moves with
+    /// `sync`) or sits beside it (and does not yet).
+    pub in_corpus_tree: bool,
+}
+
+/// Report every tracked class's status. A class that is absent is reported
+/// absent rather than skipped: "the fleet shares skills" is a claim an
+/// operator should be able to check.
+pub fn class_status(home: &Path) -> Vec<ClassStatus> {
+    let root = corpus_root(home);
+    TRACKED
+        .iter()
+        .map(|class| {
+            let at_home = home.join(class);
+            let in_tree = root.join(class).exists() || class == &"memories";
+            ClassStatus {
+                class,
+                present: at_home.exists() || root.join(class).exists(),
+                in_corpus_tree: in_tree,
+            }
+        })
+        .collect()
+}
+
+/// The one-line summary the CLI prints: what the shared mind actually moves.
+pub fn class_summary(home: &Path) -> String {
+    let statuses = class_status(home);
+    let moved: Vec<&str> = statuses
+        .iter()
+        .filter(|status| status.present && status.in_corpus_tree)
+        .map(|status| status.class)
+        .collect();
+    let stranded: Vec<&str> = statuses
+        .iter()
+        .filter(|status| status.present && !status.in_corpus_tree)
+        .map(|status| status.class)
+        .collect();
+    let absent: Vec<&str> = statuses
+        .iter()
+        .filter(|status| !status.present)
+        .map(|status| status.class)
+        .collect();
+    let mut said = format!("the shared mind syncs: {}", moved.join(", "));
+    if !stranded.is_empty() {
+        said.push_str(&format!(
+            " — present but NOT in the corpus tree yet: {}",
+            stranded.join(", ")
+        ));
+    }
+    if !absent.is_empty() {
+        said.push_str(&format!(" — absent here: {}", absent.join(", ")));
+    }
+    said
+}
 
 /// Whether a path would leak a private class if it were tracked. A refusal
 /// names the class, because "refused" alone teaches nothing.
@@ -577,6 +643,44 @@ mod tests {
                 "`{must}` must stay private and is missing from the set"
             );
         }
+    }
+
+    #[test]
+    fn the_class_summary_names_what_travels_and_what_is_stranded() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-classes-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(home.join("memories")).unwrap();
+        // A tracked class that sits OUTSIDE the corpus tree (the real shape
+        // of `skills` and `mcp.json` in a home today).
+        std::fs::create_dir_all(home.join("skills")).unwrap();
+        std::fs::write(home.join("mcp.json"), "{}").unwrap();
+        let summary = class_summary(&home);
+        assert!(
+            summary.contains("syncs: memories"),
+            "memories is in the tree: {summary}"
+        );
+        assert!(
+            summary.contains("NOT in the corpus tree yet"),
+            "the stranded classes are named: {summary}"
+        );
+        assert!(summary.contains("skills"), "{summary}");
+        assert!(summary.contains("mcp.json"), "{summary}");
+        assert!(
+            summary.contains("absent here"),
+            "classes that do not exist are named as such: {summary}"
+        );
+        // Every tracked class is accounted for somewhere in the sentence:
+        // nothing is silently dropped.
+        for class in TRACKED {
+            assert!(summary.contains(class), "`{class}` vanished from the summary: {summary}");
+        }
+        std::fs::remove_dir_all(&home).ok();
     }
 
 }

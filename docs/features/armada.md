@@ -111,3 +111,61 @@ fresh-install registration, the doctor+settles trust grade, the VPS command
 sequence). The TUI render test pins the armada board; the face harness
 (`tests/face/harness.mjs`) pins the armada section. The full gate confirms a
 single-instance fleet behaves as today.
+
+## As-built 2026-11-19 — the bridge console, containerized instances, and the served endpoint
+
+The 0.7.0 section above describes what shipped then: a read-only roster lens
+and a dispatch composer. This section records what the bridge-console plan
+changed, and the two are not the same product.
+
+**Instances are containers (D60).** `Dockerfile` builds a linux image —
+multi-stage, so the binary compiles inside a linux stage (`ring` cross-compiles
+badly) — 122 MB, unprivileged, `FLEET_HOME=/data` over one named volume, the
+service lanes beside the binary so `lanes::services_root()` resolves with no
+environment. Two facts learned by building rather than reading: the workspace's
+`default-members` includes `src-tauri`, whose GTK dependency an instance can
+never satisfy, so the build is `-p fleet`; and `cpal` links `libasound`, so the
+`-sys` crate needs headers at build time AND `libasound.so.2` at runtime — the
+first image booted to "error while loading shared libraries".
+
+**The join (C3).** `fleet armada join` is the container's entry point:
+environment only, no prompts, every refusal named before any write. It clones
+the shared corpus, mints-or-reads the install-id, registers on the roster
+un-calibrated, then heartbeats. A restart is idempotent by `bootstrap_corpus`'s
+own fresh guard — verified in a real container: `corpus_cloned=false`, the
+install-id byte-identical, the shared fact present on the volume.
+
+**Deploy through providers (C4).** `vps_commands` is retired: it returned ssh
+command strings nobody executed. In its place, `ServiceSpec` (image, one named
+volume at `/data`, the corpus remote) is pure data, so a dry run and a real run
+cannot disagree, and `preview()` prints env KEYS only — a deploy log must not be
+able to leak join material. `Provider::{Docker, OpenShip}` execute, each step
+settling a real `provision` journal event; a failed step names itself and stops.
+
+**The served control endpoint (D59, C8).** `fleet armada mcp` serves D46's ten
+verbs as MCP tools over stdio. Every call passes the same guard as a relayed
+frame: `control::admit_local` shares `admit_principal` with `admit`, so the
+endpoint cannot become a second permission system. Destructive and governance
+verbs refuse by name for lacking fresh human proof, which an agent can never
+supply — verified over a real pipe.
+
+**Roles as grant templates (C5).** `security::RoleTemplate` — `fleet-owner`,
+`org-admin`, `operator`, `auditor` — expands into rows over the same grant
+vocabulary, so the guard needs no new code path. `refuse_owner_tampering`
+refuses the owner principal and a second `fleet-owner` BEFORE reading the store,
+which pins R3's actor-blind boundary in code rather than prose.
+
+**The console (C6).** `#/armada` now carries the roster with heartbeat AGE (not
+just a live boolean), the corpus's sync state, the guard audit stream (the
+journal's own `guard`/`provision`/`governance`/`dispatch` events), the deploy
+card, and the roles panel reading `/api/armada/roles`. The lens is a row on the
+existing rail, annotated in the expert census — a console, not a second app.
+
+**The shared mind's transport (D61, C11).** Measured: the repo already tracks
+`memories/`, `roles/` and `plugins/`, so the transport is real. What has none:
+the canonical 467-skill library (not a git repo), `mcp.json`, and workflows.
+`corpus::TRACKED`/`PRIVATE` now declare the split and `refuse_private` names the
+class it refuses; closing the three gaps is C11's remaining work. GitRiver is
+the documented host — self-hosted Rust git with an OCI registry beside it,
+which is what a container deploy needs — with any git remote still working.
+

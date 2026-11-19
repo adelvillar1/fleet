@@ -4171,6 +4171,11 @@ fn armada_command(action: fleet::cli::ArmadaAction) -> ExitCode {
                     "armada corpus-sync: merged={} summed={} resolved={} refused={}",
                     report.merged, report.summed, report.resolved, report.refused
                 );
+                // Per class, always (owner ruling 2026-11-19): a whole-repo
+                // "synced" that hides a class which never moved is the exact
+                // failure the ruling names, so the summary says which classes
+                // travel and which are stranded beside the tree.
+                println!("  {}", fleet::corpus::class_summary(&home));
                 ExitCode::SUCCESS
             }
             Err(error) => {

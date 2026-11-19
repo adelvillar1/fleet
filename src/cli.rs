@@ -1179,11 +1179,17 @@ usage:
                                 the archive clustered: what repetition has
                                 earned, as proposals — the additive mirror
                                 of the sweep
-  fleet armada <roster|status|sync|deploy|dispatch>
+  fleet armada <roster|status|sync|dispatch|join|deploy|grant|revoke|mcp>
                                 the control plane: the roster and each
                                 instance's earned liveness, the corpus sync,
-                                a fresh install, and a dispatch through the
-                                control plane
+                                and a dispatch through the control plane.
+                                `join` boots this install as an instance (the
+                                container's entry: env only, no prompts);
+                                `deploy --provider docker|openship` provisions
+                                a containerized instance (`--dry-run` prints
+                                the spec and writes nothing); `grant`/`revoke`
+                                apply a role template for a principal; `mcp`
+                                serves the ten control verbs as MCP tools
   fleet footprint [--json] [--class <name>] [--path <dir>] [--estimate]
                   [--settle <kib>] [--record]
                                 what this process tree holds right now —

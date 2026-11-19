@@ -18814,6 +18814,48 @@ import { node, svg, clip } from './core/dom.js';
     });
     deployCard.appendChild(deployBtn);
     el.armadaBoard.appendChild(deployCard);
+
+    // The roles panel (C5/C6): the principals this home knows, the grants
+    // each holds, and the four templates a grant can name. The grants shown
+    // are the STORE's rows, never a re-derivation — the panel is a window on
+    // the governance layer, not a second opinion about it.
+    var rolesCard = boardCard(12, 'roles and grants', 'who may command this fleet');
+    var rolesBody = node('div', 'svc-line', 'reading the principals\u2026');
+    rolesCard.appendChild(rolesBody);
+    fetch('/api/armada/roles', { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (doc) {
+        rolesBody.textContent = '';
+        var principals = doc.principals || [];
+        if (!principals.length) {
+          rolesBody.appendChild(node('p', 'board-empty',
+            'no principal beyond the owner — pairing a device or granting a template adds one'));
+        }
+        principals.forEach(function (name) {
+          var held = (doc.grants || []).filter(function (grant) {
+            return grant.principal === name;
+          });
+          var row = node('div', 'svc-line');
+          row.appendChild(node('strong', null, name));
+          row.appendChild(document.createTextNode(
+            ' \u00b7 ' + (held.length
+              ? held.length + ' grant' + (held.length === 1 ? '' : 's')
+              : 'no explicit grants')));
+          rolesBody.appendChild(row);
+        });
+        (doc.templates || []).forEach(function (template) {
+          var row = node('div', 'svc-line');
+          row.appendChild(node('strong', null, template.name));
+          row.appendChild(document.createTextNode(' \u2014 ' + template.description));
+          rolesBody.appendChild(row);
+        });
+        rolesBody.appendChild(node('p', 'board-empty',
+          'the owner holds everything by the bootstrap wildcard and no act can grant or revoke it'));
+      })
+      .catch(function () {
+        rolesBody.textContent = 'the roles read did not land';
+      });
+    el.armadaBoard.appendChild(rolesCard);
     // The dispatch composer: a task named for one instance, admitted
     // under the owner principal before it obeys. The note is state, not
     // a transient DOM write (KI-447): the refresh after the press

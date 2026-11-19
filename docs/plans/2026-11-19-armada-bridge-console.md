@@ -233,12 +233,38 @@ owner wildcard behaves byte-for-byte as 0.8.20, and the full gate proves it.
 - [x] C3: `fleet armada join` bootstraps the corpus, registers on the roster and heartbeats from env alone; a restarted container with an existing corpus is refused re-bootstrap and keeps its install-id; missing env is refused by name; neither the corpus nor the install-id is re-minted.
 - [x] C4: `fleet armada deploy` provisions a live instance through a provider adapter (openship or docker): the service spec carries image, named volume and env from the vault/config; every step settles a `provision` journal event; a failed step names itself and stops; dry-run is the default preview; the new instance lands on the roster un-calibrated and goes live at its first heartbeat.
 - [x] C5: the identity registry holds a `principals` array and the four role templates (`fleet-owner`, `org-admin`, `operator`, `auditor`) exist as named grant sets; grant/revoke is a journaled governance act; an org-admin altering the owner's grants or the `fleet-owner` principal's own grants is refused by name; a run's principal resolves from registry/device context with owner as the unchanged default, and a delegated child inherits its parent's principal.
-- [ ] C6: the armada lens is the bridge console: instance cards show heartbeat age, capacity, settled reliability and corpus-sync state; the deploy flow (provider → target → step-up → journal tail), roles panel and audit stream work; a refused action names the guard's reason on the surface.
+- [x] C6: the armada lens is the bridge console: instance cards show heartbeat age, capacity, settled reliability and corpus-sync state; the deploy flow (provider → target → step-up → journal tail), roles panel and audit stream work; a refused action names the guard's reason on the surface.
 - [x] C7: every `destructive`/`governance` act (deploy, version-roll, retire, grant, revoke) demands fresh human proof the agent cannot satisfy — the seat on the face, TOTP from the vault's crypto on CLI/MCP — and each check settles an audit event naming principal, verb and outcome.
 - [x] C8: `fleet armada mcp` serves the ten control verbs as MCP tools over stdio through the same `control::admit`; an ungranted call is refused by name; a `fleet mcp` client invokes a read verb end to end from config alone.
-- [ ] C9: a single-owner home with no roster, one principal and no non-owner grants behaves identically to 0.8.20: the full four-leg gate passes with the armada features dormant by default, and the retired `vps_commands` print path is gone from the CLI.
-- [ ] C11: the shared mind's transport closes the three classes that have none (owner ruling 2026-11-19: *"gitriver for keeping multiple instances of fleet in sync in terms of the corpus of memories, skills, tools, workflows, in-flight work"*). Measured: `memories/`, `roles/` and `plugins/` are ALREADY git-tracked in the repo (681 / 7 / 4 files) and a home holds only its own private state — so the transport is real, not aspirational. What has none: the canonical skill library (467 skills at the user home, not a git repo), `mcp.json` (the tool registrations, home-only), and workflows (no store). The work is therefore: a declared `Tracked`/`Private` split in `corpus` with `refuse_private` naming the class it refuses; the canonical skills library becomes a tracked class (submodule or a synced subtree, chosen by whether the library is the owner's cross-harness one or fleet's own); `mcp.json` joins the tracked set; a sync reports per class, so a class that could not move is named rather than hidden inside a whole-repo success; the exclusion (identity, grants, vault, roster, sessions, cron, devices) is pinned by a test that asserts a private path is refused by name; and GitRiver is the documented host — a self-hosted Rust git platform that also carries an OCI registry, which is what a container instance needs — with plain GitHub or any git remote working unchanged because the contract is git, not a vendor.
-- [ ] C10: `docs/features/armada.md` describes the console, the templates and the container contract as built; the armada ledgers carry D58/D60/D59 and the refreshed atoms; `TECHNICAL-DOCUMENTATION.md`'s identity/security/armada sections match the shipped seams; the harness pins the console and the lib tests pin authority, admission, deployment and joins.
+- [x] C9: a single-owner home with no roster, one principal and no non-owner grants behaves identically to 0.8.20: the full four-leg gate passes with the armada features dormant by default, and the retired `vps_commands` print path is gone from the CLI.
+- [ ] C11 (PARTIALLY DONE — the report and the boundary land, the class migration is a follow-on): the shared mind's transport closes the three classes that have none (owner ruling 2026-11-19: *"gitriver for keeping multiple instances of fleet in sync in terms of the corpus of memories, skills, tools, workflows, in-flight work"*). Measured: `memories/`, `roles/` and `plugins/` are ALREADY git-tracked in the repo (681 / 7 / 4 files) and a home holds only its own private state — so the transport is real, not aspirational. What has none: the canonical skill library (467 skills at the user home, not a git repo), `mcp.json` (the tool registrations, home-only), and workflows (no store). The work is therefore: a declared `Tracked`/`Private` split in `corpus` with `refuse_private` naming the class it refuses; the canonical skills library becomes a tracked class (submodule or a synced subtree, chosen by whether the library is the owner's cross-harness one or fleet's own); `mcp.json` joins the tracked set; a sync reports per class, so a class that could not move is named rather than hidden inside a whole-repo success; the exclusion (identity, grants, vault, roster, sessions, cron, devices) is pinned by a test that asserts a private path is refused by name; and GitRiver is the documented host — a self-hosted Rust git platform that also carries an OCI registry, which is what a container instance needs — with plain GitHub or any git remote working unchanged because the contract is git, not a vendor.
+- [x] C10: `docs/features/armada.md` describes the console, the templates and the container contract as built; the armada ledgers carry D58/D60/D59 and the refreshed atoms; `TECHNICAL-DOCUMENTATION.md`'s identity/security/armada sections match the shipped seams; the harness pins the console and the lib tests pin authority, admission, deployment and joins.
+
+## C11 — what landed, and the honest remainder
+
+**Landed and tested.** `corpus::TRACKED` and `corpus::PRIVATE` declare the
+split; `refuse_private` names the class it refuses (with a test that a nested
+private path is refused too, and that `grants.json`/`vault.json`/`identity.json`
+/`sessions` cannot quietly leave the private set); `class_status` and
+`class_summary` report per class, and `fleet armada sync` prints the summary so
+a whole-repo "synced" can no longer hide a class that never moved.
+
+**The remainder, and why it is not done here.** Measured: `corpus_root(home)`
+is `<home>/memories`, so the git work tree covers ONE of the five tracked
+classes. `skills/` and `mcp.json` sit beside it in the home, and the canonical
+skill library (467 skills) sits outside the home entirely at
+`~/.agents/skills` and is not a git repo. Bringing them in is a **home-layout
+migration**, not a sync change: the work tree has to move to the home root (or
+each class has to become a tracked subtree), and `corpus_root` has five call
+sites plus a `fleet memories --remote` contract that users' existing homes
+already depend on. Doing that inside this plan would mean shipping a migration
+that a running instance performs on its own volume with no operator watching.
+
+That is the right next plan, not the right tail of this one — and the plan
+says so rather than calling the criterion met. The value shipped now is the
+one the ruling actually needs first: the **boundary** (nothing private can be
+shared) and the **honesty** (every class is reported, so the gap is visible
+instead of implied).
 
 ## Files to be touched
 
