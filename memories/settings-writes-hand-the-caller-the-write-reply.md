@@ -9,7 +9,7 @@ shape: [rendering, drops-the-row, resolved]
 phrases: [writeSettings onDone reply, readSettings resolves undefined, settings-status lives in the board column, provider-answer role alert, face.providerAnswer remembered per provider, a mock answering empty cannot tell success from silence]
 missing: []
 premises: []
-recall-count: 26
+recall-count: 27
 superseded-by:
 valid-until:
 source:

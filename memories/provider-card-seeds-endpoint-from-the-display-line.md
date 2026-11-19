@@ -9,7 +9,7 @@ shape: [rendering, drops-the-row]
 phrases: [override.detail seeds base.value, "cardEntry posts base_url: base.value.trim()", catalog.providers carries no base_url, settings::list_states provider_detail, normalize_base_url, disabled_models filtered from models at load]
 missing: []
 premises: []
-recall-count: 18
+recall-count: 19
 superseded-by:
 valid-until:
 source:

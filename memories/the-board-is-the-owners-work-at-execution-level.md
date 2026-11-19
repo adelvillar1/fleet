@@ -9,7 +9,7 @@ shape: [rendering, drops-the-row, resolved]
 phrases: [the board should show queued work that's pending, atomic delegatable tasks and to which workload/persona, the board shouldn't show any tasks that are not user initiated, board_read, plans_read, DeclaredNode.assignee]
 missing: []
 premises: []
-recall-count: 4
+recall-count: 5
 superseded-by:
 valid-until:
 source:
