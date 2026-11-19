@@ -12,6 +12,32 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.20 — 2026-11-19
+
+The density button is gone, and a face run recalls from its own corpus.
+
+**Dropping the density control.** Asked what it does, measured: its entire
+reach was two CSS rules — a token trio consumed by three selectors (the deck
+node's padding, a KPI tile's number size, the board columns' gap) and one
+dashboard page's frame padding. The conversation, whose footer the button sat
+in, has no compact mode: the 2026-10-31 density plan shipped single-line tool
+cards unconditionally. Toggled in a real engine, the only moving number was a
+KPI tile's height on pages the owner is not reading when they press it. A
+control that changes nothing where the owner is looking is not a control. The
+console's other controls (connections, labels, motion, expert, armada) are
+untouched and were measured working both ways.
+
+**A face run's corpus is its own home.** Found while verifying: the
+folder-corpus integration test failed with every face change stashed — a
+latent environment-dependent defect. The face's run path resolved its corpus
+through the CLI's `resolve_root`, which consults `FLEET_HOME`/`HOME` first,
+so a face under a scratch home adopted the environment's real corpus whenever
+that held facts. The face now resolves through the run's own home on both the
+folder-granted and the no-folder leg. Same shape as KI-087's rule, pointed the
+other way: the home-first rule belongs to the headless process, whose
+environment is its identity — a face's home is a parameter, not a fact about
+the machine.
+
 ## v0.8.19 — 2026-11-18
 
 The band at the top of the chat area is gone.
