@@ -9,7 +9,7 @@ shape: [rendering, drops-the-row, resolved]
 phrases: [every visible button on every lens, fingerprint hidden class aria text calls localStorage clipboard, type=submit button submits its owning form, copy the fact name reverts its label on a timer, state-gated silence is not a dead button, SWEEP_STILL named silences]
 missing: []
 premises: []
-recall-count: 14
+recall-count: 15
 superseded-by:
 valid-until:
 source:

@@ -9,7 +9,7 @@ shape: [rendering, state-sync, resolved]
 phrases: [readDelegation takes a session, workTabAvailable, paintPaneWork, effective_folder, bridge tree session, settle verifies only its own node]
 missing: []
 premises: []
-recall-count: 0
+recall-count: 1
 superseded-by:
 valid-until:
 source:
