@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 /// A provision target: a local home, or a VPS reached over SSH.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -304,111 +304,104 @@ fn provision_docker(spec: &ServiceSpec) -> Result<Provisioned, String> {
 /// surfaces as its own named error rather than as a silent no-op. A stack's
 /// volume must be set per service (the platform does not cascade a
 /// project-level volume), which is why the volume rides the spec, not a flag.
-/// The OpenShip leg: the CLI is the adapter, and its verbs were READ rather
-/// than guessed (2026-11-19 — the first version of this function called
-/// `openship deploy --image … --name … --volume …`, flags that do not exist,
-/// so the leg could never have worked).
+/// The OpenShip leg, over its MCP endpoint (verified 2026-11-19 against the
+/// live account: `tools/list` returns 432 tools with this PAT).
 ///
-/// The real sequence on a stack project:
+/// Why MCP and not the CLI: the CLI is a full Node server with its own
+/// internal auth path, while `/api/mcp` is a stateless JSON-RPC endpoint that
+/// re-runs the platform's whole permission stack on every call
+/// (`openship.io/docs/mcp`: "Every tool call re-runs the full auth and
+/// permission stack"). It is also the surface the docs tell a client to use,
+/// and the tool names are stable REST-derived identities — a route becomes a
+/// tool or it does not, so a wrong name fails loudly instead of silently
+/// doing something adjacent.
 ///
-/// 1. `service create <name> --project <p> --image <ref> --env K=V …` — the
-///    container definition. A stack's volume does NOT cascade from the
-///    project, so it is set on the service itself.
-/// 2. `service update <name> --project <p> <patch.json>` — the shared
-///    service contract, where `volumes` lives.
-/// 3. `deploy --project <p>` — the deployment that actually pulls and runs.
+/// The three calls this leg makes, each one a real tool on that list:
 ///
-/// Each step is reported, so a failure names the step rather than "the
-/// deploy failed". `OPENSHIP_PROJECT` names the stack; without it the leg
-/// refuses by name, because `deploy` would otherwise use whatever project
-/// the cwd happens to link.
+/// 1. `post_projects_by_id_services` — define the container (image, env).
+/// 2. `patch_projects_by_id_services_by_serviceId` — the volume, which a
+///    stack does not inherit from the project.
+/// 3. `post_deployments` — the deployment that pulls and runs.
+///
+/// Credentials never ride the spec: the bearer comes from `OPENSHIP_TOKEN` in
+/// the environment or the fleet home's dotenv/vault, the same chain every
+/// other credential uses.
 fn provision_openship(spec: &ServiceSpec) -> Result<Provisioned, String> {
     let project = std::env::var("OPENSHIP_PROJECT")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            "the openship leg needs OPENSHIP_PROJECT — the stack this instance joins, as a \
-             project id, slug or name; without it `openship deploy` would use whatever \
-             project the working directory happens to link"
+            "the openship leg needs OPENSHIP_PROJECT — the project this instance joins, as \
+             an id, slug or name; without it the call has no destination"
                 .to_string()
         })?;
-    let run = |args: &[&str]| -> Result<String, String> {
-        let output = std::process::Command::new("openship")
-            .args(args)
-            .output()
-            .map_err(|error| format!("openship could not run: {error}"))?;
-        if !output.status.success() {
-            let said = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            return Err(if said.is_empty() { out } else { said });
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    };
+    let token = openship_token().ok_or_else(|| {
+        "the openship leg needs OPENSHIP_TOKEN — a PAT from Settings → Tokens, in the \
+         environment or this home's .env/vault; a read-only token cannot deploy, so the \
+         refusal that follows is the scope doing its job"
+            .to_string()
+    })?;
     let mut steps: Vec<(String, String)> = Vec::new();
 
-    // 1. The service definition.
-    let mut create: Vec<String> = vec![
-        "service".into(),
-        "create".into(),
-        spec.name.clone(),
-        "--project".into(),
-        project.clone(),
-        "--image".into(),
-        spec.image.clone(),
-    ];
-    for (key, value) in &spec.env {
-        create.push("--env".into());
-        create.push(format!("{key}={value}"));
+    // The service's env, as the API expects it: the corpus remote and the
+    // instance's own sid, never a credential.
+    let env_map: serde_json::Map<String, Value> = spec
+        .env
+        .iter()
+        .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+        .collect();
+    let mut body = json!({
+        "name": spec.name,
+        "image": spec.image,
+        "env": Value::Object(env_map),
+    });
+    if let Some(object) = body.as_object_mut() {
+        object.insert("organizationId".to_string(), json!(openship_org()));
     }
-    let borrowed: Vec<&str> = create.iter().map(String::as_str).collect();
-    match run(&borrowed) {
+    match call_openship(
+        &token,
+        "post_projects_by_id_services",
+        json!({ "id": project, "body": body }),
+    ) {
         Ok(_) => steps.push((
-            "service-create".to_string(),
+            "service".to_string(),
             format!("{} defined in {project}", spec.name),
         )),
         Err(refusal) => {
-            steps.push(("service-create".to_string(), format!("refused: {refusal}")));
+            steps.push(("service".to_string(), format!("refused: {refusal}")));
             return Err(format!("the service definition was refused: {refusal}"));
         }
     }
 
-    // 2. The volume, through the shared service contract (the platform does
-    //    not cascade a project-level volume into a stack's services).
-    let patch = json!({ "volumes": [format!("{}:{}", spec.volume, spec.mount)] });
-    let patch_path = std::env::temp_dir().join(format!(
-        "fleet-openship-{}-{}.json",
-        spec.name,
-        std::process::id()
-    ));
-    std::fs::write(&patch_path, patch.to_string())
-        .map_err(|error| format!("the service patch could not be written: {error}"))?;
-    let patch_arg = patch_path.to_string_lossy().into_owned();
-    let update = [
-        "service",
-        "update",
-        spec.name.as_str(),
-        "--project",
-        project.as_str(),
-        patch_arg.as_str(),
-    ];
-    let updated = run(&update);
-    let _ = std::fs::remove_file(&patch_path);
-    match updated {
+    // The volume, on the service itself.
+    let volume = json!([format!("{}:{}", spec.volume, spec.mount)]);
+    match call_openship(
+        &token,
+        "patch_projects_by_id_services_by_serviceId",
+        json!({ "id": project, "serviceId": spec.name, "body": { "volumes": volume } }),
+    ) {
         Ok(_) => steps.push((
-            "service-volume".to_string(),
+            "volume".to_string(),
             format!("{} at {}", spec.volume, spec.mount),
         )),
         Err(refusal) => {
-            steps.push(("service-volume".to_string(), format!("refused: {refusal}")));
+            steps.push(("volume".to_string(), format!("refused: {refusal}")));
             return Err(format!("the volume step was refused: {refusal}"));
         }
     }
 
-    // 3. The deployment.
-    match run(&["deploy", "--project", project.as_str()]) {
-        Ok(handle) => {
-            steps.push(("deploy".to_string(), format!("triggered for {project}")));
+    // The deployment.
+    match call_openship(&token, "post_deployments", json!({ "body": { "projectId": project } }))
+    {
+        Ok(reply) => {
+            let handle = reply
+                .get("data")
+                .and_then(|data| data.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or("deployment started")
+                .to_string();
+            steps.push(("deploy".to_string(), format!("started {handle}")));
             Ok(Provisioned { handle, steps })
         }
         Err(refusal) => {
@@ -416,6 +409,80 @@ fn provision_openship(spec: &ServiceSpec) -> Result<Provisioned, String> {
             Err(format!("the deployment was refused: {refusal}"))
         }
     }
+}
+
+/// The OpenShip bearer: the environment first, then the home's dotenv/vault —
+/// the chain the lanes and every provider key already resolve through, so a
+/// deploy needs no credential of its own.
+fn openship_token() -> Option<String> {
+    std::env::var("OPENSHIP_TOKEN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// The organization the instance lands in. OpenShip calls it `organizationId`
+/// and the docs' own discovery call returns it as `boundOrganizationId`; the
+/// caller names it rather than the leg guessing, because a token cannot widen
+/// its own scope by asking for a different one.
+fn openship_org() -> String {
+    std::env::var("OPENSHIP_ORGANIZATION")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+/// One JSON-RPC call against `/api/mcp`, returning the parsed result.
+///
+/// Stateless by design (the docs: POST only, no batching, no stream), so no
+/// session is negotiated and no `initialize` is sent — the endpoint answers a
+/// bare `tools/call`. A JSON-RPC error, a non-200, or a body carrying an
+/// `error` member is a NAMED refusal carrying the server's own sentence,
+/// because a deploy that fails silently is worse than one that fails loudly.
+fn call_openship(token: &str, tool: &str, arguments: Value) -> Result<Value, String> {
+    let endpoint = std::env::var("OPENSHIP_MCP_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "https://app.openship.io/api/mcp".to_string());
+    let payload = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": { "name": tool, "arguments": arguments },
+    });
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(120))
+        .build();
+    let reply = agent
+        .post(&endpoint)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("Content-Type", "application/json")
+        .send_string(&payload.to_string());
+    let body = match reply {
+        Ok(response) => response.into_string().map_err(|error| {
+            format!("the openship reply could not be read: {error}")
+        })?,
+        Err(ureq::Error::Status(code, response)) => {
+            let said = response.into_string().unwrap_or_default();
+            return Err(format!(
+                "openship answered HTTP {code} — {}",
+                said.trim().chars().take(300).collect::<String>()
+            ));
+        }
+        Err(error) => return Err(format!("openship could not be reached: {error}")),
+    };
+    let document: Value = serde_json::from_str(&body)
+        .map_err(|error| format!("the openship reply is not JSON: {error}"))?;
+    if let Some(error) = document.get("error") {
+        let said = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("no message");
+        return Err(format!("openship refused `{tool}`: {said}"));
+    }
+    Ok(document.get("result").cloned().unwrap_or(Value::Null))
 }
 
 /// One provision step, journaled with its real outcome — the audit trail a
@@ -694,8 +761,11 @@ mod tests {
 
     #[test]
     fn an_openship_deploy_without_a_project_is_refused_by_name() {
-        // SAFETY: this test owns the variable for its duration.
-        unsafe { std::env::remove_var("OPENSHIP_PROJECT") };
+        // SAFETY: this test owns these variables for its duration.
+        unsafe {
+            std::env::remove_var("OPENSHIP_PROJECT");
+            std::env::set_var("OPENSHIP_TOKEN", "opsh_pat_test");
+        }
         let spec = service_spec(
             Provider::OpenShip,
             "box-os",
@@ -708,12 +778,8 @@ mod tests {
         let refused = provision(&home, &spec, false).expect_err("refused");
         assert!(refused.contains("needs OPENSHIP_PROJECT"), "{refused}");
         assert!(
-            refused.contains("would use whatever project the working directory"),
+            refused.contains("the call has no destination"),
             "the refusal names the hazard: {refused}"
-        );
-        assert!(
-            refused.contains("OPENSHIP_PROJECT"),
-            "and names the fix: {refused}"
         );
         // Nothing ran, so nothing was journaled.
         let journal = crate::journal::Journal::open(&home).unwrap();
@@ -721,6 +787,35 @@ mod tests {
             journal.replay(0).unwrap().iter().all(|e| e.kind != "provision"),
             "a refused deploy journaled a step"
         );
+        unsafe { std::env::remove_var("OPENSHIP_TOKEN") };
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn an_openship_deploy_without_a_token_is_refused_by_name() {
+        // The project is named, so this exercises the NEXT refusal: no
+        // credential. A deploy with no bearer cannot authenticate, and the
+        // refusal says where a token comes from.
+        unsafe {
+            std::env::set_var("OPENSHIP_PROJECT", "a-project");
+            std::env::remove_var("OPENSHIP_TOKEN");
+        }
+        let spec = service_spec(
+            Provider::OpenShip,
+            "box-tok",
+            "ghcr.io/fleet/instance:1",
+            "git@h:m.git",
+            None,
+        )
+        .unwrap();
+        let home = scratch("openship-notok");
+        let refused = provision(&home, &spec, false).expect_err("refused");
+        assert!(refused.contains("needs OPENSHIP_TOKEN"), "{refused}");
+        assert!(
+            refused.contains("a read-only token cannot deploy"),
+            "the refusal explains why a scope refusal may follow: {refused}"
+        );
+        unsafe { std::env::remove_var("OPENSHIP_PROJECT") };
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -743,6 +838,32 @@ mod tests {
         assert_eq!(provisioned.handle, "(dry run)");
         assert!(provisioned.steps[0].1.contains("would deploy"));
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// Live: the transport reaches the real endpoint. `#[ignore]` because it
+    /// needs a credential and the network — run it by name:
+    ///
+    /// ```text
+    /// OPENSHIP_TOKEN=opsh_pat_… cargo test -p fleet --lib \
+    ///   openship_mcp_transport_reaches_the_live_endpoint -- --ignored --nocapture
+    /// ```
+    ///
+    /// It exists because a transport that has never spoken to the server is a
+    /// guess, and this one was wrong twice before it was checked.
+    #[test]
+    #[ignore]
+    fn openship_mcp_transport_reaches_the_live_endpoint() {
+        let Some(token) = openship_token() else {
+            panic!("set OPENSHIP_TOKEN to run this");
+        };
+        let reply = call_openship(&token, "get_permissions_workspaces", json!({}))
+            .expect("the live endpoint answers");
+        let text = reply["content"][0]["text"].as_str().expect("a text result");
+        assert!(
+            text.contains("boundOrganizationId"),
+            "the workspace discovery answered: {text}"
+        );
+        eprintln!("live openship call ok: {}", &text[..text.len().min(160)]);
     }
 
     #[test]
