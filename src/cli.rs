@@ -764,14 +764,54 @@ pub enum ArmadaAction {
     Status { sid: Option<String> },
     /// Trigger the L4 corpus sync.
     Sync,
-    /// Provision a fresh install (governance, step-up): lay out the home, mint
-    /// a fresh install-id, and clone the corpus remote (L9).
+    /// Provision an instance by role and configuration, never by forking the
+    /// crate. Two shapes:
+    ///
+    /// * **local** — the pre-container behavior, kept because it still
+    ///   works: lay out a home, mint an install-id, clone the corpus.
+    /// * **container** — the contract this build adds (D60): build a
+    ///   [`ServiceSpec`](crate::armada::deploy::ServiceSpec) and run it
+    ///   through a provider (docker, openship).
     Deploy {
-        home: String,
+        /// The local home to lay out, when deploying a local install.
+        home: Option<String>,
+        /// The corpus remote (both shapes).
         remote: Option<String>,
+        /// The provider name; `None` means the local shape.
+        provider: Option<String>,
+        /// The instance's name on the provider (and its roster sid).
+        name: Option<String>,
+        /// The image to run.
+        image: Option<String>,
+        /// Print the spec and write nothing.
+        dry_run: bool,
     },
     /// Dispatch a task to an instance through the control plane (L9).
     Dispatch { sid: String, task: String },
+    /// Grant a role template to a principal at a scope — a governance act
+    /// (2026-11-19): journaled, and refused for the owner by name.
+    Grant {
+        principal: String,
+        template: String,
+        scope: String,
+    },
+    /// Revoke a role template from a principal at a scope.
+    Revoke {
+        principal: String,
+        template: String,
+        scope: String,
+    },
+    /// Serve the control vocabulary as MCP tools over stdio (D59,
+    /// 2026-11-19), so an agent can command the fleet.
+    Mcp,
+    /// Boot THIS install as a fleet instance (the container's entry point,
+    /// 2026-11-19): join from the environment, then heartbeat forever. No
+    /// prompts — a container has no terminal to answer one.
+    Join {
+        /// Beat once and exit, instead of looping. The CLI's own diagnostic:
+        /// it proves a container's env is good without leaving a process.
+        once: bool,
+    },
 }
 
 /// Options for `fleet improve`. The bare command lists the proposals;
@@ -2373,20 +2413,53 @@ fn parse_armada(args: &[String]) -> Result<Command, String> {
         })),
         "sync" => Ok(Command::Armada(ArmadaAction::Sync)),
         "deploy" => {
-            let Some(home) = rest.first().cloned() else {
-                return Err("armada deploy needs a home path".to_string());
-            };
+            // Two shapes, one verb: a bare path keeps the local behavior;
+            // `--provider` selects the container contract.
+            let mut home = None;
             let mut remote = None;
-            let mut index = 1;
+            let mut provider = None;
+            let mut name = None;
+            let mut image = None;
+            let mut dry_run = false;
+            let mut index = 0;
             while index < rest.len() {
-                if rest[index] == "--remote" {
-                    remote = rest.get(index + 1).cloned();
-                    index += 2;
-                } else {
-                    index += 1;
+                match rest[index].as_str() {
+                    "--remote" => {
+                        remote = rest.get(index + 1).cloned();
+                        index += 2;
+                    }
+                    "--provider" => {
+                        provider = rest.get(index + 1).cloned();
+                        index += 2;
+                    }
+                    "--name" => {
+                        name = rest.get(index + 1).cloned();
+                        index += 2;
+                    }
+                    "--image" => {
+                        image = rest.get(index + 1).cloned();
+                        index += 2;
+                    }
+                    "--dry-run" => {
+                        dry_run = true;
+                        index += 1;
+                    }
+                    other => {
+                        if home.is_none() && !other.starts_with("--") {
+                            home = Some(other.to_string());
+                        }
+                        index += 1;
+                    }
                 }
             }
-            Ok(Command::Armada(ArmadaAction::Deploy { home, remote }))
+            Ok(Command::Armada(ArmadaAction::Deploy {
+                home,
+                remote,
+                provider,
+                name,
+                image,
+                dry_run,
+            }))
         }
         "dispatch" => {
             let Some(sid) = rest.first().cloned() else {
@@ -2398,8 +2471,68 @@ fn parse_armada(args: &[String]) -> Result<Command, String> {
             }
             Ok(Command::Armada(ArmadaAction::Dispatch { sid, task }))
         }
+        "join" => Ok(Command::Armada(ArmadaAction::Join {
+            once: rest.iter().any(|arg| arg == "--once"),
+        })),
+        "mcp" => Ok(Command::Armada(ArmadaAction::Mcp)),
+        "grant" => {
+            let Some(principal) = rest.first().cloned() else {
+                return Err("armada grant needs a principal".to_string());
+            };
+            let Some(template) = rest.get(1).cloned() else {
+                return Err(format!(
+                    "armada grant needs a template ({})",
+                    "fleet-owner|org-admin|operator|auditor"
+                ));
+            };
+            let mut scope = "instance".to_string();
+            let mut index = 2;
+            while index < rest.len() {
+                if rest[index] == "--scope" {
+                    scope = rest
+                        .get(index + 1)
+                        .cloned()
+                        .ok_or("armada grant --scope needs a value")?;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+            }
+            Ok(Command::Armada(ArmadaAction::Grant {
+                principal,
+                template,
+                scope,
+            }))
+        }
+        "revoke" => {
+            let Some(principal) = rest.first().cloned() else {
+                return Err("armada revoke needs a principal".to_string());
+            };
+            let Some(template) = rest.get(1).cloned() else {
+                return Err("armada revoke needs a template".to_string());
+            };
+            let mut scope = "instance".to_string();
+            let mut index = 2;
+            while index < rest.len() {
+                if rest[index] == "--scope" {
+                    scope = rest
+                        .get(index + 1)
+                        .cloned()
+                        .ok_or("armada revoke --scope needs a value")?;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+            }
+            Ok(Command::Armada(ArmadaAction::Revoke {
+                principal,
+                template,
+                scope,
+            }))
+        }
         other => Err(format!(
-            "unknown armada subcommand `{other}` (roster, status, sync, deploy, dispatch)"
+            "unknown armada subcommand `{other}` (roster, status, sync, deploy, dispatch, join, \
+             grant, revoke, mcp)"
         )),
     }
 }

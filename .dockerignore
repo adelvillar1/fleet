@@ -1,0 +1,9 @@
+# The build context ships to the daemon before the first instruction runs.
+# `target/` and `.git/` are most of this tree and neither belongs in an
+# image: the binary is built inside the build stage, and history is not
+# source.
+target/
+.git/
+tmp/
+node_modules/
+*.log

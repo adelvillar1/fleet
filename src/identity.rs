@@ -35,6 +35,12 @@ pub const IDENTITY_FILE: &str = "identity.json";
 /// change (D8).
 pub const OWNER: &str = "owner";
 
+/// The environment variable naming the device this PROCESS acts as. Set by
+/// the instance container's boot (`fleet armada join`); unset on an ordinary
+/// CLI run, which resolves to the owner. A property of the process, not the
+/// home — two processes over one home are two devices.
+pub const PROCESS_DEVICE_ENV: &str = "FLEET_DEVICE_ID";
+
 /// A stable per-install identity: 32 lowercase hex characters (D7).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallId(String);
@@ -209,11 +215,73 @@ impl Registry {
     }
 }
 
-/// The principal a run acts for. Lane 1: always the owner (D8). The guard
-/// (L3) reads this; the run carries it as `AgentOptions.principal`, `None`
-/// resolving here to the owner — the run this crate has always had.
-pub fn principal_for(_home: &Path) -> PrincipalId {
-    PrincipalId::owner()
+/// The principal a run acts for, from the calling CONTEXT (D8, extended
+/// 2026-11-19 for the armada console).
+///
+/// Three contexts, in precedence order:
+///
+/// 1. The explicit device the caller names — a paired phone or a relayed
+///    peer. A device the registry does not link is a **named refusal**,
+///    never a silent fallback: resolving an unlinked device to the owner
+///    would be the confused-deputy escalation D32 exists to prevent.
+/// 2. This process's own device identity, when one was minted for it (an
+///    instance's container boot sets it; a desktop launch may too).
+/// 3. The owner — the run this crate has always had, and the default every
+///    single-owner home stays on.
+///
+/// The guard (L3) reads this; the run carries it as
+/// `AgentOptions.principal`, `None` resolving here.
+pub fn principal_for(home: &Path) -> PrincipalId {
+    match process_device(home) {
+        Some(device) => principal_of_device_or_owner(home, &device),
+        None => PrincipalId::owner(),
+    }
+}
+
+/// The principal a run acts for when the caller names the device it
+/// arrived on — the armada console's and the served endpoint's path.
+/// An unlinked device is refused by name (D32), exactly as
+/// `device_principal` returning `None` is turned into a refusal by the
+/// communication layer.
+pub fn principal_for_device(home: &Path, device: &str) -> Result<PrincipalId, String> {
+    let device = device.trim();
+    if device.is_empty() {
+        return Ok(PrincipalId::owner());
+    }
+    device_principal(home, device).ok_or_else(|| {
+        format!(
+            "the device `{device}` is not linked to any principal — pairing links one, and an \
+             unlinked device never falls back to the owner"
+        )
+    })
+}
+
+/// Resolve a device the registry may know; an unlinked one answers the
+/// owner, which is correct for the process's OWN identity (a desktop
+/// install that never paired is the owner's) and deliberately different
+/// from `principal_for_device`, whose caller named a FOREIGN device.
+fn principal_of_device_or_owner(home: &Path, device: &str) -> PrincipalId {
+    device_principal(home, device).unwrap_or_else(PrincipalId::owner)
+}
+
+/// The device this PROCESS acts as, when one was minted for it. The
+/// instance container's boot writes `FLEET_DEVICE_ID`; a desktop that
+/// paired may set it; an ordinary CLI run leaves it unset and resolves to
+/// the owner. Read from the environment because it is a property of the
+/// process, not of the home — two processes over one home are two devices.
+pub fn process_device(home: &Path) -> Option<String> {
+    let named = std::env::var(PROCESS_DEVICE_ENV).ok()?;
+    let named = named.trim();
+    if named.is_empty() {
+        return None;
+    }
+    // A named device that the registry does not know is not silently
+    // dropped here: `principal_for` answers the owner for the process's
+    // OWN identity, and the named-refusal rule belongs to the callers
+    // that name a foreign device. The home is accepted for symmetry with
+    // the rest of the module and for a future per-home device store.
+    let _ = home;
+    Some(named.to_string())
 }
 
 /// The principal a paired device acts for, if it is linked (D2). An
@@ -358,6 +426,48 @@ mod tests {
         let home = scratch();
         assert_eq!(principal_for(&home), PrincipalId::owner());
         assert_eq!(principal_for(&home).as_str(), "owner");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_named_device_resolves_to_its_principal() {
+        let home = scratch();
+        let operator = PrincipalId::new("operator");
+        link_device(&home, "phone-1", &operator).unwrap();
+        assert_eq!(principal_for_device(&home, "phone-1").unwrap(), operator);
+        // An empty name is the default run, not a refusal.
+        assert_eq!(principal_for_device(&home, "  ").unwrap(), PrincipalId::owner());
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn an_unlinked_named_device_is_refused_by_name() {
+        let home = scratch();
+        let refused = principal_for_device(&home, "stranger").expect_err("refused");
+        assert!(
+            refused.contains("not linked to any principal"),
+            "the refusal names the condition: {refused}"
+        );
+        assert!(
+            refused.contains("never falls back to the owner"),
+            "the refusal names the rule it refuses to break: {refused}"
+        );
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_process_device_env_resolves_the_run() {
+        let home = scratch();
+        let operator = PrincipalId::new("operator");
+        link_device(&home, "box-7", &operator).unwrap();
+        // SAFETY: this test owns the variable for its own duration; the
+        // suite serializes env-touching cases behind the crate's ambient
+        // discipline elsewhere, and this name is unique to this test.
+        unsafe { std::env::set_var(PROCESS_DEVICE_ENV, "box-7") };
+        assert_eq!(principal_for(&home), operator);
+        // An unset variable is the owner's ordinary run.
+        unsafe { std::env::remove_var(PROCESS_DEVICE_ENV) };
+        assert_eq!(principal_for(&home), PrincipalId::owner());
         fs::remove_dir_all(&home).ok();
     }
 

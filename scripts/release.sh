@@ -359,6 +359,32 @@ cp "$REPO_ROOT/target/release/fleet" "$PKGDIR/fleet-aarch64-apple-darwin/fleet"
 BV=$("$PKGDIR/fleet-aarch64-apple-darwin/fleet" --version)
 printf '# %s\n\nThe CLI binary: the terminal face, the face'"'"'s server, the agent.\n\n```sh\ntar xzf fleet-aarch64-apple-darwin.tar.gz\nchmod +x fleet-aarch64-apple-darwin/fleet\n```\n' "$BV" \
   > "$PKGDIR/fleet-aarch64-apple-darwin/README.txt"
+# The instance image (armada C2, 2026-11-19): the same release, packaged as a
+# container an instance can run. The build happens on the release host — this
+# repo's CI is deliberately unarmed (workflow_dispatch only, owner decision
+# 2026-10-13), so the release script is the publisher, exactly as it already
+# is for the darwin binaries and the updater feed.
+#
+# The image builds the linux binary INSIDE a linux stage (see Dockerfile), so
+# no cross toolchain is needed here. It is tagged with this release's version
+# and pushed to the registry the operator names; a push failure is NAMED and
+# does not fail the darwin assets that already uploaded.
+echo "== building the instance image =="
+IMAGE_REPO=${FLEET_IMAGE_REPO:-}
+if [ -n "$IMAGE_REPO" ]; then
+  docker build -t "$IMAGE_REPO:$VERSION" -t "$IMAGE_REPO:latest" "$REPO_ROOT" ||
+    die "the instance image did not build"
+  docker run --rm "$IMAGE_REPO:$VERSION" --version >/dev/null ||
+    die "the instance image does not answer --version"
+  if docker push "$IMAGE_REPO:$VERSION" && docker push "$IMAGE_REPO:latest"; then
+    echo "image pushed: $IMAGE_REPO:$VERSION and :latest"
+  else
+    echo "image push FAILED for $IMAGE_REPO — the darwin assets are already uploaded" >&2
+  fi
+else
+  echo "image: FLEET_IMAGE_REPO is unset — built nothing; set it to publish (e.g. ghcr.io/<owner>/fleet-instance)"
+fi
+
 TARBALL="$PKGDIR/fleet-aarch64-apple-darwin.tar.gz"
 tar -czf "$TARBALL" -C "$PKGDIR" fleet-aarch64-apple-darwin
 

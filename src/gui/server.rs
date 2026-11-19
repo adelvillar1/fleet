@@ -1845,6 +1845,21 @@ async fn serve_connection(
         // The armada panel's roster (armada L9, C3): the instances with
         // their earned liveness and measured reliability, one read.
         ("GET", "/api/armada") => write_reply(&mut stream, api(200, bridge.armada().await)).await,
+        // The console's roles panel (2026-11-19): the principals, their
+        // grants and the templates a grant can name.
+        ("GET", "/api/armada/roles") => {
+            write_reply(&mut stream, api(200, bridge.armada_roles().await)).await
+        }
+        ("POST", "/api/armada/grant") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.armada_grant(&body).await {
+                Ok(made) => write_reply(&mut stream, api(200, made)).await,
+                Err(reason) => write_reply(&mut stream, api(400, json!({"error": reason}))).await,
+            }
+        }
         // The dispatch composer's act: a task named for one instance,
         // admitted under the owner principal before it obeys. A refusal
         // is the control plane's own named reason.

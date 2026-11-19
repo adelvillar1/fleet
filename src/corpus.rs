@@ -187,6 +187,49 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// What the shared mind carries (owner ruling 2026-11-19): the classes two
+/// instances must agree about. Each is a path RELATIVE to the corpus root,
+/// so the repo has one shape whatever home it lives in.
+///
+/// **Tracked.** `memories/` (the facts), `skills/` (the library and its
+/// proposals), `mcp.json` (the tool registrations), `workflows/` (the
+/// learned chains), and `work/` (the in-flight index — what is running and
+/// what it is for, never the raw transcripts).
+pub const TRACKED: &[&str] = &["memories", "skills", "mcp.json", "workflows", "work"];
+
+/// What a home must NEVER share, named so a mistake is a refusal rather than
+/// a leak. The boundary is the security one: a shared grant store would be a
+/// cross-instance escalation, a shared vault would hand every instance every
+/// credential, and a shared identity would make two machines one principal.
+///
+/// **Private.** `identity.json`, `grants.json`, `vault.json`, `install-id`,
+/// `roster.json`, `sessions/`, `cron/`, `devices.json`.
+pub const PRIVATE: &[&str] = &[
+    "identity.json",
+    "grants.json",
+    "vault.json",
+    "install-id",
+    "roster.json",
+    "sessions",
+    "cron",
+    "devices.json",
+];
+
+/// Whether a path would leak a private class if it were tracked. A refusal
+/// names the class, because "refused" alone teaches nothing.
+pub fn refuse_private(path: &str) -> Result<(), String> {
+    let head = path.trim_start_matches('/').split('/').next().unwrap_or("");
+    if PRIVATE.iter().any(|private| private == &head) {
+        return Err(format!(
+            "refused: `{head}` is private to a home — sharing it would carry an identity, a \
+             grant, a credential or a transcript across instances, and none of those is the \
+             fleet's to share (the tracked set is {})",
+            TRACKED.join(", ")
+        ));
+    }
+    Ok(())
+}
+
 /// The corpus root for a home: the home's `memories` dir (the tracked fact
 /// tree). The sync moves only this tree (D29).
 pub fn corpus_root(home: &Path) -> PathBuf {
@@ -488,4 +531,52 @@ mod tests {
         assert!(!SyncState::path(&dir).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
+    #[test]
+    fn the_private_classes_are_refused_by_name() {
+        for private in PRIVATE {
+            let refused = refuse_private(private).expect_err("refused");
+            assert!(
+                refused.contains(private),
+                "the refusal names the class `{private}`: {refused}"
+            );
+            assert!(
+                refused.contains("the fleet's to share"),
+                "the refusal names the rule: {refused}"
+            );
+            // A nested path under a private class is refused too: tracking
+            // `sessions/abc.jsonl` leaks the same thing as tracking the dir.
+            let nested = format!("{private}/nested-thing");
+            assert!(
+                refuse_private(&nested).is_err(),
+                "a nested private path slipped through: {nested}"
+            );
+        }
+        // The tracked classes are not caught by the boundary: a false
+        // refusal would make the tracked set unreachable.
+        for tracked in ["memories", "skills", "mcp.json"] {
+            assert!(
+                refuse_private(tracked).is_ok(),
+                "`{tracked}` is tracked but the boundary refused it"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tracked_and_private_sets_do_not_overlap() {
+        for tracked in TRACKED {
+            assert!(
+                !PRIVATE.contains(tracked),
+                "`{tracked}` is in both sets — one of them is wrong"
+            );
+        }
+        // The security-critical names must be present: an entry quietly
+        // dropped from PRIVATE is how a vault ends up shared.
+        for must in ["grants.json", "vault.json", "identity.json", "sessions"] {
+            assert!(
+                PRIVATE.contains(&must),
+                "`{must}` must stay private and is missing from the set"
+            );
+        }
+    }
+
 }

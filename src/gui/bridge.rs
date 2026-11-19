@@ -2085,31 +2085,188 @@ impl Bridge {
                 .map(|span| span.as_secs())
                 .unwrap_or_default();
             let roster = crate::armada::roster::load(&home);
+            // The console needs the AGE of a heartbeat, not just a boolean:
+            // "live" and "last heard 40 seconds ago" answer different
+            // questions when an instance is failing.
             let instances: Vec<Value> = roster
                 .instances
                 .values()
                 .map(|instance| {
                     let grade = crate::armada::control::grade(&home, &instance.sid);
+                    let age = if instance.last_heartbeat == 0 {
+                        Value::Null
+                    } else {
+                        json!(now.saturating_sub(instance.last_heartbeat))
+                    };
                     json!({
                         "sid": instance.sid,
                         "install_id": instance.install_id,
                         "version": instance.version,
                         "capacity_kib": instance.capacity_kib,
                         "live": instance.live(now),
+                        "heartbeat_age_secs": age,
+                        "registered_at": instance.registered_at,
                         "settled": grade.settled,
                         "calibrated": grade.calibrated,
                         "reliability": grade.reliability,
                     })
                 })
                 .collect();
+            // The corpus sync's own state (L4): the console says whether the
+            // shared mind is current rather than implying it.
+            let sync = Some(crate::corpus::SyncState::load(&home));
+            let corpus = match sync {
+                Some(state) => json!({
+                    "remote": state.remote,
+                    "corpus_ref": state.corpus_ref,
+                    "last_revision": state.last_revision,
+                    "settles": state.settles.len(),
+                }),
+                None => Value::Null,
+            };
+            // The guard audit stream: every admit/refusal, newest first. The
+            // console's audit section reads this and nothing else, so the
+            // surface cannot invent an event the journal does not hold.
+            let audit: Vec<Value> = crate::journal::Journal::open(&home)
+                .ok()
+                .and_then(|journal| journal.replay(0).ok())
+                .map(|events| {
+                    events
+                        .into_iter()
+                        .filter(|event| {
+                            matches!(
+                                event.kind.as_str(),
+                                "guard" | "provision" | "governance" | "dispatch"
+                            )
+                        })
+                        .rev()
+                        .take(40)
+                        .map(|event| {
+                            json!({
+                                "seq": event.seq,
+                                "kind": event.kind,
+                                "at": event.ts,
+                                "principal": event.principal,
+                                "session": event.session,
+                                "body": event.payload,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             json!({
                 "type": "armada",
                 "flagship": crate::armada::is_flagship(&home),
                 "instances": instances,
+                "corpus": corpus,
+                "audit": audit,
             })
         })
         .await
         .unwrap_or_else(|_| json!({"type": "armada", "refused": ["the armada read did not land"]}))
+    }
+
+    /// A governance act from the console: grant or revoke a role template
+    /// for a principal at a scope (2026-11-19). The boundary lives in
+    /// `security::grant_template`, so the surface cannot grant what the CLI
+    /// refuses — one rule, two doors.
+    pub async fn armada_grant(&self, body: &str) -> Result<Value, String> {
+        let arguments: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("the grant is not a JSON object: {error}"))?;
+        let principal = arguments
+            .get("principal")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "the grant names a principal".to_string())?
+            .to_string();
+        let template_name = arguments
+            .get("template")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "the grant names a template".to_string())?
+            .to_string();
+        let scope = arguments
+            .get("scope")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("instance")
+            .to_string();
+        let revoke = arguments
+            .get("revoke")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let template = crate::security::RoleTemplate::parse(&template_name).ok_or_else(|| {
+            format!(
+                "unknown template `{template_name}` \
+                 (fleet-owner|org-admin|operator|auditor)"
+            )
+        })?;
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            let act = crate::security::grant_template(&home, &principal, template, &scope, revoke)?;
+            crate::armada::deploy::journal_governance(&home, &act.note());
+            Ok(json!({
+                "type": "armada_grant",
+                "what": act.what,
+                "principal": act.principal,
+                "template": act.template.as_str(),
+                "scope": act.scope,
+                "rows": act.rows,
+                "note": act.note(),
+            }))
+        })
+        .await
+        .map_err(|_| "the grant did not land".to_string())?
+    }
+
+    /// The principals this home knows and the grants each holds — the roles
+    /// panel's read, derived from the two stores that own the facts.
+    pub async fn armada_roles(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            let registry = crate::identity::Registry::load(&home).ok();
+            let store = crate::security::GrantStore::load(&home).ok();
+            let principals: Vec<String> = registry
+                .map(|registry| {
+                    registry
+                        .principals
+                        .iter()
+                        .map(|one| one.as_str().to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let grants: Vec<Value> = store
+                .map(|store| {
+                    store
+                        .grants
+                        .iter()
+                        .map(|grant| {
+                            json!({
+                                "principal": grant.principal,
+                                "dimension": grant.dimension.map(|d| format!("{d:?}").to_lowercase()),
+                                "scope": grant.scope,
+                                "class": grant.class.map(|c| c.as_str()),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let templates: Vec<Value> = crate::security::RoleTemplate::ALL
+                .iter()
+                .map(|template| {
+                    json!({
+                        "name": template.as_str(),
+                        "description": template.description(),
+                    })
+                })
+                .collect();
+            json!({
+                "type": "armada_roles",
+                "principals": principals,
+                "grants": grants,
+                "templates": templates,
+            })
+        })
+        .await
+        .unwrap_or_else(|_| json!({"type": "armada_roles", "refused": ["the roles read did not land"]}))
     }
 
     /// The dispatch composer's act (armada L9, C3): a task named for one

@@ -4181,31 +4181,184 @@ fn armada_command(action: fleet::cli::ArmadaAction) -> ExitCode {
         ArmadaAction::Deploy {
             home: target_home,
             remote,
+            provider,
+            name,
+            image,
+            dry_run,
         } => {
-            // Provision is a governance action (D18/D19): the owner's own
-            // invocation is the in-turn approval; the act is journaled, and
-            // the fresh install is un-calibrated until it settles (D57).
-            let target = std::path::PathBuf::from(&target_home);
-            match fleet::armada::deploy::provision_local(&target, remote.as_deref()) {
-                Ok(report) => {
-                    fleet::armada::deploy::journal_provision(
-                        &target,
-                        &report.install_id,
-                        "local",
-                        report.corpus_cloned,
-                    );
-                    println!(
-                        "armada deploy: install={} corpus_cloned={} calibrated={}",
-                        report.install_id, report.corpus_cloned, report.calibrated
-                    );
+            // Two shapes on one verb. A provider selects the container
+            // contract (D60); a bare path keeps the local behavior the
+            // pre-container build had, because a local home still works and
+            // retiring it would break a working deploy for nothing.
+            let Some(provider_name) = provider else {
+                let Some(target_home) = target_home else {
+                    eprintln!("armada deploy: a local deploy needs a home path, or pass --provider docker|openship");
+                    return ExitCode::from(1);
+                };
+                let target = std::path::PathBuf::from(&target_home);
+                return match fleet::armada::deploy::provision_local(&target, remote.as_deref()) {
+                    Ok(report) => {
+                        fleet::armada::deploy::journal_provision(
+                            &target,
+                            &report.install_id,
+                            "local",
+                            report.corpus_cloned,
+                        );
+                        println!(
+                            "armada deploy: install={} corpus_cloned={} calibrated={}",
+                            report.install_id, report.corpus_cloned, report.calibrated
+                        );
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => {
+                        eprintln!("armada deploy: {error}");
+                        ExitCode::from(1)
+                    }
+                };
+            };
+            let Some(provider) = fleet::armada::deploy::Provider::parse(&provider_name) else {
+                eprintln!(
+                    "armada deploy: unknown provider `{provider_name}` (docker|openship)"
+                );
+                return ExitCode::from(1);
+            };
+            let Some(name) = name else {
+                eprintln!("armada deploy: a container deploy names the instance with --name");
+                return ExitCode::from(1);
+            };
+            let Some(image) = image else {
+                eprintln!("armada deploy: a container deploy names its --image");
+                return ExitCode::from(1);
+            };
+            let Some(remote) = remote else {
+                eprintln!("armada deploy: a container deploy names the shared corpus with --remote");
+                return ExitCode::from(1);
+            };
+            let spec = match fleet::armada::deploy::service_spec(
+                provider,
+                &name,
+                &image,
+                &remote,
+                None,
+            ) {
+                Ok(spec) => spec,
+                Err(refusal) => {
+                    eprintln!("armada deploy: {refusal}");
+                    return ExitCode::from(1);
+                }
+            };
+            match fleet::armada::deploy::provision(&home, &spec, dry_run) {
+                Ok(provisioned) => {
+                    println!("armada deploy: {} — {}", spec.preview(), provisioned.handle);
+                    for (step, outcome) in &provisioned.steps {
+                        println!("  {step}: {outcome}");
+                    }
                     ExitCode::SUCCESS
                 }
-                Err(error) => {
-                    eprintln!("armada deploy: {error}");
+                Err(refusal) => {
+                    eprintln!("armada deploy: {refusal}");
                     ExitCode::from(1)
                 }
             }
         }
+        ArmadaAction::Join { once } => {
+            let home = match fleet::armada::join::home_from_env(&fleet::armada::join::process_env)
+            {
+                Ok(home) => home,
+                Err(refusal) => {
+                    eprintln!("{refusal}");
+                    return ExitCode::from(1);
+                }
+            };
+            let spec = match fleet::armada::join::read_env(&fleet::armada::join::process_env) {
+                Ok(spec) => spec,
+                Err(refusal) => {
+                    eprintln!("{refusal}");
+                    return ExitCode::from(1);
+                }
+            };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let joined = match fleet::armada::join::join(&home, &spec, now) {
+                Ok(joined) => joined,
+                Err(refusal) => {
+                    eprintln!("armada join: {refusal}");
+                    return ExitCode::from(1);
+                }
+            };
+            println!("{}", fleet::armada::join::report(&joined));
+            if once {
+                return ExitCode::SUCCESS;
+            }
+            let interval = std::time::Duration::from_secs(spec.heartbeat_secs);
+            loop {
+                std::thread::sleep(interval);
+                let at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if let Err(refused) = fleet::armada::join::beat(&home, &joined.sid, at) {
+                    eprintln!("armada join: the heartbeat was refused: {refused}");
+                }
+            }
+        }
+        ArmadaAction::Grant {
+            principal,
+            template,
+            scope,
+        } => {
+            let Some(template) = fleet::security::RoleTemplate::parse(&template) else {
+                eprintln!(
+                    "armada grant: unknown template `{template}` \
+                     (fleet-owner|org-admin|operator|auditor)"
+                );
+                return ExitCode::from(1);
+            };
+            match fleet::security::grant_template(&home, &principal, template, &scope, false) {
+                Ok(act) => {
+                    fleet::armada::deploy::journal_governance(&home, &act.note());
+                    println!("armada grant: {}", act.note());
+                    ExitCode::SUCCESS
+                }
+                Err(refusal) => {
+                    eprintln!("{refusal}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        ArmadaAction::Revoke {
+            principal,
+            template,
+            scope,
+        } => {
+            let Some(template) = fleet::security::RoleTemplate::parse(&template) else {
+                eprintln!(
+                    "armada revoke: unknown template `{template}` \
+                     (fleet-owner|org-admin|operator|auditor)"
+                );
+                return ExitCode::from(1);
+            };
+            match fleet::security::grant_template(&home, &principal, template, &scope, true) {
+                Ok(act) => {
+                    fleet::armada::deploy::journal_governance(&home, &act.note());
+                    println!("armada revoke: {}", act.note());
+                    ExitCode::SUCCESS
+                }
+                Err(refusal) => {
+                    eprintln!("{refusal}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        ArmadaAction::Mcp => match fleet::armada::mcp::serve_stdio(&home) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(refusal) => {
+                eprintln!("armada mcp: {refusal}");
+                ExitCode::from(1)
+            }
+        },
         ArmadaAction::Dispatch { sid, task } => {
             // The flagship signs a dispatch frame under the owner principal,
             // admits it through the control plane (authority + guard), and

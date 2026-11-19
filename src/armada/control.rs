@@ -160,6 +160,65 @@ pub fn admit(
     })
 }
 
+/// The guard half of admission, shared by the relayed path ([`admit`], after
+/// it verifies the flagship's authority) and the local path
+/// ([`admit_local`], which has no authority to verify because the caller is
+/// this home's own process).
+///
+/// Extracted rather than duplicated so the served endpoint cannot drift into
+/// a second permission system: whatever a relayed frame must survive, a
+/// local call survives too — the principal's grants, default-deny, and the
+/// step-up tiers.
+fn admit_principal(
+    home: &Path,
+    verb: Verb,
+    frame: ControlFrame,
+    now_secs: u64,
+) -> Result<Admitted, String> {
+    let store = GrantStore::load(home).map_err(|e| format!("the grant store: {e}"))?;
+    let scope = format!("instance:{}", frame.install);
+    let decision = guard::check_grant(
+        &frame.principal,
+        verb.dimension(),
+        &scope,
+        verb.class(),
+        &store,
+    );
+    match decision {
+        Decision::Granted => {}
+        Decision::Denied { name } => {
+            journal_guard(home, &frame, "denied", &name);
+            return Err(format!(
+                "the principal `{}` is not granted `{}` here: {name}",
+                frame.principal,
+                frame.verb
+            ));
+        }
+        Decision::StepUpRequired => {
+            journal_guard(home, &frame, "step_up", "step-up required");
+            return Err(format!("the `{}` verb requires step-up approval", frame.verb));
+        }
+    }
+    // A local call carries no signed assertion, so a privileged verb is
+    // refused by NAME rather than silently obeyed: the human's fresh proof
+    // is what the destructive tier exists to demand, and the agent can never
+    // satisfy it (R5).
+    if verb.class().needs_step_up() {
+        journal_guard(home, &frame, "step_up", "no fresh proof on a local call");
+        return Err(format!(
+            "the `{}` verb requires fresh human proof (step-up), and a local call carries none \
+             — approve it on the face, or pass the assertion the flagship signs",
+            frame.verb
+        ));
+    }
+    let _ = now_secs;
+    Ok(Admitted {
+        verb,
+        principal: frame.principal.clone(),
+        frame,
+    })
+}
+
 /// What obeying an admitted frame produces. The read/governance/sync verbs
 /// perform here; `dispatch` and the destructive verbs return the action the
 /// caller (the bridge / the deployment layer) executes — dispatch reuses
@@ -169,6 +228,54 @@ pub enum Outcome {
     Done(Value),
     Dispatch { task: String, principal: String },
     Destructive { verb: Verb, target: String },
+}
+
+impl Outcome {
+    /// The one word the endpoint and the console report: what became of the
+    /// call. `Done` is a read or a completed effect; `Dispatch` names work
+    /// handed to an instance; `Destructive` is the guard's step-up refusal of
+    /// an act that needs fresh human proof, which is an OUTCOME rather than
+    /// an error because the frame itself was well-formed and admitted.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Outcome::Done(_) => "done",
+            Outcome::Dispatch { .. } => "dispatch",
+            Outcome::Destructive { .. } => "needs-fresh-proof",
+        }
+    }
+}
+
+/// Admit a call that originates LOCALLY — the served MCP endpoint and the
+/// CLI — rather than arriving as a signed frame over the relay (2026-11-19).
+///
+/// The distinction is who is asking, not what is allowed: a local caller is
+/// this home's own process, so there is no relay to distrust and no flagship
+/// signature to verify. What does NOT change is the guard: the principal's
+/// grants are checked through [`admit_principal`], default-deny, and a
+/// destructive or governance verb still demands fresh proof.
+///
+/// Building the frame here rather than letting callers do it keeps one
+/// shape: a local call and a relayed call admit through the same guard, so
+/// the served endpoint cannot drift into a second permission system.
+pub fn admit_local(
+    home: &Path,
+    verb: Verb,
+    principal: &str,
+    target: &str,
+    sid: Option<&str>,
+    now_secs: u64,
+) -> Result<Admitted, String> {
+    let frame = ControlFrame {
+        kind: "control".to_string(),
+        verb: verb.as_str().to_string(),
+        install: sid.unwrap_or_default().to_string(),
+        principal: principal.to_string(),
+        payload: json!({ "target": target }),
+        nonce: String::new(),
+        issued_at: now_secs,
+        assertion: None,
+    };
+    admit_principal(home, verb, frame, now_secs)
 }
 
 /// Obey an admitted frame (C3). `corpus-sync` triggers the L4 sync; `health`

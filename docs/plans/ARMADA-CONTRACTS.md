@@ -20,7 +20,10 @@ How to read it:
 
 The consistency rule: **every EXPECTS resolves to an OFFER.** The new
 modules' offers are design (settled by the plans, cited D-ids); the existing
-fleet seams are verified against the code at 0.6.30 (file:line).
+fleet seams are verified against the code at **0.8.20** (file:line), refreshed
+2026-11-19 by `docs/plans/2026-11-19-armada-bridge-console.md` C1. The stamp
+names the version it was verified at so the next drift is detectable rather
+than silent — it had sat at 0.6.30 for five minor releases.
 
 ## 0. Shared types (defined once, in the bedrock)
 
@@ -34,23 +37,28 @@ ActionClass  = read|write|dispatch|destructive|governance                       
 Scope        = instance|project(id)|team(id)|org                                     // D14
 ```
 
-## 1. Existing fleet seams (verified at 0.6.30 — armada consumes these)
+## 1. Existing fleet seams (verified at 0.8.20 — armada consumes these)
 
 These OFFERS already exist; the new modules EXPECT them. They are the raw
-material, not armada builds.
+material, not armada builds. Every citation below was re-read in the tree on
+2026-11-19; where 0.6.30's line drifted, the current line stands.
 
 | Provider | Offer (verified) | Evidence |
 |---|---|---|
-| `home` | `fleet_home(...) -> PathBuf`; `sessions_dir(home)`; `read_soul(home)` | `src/home.rs:13,29,45` |
+| `home` | `fleet_home(fleet_home_env, user_home) -> PathBuf`; `sessions_dir(home)`; `read_soul(home)` | `src/home.rs:13,29,45` |
 | `filelock` | `FileLock::beside(path)`; `FileLock::take(lock) -> FileLock` | `src/filelock.rs:33,42` |
-| `gui::bridge` | `run(session, task)`; `run_as(session, task, kind, role)`; `run_as_principal(session, task, principal)` (L5/D34); `state(session) -> Value`; `huddle(goal, personas)`; `hand_to_desk(id)` (as-built: attaches the room's thread + binds the room's workspace + records the thread→deliverable edge, D39); `projects() -> Value` (as-built: a projection of `workspace::view`, D40); `assign_task(task_id, role, task_text, principal)` (L7/D41–D42); `armada() -> Value`; `armada_dispatch(body) -> Result<Value>` (L9); `answer(...)`; `stop(steer)`; `resume(asked)` | `src/gui/bridge.rs` (as-built 0.7.0) |
-| `memory` | `load_facts(root) -> Vec<Fact>`; `Memory::remember(&Remember) -> Fact`; `Memory::supersede(...)`; `rewrite_field(path, key, value)`; `recall(instruction) -> Vec<ScoredFact>`; `archive_fact(...)` | `src/memory.rs:1023,4869,5165,3367,3092` |
+| `gui::bridge` | `run(session, task)`; `run_as(session, task, kind, role)`; `run_as_principal(...)` (L5/D34); `run_with(...)` / `run_with_budget(...)`; `state(session) -> Value`; `huddle(goal, personas)`; `huddle_breakout(...)`; `hand_to_desk(id)` (D39); `projects() -> Value` (D40); `assign_task(...)` (L7/D41–D42); `armada() -> Value`; `armada_dispatch(body) -> Result<Value>` (L9); `answer(...)`; `stop(steer)`; `resume(asked)` | `src/gui/bridge.rs:5528,5545,5624,5580,5648,1367,974,1238,1013,1841,1081,2080,2120,6602,6221,6358` |
+| `memory` | `load_facts(root) -> Vec<Fact>`; `resolve_root_from(cwd, home)`; `Memory::remember(&Remember)`; `Memory::supersede(...)`; `recall(instruction) -> Vec<ScoredFact>`; `rewrite_field`; `archive_fact` | `src/memory.rs:1023,969,4873,5169,3096` |
 | `memory_pull` | `trait Source { harness(); project(); read() -> Snapshot }`; `pull(source)`; `Snapshot { revision, facts, skips }` | `src/memory_pull.rs:72,731,60` |
-| `contract` | `admits_concurrent(reading, in_flight) -> Admission`; `footprint::admit(available, reserve, estimate)`; `Oversight::measure(now)` | `src/contract.rs:90,266`; `src/footprint.rs:415` |
-| `channels` | `trait Channel { name(); serve(sink, ready, shutdown); reply(to, text); present_seat(to, seat) }`; `Peer { channel, id, name }`; `Policy::authorize` | `src/channels/mod.rs:636,73,295` |
-| `remote::relay` | `join()`; `poll() -> Vec<Frame>`; `serve(...)`; the sealing (X25519+HKDF+AES-GCM) | `src/remote/relay.rs:358,393,452,126` |
-| `agent` | `prepare_call` (the choke point); `declaration_set` (the filter); `AgentOptions` (the run context) | `src/agent.rs:5184,2443,492` |
-| `approvals` | `Gate` (the mode gate); the in-turn approval (hard rule 7) | `src/approvals.rs:258` |
+| `contract` | `admits_concurrent(reading, in_flight) -> Admission`; `footprint::admit(available, reserve, estimate) -> Admission`; `Oversight::measure(&Readout) -> Standing` | `src/contract.rs:90,266`; `src/footprint.rs:415` |
+| `channels` | `trait Channel`; `Policy::authorize(&peer) -> Result<Capability, Refusal>`; `Peer { channel, id, name }` | `src/channels/mod.rs:637,296,271` |
+| `remote::relay` | `join()`; `poll() -> Vec<Frame>`; the sealing (X25519+HKDF+AES-GCM) | `src/remote/relay.rs:358,393` |
+| `agent` | `Agent::prepare_call` (the choke point); `declaration_set` (the filter); `AgentOptions` (the run context) | `src/agent.rs:5402,2507,502` |
+| `approvals` | `Gate` (the mode gate); the in-turn approval (hard rule 7) | `src/approvals.rs:262` |
+| `workspace` **(new at 0.8.20)** | `WorkObject`; `link(from, to, kind)`; `view(home, filter) -> Vec<ViewRow>`; the append-only graph at `graph_path(home)` (D37) | `src/workspace.rs:71,278,414,190` |
+| `roles` **(new at 0.8.20)** | `Role { name, description, tools, skills, shapes, workload, overlay }`; `load_all(home)`; `catalog(home) -> Vec<RoleEntry>` — **persona overlays for delegation, carrying no authority** | `src/roles.rs:30,217,263` |
+| `plugins::face` **(new at 0.8.20)** | `load_registry(home)`; `save_registry(...)`; `list(home)`; the registry at `<home>/plugins.json`; the bundle at `<home>/plugins/<name>/manifest.json` | `src/plugins/face.rs:172,182,309,18` |
+| `mcp_registry` **(new at 0.8.20)** | `enabled_specs(...)` — the server registry the MCP client resolves through | `src/mcp_registry.rs:246` |
 
 ## 2. L1 — `src/identity.rs` (D7–D9)
 
@@ -298,6 +306,41 @@ fleet-desktop wraps the same face                      // no second frontend, U2
 over existing stores, no new capability: `/api/skills` (exists), the tools
 registry read (new), the workflow store read (new), `/api/calibration`
 (exists), `/api/desk` (exists), `/api/onboard` (exists).
+
+## 10b. As-built record — the 0.8.20 seam refresh (recorded 2026-11-19)
+
+The refresh `2026-11-19-armada-bridge-console.md` C1 performed, so the next
+reader sees what changed rather than only the result. Every row of §1 was
+re-read in the tree; the drift it found:
+
+**Citations that moved (0.6.30 → 0.8.20).** `agent::prepare_call` 5184 → 5402
+(a second `prepare_call_checked` exists at 6451 and is *not* the choke point
+the contract names — the un-checked one is); `agent::declaration_set`
+2443 → 2507; `AgentOptions` 492 → 502; `approvals::Gate` 258 → 262;
+`channels::Policy::authorize` 295 → 296 and `trait Channel` 636 → 637;
+`memory::remember` 4869 → 4873; `memory::supersede` 5165 → 5169;
+`memory::recall` 3092 → 3096.
+
+**Offers the ledger named but no longer existed, or never did.** The
+`remote::relay` row cited `serve(...)` at 452 and sealing at 126 — neither is
+a function at those lines; the real offers are `join` (358) and `poll` (393),
+and the sealing is module-level (X25519+HKDF+AES-GCM), not a `serve` call.
+The row is rewritten to what exists.
+
+**New seams this plan consumes (recorded because they are EXPECTS now).**
+`workspace` (`WorkObject`/`link`/`view`/`graph_path`, D37 landed after the
+ledger was written); `roles` (`load_all`/`catalog` — persona overlays that
+carry **no authority**, which is what makes the plan's role templates new
+work rather than a rename); `plugins::face` (the face plugin registry at
+`plugins.json` + per-bundle `manifest.json` — the carrier candidate, consumed
+by nothing here); `mcp_registry::enabled_specs` (the client-side registry the
+new served endpoint's counterpart resolves through).
+
+**The stale claim worth naming.** The §9 as-built block and §10's surface row
+describe the face armada section as "the roster board, a dispatch composer,
+and a corpus view". That is what shipped at 0.7.0 and it is still what the
+tree has — the console this plan builds is the *replacement*, so those rows
+stay accurate until C6 lands and are rewritten then, not now.
 
 ## 11. The bidirectional consistency check
 

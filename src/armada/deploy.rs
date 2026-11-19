@@ -117,25 +117,243 @@ pub fn provision_local(home: &Path, remote: Option<&str>) -> Result<ProvisionRep
     })
 }
 
-/// The SSH command sequence to provision a VPS (D51): drop the self-contained
-/// binary from the release raw-binary channel, run install, bootstrap the
-/// corpus, register. Credentials resolve out-of-band — the SSH agent / env
-/// carries them, never the corpus or these commands. The sequence is pure
-/// (testable construction); the caller executes it.
-pub fn vps_commands(
-    host: &str,
-    user: &str,
-    home: &str,
-    payload_url: &str,
-    remote: &str,
-) -> Vec<String> {
-    let bin = format!("{home}/bin/fleet");
-    vec![
-        format!("ssh {user}@{host} 'mkdir -p {home}/bin'"),
-        format!("ssh {user}@{host} 'curl -fsSL {payload_url} -o {bin} && chmod +x {bin}'"),
-        format!("ssh {user}@{host} '{bin} install'"),
-        format!("ssh {user}@{host} '{bin} memories --sync --remote {remote}'"),
-    ]
+/// The provider a deploy targets (D60, 2026-11-19): an instance is a
+/// container, and a container needs a host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    /// A local or remote Docker engine. The flagship runs `docker` against
+    /// whatever engine its own context names.
+    Docker,
+    /// OpenShip Cloud: the project/service/deployment API.
+    OpenShip,
+}
+
+impl Provider {
+    /// Parse a provider by name.
+    pub fn parse(name: &str) -> Option<Provider> {
+        match name.trim().to_lowercase().as_str() {
+            "docker" => Some(Provider::Docker),
+            "openship" => Some(Provider::OpenShip),
+            _ => None,
+        }
+    }
+
+    /// The provider's stable name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Provider::Docker => "docker",
+            Provider::OpenShip => "openship",
+        }
+    }
+}
+
+/// The container spec a deploy builds (D60): the whole of what an instance
+/// needs to exist, as data — so a dry run prints exactly what a real run
+/// would do, and the two can never disagree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceSpec {
+    /// The provider that will run it.
+    pub provider: Provider,
+    /// The image reference.
+    pub image: String,
+    /// The instance's name/target on that provider.
+    pub name: String,
+    /// The named volume mounted at `FLEET_HOME`.
+    pub volume: String,
+    /// The mount point the volume holds (the image's `FLEET_HOME`).
+    pub mount: String,
+    /// The environment the container boots with. Keys only are ever logged;
+    /// values carry the corpus remote and the join material.
+    pub env: Vec<(String, String)>,
+}
+
+impl ServiceSpec {
+    /// The environment KEYS, for a log line or a dry run — never the values,
+    /// so a deploy's output cannot leak a join secret into a scrollback.
+    pub fn env_keys(&self) -> Vec<&str> {
+        self.env.iter().map(|(key, _)| key.as_str()).collect()
+    }
+
+    /// The dry-run rendering: what the deploy would do, in the operator's
+    /// own words, with no secret values.
+    pub fn preview(&self) -> String {
+        format!(
+            "would deploy `{}` on {} — image {}, volume {} at {}, env [{}]",
+            self.name,
+            self.provider.as_str(),
+            self.image,
+            self.volume,
+            self.mount,
+            self.env_keys().join(", ")
+        )
+    }
+}
+
+/// Build the service spec for a deploy. Pure: the whole contract between a
+/// dry run and a real run.
+pub fn service_spec(
+    provider: Provider,
+    name: &str,
+    image: &str,
+    corpus_remote: &str,
+    volume: Option<&str>,
+) -> Result<ServiceSpec, String> {
+    if name.trim().is_empty() {
+        return Err("a deploy names an instance (the sid its roster row will carry)".to_string());
+    }
+    if image.trim().is_empty() {
+        return Err("a deploy names an image — the instance's binary and lanes".to_string());
+    }
+    if corpus_remote.trim().is_empty() {
+        return Err(
+            "a deploy names the corpus remote — an instance with no corpus starts empty".to_string(),
+        );
+    }
+    Ok(ServiceSpec {
+        provider,
+        image: image.to_string(),
+        name: name.trim().to_string(),
+        volume: volume.unwrap_or(name.trim()).to_string(),
+        mount: "/data".to_string(),
+        env: vec![
+            ("FLEET_HOME".to_string(), "/data".to_string()),
+            ("FLEET_SID".to_string(), name.trim().to_string()),
+            ("FLEET_CORPUS_REMOTE".to_string(), corpus_remote.to_string()),
+        ],
+    })
+}
+
+/// What a provider reported after running the spec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provisioned {
+    /// The provider's own handle: a container id or a service id.
+    pub handle: String,
+    /// The steps taken, in order, with their outcomes — each is journaled.
+    pub steps: Vec<(String, String)>,
+}
+
+/// Run a spec through its provider. Each step is executed and reported, not
+/// printed: a failed step names itself and stops the sequence (D3), so a
+/// half-provisioned instance never looks like a whole one.
+pub fn provision(home: &Path, spec: &ServiceSpec, dry_run: bool) -> Result<Provisioned, String> {
+    if dry_run {
+        return Ok(Provisioned {
+            handle: "(dry run)".to_string(),
+            steps: vec![("preview".to_string(), spec.preview())],
+        });
+    }
+    match spec.provider {
+        Provider::Docker => provision_docker(spec),
+        Provider::OpenShip => provision_openship(spec),
+    }
+    .map(|provisioned| {
+        for (step, outcome) in &provisioned.steps {
+            journal_step(home, &spec.name, step, outcome);
+        }
+        provisioned
+    })
+}
+
+/// The docker leg: create the volume, then run the container attached to it.
+fn provision_docker(spec: &ServiceSpec) -> Result<Provisioned, String> {
+    let mut steps: Vec<(String, String)> = Vec::new();
+    let run = |args: &[&str]| -> Result<String, String> {
+        let output = std::process::Command::new("docker")
+            .args(args)
+            .output()
+            .map_err(|error| format!("docker could not run: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    match run(&["volume", "create", &spec.volume]) {
+        Ok(_) => steps.push(("volume".to_string(), format!("created {}", spec.volume))),
+        Err(refusal) => {
+            steps.push(("volume".to_string(), format!("refused: {refusal}")));
+            return Err(format!("the volume step failed: {refusal}"));
+        }
+    }
+    let mut args: Vec<String> = vec![
+        "run".into(),
+        "-d".into(),
+        "--name".into(),
+        spec.name.clone(),
+        "-v".into(),
+        format!("{}:{}", spec.volume, spec.mount),
+    ];
+    for (key, value) in &spec.env {
+        args.push("-e".into());
+        args.push(format!("{key}={value}"));
+    }
+    args.push(spec.image.clone());
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    match run(&borrowed) {
+        Ok(handle) => {
+            steps.push(("run".to_string(), format!("started {handle}")));
+            Ok(Provisioned { handle, steps })
+        }
+        Err(refusal) => {
+            steps.push(("run".to_string(), format!("refused: {refusal}")));
+            Err(format!("the run step failed: {refusal}"))
+        }
+    }
+}
+
+/// The OpenShip leg: the CLI is the adapter, so a version mismatch in the API
+/// surfaces as its own named error rather than as a silent no-op. A stack's
+/// volume must be set per service (the platform does not cascade a
+/// project-level volume), which is why the volume rides the spec, not a flag.
+fn provision_openship(spec: &ServiceSpec) -> Result<Provisioned, String> {
+    let run = |args: &[&str]| -> Result<String, String> {
+        let output = std::process::Command::new("openship")
+            .args(args)
+            .output()
+            .map_err(|error| format!("openship could not run: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let volume = format!("{}:{}", spec.volume, spec.mount);
+    let mut env_args: Vec<String> = Vec::new();
+    for (key, value) in &spec.env {
+        env_args.push(format!("{key}={value}"));
+    }
+    let mut args: Vec<String> = vec![
+        "deploy".into(),
+        "--image".into(),
+        spec.image.clone(),
+        "--name".into(),
+        spec.name.clone(),
+        "--volume".into(),
+        volume,
+    ];
+    for pair in &env_args {
+        args.push("--env".into());
+        args.push(pair.clone());
+    }
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    match run(&borrowed) {
+        Ok(handle) => Ok(Provisioned {
+            handle: handle.clone(),
+            steps: vec![("deploy".to_string(), format!("openship {handle}"))],
+        }),
+        Err(refusal) => Err(format!("the openship deploy was refused: {refusal}")),
+    }
+}
+
+/// One provision step, journaled with its real outcome — the audit trail a
+/// stopped sequence is read from.
+fn journal_step(home: &Path, name: &str, step: &str, outcome: &str) {
+    if let Ok(mut journal) = crate::journal::Journal::open(home) {
+        let _ = journal.append(
+            "provision",
+            Some(crate::identity::OWNER),
+            Some(name),
+            json!({"instance": name, "step": step, "outcome": outcome}),
+        );
+    }
 }
 
 /// Register a fresh install with the flagship roster (D44). The install is
@@ -182,6 +400,20 @@ pub fn journal_provision(home: &Path, install_id: &str, target: &str, corpus_clo
             Some(crate::identity::OWNER),
             Some(install_id),
             json!({"install": install_id, "target": target, "corpus_cloned": corpus_cloned}),
+        );
+    }
+}
+
+/// Settle a governance act (grant/revoke) in the journal: every authority
+/// change is auditable, per principal and per template, and the audit stream
+/// the console reads IS this journal.
+pub fn journal_governance(home: &Path, note: &str) {
+    if let Ok(mut journal) = crate::journal::Journal::open(home) {
+        let _ = journal.append(
+            "governance",
+            Some(crate::identity::OWNER),
+            None,
+            json!({"note": note}),
         );
     }
 }
@@ -329,28 +561,68 @@ mod tests {
     /// install, and syncs the corpus — credentials out-of-band (no secret in
     /// the commands).
     #[test]
-    fn vps_commands_drop_the_payload_and_install() {
-        let cmds = vps_commands(
-            "vps.example",
-            "fleet",
-            "/opt/fleet",
-            "https://example/fleet",
+    fn a_service_spec_carries_the_whole_contract_and_no_secrets() {
+        let spec = service_spec(
+            Provider::Docker,
+            "box-1",
+            "ghcr.io/fleet/instance:0.8.20",
             "git@host:mind.git",
+            None,
+        )
+        .expect("a complete spec");
+        assert_eq!(spec.mount, "/data");
+        assert_eq!(spec.volume, "box-1", "the volume defaults to the instance name");
+        assert_eq!(spec.env_keys(), vec!["FLEET_HOME", "FLEET_SID", "FLEET_CORPUS_REMOTE"]);
+        // The preview names the SHAPE and never a value: a deploy log must
+        // not be able to leak the join material into a scrollback. That is
+        // why the corpus remote is absent from it even though it is not a
+        // secret — one rule for every value cannot spring a leak, while
+        // "this one is fine to print" is a judgement that eventually errs.
+        let preview = spec.preview();
+        assert!(preview.contains("box-1"), "{preview}");
+        assert!(preview.contains("FLEET_CORPUS_REMOTE"), "the keys are named: {preview}");
+        assert!(
+            !preview.contains("git@host:mind.git"),
+            "no value rides the preview: {preview}"
         );
-        assert!(cmds
-            .iter()
-            .any(|c| c.contains("curl -fsSL https://example/fleet")));
-        assert!(cmds
-            .iter()
-            .any(|c| c.contains("/opt/fleet/bin/fleet install")));
-        assert!(cmds
-            .iter()
-            .any(|c| c.contains("memories --sync --remote git@host:mind.git")));
-        // No credential material rides the commands (the SSH agent carries it).
-        for c in &cmds {
-            assert!(!c.contains("password"), "{c}");
-        }
-        assert_eq!(provision_class(), crate::security::ActionClass::Governance);
+    }
+
+    #[test]
+    fn a_spec_missing_its_name_image_or_corpus_is_refused_by_name() {
+        let no_name = service_spec(Provider::Docker, "  ", "img", "git@h:m.git", None)
+            .expect_err("refused");
+        assert!(no_name.contains("names an instance"), "{no_name}");
+        let no_image = service_spec(Provider::Docker, "box", "", "git@h:m.git", None)
+            .expect_err("refused");
+        assert!(no_image.contains("names an image"), "{no_image}");
+        let no_corpus = service_spec(Provider::Docker, "box", "img", "", None)
+            .expect_err("refused");
+        assert!(no_corpus.contains("names the corpus remote"), "{no_corpus}");
+    }
+
+    #[test]
+    fn a_dry_run_prints_the_spec_and_writes_nothing() {
+        let home = scratch("dry");
+        let spec = service_spec(Provider::Docker, "box-1", "img:1", "git@h:m.git", None).unwrap();
+        let provisioned = provision(&home, &spec, true).expect("a dry run always answers");
+        assert_eq!(provisioned.handle, "(dry run)");
+        assert_eq!(provisioned.steps.len(), 1);
+        assert!(provisioned.steps[0].1.contains("would deploy"), "{:?}", provisioned.steps);
+        // Nothing ran: no journal was written for a preview.
+        let journal = crate::journal::Journal::open(&home).unwrap();
+        assert!(
+            journal.replay(0).unwrap().iter().all(|e| e.kind != "provision"),
+            "a dry run journaled a step"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn an_unknown_provider_is_refused_by_name() {
+        assert!(Provider::parse("ssh").is_none());
+        assert!(Provider::parse("kubernetes").is_none());
+        assert_eq!(Provider::parse("OpenShip"), Some(Provider::OpenShip));
+        assert_eq!(Provider::parse("docker"), Some(Provider::Docker));
     }
 
     /// C0: a local provision without a remote lays out the home and mints the

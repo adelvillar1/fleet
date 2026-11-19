@@ -18657,6 +18657,16 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
+  // A heartbeat's age in the words an owner reads: seconds, minutes, hours.
+  // A number of seconds answers "is it alive"; this answers "how long has it
+  // not been", which is the question a failing instance raises.
+  function heartbeatAge(secs) {
+    if (secs < 90) return Math.round(secs) + 's ago';
+    if (secs < 5400) return Math.round(secs / 60) + 'm ago';
+    if (secs < 172800) return Math.round(secs / 3600) + 'h ago';
+    return Math.round(secs / 86400) + 'd ago';
+  }
+
   function paintArmada() {
     var read = face.armada;
     el.armadaBoard.textContent = '';
@@ -18716,9 +18726,17 @@ import { node, svg, clip } from './core/dom.js';
         var reliability = instance.calibrated
           ? Math.round((instance.reliability || 0) * 100) + '% reliable'
           : 'un-calibrated';
+        // The heartbeat's AGE, not just the boolean: "live" and "last heard
+        // 40s ago" answer different questions when an instance is failing,
+        // and the age is what turns a dead instance into a diagnosable one.
+        var age = instance.heartbeat_age_secs;
+        var heard = age == null
+          ? 'never heard'
+          : 'heard ' + heartbeatAge(age);
         line.appendChild(document.createTextNode(
           ' \u00b7 ' + (instance.version || 'unknown') +
           ' \u00b7 ' + (instance.live ? 'live' : 'not live') +
+          ' \u00b7 ' + heard +
           ' \u00b7 ' + gib + ' GiB' +
           ' \u00b7 ' + reliability +
           (instance.calibrated ? ' (' + instance.settled + ' settled)' : '')));
@@ -18726,6 +18744,76 @@ import { node, svg, clip } from './core/dom.js';
       });
     }
     el.armadaBoard.appendChild(roster);
+
+    // The shared mind's own state (L4): a console that showed instances but
+    // not whether the corpus was current would let an owner believe the
+    // fleet agreed when it had not synced since Tuesday.
+    var corpus = read.corpus;
+    var corpusCard = boardCard(12, 'the corpus', 'the shared mind, over git');
+    if (!corpus) {
+      corpusCard.appendChild(node('p', 'board-empty',
+        'no corpus state yet — an instance that has not synced has none'));
+    } else if (!corpus.remote) {
+      corpusCard.appendChild(node('p', 'board-empty',
+        'this home has no corpus remote, so the shared mind is local only'));
+    } else {
+      var lineC = node('div', 'svc-line');
+      lineC.appendChild(node('strong', null, corpus.remote));
+      lineC.appendChild(document.createTextNode(
+        ' \u00b7 ' + corpus.corpus_ref +
+        ' \u00b7 ' + (corpus.last_revision
+          ? 'at ' + String(corpus.last_revision).slice(0, 8)
+          : 'never synced') +
+        ' \u00b7 ' + corpus.settles + ' settled sync' +
+        (corpus.settles === 1 ? '' : 's')));
+      corpusCard.appendChild(lineC);
+    }
+    el.armadaBoard.appendChild(corpusCard);
+
+    // The guard's audit stream: every admit, refusal and destructive act,
+    // newest first, per principal. This is the section the owner reads to
+    // answer "who did what to my fleet", and it renders the journal's own
+    // events rather than a second record.
+    var audit = read.audit || [];
+    var auditCard = boardCard(12, 'the audit stream', 'every guarded act, per principal');
+    if (!audit.length) {
+      auditCard.appendChild(node('p', 'board-empty',
+        'nothing guarded has happened yet — a refusal or a dispatch lands here'));
+    } else {
+      audit.forEach(function (event) {
+        var row = node('div', 'svc-line');
+        row.appendChild(node('strong', null, event.kind));
+        row.appendChild(document.createTextNode(
+          ' \u00b7 ' + (event.principal || 'no principal') +
+          (event.session ? ' \u00b7 ' + event.session : '') +
+          ' \u00b7 ' + String(event.at || '').replace('T', ' ').slice(0, 19)));
+        var said = event.body && (event.body.note || event.body.outcome || event.body.step);
+        if (said) row.appendChild(document.createTextNode(' \u2014 ' + said));
+        auditCard.appendChild(row);
+      });
+    }
+    el.armadaBoard.appendChild(auditCard);
+
+    // The deploy flow: the spec is shown BEFORE the press, with the step-up
+    // named, because a deployment is the one act on this surface that
+    // demands fresh proof and spends real capacity.
+    var deployCard = boardCard(12, 'deploy an instance',
+      'containerized, and it must be approved');
+    var deployLine = node('p', 'board-empty',
+      'A deploy builds a service spec (image, one named volume at /data, the corpus remote), ' +
+      'runs it on a provider, and adds the instance un-calibrated until it settles. ' +
+      'It is a destructive-class act: it demands fresh proof, and an agent cannot supply one.');
+    deployCard.appendChild(deployLine);
+    var deployBtn = node('button', 'replay-button replay-resume', 'deploy from the CLI');
+    deployBtn.type = 'button';
+    deployBtn.title = 'fleet armada deploy --provider docker|openship --name <sid> --image <ref> --remote <git>';
+    deployBtn.addEventListener('click', function () {
+      notice('a deploy is a CLI act for now',
+        'run: fleet armada deploy --provider docker --name <sid> --image <ref> --remote <git> ' +
+        '(--dry-run previews it) — the console door lands with the step-up flow');
+    });
+    deployCard.appendChild(deployBtn);
+    el.armadaBoard.appendChild(deployCard);
     // The dispatch composer: a task named for one instance, admitted
     // under the owner principal before it obeys. The note is state, not
     // a transient DOM write (KI-447): the refresh after the press

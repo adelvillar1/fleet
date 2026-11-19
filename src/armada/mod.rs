@@ -13,6 +13,8 @@
 pub mod authority;
 pub mod control;
 pub mod deploy;
+pub mod join;
+pub mod mcp;
 pub mod roster;
 
 use std::path::{Path, PathBuf};
