@@ -12,6 +12,65 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.21 — 2026-11-19
+
+Armada becomes a fleet you can actually grow: containerized instances, roles,
+a console, and a shared mind that all three of its classes travel over.
+
+**An instance is a container.** `Dockerfile` builds a linux image — 122 MB,
+unprivileged, one named volume at `/data`, the service lanes beside the binary
+so they resolve in-image. `fleet armada join` is the container's entry: env
+only, no prompts, every refusal named before any write. It clones the shared
+corpus, mints the install-id once, registers on the flagship's roster
+un-calibrated, and beats. A restart keeps its corpus and its identity
+byte-identically. Two facts learned by building rather than reading: the
+workspace's `default-members` pulls `src-tauri`'s GTK into a build an instance
+cannot have, so the build is `-p fleet`; and `cpal` links `libasound`, needed at
+compile time by the `-sys` crate and at run time by the binary.
+
+**The shared mind carries all three classes** the armada direction note names.
+`memories` through the corpus sync; **skills** cloned at boot (the canonical
+library is its own repo — an instance is as smart as its siblings from the first
+token, and says how many skills it loaded); **tools** merged from a shared
+`mcp.json` with a deliberately asymmetric rule that is the security boundary —
+a server definition arrives **disabled** (a shared file must not decide what a
+machine runs), while an instance that already knows a server keeps its own
+enablement and probe history.
+
+**Roles as grant templates.** `fleet-owner`, `org-admin`, `operator`,
+`auditor` expand into the existing grant vocabulary, so the guard needs no new
+privileged path. `refuse_owner_tampering` refuses the owner principal and a
+second `fleet-owner` in code, before reading the store — R3's actor-blind
+boundary with teeth. `identity` resolves a run's principal from device context,
+with owner as the unchanged default.
+
+**A served control endpoint.** `fleet armada mcp` exposes the ten control verbs
+as MCP tools over stdio, every call through the same guard as a relayed frame,
+so the endpoint cannot become a second permission system. Destructive and
+governance verbs refuse by name for lacking the fresh proof an agent can never
+supply.
+
+**Deploy, on OpenShip, over MCP.** The ssh command-drop that printed strings
+nobody ran is retired. Deploy builds a `ServiceSpec` (so a dry run and a real
+run cannot disagree) and provisions through a provider. The OpenShip leg speaks
+its MCP endpoint — verified live against a real account: `tools/list` returns
+432 tools, and the three calls the leg makes are real (`post_projects_by_id_services`,
+`patch_projects_by_id_services_by_serviceId`, `post_deployments`). Docker remains
+a provider for a local or remote engine.
+
+**The console.** The armada lens carries the roster with heartbeat age rather
+than a live boolean, the corpus's sync state, the guard audit stream, the deploy
+card and a roles panel — a lens on the existing rail, not a second app.
+
+**The expert switch is the census.** It listed nine lenses; now it lists every
+surface the build carries, each with its subsystem name, and the palette speaks
+the same vocabulary.
+
+**A face run recalls from its own corpus.** Found while verifying: the face's
+corpus resolution read the process environment's home, so a run under a scratch
+home adopted the machine's real corpus. It now resolves through the run's own
+home on both legs.
+
 ## v0.8.20 — 2026-11-19
 
 The density button is gone, and a face run recalls from its own corpus.
