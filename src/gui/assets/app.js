@@ -14384,11 +14384,20 @@ import { node, svg, clip } from './core/dom.js';
   function paintRoomHead() {
     if (!el.roomHead) return;
     var members = face.members || [];
-    var room = face.session && members.length;
+    // A room is a session WITH members. That is the whole test, and it is
+    // enough: a plain conversation has none, so its state read cannot put
+    // a room's head over the conversations list. (The band the owner
+    // reported came from the line below, not from this one — the head was
+    // never the leak; the invitation was.)
+    var room = !!(face.session && members.length);
     el.roomHead.hidden = !room;
-    // A room and the invitation are exclusive; the two are painted here
-    // and in paintRoomEmpty, so neither can stand inside the other.
-    if (el.roomEmpty) el.roomEmpty.hidden = !!room;
+    // The head and the invitation are exclusive. This line used to
+    // UN-hide the invitation whenever the session was not a room, on
+    // every paint and on every surface — which is the band the owner
+    // reported: the huddles column's text standing over the conversations
+    // list. The invitation is `paintRoomEmpty`'s to show, and that painter
+    // guards its own surface; here the head may only ever stand down.
+    if (room && el.roomEmpty) el.roomEmpty.hidden = true;
     // A room hides the conversation's head; the general rule (no session,
     // or the huddles surface) is paintConvHead's to set.
     if (room && el.convHead) el.convHead.hidden = true;
@@ -14562,9 +14571,24 @@ import { node, svg, clip } from './core/dom.js';
   // recent rooms when it does, and the read's own refusal when it failed.
   function paintRoomEmpty() {
     if (!el.roomEmpty) return;
-    var on = face.panel === 'huddles' && !(face.session && (face.members || []).length);
+    // The invitation belongs to the huddles surface and to nothing else. The
+    // guard is HERE, in the painter, rather than at each call site: a room is
+    // opened through a `load()` that resolves a beat later, and by then the
+    // owner may have moved on — that continuation painted the invitation
+    // over the conversations list, which is the band the owner reported
+    // reading text from another page. A painter that can only ever draw its
+    // own surface's state cannot inherit another surface's arrival.
+    var on = face.panel === 'huddles' &&
+      !(face.session && (face.members || []).length);
     el.roomEmpty.hidden = !on;
-    if (face.panel === 'huddles') el.empty.hidden = true;
+    // Whatever the caller was, a surface that is not huddles shows neither
+    // half of the huddles column's emptiness.
+    if (face.panel !== 'huddles') {
+      if (el.empty) el.empty.hidden = false;
+      el.roomEmpty.textContent = '';
+      return;
+    }
+    el.empty.hidden = true;
     if (!on) return;
     el.roomEmpty.textContent = '';
     if (face.huddles && face.huddles.refused && face.huddles.refused.length) {
@@ -15827,7 +15851,9 @@ import { node, svg, clip } from './core/dom.js';
     if (!el.convHead) return;
     var row = workSelected();
     // The huddles surface has its own head: the conversation's is for a
-    // chat, not for a room.
+    // chat, not for a room. The room's head is `paintRoomHead`'s alone —
+    // one owner per element, so the two can never disagree about which is
+    // showing.
     el.convHead.hidden = !face.session || face.panel === 'huddles';
     // The bot door needs a conversation to join: a landing has none.
     paintRoomHead();
@@ -28384,6 +28410,15 @@ import { node, svg, clip } from './core/dom.js';
     var withList = work || address === 'desk' || address === 'learning';
     closeDrawer();
     face.panel = address;
+    // The column's own HEAD belongs to the surface that owns it, and every
+    // surface has one: a room's head, or the conversation's. Only the
+    // `huddles` branch below paints the room's, so arriving anywhere else
+    // has to put it away — a head left standing from the last lens is the
+    // band the owner reported reading the huddles invitation over the
+    // conversations list. Hiding here, once, on every arrival means no
+    // lens has to remember to clean up after the one before it.
+    if (el.roomHead) el.roomHead.hidden = true;
+    if (el.roomEmpty) el.roomEmpty.hidden = true;
     // The drawer's context intent belongs to the lens being arrived at:
     // only desk and learning ask for it again below, and a lens that does
     // not must not inherit a stale ask.

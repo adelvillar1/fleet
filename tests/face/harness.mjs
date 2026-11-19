@@ -7333,6 +7333,70 @@ async function theStrategyStepShowsItsPreview() {
   }
 
 
+  // The band the owner reported (2026-11-18): "on the top of the chat area
+  // there is a band that sometimes displays text from other pages, for
+  // instance if you go to the huddle page the text from that page shows
+  // even if you are in the conversations page."
+  //
+  // The cause was one line in paintRoomHead: it UN-hid the invitation
+  // whenever the loaded session was not a room, on every paint and on
+  // every surface. So any state read while a conversation was open put the
+  // huddles column's copy at the top of the column — and the state read
+  // runs on every event, which is why it "sometimes" showed.
+  //
+  // The rule this pins: each element of the column's top has exactly one
+  // owner, and the owner guards its own surface.
+  async function theColumnsHeadsNeverBorrowAnotherSurfacesText() {
+    const conv = {
+      type: 'sessions', read_at: 'now', current: 'c1',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('c1', 'completed', { title: 'a conversation of mine' })],
+    };
+    const page = boot({
+      documents: {
+        sessions: conv,
+        huddles: { type: 'huddles', active: [], inactive: [], ended: [],
+          counts: { active: 0, inactive: 0, ended: 0 } },
+        state: (asked) => ({ ...emptyState(asked), session: asked, members: [] }),
+      },
+    });
+    await flush();
+    page.open();
+    await flush();
+
+    // 1. A plain conversation: the huddles copy must not be on the page.
+    page.hash('#/sessions/c1');
+    for (let i = 0; i < 8; i++) await flush();
+    check('BAND a conversation shows no huddles invitation',
+      page.IDS['room-empty'].hidden === true,
+      String(page.IDS['room-empty'].textContent).slice(0, 80));
+    check('BAND a conversation shows no room head',
+      page.IDS['room-head'].hidden === true, '');
+    check('BAND a conversation does show its own head',
+      page.IDS['conv-head'].hidden === false, '');
+
+    // 2. Visit huddles, then come back: the walk that produced the report.
+    page.hash('#/huddles');
+    for (let i = 0; i < 8; i++) await flush();
+    check('BAND huddles does show its invitation',
+      page.IDS['room-empty'].hidden === false, '');
+    page.hash('#/sessions/c1');
+    for (let i = 0; i < 8; i++) await flush();
+    check('BAND leaving huddles takes its text with it',
+      page.IDS['room-empty'].hidden === true,
+      'the invitation followed the owner to the conversation');
+    check('BAND leaving huddles takes its head with it',
+      page.IDS['room-head'].hidden === true, '');
+
+    // 3. A state read is not a surface: it must not put the band back.
+    //    This is the path that made the report intermittent.
+    page.push({ type: 'token', session: 'c1', text: 'hello again' });
+    for (let i = 0; i < 10; i++) await flush();
+    check('BAND a repaint does not resurrect the invitation',
+      page.IDS['room-empty'].hidden === true,
+      'a state read un-hid the invitation while a conversation was open');
+  }
+
   // The bots rail's personas (the icons plan's C6): a persona is a mark —
   // the same initial disc a huddle draws — and the channels row keeps the
   // robot, so the two kinds never look alike.
@@ -16360,6 +16424,8 @@ const cases = [
   ['C7 the receipt hands over the work', theReceiptHandsOverTheWork],
   ['C8 the turn is a navigational unit', theTurnIsANavigationalUnit],
   ['C9 a content query drives the work list', aContentQueryDrivesTheWorkList],
+  ['BAND the column\u2019s heads never borrow another surface\u2019s text',
+    theColumnsHeadsNeverBorrowAnotherSurfacesText],
   ['C10 what the model saw opens from the receipt', whatTheModelSawOpensFromTheReceipt],
   ['C8 the addresses hold', theAddressesHold],
   ['C4 /clear starts a conversation', theClearCommandStartsAConversation],
