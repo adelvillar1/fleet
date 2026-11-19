@@ -15405,16 +15405,24 @@ async fn drive_run(
     // the session's own working folder — a face launched from `/` (the
     // LaunchAgent's cwd) used to freeze the corpus at `/memories`, and
     // every remember in a folder-granted chat died on a read-only
-    // filesystem (KI-535). No folder granted, the launch cwd answers as
-    // it always has.
+    // filesystem (KI-535).
+    //
+    // The "no folder granted" leg reads THIS home, not the process
+    // environment's: `resolve_root` consults `FLEET_HOME`/`HOME` first
+    // (KI-087's home-first rule), so a run under a scratch home adopted
+    // the environment's real corpus whenever that held facts. The home
+    // is a parameter of the run, not a fact about the machine.
     let memory = {
         let folder = folder.clone();
+        let run_home = home.clone();
         tokio::task::spawn_blocking(move || {
             let root = folder
                 .as_deref()
-                .map(crate::memory::resolve_root)
+                .map(|granted| {
+                    crate::memory::resolve_root_from(granted, Some(&run_home))
+                })
                 .unwrap_or_else(|| {
-                    crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default())
+                    crate::memory::resolve_root_from(&run_home, Some(&run_home))
                 });
             std::sync::Arc::new(crate::memory::Memory::load(&root))
         })
