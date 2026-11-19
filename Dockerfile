@@ -105,6 +105,7 @@ RUN git config --file /home/fleet/.gitconfig --add safe.directory /corpus.git \
  && git config --file /home/fleet/.gitconfig --add safe.directory /data/memories \
  && git config --file /home/fleet/.gitconfig --add safe.directory /skills.git \
  && git config --file /home/fleet/.gitconfig --add safe.directory /data/skills-canonical \
+ && git config --file /home/fleet/.gitconfig --add safe.directory /mcp.git \
  && cat /home/fleet/.gitconfig
 
 # `tini` reaps the children fleet spawns (the service lanes, git, the

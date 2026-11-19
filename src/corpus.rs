@@ -189,10 +189,9 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
 
 /// The classes the shared mind distributes, and where each one's transport
 /// stands. The list is the DIRECTION NOTE's (armada §4: memories, skills,
-/// tools), not a second design — and it records the truth rather than an
-/// aspiration: `memories` travels through this module's sync today, `skills`
-/// is its own git repo that an instance clones at boot (L4.5, `armada join`),
-/// and `mcp.json` still travels nowhere.
+/// tools), and all three now have a real transport: `memories` through this
+/// module's sync (L4), `skills` through its own repo cloned at boot, and
+/// `mcp.json` through its own repo merged at boot (both L4.5, `armada join`).
 ///
 /// It lives here as data so a surface can report the whole picture honestly.
 /// The RULE for what may not travel is not re-stated here: L4's C6 owns the
@@ -200,7 +199,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
 pub const CLASSES: &[(&str, Transport)] = &[
     ("memories", Transport::CorpusSync),
     ("skills", Transport::OwnRepo),
-    ("mcp.json", Transport::LocalOnly),
+    ("mcp.json", Transport::OwnRepo),
 ];
 
 /// How a shared class reaches another instance.
@@ -208,9 +207,12 @@ pub const CLASSES: &[(&str, Transport)] = &[
 pub enum Transport {
     /// Through this module's `sync` (the fact tree, L4).
     CorpusSync,
-    /// Through its own git repository, cloned at boot (skills, L4.5).
+    /// Through its own git repository, merged at boot (skills and the tool
+    /// registry, L4.5).
     OwnRepo,
-    /// Nowhere yet: the class is home-local and an instance starts without it.
+    /// Nowhere: the class is home-local and an instance starts without it.
+    /// Nothing in the direction note's three carries this today; the variant
+    /// stays so a future class can say so plainly instead of pretending.
     LocalOnly,
 }
 
@@ -609,7 +611,7 @@ mod tests {
         let summary = class_summary();
         assert!(summary.contains("memories: synced with the corpus"), "{summary}");
         assert!(summary.contains("skills: its own repo"), "{summary}");
-        assert!(summary.contains("mcp.json: local only"), "{summary}");
+        assert!(summary.contains("mcp.json: its own repo"), "{summary}");
         // Nothing in the shared set may be private.
         for class in &names {
             assert!(!PRIVATE.contains(class), "`{class}` is both shared and private");

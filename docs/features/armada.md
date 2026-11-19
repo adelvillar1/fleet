@@ -161,11 +161,26 @@ journal's own `guard`/`provision`/`governance`/`dispatch` events), the deploy
 card, and the roles panel reading `/api/armada/roles`. The lens is a row on the
 existing rail, annotated in the expert census — a console, not a second app.
 
-**The shared mind's transport (D61, C11).** Measured: the repo already tracks
-`memories/`, `roles/` and `plugins/`, so the transport is real. What has none:
-the canonical 467-skill library (not a git repo), `mcp.json`, and workflows.
-`corpus::TRACKED`/`PRIVATE` now declare the split and `refuse_private` names the
-class it refuses; closing the three gaps is C11's remaining work. GitRiver is
+**The shared mind's transport (D61, L4.5).** All three classes the direction
+note names now travel, and a fresh instance is as capable as its siblings:
+
+| class | transport | verified |
+|---|---|---|
+| `memories` | corpus sync (L4) | the fact tree merges and pushes |
+| `skills` | its own repo, cloned at boot | `skills_cloned=true (N loaded)` |
+| `mcp.json` | its own repo, merged at boot | `tools: N inherited, M new` |
+
+The tool registry's merge is deliberately asymmetric, and the asymmetry is the
+security boundary: a server DEFINITION this instance lacks arrives **disabled**
+(a shared file must not decide what a machine runs), while a server it already
+knows keeps its **enablement and probe history** (those describe this machine,
+not the fleet) even as the definition refreshes from upstream. The schema
+stores env NAMES with no field a credential could occupy, which is why the file
+is safe on a volume at all.
+
+`corpus::CLASSES` reports each class with its real transport, and
+`corpus::PRIVATE` + `refuse_private` keep identity, grants, the vault, the
+roster, sessions, cron and devices out of the shared set by name. GitRiver is
 the documented host — self-hosted Rust git with an OCI registry beside it,
 which is what a container deploy needs — with any git remote still working.
 

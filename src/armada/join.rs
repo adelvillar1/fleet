@@ -32,6 +32,8 @@ use std::path::{Path, PathBuf};
 
 use crate::armada::deploy;
 use crate::armada::roster;
+use serde_json::{json, Value};
+
 use crate::identity;
 
 /// The variable naming the shared corpus's git remote. Required: an
@@ -57,6 +59,17 @@ pub const HEARTBEAT_SECS_ENV: &str = "FLEET_HEARTBEAT_SECS";
 /// machine joining the fleet and a new machine merely existing.
 pub const SKILLS_REMOTE_ENV: &str = "FLEET_SKILLS_REMOTE";
 
+/// The shared TOOL REGISTRY's git remote (armada §4's third sync-ready
+/// artifact, and L4's last deferred class). `mcp.json` holds server
+/// DEFINITIONS only — a program, its args, and the env NAMES a server needs,
+/// with no field a credential could live in — so the file is safe to share.
+/// What is NOT shared is enablement and the probe history: whether *this*
+/// instance runs a server, and when it last answered, are local judgements.
+/// A new instance therefore inherits the fleet's tools switched ON in
+/// principle and off in fact, and its owner turns on what this machine
+/// should run.
+pub const MCP_REMOTE_ENV: &str = "FLEET_MCP_REMOTE";
+
 /// What the boot found in its environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinSpec {
@@ -67,6 +80,8 @@ pub struct JoinSpec {
     /// that the instance is running on its own skills rather than pretending
     /// it inherited the house's.
     pub skills_remote: Option<String>,
+    /// The shared tool registry's git remote, when one is configured.
+    pub mcp_remote: Option<String>,
     /// This install's sid on the roster.
     pub sid: String,
     /// The heartbeat interval.
@@ -88,6 +103,10 @@ pub struct JoinReport {
     /// How many skills the instance can load after the boot — the number the
     /// "as smart as the others" claim is measured by.
     pub skills_loaded: usize,
+    /// Server definitions the instance inherited from the shared registry.
+    pub servers_inherited: usize,
+    /// Of those, how many this instance already had (a restart).
+    pub servers_added: usize,
     /// The roster row's registered-at stamp.
     pub registered_at: u64,
 }
@@ -137,9 +156,11 @@ pub fn read_env(lookup: &dyn Fn(&str) -> Option<String>) -> Result<JoinSpec, Str
     // an instance with no skills library is less capable than its siblings,
     // and the boot line says so.
     let skills_remote = read(SKILLS_REMOTE_ENV);
+    let mcp_remote = read(MCP_REMOTE_ENV);
     Ok(JoinSpec {
         corpus_remote,
         skills_remote,
+        mcp_remote,
         sid,
         heartbeat_secs,
     })
@@ -189,6 +210,18 @@ pub fn join(home: &Path, joining: &JoinSpec, now_secs: u64) -> Result<JoinReport
     };
     let skills_loaded = crate::skills::load(&skills_dir(home)).len();
 
+    // 3c. The shared TOOL REGISTRY (armada §4's third artifact; L4's last
+    //     deferred class). The file is a document of server DEFINITIONS —
+    //     program, args, env names, no value — so it travels safely. The
+    //     merge is deliberately asymmetric: a definition this instance lacks
+    //     is ADDED disabled (the owner decides what runs here), and a
+    //     definition the instance already has keeps ITS enablement and probe
+    //     history, because those are local judgements about this machine.
+    let (servers_inherited, servers_added) = match joining.mcp_remote.as_deref() {
+        Some(remote) if !remote.trim().is_empty() => inherit_servers(home, remote)?,
+        _ => (0, 0),
+    };
+
     // 4. The roster row. Registration earns a place, never autonomy (D49):
     //    `roster::register` reports the instance un-calibrated until it
     //    settles (D44's grade reads the journal).
@@ -208,8 +241,151 @@ pub fn join(home: &Path, joining: &JoinSpec, now_secs: u64) -> Result<JoinReport
         corpus_cloned,
         skills_cloned,
         skills_loaded,
+        servers_inherited,
+        servers_added,
         registered_at: instance.registered_at,
     })
+}
+
+/// Pull the shared tool registry and merge its DEFINITIONS into this home's
+/// `mcp.json`. Returns `(definitions the shared registry carries, how many
+/// this instance did not have)`.
+///
+/// Three rules, each load-bearing:
+///
+/// 1. **Definitions travel; enablement does not.** A newly inherited server
+///    lands `enabled: false`. Silently switching on a server an operator has
+///    never seen would let a shared file change what an instance runs — the
+///    confused deputy at the registry layer.
+/// 2. **A local entry wins on the local fields.** If this instance already
+///    knows a server, its `enabled` and `last_probe` survive untouched: they
+///    describe this machine, not the fleet.
+/// 3. **Values never travel, and nothing here could leak one.** The schema
+///    has no field for a credential — only `env_names` — so the clone is
+///    safe to keep on a volume and the merge needs no redaction pass.
+pub fn inherit_servers(home: &Path, remote: &str) -> Result<(usize, usize), String> {
+    let scratch = std::env::temp_dir().join(format!(
+        "fleet-mcp-inherit-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|span| span.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let clone = std::process::Command::new("git")
+        .arg("clone")
+        .arg("--quiet")
+        .arg("--depth")
+        .arg("1")
+        .arg(remote)
+        .arg(&scratch)
+        .output()
+        .map_err(|error| format!("the tool registry clone could not run: {error}"))?;
+    if !clone.status.success() {
+        let said = String::from_utf8_lossy(&clone.stderr).trim().to_string();
+        let _ = std::fs::remove_dir_all(&scratch);
+        return Err(format!(
+            "the shared tool registry could not be cloned from `{remote}`: {said} — an \
+             instance that silently kept only its own tools would look configured while \
+             missing the fleet's, so this is refused rather than booted past"
+        ));
+    }
+    // The shared file may sit at the repo root or under a `mcp/` directory.
+    let shared_path = [scratch.join("mcp.json"), scratch.join("mcp").join("mcp.json")]
+        .into_iter()
+        .find(|path| path.exists());
+    let Some(shared_path) = shared_path else {
+        let _ = std::fs::remove_dir_all(&scratch);
+        return Err(format!(
+            "the shared tool registry at `{remote}` carries no mcp.json — the repo must \
+             hold the registry document"
+        ));
+    };
+    let shared: Value = serde_json::from_str(
+        &std::fs::read_to_string(&shared_path)
+            .map_err(|error| format!("the shared registry is unreadable: {error}"))?,
+    )
+    .map_err(|error| format!("the shared registry is not valid JSON: {error}"))?;
+    let shared_servers = shared
+        .get("servers")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let inherited = shared_servers.len();
+
+    let local_path = crate::mcp_registry::servers_path(home);
+    let mut local: Value = match std::fs::read_to_string(&local_path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|error| format!("{} is not valid JSON: {error}", local_path.display()))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(error) => return Err(format!("{} is unreadable: {error}", local_path.display())),
+    };
+    if !local.is_object() {
+        local = json!({});
+    }
+    let mut added = 0usize;
+    let mut changed = false;
+    {
+        let object = local
+            .as_object_mut()
+            .expect("checked as an object immediately above");
+        let servers = object
+            .entry("servers")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| format!("{}'s `servers` is not an object", local_path.display()))?;
+        for (name, definition) in shared_servers {
+            if servers.contains_key(&name) {
+                // Rule 2: a known server keeps this machine's enablement and
+                // probe history. Only the DEFINITION fields are refreshed, so
+                // an upstream fix to args or program reaches the instance.
+                if let (Some(local_entry), Some(shared_entry)) = (
+                    servers.get_mut(&name).and_then(Value::as_object_mut),
+                    definition.as_object(),
+                ) {
+                    for field in ["program", "args", "env_names"] {
+                        if let Some(value) = shared_entry.get(field) {
+                            // Only a real difference counts as a change: an
+                            // unchanged refresh must not rewrite the file on
+                            // every boot.
+                            if local_entry.get(field) != Some(value) {
+                                local_entry.insert(field.to_string(), value.clone());
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            // Rule 1: a server this instance has never seen arrives OFF.
+            let mut entry = definition.as_object().cloned().unwrap_or_default();
+            entry.insert("enabled".to_string(), Value::Bool(false));
+            entry.insert(
+                "source".to_string(),
+                json!({"harness": "fleet-shared", "imported": crate::calib::today()}),
+            );
+            servers.insert(name, Value::Object(entry));
+            added += 1;
+            changed = true;
+        }
+    }
+    // Write when anything actually changed: a pure field refresh must
+    // persist too, which the first version of this got wrong — it gated the
+    // write on `added > 0`, so an upstream definition fix was computed and
+    // discarded. The test that caught it is why this reads as it does.
+    if changed || !local_path.exists() {
+        if let Some(parent) = local_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("the registry home: {error}"))?;
+        }
+        let text = serde_json::to_string_pretty(&local)
+            .map_err(|error| format!("the registry could not be written: {error}"))?;
+        std::fs::write(&local_path, text)
+            .map_err(|error| format!("{} could not be written: {error}", local_path.display()))?;
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
+    Ok((inherited, added))
 }
 
 /// Where the skills library lives for this home: `$FLEET_SKILLS_DIR` when the
@@ -272,13 +448,30 @@ pub fn report(joined: &JoinReport) -> String {
     } else {
         "skills=0 — this instance runs on its own skills, not the fleet's".to_string()
     };
+    // Tools are reported as definitions, never as "enabled": an inherited
+    // server arrives off, and saying otherwise would promise a capability
+    // this instance has not turned on.
+    let tools = if joined.servers_inherited == 0 {
+        "tools=0 inherited".to_string()
+    } else if joined.servers_added > 0 {
+        format!(
+            "tools: {} inherited, {} new (added disabled)",
+            joined.servers_inherited, joined.servers_added
+        )
+    } else {
+        format!(
+            "tools: {} inherited, all already known",
+            joined.servers_inherited
+        )
+    };
     format!(
-        "armada join: sid={} install={} corpus_cloned={} {} registered_at={} — un-calibrated \
+        "armada join: sid={} install={} corpus_cloned={} {} {} registered_at={} — un-calibrated \
          until it settles dispatches",
         joined.sid,
         joined.install_id,
         joined.corpus_cloned,
         skills,
+        tools,
         joined.registered_at
     )
 }
@@ -402,6 +595,7 @@ mod tests {
         let spec = JoinSpec {
             corpus_remote: remote.to_str().unwrap().to_string(),
             skills_remote: None,
+            mcp_remote: None,
             sid: "box-1".to_string(),
             heartbeat_secs: 60,
         };
@@ -492,6 +686,7 @@ mod tests {
         let spec = JoinSpec {
             corpus_remote: corpus.to_str().unwrap().to_string(),
             skills_remote: Some(skills_bare.to_str().unwrap().to_string()),
+            mcp_remote: None,
             sid: "box-smart".to_string(),
             heartbeat_secs: 60,
         };
@@ -526,6 +721,8 @@ mod tests {
             corpus_cloned: true,
             skills_cloned: false,
             skills_loaded: 0,
+            servers_inherited: 0,
+            servers_added: 0,
             registered_at: 1,
         };
         let said = report(&joined);
@@ -533,6 +730,132 @@ mod tests {
             said.contains("runs on its own skills, not the fleet's"),
             "the absence is named: {said}"
         );
+    }
+
+    /// A bare repo holding one mcp.json, ready to clone.
+    fn registry_remote(root: &Path, name: &str, body: &str) -> PathBuf {
+        let work = root.join(format!("{name}-work"));
+        let bare = root.join(format!("{name}.git"));
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(work.join("mcp.json"), body).unwrap();
+        let run = |args: &[&str], cwd: &Path| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .output()
+                .expect("git runs")
+        };
+        run(&["init", "--bare", "-q", bare.to_str().unwrap()], root);
+        run(&["init", "-q"], &work);
+        run(&["add", "."], &work);
+        run(
+            &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"],
+            &work,
+        );
+        run(&["remote", "add", "origin", bare.to_str().unwrap()], &work);
+        run(&["push", "-q", "origin", "HEAD:master"], &work);
+        bare
+    }
+
+    #[test]
+    fn an_inherited_server_definition_arrives_disabled() {
+        let root = scratch("mcp-inherit");
+        let remote = registry_remote(
+            &root,
+            "shared",
+            r#"{"servers":{"cloudflare":{"program":"npx","args":["-y","mcp-remote@latest"],
+                "env_names":[],"enabled":true}}}"#,
+        );
+        let home = scratch("mcp-home");
+        let (inherited, added) = inherit_servers(&home, remote.to_str().unwrap()).expect("merged");
+        assert_eq!(inherited, 1, "the shared registry carries one server");
+        assert_eq!(added, 1, "this instance had none");
+        let servers = crate::mcp_registry::read_servers(&home).expect("the merged registry parses");
+        let (name, entry) = servers.first().expect("the server landed");
+        assert_eq!(name, "cloudflare");
+        // Rule 1: a server this instance has never seen arrives OFF, even
+        // though the shared file said enabled:true.
+        assert!(
+            !entry.enabled,
+            "an inherited definition must not switch itself on"
+        );
+        assert_eq!(entry.program, "npx");
+        assert_eq!(entry.args, vec!["-y", "mcp-remote@latest"]);
+        assert_eq!(
+            entry.source.as_ref().map(|source| source.harness.as_str()),
+            Some("fleet-shared"),
+            "the provenance names the shared registry"
+        );
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_local_servers_enablement_and_probe_survive_the_merge() {
+        let root = scratch("mcp-local");
+        let remote = registry_remote(
+            &root,
+            "shared2",
+            r#"{"servers":{"cloudflare":{"program":"npx","args":["-y","v2"],
+                "env_names":[],"enabled":false}}}"#,
+        );
+        let home = scratch("mcp-local-home");
+        // This instance already runs the server, with a probe on record.
+        std::fs::write(
+            crate::mcp_registry::servers_path(&home),
+            r#"{"servers":{"cloudflare":{"program":"npx","args":["-y","v1"],
+                "env_names":[],"enabled":true,
+                "last_probe":{"at":"2026-11-19T00:00Z","ok":true,"reason":"",
+                  "server_name":"cloudflare-api","server_version":"1","tools":4}}}}"#,
+        )
+        .unwrap();
+        let (inherited, added) =
+            inherit_servers(&home, remote.to_str().unwrap()).expect("merged");
+        assert_eq!((inherited, added), (1, 0), "nothing new to add");
+        let (_, entry) = crate::mcp_registry::read_servers(&home)
+            .expect("parses")
+            .into_iter()
+            .next()
+            .expect("still there");
+        // Rule 2: enablement and probe are THIS machine's judgements.
+        assert!(entry.enabled, "a local enablement survived");
+        assert!(entry.last_probe.is_some(), "the probe history survived");
+        // ...and the definition fields refreshed from upstream.
+        assert_eq!(entry.args, vec!["-y", "v2"], "the definition updated");
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_shared_registry_with_no_document_is_refused_by_name() {
+        let root = scratch("mcp-empty");
+        let remote = registry_remote(&root, "empty", "{}");
+        // No mcp.json: the repo holds something else entirely.
+        let work = root.join("empty-work");
+        std::fs::remove_file(work.join("mcp.json")).unwrap();
+        std::fs::write(work.join("README.md"), "not a registry").unwrap();
+        let run = |args: &[&str], cwd: &Path| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .output()
+                .expect("git runs")
+        };
+        run(&["add", "-A"], &work);
+        run(
+            &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "swap"],
+            &work,
+        );
+        run(&["push", "-q", "origin", "HEAD:master"], &work);
+        let home = scratch("mcp-empty-home");
+        let refused = inherit_servers(&home, remote.to_str().unwrap()).expect_err("refused");
+        assert!(refused.contains("carries no mcp.json"), "{refused}");
+        assert!(
+            refused.contains("must hold the registry document"),
+            "the refusal says what to do: {refused}"
+        );
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[test]
