@@ -12,6 +12,27 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.19 — 2026-11-18
+
+The band at the top of the chat area is gone.
+
+A strip above the transcript was showing text from a surface the owner was not
+on — open the huddles page and its copy stayed over the conversations list.
+The cause was one line: the room head's painter un-hid the huddles invitation
+whenever the loaded session was not a room, on every paint and on every
+surface. Since the state read runs on every event, any conversation could put
+"Start a huddle. A working session you share with one or more bots." at the top
+of its column, which is why it looked intermittent.
+
+Each element at the top of the column now has exactly one owner, and the owner
+guards its own surface: the invitation is drawn only by the painter that owns
+it and only on huddles, and the room head only stands down there. Arriving at a
+surface also clears the previous one's head, so no lens has to remember to
+clean up after the one before it. Verified in the real engine across six
+surface changes, and pinned by a case that walks the exact sequence from the
+report — a conversation, then huddles, then back, then a repaint — which goes
+red on the old line three ways.
+
 ## v0.8.18 — 2026-11-18
 
 The collapsed rail's icons line up on the left.
