@@ -114,6 +114,13 @@
      (docs/design/fleet-workspace-mockup.html), the contract U27 holds
      one-to-one in the signal tier under this block. */
   --dsw-alias-page: rgb(8, 19, 26);
+  --dsw-alias-persona-1: rgb(174, 81, 50);
+  --dsw-alias-persona-2: rgb(126, 104, 37);
+  --dsw-alias-persona-3: rgb(36, 123, 79);
+  --dsw-alias-persona-4: rgb(44, 115, 150);
+  --dsw-alias-persona-5: rgb(133, 81, 205);
+  --dsw-alias-persona-6: rgb(186, 54, 142);
+
   --dsw-alias-surface: rgb(15, 37, 48);
   --dsw-alias-surface-raised: rgb(18, 48, 60);
   --dsw-alias-surface-overlay: rgb(22, 57, 74);
@@ -277,6 +284,13 @@
      existing components read the warm-paper ground under Day Watch
      exactly as they did under paper. */
   --dsw-alias-page: rgb(246, 244, 239);
+  --dsw-alias-persona-1: rgb(202, 105, 73);
+  --dsw-alias-persona-2: rgb(158, 130, 46);
+  --dsw-alias-persona-3: rgb(44, 150, 97);
+  --dsw-alias-persona-4: rgb(54, 142, 186);
+  --dsw-alias-persona-5: rgb(155, 113, 214);
+  --dsw-alias-persona-6: rgb(207, 89, 168);
+
   --dsw-alias-surface: rgb(252, 251, 248);
   --dsw-alias-surface-raised: rgb(239, 236, 230);
   --dsw-alias-surface-overlay: rgb(255, 255, 255);
@@ -310,6 +324,13 @@
    default, and it keeps the same structure and type scale as paper. */
 :root[data-theme="console"] {
   --dsw-alias-page: rgb(14, 15, 18);
+  --dsw-alias-persona-1: rgb(162, 76, 47);
+  --dsw-alias-persona-2: rgb(119, 98, 34);
+  --dsw-alias-persona-3: rgb(33, 115, 74);
+  --dsw-alias-persona-4: rgb(41, 109, 142);
+  --dsw-alias-persona-5: rgb(127, 73, 202);
+  --dsw-alias-persona-6: rgb(174, 50, 133);
+
   --dsw-alias-surface: rgb(20, 22, 26);
   --dsw-alias-surface-raised: rgb(28, 31, 36);
   --dsw-alias-surface-overlay: rgb(32, 35, 41);
@@ -343,6 +364,13 @@
 /* The accessibility theme: pure ground, near-black ink, no atmosphere. */
 :root[data-theme="contrast"] {
   --dsw-alias-page: rgb(255, 255, 255);
+  --dsw-alias-persona-1: rgb(190, 89, 55);
+  --dsw-alias-persona-2: rgb(158, 130, 46);
+  --dsw-alias-persona-3: rgb(46, 158, 102);
+  --dsw-alias-persona-4: rgb(48, 127, 166);
+  --dsw-alias-persona-5: rgb(141, 93, 208);
+  --dsw-alias-persona-6: rgb(200, 65, 155);
+
   --dsw-alias-surface: rgb(255, 255, 255);
   --dsw-alias-surface-raised: rgb(238, 238, 238);
   --dsw-alias-surface-overlay: rgb(255, 255, 255);

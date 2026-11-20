@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-20
 updated: 2026-11-20
 slug: face-rethought
@@ -80,6 +80,26 @@ This plan adds five rules that make it *feel* like a room you enter:
   devices as passports, and a proof of life replace the current
   dashboard shape. Extends the bots surface's own doc (pairing model
   unchanged: capability fixed at pairing, tokens as digests).
+
+## Status pass, 2026-11-20
+
+**P0, first item landed: the persona tints.** Six `--dsw-alias-persona-*`
+tokens in all four themes, chosen by computation rather than by eye — each
+clears the AA floor against its own theme's ink (measured 4.61–6.20:1), and
+`themes::tests::every_theme_carries_six_readable_persona_tints` extends the
+existing check rather than bypassing it.
+
+Two things worth recording from the doing:
+
+- The contrast theme's ink is **black**, so its tints had to be found from
+  the *darkest passing* lightness; the first pass produced six near-white
+  discs that cleared AA trivially and would have been indistinguishable in
+  use. A test can prove readability and still let you ship mush.
+- The field is `#[allow(dead_code)]` on purpose: the face reads the tints from
+  the stylesheet, so the struct field exists to prove them, not to serve them.
+
+Still open in P0: `answerHead`, `carry`, `presence`, and the topbar's
+truths-only render.
 
 ## Phases
 

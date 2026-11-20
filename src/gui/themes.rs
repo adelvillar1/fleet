@@ -37,6 +37,15 @@ struct Theme {
     raised: Option<(u8, u8, u8)>,
     /// The tokens that carry text, each against every surface.
     text: Vec<(String, (u8, u8, u8))>,
+    /// The six persona tints (P0 of the face rethink): a disc's fill, with
+    /// the theme's ink riding it. Each is held to the same AA floor as body
+    /// text, because a persona's initial is drawn on the disc.
+    ///
+    /// Read by the AA test, not by the binary: the face gets the tints from
+    /// the stylesheet, so this field exists to prove them rather than to
+    /// serve them.
+    #[allow(dead_code)]
+    personas: Vec<(String, (u8, u8, u8))>,
 }
 
 /// Relative luminance, the WCAG formula.
@@ -166,11 +175,18 @@ fn themes() -> Vec<(String, Theme)> {
             .iter()
             .filter_map(|token| pick(token).map(|colour| (token.to_string(), colour)))
             .collect();
+            let personas = (1..=6)
+                .filter_map(|index| {
+                    let token = format!("--dsw-alias-persona-{index}");
+                    pick(&token).map(|colour| (token, colour))
+                })
+                .collect();
             let theme = Theme {
                 page: pick("--dsw-alias-page"),
                 surface: pick("--dsw-alias-surface"),
                 raised: pick("--dsw-alias-surface-raised"),
                 text,
+                personas,
             };
             (name, theme)
         })
@@ -312,6 +328,38 @@ mod tests {
     /// Every theme's text tokens clear 4.5:1 against all three of its
     /// surfaces. This is the guard that makes "great readability" a
     /// property of the shipped stylesheet rather than a claim about it.
+    /// P0 of the face rethink: six persona tints in every theme, each one
+    /// readable with the theme's own ink. A persona's initial is drawn on its
+    /// disc, so the tint is a text background and takes the AA floor rather
+    /// than the 3:1 a decorative fill would.
+    #[test]
+    fn every_theme_carries_six_readable_persona_tints() {
+        let themes = themes();
+        assert_eq!(themes.len(), THEMES.len(), "every declared theme is read");
+        for (name, theme) in &themes {
+            assert_eq!(
+                theme.personas.len(),
+                6,
+                "{name} declares six persona tints, found {}",
+                theme.personas.len()
+            );
+            let ink = theme
+                .text
+                .iter()
+                .find(|(token, _)| token == "--dsw-alias-ink")
+                .map(|(_, colour)| *colour)
+                .unwrap_or_else(|| panic!("{name} declares an ink"));
+            for (token, tint) in &theme.personas {
+                let ratio = contrast(*tint, ink);
+                assert!(
+                    ratio >= MIN_TEXT,
+                    "{name}: {token} is {ratio:.2}:1 against the ink, under the {}:1 floor",
+                    MIN_TEXT
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_themes_text_clears_the_contrast_floor_on_every_surface() {
         let found = themes();
