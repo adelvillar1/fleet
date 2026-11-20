@@ -5971,23 +5971,33 @@ import { node, svg, clip } from './core/dom.js';
   // about what the panel reads, and the read's own stamp on the right.
   // It is deliberately not a card — ten surfaces should not all open with
   // the same framed heading.
-  function pageHead(eyebrow, title, note, stamp, action) {
+  // The answer head (P0 of the face rethink): eyebrow · display title · the
+  // sentence · the verb, and nothing else. A count does not belong in it — a
+  // number in the head is an instrument, and instruments sit beside the head
+  // (`surfaceInstrument`), never inside the sentence the owner reads.
+  //
+  // `pageHead` is the positional form of this and now delegates, so every
+  // page head in the face renders through one builder while the classes the
+  // stylesheet and the harness already name stay exactly as they are.
+  function answerHead(surface) {
+    var spec = surface || {};
     var head = node('header', 'page-head');
     var main = node('div', 'page-main');
-    main.appendChild(node('p', 'page-eyebrow', eyebrow));
-    main.appendChild(node('h1', 'page-title', title));
-    if (note) main.appendChild(node('p', 'page-note', note));
+    if (spec.eyebrow) main.appendChild(node('p', 'page-eyebrow', spec.eyebrow));
+    main.appendChild(node('h1', 'page-title', spec.title || ''));
+    if (spec.sentence) main.appendChild(node('p', 'page-note', spec.sentence));
     head.appendChild(main);
-    if (stamp || action) {
+    if (spec.stamp || spec.verb) {
       var side = node('div', 'page-side');
-      if (stamp) side.appendChild(node('span', 'page-stamp', stamp));
-      if (action) {
-        var button = node('button', 'page-action', action.label);
+      if (spec.stamp) side.appendChild(node('span', 'page-stamp', spec.stamp));
+      if (spec.verb) {
+        var verb = spec.verb;
+        var button = node('button', 'page-action', verb.label);
         button.type = 'button';
         button.dataset.act = 'action';
         button.addEventListener('click', function () {
-          usageRecord('actions', 'page:' + action.label, 'uses');
-          action.run();
+          usageRecord('actions', 'page:' + verb.label, 'uses');
+          verb.run();
         });
         side.appendChild(button);
       }
@@ -7442,6 +7452,18 @@ import { node, svg, clip } from './core/dom.js';
     el0.title = String(text);
     if (tone) el0.dataset.tone = tone;
     return el0;
+  }
+
+  // The positional form of `answerHead`, for the call sites that predate the
+  // object shape. One builder, two doors.
+  function pageHead(eyebrow, title, note, stamp, action) {
+    return answerHead({
+      eyebrow: eyebrow,
+      title: title,
+      sentence: note,
+      stamp: stamp,
+      verb: action
+    });
   }
 
   function surfaceHead(eyebrow, title, note, instrument) {

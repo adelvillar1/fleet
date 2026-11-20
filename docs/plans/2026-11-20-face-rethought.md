@@ -106,7 +106,18 @@ accent, a neutral word — because an empty disc is worse than an unnamed one.
 The harness asserts the contract from the DOM: a `designer` disc takes
 `var(--lane-4)`, 1484 checks.
 
-Still open in P0: `answerHead`, `carry`, and the topbar's truths-only render.
+**P0, third item landed: `answerHead(surface)`.** One builder for a surface's
+head — eyebrow · display title · the sentence · the verb — with `pageHead`
+kept as its positional door so all seven call sites render through it and the
+classes the stylesheet names stay put.
+
+**Its harness case is not landed, and that is a finding, not an omission:**
+the harness never paints a board (KI-583 — a probe on `#/bots` reported zero
+`.page-head` and zero `.page-title`), so no board-level builder can be pinned
+until a board fixture exists. 1484 checks pass over the refactor; the contract
+is unpinned.
+
+Still open in P0: `carry`, and the topbar's truths-only render.
 
 ## Phases
 
