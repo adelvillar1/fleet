@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-20
 updated: 2026-11-20
 slug: run-checkpoint-reclaim
@@ -57,9 +57,9 @@ siblings have.
       harness do not start the reclaim; both are single-shot runs, so the
       shared store is trimmed by the next reclaim-equipped process —
       recorded as KI-577 (status: noted).
-- [ ] The full gate exits 0: fmt and the lib suite are green on this tree
-      (2433 passed, 0 failed); clippy and the release build were re-run
-      after the join-helper fix and their result is recorded at landing.
+- [x] The full gate exits 0 on the tree that carries the fix: fmt 0,
+      clippy `-D warnings` 0, `cargo test` **2648 passed, 0 failed** across
+      the workspace, `cargo build --release` 4m07s.
 - [x] KI-575 is closed in `docs/known-issues.md`, naming `src/main.rs`'s
       call beside `chat_command` and the face, with the guard test as the
       next action. The ledger is at 578 rows / 3 open.

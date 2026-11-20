@@ -21,20 +21,37 @@ installs it and seeds the inventory from a two-grep sweep.
 ## A. The socket guards — the lane-asking beats
 
 Three beats spend a lane ask (sys1 judgment calls): `judge`,
-`delegate`, `explain`. Each is guarded by a text-scan test that reads
-a list of synchronous-path modules with `include_str!` and refuses
-any reference to the beat:
+`delegate`, `explain`. Each is guarded by a text-scan test named
+`no_synchronous_path_references_the_<beat>_beat`:
 
-- `src/judge/tests.rs` → `no_synchronous_path_references_the_judgment_beat`
-  (scans memory.rs, agent.rs, tools.rs, session.rs, calib.rs, route.rs,
-  compaction.rs, cron.rs, improve.rs, boards.rs, skills.rs,
-  subagents.rs, and the tui modules for `judge::`, `crate::judge`,
-  `JUDGE_BUDGET_ENV`, `JUDGE_ESTIMATED_ASK_USD`)
-- `src/delegate/tests.rs` → `no_synchronous_path_references_the_delegation_beat`
-  (27 modules — wider: api.rs, mcp.rs, lanes.rs, home.rs, install.rs,
-  net.rs, cli.rs are in its set on purpose)
-- `src/explain/tests.rs` → `no_synchronous_path_references_the_explanation_beat`
-  (its own list, same shape)
+- `src/judge/tests.rs` → the judgment beat (13 named drivers)
+- `src/delegate/tests.rs` → the delegation beat (7 named drivers)
+- `src/explain/tests.rs` → the explanation beat (9 named drivers)
+
+**The convention: a guard scans the census, and every exempt module is
+named with a reason.** Each of these three used to carry its own
+hand-written `include_str!` list — 27, 30 and 42 modules — so most of the
+crate was never looked at (the delegation guard saw 27 of 142). They now
+iterate `crate::testcensus::MODULES` (every module file the crate
+compiles, itself checked against `lib.rs` in both directions) and skip a
+`DRIVERS` array in which each entry carries the reason it is exempt. A new
+guard is born accounted-for: scanning the census is the default, and an
+exemption is a line of prose a reviewer can argue with, never a silent
+omission.
+
+Two things make the pattern honest:
+
+- `every_module_is_accounted_for` asserts every driver names a real
+  module, so a typo cannot quietly exempt nothing (`main.rs` is named
+  separately as `CENSUS_EXEMPT_DRIVERS`: it is the binary's root and the
+  census, which walks `lib.rs`, cannot list it).
+- `crate::testcensus::matches` expands `dir/*`, `dir/**` and `*/suffix`,
+  so exempting a class takes one line — but the class still has to be
+  written down.
+
+Expanding the delegation guard from 27 to 142 modules cost exactly three
+new drivers, all found on the first run: `approvals.rs`, `onboard.rs` and
+`settings.rs` name the beat's constants, never its execution path (KI-581).
 
 **Trigger:** any new reference to `judge::` / `delegate::` /
 `explain::` (or a beat's named constant) from a scanned module.

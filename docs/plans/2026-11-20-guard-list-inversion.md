@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-20
 updated: 2026-11-20
 slug: guard-list-inversion
@@ -93,16 +93,19 @@ Still owed: the same inversion for `judge` (13 modules name it) and
 
 ## Acceptance Criteria
 
-- [ ] Every census-guard's `SCANNED ∪ EXEMPT` equals `lib.rs`'s module
-      set, asserted by a test that reads `lib.rs` at compile time.
-- [ ] Red-proof: a new `mod` line in `lib.rs` with no guard entry fails
-      the suite with the new module named; the revert is clean.
-- [ ] No guard's effective scanned set shrinks: before/after sets are
-      compared and any difference is named in the plan's Status pass.
-- [ ] `structure-guards.md` states the convention (checked table, not
-      hand-appended list) and the exemption rule (one-line reason, never
-      silent).
-- [ ] The full gate exits 0.
+- [x] Every census-guard's `SCANNED ∪ EXEMPT` equals `lib.rs`'s module
+      set: the guards scan `testcensus::MODULES`, whose own test walks
+      `lib.rs` and every nested `mod` in both directions, and each guard
+      added `every_module_is_accounted_for` for the driver direction.
+- [x] Red-proof: `mod zz_redproof;` added to `lib.rs` failed the census
+      with `["zz_redproof.rs"]` named; the revert re-ran green (2 passed).
+- [x] No guard's effective scanned set shrinks — all three grew to the
+      whole census: delegate 27 → 142, judge 42 → 142, explain 30 → 142.
+- [x] `structure-guards.md` §A states the convention (the census is the
+      scan set) and the exemption rule (a `DRIVERS` entry carries its
+      reason, never silence).
+- [x] The full gate exits 0: fmt 0, clippy `-D warnings` 0, `cargo test`
+      **2652 passed, 0 failed**, `cargo build --release` 3m54s.
 
 ## Files to be touched
 
