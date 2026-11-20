@@ -2927,6 +2927,30 @@ mod tests {
         }
     }
 
+    /// KI-078's shape at the cron card: a long job name clips, a long task
+    /// wraps, and no line runs past the card.
+    #[test]
+    fn a_long_job_name_never_widens_the_card() {
+        let home = temp_home("card-width");
+        let long = "a-job-name-that-runs-on-".repeat(5);
+        let mut row = job(&long, "every minute", None);
+        row.task = "the goal ".repeat(40);
+        let now = Minute::parse("2026-11-20T09:00Z").expect("a minute");
+        let card = card(&home, &row, now);
+        let mut widest = 0;
+        for line in card.lines() {
+            let cells = crate::cards::width_of(line);
+            widest = widest.max(cells);
+            assert!(
+                cells <= crate::cards::CARD_WIDTH,
+                "{cells} cells against a {} cell card: {line:?}",
+                crate::cards::CARD_WIDTH
+            );
+        }
+        assert!(widest > 0, "the card rendered");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     // --- the parser ---------------------------------------------------------
 
     /// KI-089: the claim is atomic and per-minute. The first claim owns

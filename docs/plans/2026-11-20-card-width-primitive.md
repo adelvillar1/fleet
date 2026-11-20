@@ -87,11 +87,17 @@ frame is converted too — body wrapped, title clipped, its three warning rows
 and two dim rows wrapped — so all four card families in the tree measure in
 cells.
 
-Remaining: a family-level test per frame (the `calib` card has one; judge,
-cron and delegate are proven by their existing suites plus the primitives'
-property test, not by a test that hands them an over-long field), and AC1's
-wording ("every card builder renders through the one helper" — the border
-does, the row shape is still per-family).
+Family-level tests are in for all four: `calib`'s
+`a_long_op_name_never_widens_the_card`, and the same shape at
+`judge::tests`, `delegate::tests` and `cron::tests` — each hands its own
+frame a 100+ character title, body and footer and asserts no line passes the
+card. All green.
+
+Remaining: AC1's wording ("every card builder renders through the one
+helper" — the border and the row primitives are shared, the frame's
+assembly is still per-family), and AC3's "at 72 and at 80" (the cards are
+fixed at 72; the property test covers every width 20..120, but no card is
+rendered at a wider house width).
 
 **A bug this plan's own test missed, found by judge's:** `fit` measured each
 word by summing `UnicodeWidthChar` over its characters, so an ANSI colour

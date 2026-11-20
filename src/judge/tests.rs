@@ -2544,6 +2544,22 @@ fn an_insufficient_row_renders_as_insufficient_and_never_as_right() {
 }
 
 #[test]
+fn a_long_line_never_widens_the_frame() {
+    // KI-078's shape at the builder: a long title, a long body line and a
+    // long footer must never make a line wider than the card.
+    let long = "a-disposition-that-runs-on-".repeat(4);
+    let card = super::frame(&long, &long, vec![long.clone(), "short".to_string()], &long);
+    for line in card.lines() {
+        let cells = crate::cards::width_of(line);
+        assert!(
+            cells <= crate::cards::CARD_WIDTH,
+            "{cells} cells against a {} cell card: {line:?}",
+            crate::cards::CARD_WIDTH
+        );
+    }
+}
+
+#[test]
 fn a_card_with_unbounded_fields_stays_inside_the_house_width() {
     // A provider id and a reason the operator never bounded are cut at
     // the house width, not run past it — and the LONGEST verdict word
