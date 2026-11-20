@@ -67,6 +67,24 @@ Two instances are already closed and are the evidence base: **KI-578**
 default, not by env) and **KI-579** (`route`'s test reading a provider key
 from the process env — fixed by naming a variable nothing sets).
 
+## Pass 1 landed, 2026-11-20
+
+`src/testsupport.rs` exists (registered in `lib.rs` under `#[cfg(test)]`, and
+in the census so it cannot be forgotten): a process-wide `env_lock()` that
+recovers from poison, and an RAII `EnvVar::set` / `EnvVar::unset` that
+restores the previous value — including absence — on drop, with the unsafe
+call isolated behind one documented SAFETY condition.
+
+First cluster migrated: **`lanes`** — its private `ENV_LOCK` and `EnvVar`
+duplicate are gone, and all five of its environment tests take the shared
+lock. Its own 25 tests pass unchanged.
+
+Remaining passes: `explain/tests` and `delegate/tests` and `judge/tests` (each
+carries its own copy of the same guard), then the bulk — `layerfs_tools` 10,
+`gui/server` 9, `armada/deploy` 8, and the rest of the 85. The guard in AC2
+lands **after** the bulk, per the ruling, so it never needs an 85-entry
+exemption list.
+
 ## Approach
 
 1. One support module behind `#[cfg(test)]` — the crate's existing test

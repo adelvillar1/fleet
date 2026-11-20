@@ -1589,37 +1589,7 @@ fn plural(count: usize) -> &'static str {
 mod tests {
     use super::*;
 
-    /// The env-mutating tests below serialize on this. `cargo test` runs a
-    /// module's tests on threads, and a `set_var` in one must not be
-    /// visible to another mid-flight; the readers take it too.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Set `name` for the duration of the guard, restoring whatever was
-    /// there before — including its absence — on the way out.
-    struct EnvVar {
-        name: String,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl EnvVar {
-        fn set(name: &str, value: &str) -> EnvVar {
-            let previous = std::env::var_os(name);
-            std::env::set_var(name, value);
-            EnvVar {
-                name: name.to_string(),
-                previous,
-            }
-        }
-    }
-
-    impl Drop for EnvVar {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(&self.name, value),
-                None => std::env::remove_var(&self.name),
-            }
-        }
-    }
+    use crate::testsupport::{env_lock, EnvVar};
 
     fn lane(name: &'static str) -> Lane {
         *LANES
@@ -1885,7 +1855,7 @@ mod tests {
 
     #[test]
     fn a_relative_per_lane_home_reports_the_reason_not_a_layout_failure() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let _sem1 = EnvVar::set("FLEET_LANE_SEM1_HOME", "services/sem1");
         match resolve_home(&lane("sem1")) {
             LaneHome::Unavailable { reason } => {
@@ -1898,7 +1868,7 @@ mod tests {
 
     #[test]
     fn a_relative_services_root_is_a_typed_error_not_a_silent_fallback() {
-        let _guard = ENV_LOCK.lock();
+        let _guard = env_lock();
         let _root = EnvVar::set(SERVICES_ROOT_ENV, "services");
         assert_eq!(
             services_root(),
@@ -1919,7 +1889,7 @@ mod tests {
         // Resolution reads the ambient `FLEET_SERVICES_ROOT`, so this test
         // serializes against the env-mutating ones below the way they
         // serialize against each other.
-        let _guard = ENV_LOCK.lock();
+        let _guard = env_lock();
         // The agent loop resolves a lane by name on its first call, so an
         // unknown name must be a reason, not a panic and not silence.
         let error = spec_for("nope").expect_err("an unknown lane has no spec");
@@ -1948,7 +1918,7 @@ mod tests {
 
     #[test]
     fn a_lane_without_a_home_reports_a_named_reason() {
-        let _guard = ENV_LOCK.lock();
+        let _guard = env_lock();
         // No env override is set for this lane in the test process, so the
         // resolution falls through to the bundled root or names its absence.
         let home = resolve_home(&lane("gen1"));
@@ -1966,7 +1936,7 @@ mod tests {
 
     #[test]
     fn the_services_root_walk_finds_a_repo_root_from_a_nested_exe() {
-        let _guard = ENV_LOCK.lock();
+        let _guard = env_lock();
         // The walk starts at the executable: in tests that is
         // target/debug/deps/..., and the repo root carries both services/
         // and Cargo.toml. This asserts the discovery mechanism, not the
