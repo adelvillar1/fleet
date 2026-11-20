@@ -54,6 +54,16 @@ arboard = "3.7.0"
 png = "0.18.1"
 cpal = "0.18.2"
 
+# The gate and the inner loop build in dev; at full debuginfo this tree
+# reached 22 GiB (deps 13.9, incremental 9.8) on a 16 GiB machine that ran
+# out of headroom mid-gate. Line tables are enough to point a debugger at a
+# line; the type detail full debuginfo buys is not what these builds are for.
+[profile.dev]
+debug = 1
+# A 267K-line crate has no useful unit boundary for incremental compilation;
+# it cost ~9 GiB and a fingerprint check on every run.
+incremental = false
+
 [profile.release]
 strip = true
 lto = true
