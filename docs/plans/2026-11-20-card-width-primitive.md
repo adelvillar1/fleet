@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-20
 updated: 2026-11-20
 slug: card-width-primitive
@@ -24,6 +24,23 @@ Each instance was fixed before commit; the class was never stopped.
 - `unicode-width` is already a declared dependency (`Cargo.toml`, added
   for KI-025), so display-cell measurement is available without a new
   crate.
+
+## Status pass, 2026-11-20
+
+Measured before writing: the plan expected four surfaces drawing at the
+house width; the tree carries **eighteen** identical copies —
+`const CARD_WIDTH: usize = 72;` in `calib`, `cron`, `delegate`, `demand`,
+`desk`, `doctor`, `eval`, `explain`, `graph`, `improve`, `judge`, `lanes`,
+`mcp_registry`, `memory`, `route`, `session_recall`, `settings`, `skills` —
+all agreeing on 72, which is what made the sweep safe.
+
+Landed: `src/cards.rs` holds `CARD_WIDTH` and `CARD_INNER` (`CARD_WIDTH - 4`,
+the border and padding), every one of the eighteen now imports it, and the
+census from `2026-11-20-guard-list-inversion.md` carries the guard: a module
+that declares its own `const CARD_WIDTH` fails
+`cards::tests::the_house_width_has_one_home` by name. The full lib suite is
+**2435 passed / 0 failed**; the card surfaces' own width assertions (20 of
+them) were unchanged and every one still passes.
 
 ## Approach
 

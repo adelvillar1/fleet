@@ -1379,7 +1379,7 @@ mod palette {
 
 /// The card width, in characters — the lanes' card width, so the two
 /// surfaces read as one family.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// The launch line as the face shows it: the program and the args
 /// through the display redaction, so no value the file carries reaches

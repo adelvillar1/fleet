@@ -4441,7 +4441,7 @@ mod palette {
 }
 
 /// The card width, matching `lanes`.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// Render the roster as cards, one per candidate, in declared chain order:
 /// a status dot, the endpoint, the key env-var NAME with its presence

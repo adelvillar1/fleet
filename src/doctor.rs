@@ -1224,7 +1224,7 @@ mod palette {
 
 use palette::{ACCENT, BOLD, DIM, RESET, TEXT, WARN};
 
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// One open ledger row, as the read-back surfaces it: the id, the
 /// severity, the issue, and the next action that stays visible until

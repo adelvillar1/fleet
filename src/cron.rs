@@ -2705,7 +2705,7 @@ mod palette {
 use palette::{ACCENT, BOLD, DIM, OK, RESET, TEXT, WARN};
 
 /// The card width, matching `skills`, `lanes`, `providers`, and `calib`.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// Render the jobs as cards: one per job with its schedule, its task,
 /// its next fire, and its last run, outcome, and session. Never a

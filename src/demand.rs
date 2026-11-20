@@ -255,7 +255,7 @@ pub fn record_view(stream: &Stream, window_days: usize, demands: &[ClassDemand])
 }
 
 /// The surface's card width.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// Render the demand map as the CLI's cards: per family, the classes
 /// strongest first, each with its rate, trend, and row count.

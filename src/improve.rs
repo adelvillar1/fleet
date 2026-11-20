@@ -2575,7 +2575,7 @@ mod palette {
 use palette::{ACCENT, BOLD, DIM, RESET, TEXT, WARN};
 
 /// The card width, matching `lanes`, `providers`, `skills`, and `calib`.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// Render the proposals as cards, in two named sections: the general
 /// store, then slice 7's drafts. Every card carries the target, the

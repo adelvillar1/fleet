@@ -18,6 +18,7 @@ pub mod cache_report;
 pub mod calib;
 pub mod canvas;
 pub mod capabilities;
+pub(crate) mod cards;
 pub mod catalog;
 pub mod channels;
 pub mod checkpoints;

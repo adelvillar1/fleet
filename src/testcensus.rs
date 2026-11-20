@@ -36,6 +36,7 @@ pub(crate) const MODULES: &[(&str, &str)] = &[
     ("armada/roster.rs", include_str!("armada/roster.rs")),
     ("boards.rs", include_str!("boards.rs")),
     ("cache_report.rs", include_str!("cache_report.rs")),
+    ("cards.rs", include_str!("cards.rs")),
     ("calib.rs", include_str!("calib.rs")),
     ("canvas.rs", include_str!("canvas.rs")),
     ("capabilities.rs", include_str!("capabilities.rs")),

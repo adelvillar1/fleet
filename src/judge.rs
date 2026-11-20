@@ -125,7 +125,7 @@ const SPEND_LEDGER: &str = ".fleet-judge-spend.jsonl";
 
 /// The card's width, the house width `calib`, `eval`, `improve`, and
 /// `doctor` all draw at.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// The evidence record's bound inside the ask's prompt. The record is
 /// built from bounded fields, so this is a ceiling rather than a

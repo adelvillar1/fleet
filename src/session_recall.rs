@@ -2052,7 +2052,7 @@ mod tests {
 // --- the surfaces ----------------------------------------------------------
 
 /// The card width, matching `lanes` and `calib`.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 mod palette {
     pub const ACCENT: &str = "\u{1b}[36m";

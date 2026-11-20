@@ -6518,7 +6518,7 @@ mod palette {
 use palette::{ACCENT, BOLD, DIM, RESET, TEXT, WARN};
 
 /// The card width, matching `skills`, `calib`, `lanes`, and `providers`.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// The recall surface's line bound. Its status line and its dividers
 /// are concatenations that grow with the corpus — a backend label, a

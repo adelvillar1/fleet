@@ -3289,7 +3289,7 @@ pub fn sidecar_spend(home: &Path, name: &str, day: &str) -> f64 {
 // --- the surface -----------------------------------------------------------
 
 /// The card width, matching `lanes` and `providers`.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// How many rows `fleet calib` prints verbatim at the end.
 const RECENT_ROWS: usize = 5;

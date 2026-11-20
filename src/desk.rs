@@ -1345,7 +1345,7 @@ pub fn number_givens(desk: &DeskProject) -> Vec<f64> {
 // --- the CLI card ------------------------------------------------------------
 
 /// The card width the crate's CLI surfaces draw at.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// One desk project's card: the name, the binding, the stage marks, the
 /// shape, the evidence status — the `fleet desk` listing.

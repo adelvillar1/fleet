@@ -1811,7 +1811,7 @@ mod palette {
 use palette::{ACCENT, BOLD, DIM, RESET, TEXT};
 
 /// The card width, matching `lanes`, `providers`, and `calib`.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// Render the live skills as cards: one per skill with its description,
 /// its usage count from the scan, and the file's mtime. Never a

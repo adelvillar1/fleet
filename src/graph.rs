@@ -1817,7 +1817,7 @@ pub fn build_lesson_plan(goal: &str, nodes: &[LessonNode]) -> Result<LessonPlan,
 
 /// The card width, the house width `calib`, `eval`, `judge`, and the
 /// rest of the card family draw at.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// How many cells the readiness bar draws.
 const BAR_CELLS: usize = 10;

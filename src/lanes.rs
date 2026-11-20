@@ -1422,7 +1422,7 @@ mod palette {
 
 /// The card width, in characters. A fixed width keeps the cards aligned
 /// without a terminal-size dependency.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// Render the health report as cards: one bordered card per lane, a status
 /// dot, the role and tool count, the tool names, and the launch command —

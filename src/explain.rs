@@ -89,7 +89,7 @@ pub const EXPLANATIONS_DIR: &str = "explanations";
 
 /// The card's width, the house width `calib`, `eval`, `improve`, and
 /// `doctor` all draw at.
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// The bounds the card draws the lane-reported words at: a route path,
 /// an answer shape, a step name, and a validation outcome are the

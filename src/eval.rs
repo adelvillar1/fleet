@@ -1205,7 +1205,7 @@ mod palette {
 
 use palette::{ACCENT, BOLD, DIM, OK, RESET, TEXT, WARN};
 
-const CARD_WIDTH: usize = 72;
+use crate::cards::CARD_WIDTH;
 
 /// Render one run's report as house cards: a header with the aggregate
 /// score, one card per scenario, and a footer naming any regression the
