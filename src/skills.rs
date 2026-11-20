@@ -705,6 +705,118 @@ fn live_skill(
 /// refuses the unrelated.
 pub const SKILL_MEANING_FLOOR: f64 = 0.15;
 
+// --- selecting what a run's prompt declares ----------------------------------
+
+/// The token budget one run's skill index may spend.
+///
+/// The index is not the library: every entry rides the system prompt on
+/// every request, and the cost is paid before the owner has said
+/// anything. Measured 2026-11-20 on this machine's 464-skill library: the
+/// 60 entries the old count cap declared came to ~3,940 tokens at a
+/// 400-character description clip — so the count and the cost were two
+/// numbers that could only be kept in step by hand, and the count said
+/// nothing about what the entries cost.
+///
+/// A token budget is the honest bound: the number of skills that fit is
+/// whatever fits, and a ranking decides *which* ones rather than a file
+/// modification time. 4,000 keeps the previous ceiling's spend to within
+/// a rounding, so this changes what is selected, not what it costs.
+pub const SKILL_INDEX_TOKENS: usize = 4_000;
+
+/// Roughly how many characters one token costs. The same four-to-one
+/// estimate the tool-surface bound documents (`MAX_DEFINITION_TOKENS`'s
+/// comment), so the two budgets cannot disagree about what a token is.
+pub const CHARS_PER_TOKEN: usize = 4;
+
+/// The characters one declared line costs the prompt: its name, the
+/// separator, and the trigger clip [`crate::skills::trigger`] already
+/// applies, plus the list marker and newline.
+fn declared_line_chars(skill: &Skill) -> usize {
+    3 + skill.name.chars().count() + 3 + trigger(&skill.description).chars().count() + 1
+}
+
+/// The skills a run declares for one brief, best-first and bounded by
+/// [`SKILL_INDEX_TOKENS`].
+///
+/// The brief ranks the library through the tool router's own lexical
+/// ranker — pure, offline, no lane and no model call — so the same
+/// geometry that picks a tool picks a skill. A brief that clears nothing
+/// falls back to the room's own skills and then the newest, which is
+/// exactly the old behavior: an unrelated or absent brief costs the
+/// ranking nothing and is never worse than what the run had before.
+///
+/// `priority` is the room's assigned skills (`huddles` C4): they lead
+/// whatever the ranking says, because the room said so.
+///
+/// Returns the chosen skills in declaration order. The caller logs the
+/// list, so what the model saw is reconstructable (hard rule 5).
+pub fn rank_declared<'a>(library: &'a [Skill], brief: &str, priority: &[String]) -> Vec<&'a Skill> {
+    // The room's skills lead, in the order their roles named them.
+    let mut chosen: Vec<&Skill> = Vec::new();
+    let mut budget = SKILL_INDEX_TOKENS * CHARS_PER_TOKEN;
+    for name in priority {
+        if let Some(skill) = library.iter().find(|skill| &skill.name == name) {
+            if chosen.iter().any(|held| held.name == skill.name) {
+                continue;
+            }
+            let cost = declared_line_chars(skill);
+            if cost <= budget {
+                budget -= cost;
+                chosen.push(skill);
+            }
+        }
+    }
+    // Then the ranked remainder. A brief that matches nothing leaves the
+    // ranking silent, and the newest-first order below is the fallback
+    // this run always had rather than a worse one.
+    let candidates: Vec<crate::tool_router::Candidate> = library
+        .iter()
+        .filter(|skill| !chosen.iter().any(|held| held.name == skill.name))
+        .map(|skill| crate::tool_router::Candidate {
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+        })
+        .collect();
+    let ranked = crate::tool_router::lexical_rank(brief, &candidates);
+    let mut order: Vec<&Skill> = Vec::new();
+    for entry in &ranked {
+        if entry.score < SKILL_MEANING_FLOOR {
+            break;
+        }
+        if let Some(skill) = library.iter().find(|skill| {
+            skill.name == entry.name && !chosen.iter().any(|held| held.name == skill.name)
+        }) {
+            order.push(skill);
+        }
+    }
+    // The rest, newest-first: the brief had nothing to say about them,
+    // and the owner's recent work is the likelier match (the rule the
+    // count cap carried before the ranking existed).
+    let mut rest: Vec<&Skill> = library
+        .iter()
+        .filter(|skill| {
+            !chosen.iter().any(|held| held.name == skill.name)
+                && !order.iter().any(|held| held.name == skill.name)
+        })
+        .collect();
+    rest.sort_by(|left, right| {
+        right
+            .modified
+            .cmp(&left.modified)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    order.extend(rest);
+    for skill in order {
+        let cost = declared_line_chars(skill);
+        if cost > budget {
+            continue;
+        }
+        budget -= cost;
+        chosen.push(skill);
+    }
+    chosen
+}
+
 /// Shape-first discovery over the library. The query routes under a
 /// shape by memory's keyword rule — one vocabulary, the importer's own
 /// order rule deciding — and the skills declaring it lead; a skill
@@ -3554,5 +3666,128 @@ mod tests {
             skills.iter().any(|s| s.name == "house-mockups-first"),
             "{skills:?}"
         );
+    }
+
+    // --- rank_declared: selection by brief, bounded by tokens -------------
+
+    fn ranked(name: &str, description: &str, modified_secs: u64) -> Skill {
+        Skill {
+            name: name.to_string(),
+            description: description.to_string(),
+            shapes: Vec::new(),
+            body: format!("{name} body"),
+            path: std::path::PathBuf::from(format!("/x/{name}/SKILL.md")),
+            modified: Some(
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(modified_secs),
+            ),
+        }
+    }
+
+    #[test]
+    fn a_brief_selects_the_skills_that_mention_it_over_the_newest() {
+        // The defect this replaced: the newest-by-mtime cut put whatever
+        // was written last on the list. A brief naming a domain must pull
+        // the skills that mention it above those, and the fixture is built
+        // so the two rules disagree — the matching skills are the OLDEST.
+        let library = vec![
+            ranked("video-studio", "compose a video composition scene", 900),
+            ranked("video-core", "animate a video timeline clip", 901),
+            ranked("video-audio", "mix a video soundtrack", 902),
+            ranked(
+                "flaky-test-fix",
+                "debug a flaky embedder test with a retry",
+                1,
+            ),
+            ranked("embedder-tuning", "tune the embedder index for recall", 2),
+        ];
+        let chosen = rank_declared(&library, "fix the flaky embedder test", &[]);
+        let names: Vec<&str> = chosen.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            &names[..2],
+            &["flaky-test-fix", "embedder-tuning"],
+            "the matching skills lead even though they are the oldest: {names:?}"
+        );
+        assert!(
+            names.contains(&"video-studio"),
+            "the budget still has room for the rest: {names:?}"
+        );
+    }
+
+    #[test]
+    fn the_budget_bounds_what_is_declared_not_a_count() {
+        // 400 entries with a long description cannot all fit a token
+        // budget, so the list is cut by cost rather than by a fixed count.
+        let library: Vec<Skill> = (0..400)
+            .map(|index| {
+                ranked(
+                    &format!("skill-{index:03}"),
+                    &"a long enough description to cost real tokens in the prompt".repeat(3),
+                    index,
+                )
+            })
+            .collect();
+        let chosen = rank_declared(&library, "nothing matches this brief", &[]);
+        assert!(
+            chosen.len() < 400,
+            "a long description cannot fit 400 entries: {}",
+            chosen.len()
+        );
+        let spent: usize = chosen.iter().map(|s| declared_line_chars(s)).sum();
+        assert!(
+            spent <= SKILL_INDEX_TOKENS * CHARS_PER_TOKEN,
+            "the declaration stays inside the budget: {spent} chars"
+        );
+        assert!(chosen.len() > 10, "and it still declares plenty");
+    }
+
+    #[test]
+    fn an_empty_brief_declares_newest_first_within_the_budget() {
+        // A run with no brief (or one that matches nothing) is never worse
+        // than the rule that came before it.
+        let library = vec![
+            ranked("oldest", "one", 1),
+            ranked("middle", "two", 2),
+            ranked("newest", "three", 3),
+        ];
+        let chosen = rank_declared(&library, "", &[]);
+        assert_eq!(
+            chosen.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            vec!["newest", "middle", "oldest"]
+        );
+    }
+
+    #[test]
+    fn a_rooms_own_skills_lead_the_ranking() {
+        let library = vec![
+            ranked("matches-brief", "fix the flaky embedder test", 900),
+            ranked("the-rooms-pick", "something unrelated entirely", 1),
+        ];
+        let chosen = rank_declared(
+            &library,
+            "fix the flaky embedder test",
+            &["the-rooms-pick".to_string()],
+        );
+        assert_eq!(
+            chosen[0].name, "the-rooms-pick",
+            "the room's assignment outranks the ranking"
+        );
+        assert_eq!(chosen[1].name, "matches-brief", "the rest still ranks");
+    }
+
+    #[test]
+    fn the_whole_library_stays_loadable_by_name() {
+        // The loader never sees the declared slice: what a run declares
+        // curates the prompt, and a skill held back from the prompt is
+        // still loadable. This is the invariant that makes the ranking
+        // safe to make aggressive.
+        let library = vec![
+            ranked("declared-loudly", "the brief is about this one", 900),
+            ranked("held-back-quietly", "unrelated", 1),
+        ];
+        let chosen = rank_declared(&library, "the brief is about this one", &[]);
+        assert!(chosen.iter().any(|s| s.name == "declared-loudly"));
+        // And the loader answers for the one that was not chosen.
+        let out = use_skill_result(&library, &serde_json::json!({"name": "held-back-quietly"}));
+        assert_eq!(out, "held-back-quietly body");
     }
 }

@@ -155,10 +155,18 @@ pub fn subagent_call_prefix() -> String {
 /// gives the child nothing to diff against. `max-turns` is bounded in
 /// the schema and again at parse, because a bound the schema alone
 /// carries is a bound a non-conforming caller ignores.
-pub fn subagent_spec() -> ToolSpec {
+pub fn subagent_spec(caps: crate::subagents::TurnCaps) -> ToolSpec {
+    // The bounds render from the home's resolved pair, never a literal:
+    // a schema that promised 50 while the parse enforced something else
+    // is the failure the module doc above names. `base_declarations`
+    // threads the pair in from the run's own home.
+    let default_turns = caps.default;
+    let ceiling_turns = caps.ceiling;
     ToolSpec::function(
         SUBAGENT_TOOL,
-        "Spawn a subagent that runs one delegated task in its own session, with its own context and no knowledge of this conversation. The goal must be self-contained: state the whole task, every path and constraint, because it sees nothing else. It runs on this same model and its tool calls still ask for approval. Compose the brief: `context` is the background it cannot see, `output` the definition of done, `approach` your proposed solution stated as a proposal, not an order; its first message separates all four with markers so it cannot read the background as the task, and it ends with a delta block saying whether it followed your approach, and when it deviated whether that was forced or chosen. Omit the three and it gets the goal alone. The declaration IS the scope: `tools` names the capabilities this subtree needs and nothing outside it is callable — remember, supersede, lane tools and improve are never admissible — and naming `subagent` opens a second level, refused at depth 2 by name. An undeclared tool is refused by name, so under-declare deliberately. It stops at `max-turns` (default 20, halved at depth 2, at most 50) — the only bound on the delegation as a whole, so a long delegation is a long occupancy of your turn (KI-076). It returns its answer, session id and log path, turn count, and outcome (completed, max-turns, failed); a failure returns the partial result and the reason, never silence. Its summary is a report, not evidence: verify any side effect it claims before repeating it. Delegate self-contained work whose intermediate steps would not help you; do the work yourself when you need what you learn along the way.",
+        format!(
+            "Spawn a subagent that runs one delegated task in its own session, with its own context and no knowledge of this conversation. The goal must be self-contained: state the whole task, every path and constraint, because it sees nothing else. It runs on this same model and its tool calls still ask for approval. Compose the brief: `context` is the background it cannot see, `output` the definition of done, `approach` your proposed solution stated as a proposal, not an order; its first message separates all four with markers so it cannot read the background as the task, and it ends with a delta block saying whether it followed your approach, and when it deviated whether that was forced or chosen. Omit the three and it gets the goal alone. The declaration IS the scope: `tools` names the capabilities this subtree needs and nothing outside it is callable — remember, supersede, lane tools and improve are never admissible — and naming `subagent` opens a second level, refused at depth 2 by name. An undeclared tool is refused by name, so under-declare deliberately. It stops at `max-turns` (default {default_turns}, halved at depth 2, at most {ceiling_turns}) — the only bound on the delegation as a whole, so a long delegation is a long occupancy of your turn (KI-076). It returns its answer, session id and log path, turn count, and outcome (completed, max-turns, failed); a failure returns the partial result and the reason, never silence. Its summary is a report, not evidence: verify any side effect it claims before repeating it. Delegate self-contained work whose intermediate steps would not help you; do the work yourself when you need what you learn along the way."
+        ),
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -181,8 +189,11 @@ pub fn subagent_spec() -> ToolSpec {
                 "max-turns": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 50,
-                    "description": "The subagent's turn cap. Defaults to 20 and is bounded at 50; a depth-2 child is held to half the default.",
+                    "maximum": ceiling_turns,
+                    "description": format!(
+                        "The subagent's turn cap. Defaults to {default_turns} and is bounded at \
+                         {ceiling_turns}; a depth-2 child is held to half the default."
+                    ),
                 },
                 "context": {
                     "type": "string",
@@ -4237,7 +4248,7 @@ fn shell_command(command: &str) -> Command {
 /// This is a boundary on the file tools, not on `bash`: a subprocess can
 /// still reach anything the owner's account can read. The folder is
 /// where a run works, not a sandbox around it.
-fn resolve_in_root(root: &Path, path: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_in_root(root: &Path, path: &str) -> Result<PathBuf, String> {
     let asked = path.trim();
     if asked.is_empty() {
         return Ok(root.to_path_buf());
@@ -4285,7 +4296,7 @@ fn resolve_in_root(root: &Path, path: &str) -> Result<PathBuf, String> {
 /// and the file's own name is appended to it. Writing through a
 /// directory symlink that points out is therefore refused, which is the
 /// half a lexical check misses.
-fn resolve_write_in_root(root: &Path, path: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_write_in_root(root: &Path, path: &str) -> Result<PathBuf, String> {
     let asked = path.trim();
     let given = Path::new(asked);
     let candidate = if given.is_absolute() {
@@ -4784,7 +4795,7 @@ mod tests {
         // The declaration measured is `subagent_spec`, which the agent
         // pushes on every unscoped run — the built-in four do not
         // carry it.
-        let bytes = serde_json::to_string(&subagent_spec())
+        let bytes = serde_json::to_string(&subagent_spec(crate::subagents::TurnCaps::compiled()))
             .expect("the declaration serializes")
             .len();
         // The measured size: 4081 bytes at the 2026-10-18 pass, about
@@ -5385,7 +5396,8 @@ mod tests {
 
     #[test]
     fn subagent_declares_the_goal_required_and_the_scope_narrowable() {
-        let spec = serde_json::to_value(subagent_spec()).unwrap();
+        let spec =
+            serde_json::to_value(subagent_spec(crate::subagents::TurnCaps::compiled())).unwrap();
         assert_eq!(spec["function"]["name"], SUBAGENT_TOOL);
         let parameters = &spec["function"]["parameters"];
         // `goal` is the one required parameter: the child sees nothing of
@@ -5429,9 +5441,18 @@ mod tests {
             );
         }
         // The turn cap is bounded in the schema as well as at parse.
+        // The bound is the resolver's, never a literal: a schema that
+        // promised one number while the parse enforced another is the
+        // failure the module doc above names. This pin reads the same
+        // constant the parse reads, so the two cannot drift.
+        let caps = crate::subagents::TurnCaps::compiled();
         let turns = &parameters["properties"]["max-turns"];
         assert_eq!(turns["minimum"], 1);
-        assert_eq!(turns["maximum"], 50);
+        assert_eq!(turns["maximum"], caps.ceiling);
+        assert_eq!(caps.ceiling, crate::subagents::DEFAULT_CHILD_TURNS_CEILING);
+        // The description names the same pair the schema enforces.
+        let described = turns["description"].as_str().unwrap();
+        assert!(described.contains(&caps.default.to_string()), "{described}");
         // The delegation tool is not one of the closed four either.
         assert_eq!(Tool::from_name(SUBAGENT_TOOL), None);
         // The description names the two facts the model most needs: the

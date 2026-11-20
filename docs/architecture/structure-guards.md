@@ -53,10 +53,16 @@ exactly two modules — `calib` (which defines it) and the beat (which
 writes it). `route.rs` keeps its own JSON-literal helper in its tests
 for exactly this reason; do not "fix" that duplication.
 
+**Where these numbers are checked.** This doc states them for a reader;
+`fleet drift` is the registry that holds each one beside the constant that
+produces it, so a bound that moves without this file moving is a finding
+rather than a surprise (`src/drift.rs`, and the 2026-11-20 correction that
+this very section needed — it read 10,050 for five crossings).
+
 ## B. The tool-surface bounds
 
 `src/agent.rs`: `MAX_VISIBLE_TOOLS` (36) and `MAX_DEFINITION_TOKENS`
-(10,050). The tokens bound pins the total size of the tool
+(10,800). The tokens bound pins the total size of the tool
 declarations the native surface sends, through
 `the_native_surface_fits_its_own_bounds`, and drives three runtime
 withholding walks in the surface curator — when the surface outgrows
@@ -68,13 +74,13 @@ instead.
 
 **What to do when it fires:** the protocol is written on the constant
 itself — measure the real count, then either trim the prose or move
-the constant with the crossing named in its history (it records all
-three). Never move it silently. Because the bound also feeds the
+the constant with the crossing named in its history (it records every
+move). Never move it silently. Because the bound also feeds the
 runtime walks, a move changes what withholds: the declared-list test
 `a_run_with_memory_declares_the_write_path_and_one_without_it_does_not`
 pins the whole list, and its expectation follows the walk (at 10,000
 the `remember` schema's `source` field withheld `apply_patch` and
-declared `tool_search`; at 10,050 neither happens).
+declared `tool_search`; at 10,800 neither happens).
 
 ## C. The calibration row discipline
 

@@ -89,17 +89,33 @@ A run with no skills records nothing and its prompt is the compiled-in
 constant, so the skill-less run is byte-for-byte the run it has always
 been.
 
-The list is **capped** (`agent::SKILLS_PROMPT_CAP`, 60) and
-**trigger-shaped**. Each declared skill rides as one line,
+The list is **ranked** against the run's brief and **trigger-shaped**.
+Each declared skill rides as one line,
 `` - `name` — use when <trigger> ``, where the trigger is the
 description with its leading frame stripped and its first word lowered,
 clipped near 160 characters — a match signal, not the catalogue entry,
-because the body arrives on the call. The cap selects the library's
-newest by the skill's own mtime, so the owner's recent work floats up,
-and one line per run names how many are held back and that `fleet skills`
-lists them all. The list is re-sent on every request of every run, so
-the cap is what keeps a 442-skill library from costing a 128k-window
+because the body arrives on the call.
+
+Which skills ride is `skills::rank_declared`'s answer: the room's own
+assigned skills lead, then the ones the brief ranks highest through the
+same lexical ranker the tool router uses — pure, offline, no lane and no
+model call — then the newest of the rest. The bound is a **token budget**
+(`skills::SKILL_INDEX_TOKENS`, 4,000), not a count, because the count said
+nothing about what the entries cost and the two drifted; the number of
+skills that fit falls out of the budget. One line per run names how many
+are held back, that they are the ones that best match the brief, and that
+`fleet skills` lists them all.
+
+The list is re-sent on every request of every run, which is why it has a
+budget at all: an unranked 464-skill library would cost a 128k-window
 model an eighth of its window before the owner has said anything.
+
+**What is held back is still loadable.** `use_skill` consults the whole
+library, not the declared slice, so the ranking curates what the model is
+told about and never what it may load. (Until 2026-11-20 the selection was
+a newest-by-mtime cut at a fixed 60, which put seven sibling
+video-composition skills at ranks 55-62 on every run — the ranking replaced
+it, `docs/plans/2026-11-20-omh-borrowings.md`.)
 
 A run declares the library **minus what the owner retired**: a `retire`
 action on the skills page writes the name to

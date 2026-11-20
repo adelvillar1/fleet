@@ -36,6 +36,7 @@ pub mod dictate;
 pub mod doctor;
 pub mod documents;
 pub mod dream;
+pub mod drift;
 pub mod engine;
 pub mod eval;
 pub mod experiments;

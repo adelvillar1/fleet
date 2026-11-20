@@ -312,10 +312,9 @@ fn clamp_concurrency(ceiling: usize, requested: Option<&str>) -> usize {
         .map_or(ceiling, |requested| requested.min(ceiling))
 }
 
-/// The cap on what one run declares. The prompt is not the library:
-/// every entry costs a 128k-window model an eighth of its window before
-/// the owner has said anything, and a list that long is a list no model
-/// reads. The cap curates the prompt's list, never the library.
+/// How many skills one run declared, for a surface that asks. The real
+/// bound is [`crate::skills::SKILL_INDEX_TOKENS`] — a token budget, not a
+/// count — so this is not a cap and nothing truncates to it.
 pub const SKILLS_PROMPT_CAP: usize = 60;
 
 /// A string array out of a tool-call's arguments, empties dropped — the
@@ -376,48 +375,47 @@ fn gap_kind(home: Option<&std::path::Path>, name: &str) -> &'static str {
     "capability"
 }
 
-/// The skills a run declares: the retired are already filtered by the
-/// loader, the newest by the skill's own mtime float up — the owner's
-/// recent work is the likely match — and the cap keeps the prompt's
-/// cost bounded. The prompt and the `skills` record read the same list,
-/// so the log pins what the model saw.
-/// The declaration with a room's own skills leading (the huddles plan's
-/// C4): the members' assigned names first, in the order their roles named
-/// them, then the rest newest-first under the same cap. Without a room the
-/// list is exactly what it has always been.
+/// The skills a run declares, selected by [`crate::skills::rank_declared`]:
+/// the room's own skills lead (the huddles plan's C4), then the ones the
+/// run's brief ranks highest, then the newest of the rest — all bounded by
+/// a token budget rather than a count.
+///
+/// This replaced a newest-by-mtime cut at a fixed count (2026-11-20,
+/// `docs/plans/2026-11-20-omh-borrowings.md`). The count said how many
+/// entries the prompt carried and nothing about what they cost, so the
+/// two drifted; and the newest-by-mtime order put whatever was written
+/// last on the list, which on this machine was seven sibling
+/// video-composition skills at ranks 55-62. The ranker is the tool
+/// router's own — pure, offline, no lane and no model call — so a brief
+/// that names a domain selects the skills that mention it.
+///
+/// The prompt and the `skills` record read the same list, so the log
+/// pins what the model saw (hard rule 5). `use_skill` still consults the
+/// whole library, so nothing removed here becomes unreachable — this
+/// curates what the model is *told about*, never what it may load.
 fn declared_skills_priority<'a>(
     skills: &'a [crate::skills::Skill],
     priority: &[String],
+    brief: &str,
 ) -> Vec<&'a crate::skills::Skill> {
-    let mut ordered: Vec<&crate::skills::Skill> = Vec::with_capacity(skills.len());
-    for name in priority {
-        if let Some(skill) = skills.iter().find(|skill| &skill.name == name) {
-            ordered.push(skill);
-        }
-    }
-    let mut rest: Vec<&crate::skills::Skill> = skills
-        .iter()
-        .filter(|skill| !priority.contains(&skill.name))
-        .collect();
-    rest.sort_by(|left, right| {
-        right
-            .modified
-            .cmp(&left.modified)
-            .then_with(|| left.name.cmp(&right.name))
-    });
-    ordered.extend(rest);
-    ordered.truncate(SKILLS_PROMPT_CAP);
-    ordered
+    crate::skills::rank_declared(skills, brief, priority)
 }
 
-/// The one logged line when the library is bigger than the cap, naming
-/// how many are held back and where the full list lives.
+/// The one logged line when the library is bigger than what the index
+/// declares, naming how many are held back, why, and where the rest live.
+///
+/// The reason names the ranking rather than a count: before 2026-11-20
+/// the line said "the newest N are declared", which was true and also
+/// the defect — it told the owner the selection rule was recency.
 fn skills_prompt_growth_line(library: usize, declared: usize) -> Option<String> {
-    (library > SKILLS_PROMPT_CAP).then(|| {
+    (library > declared).then(|| {
         format!(
             "fleet: {library} skills in the library; {} held back from this run's prompt \
-             (the newest {SKILLS_PROMPT_CAP} are declared) \u{2014} `fleet skills` lists them all",
-            library.saturating_sub(declared)
+             (the {} that best match this run's brief are declared, within a {} token budget) \
+             \u{2014} `fleet skills` lists them all, and `use_skill` loads any by name",
+            library.saturating_sub(declared),
+            declared,
+            crate::skills::SKILL_INDEX_TOKENS
         )
     })
 }
@@ -506,6 +504,10 @@ pub struct AgentOptions {
     /// `goal` record, so the prompt the model saw stays reconstructable
     /// (hard rule 5). `None` is a session with no goal.
     pub goal: Option<String>,
+    /// The write scope this run's plan node declared, when a delegation
+    /// bound one. `None` — every ordinary run — disables the guard
+    /// entirely, so nothing about a scope-less run changes.
+    pub write_scope: Option<crate::approvals::WriteScope>,
     pub model: String,
     pub max_turns: usize,
     /// Whether this run's loop is bounded by `max_turns` — the
@@ -707,6 +709,7 @@ impl Default for AgentOptions {
     fn default() -> AgentOptions {
         AgentOptions {
             goal: None,
+            write_scope: None,
             goal_home: None,
             goal_session: None,
             model: crate::route::AUTO_MODEL.to_string(),
@@ -1741,6 +1744,19 @@ pub struct Agent<'a> {
     /// name each image, so a replay rebuilds the words rather than four
     /// thirds of a picture's pixels in characters.
     first_images: Vec<crate::api::ImageRef>,
+    /// The words this run was given, kept so the skills index can rank
+    /// against them. Set once at the top of [`run`](Self::run), before
+    /// any prompt is composed — the declaration is built from it, so a
+    /// replay that reads the `skills` record sees the list the ranking
+    /// produced. Empty on a run that never set it, which ranks nothing
+    /// and falls back to the newest-first order this module always had.
+    brief: String,
+    /// The evidence-capable results this run has produced, in order: a
+    /// `bash` call whose output begins with a success, and a `write_file`
+    /// or `edit` that landed. Each entry is the step it could close, so a
+    /// `todo` tick can be checked against something that happened rather
+    /// than against the model's word (2026-11-20).
+    turn_evidence: Vec<Evidence>,
     /// How many tool calls this run put through the gate. The report
     /// repair reads it: an acknowledgment-only stop is a missing report
     /// only when the run had tool work whose result the owner needs.
@@ -2016,6 +2032,8 @@ impl<'a> Agent<'a> {
             pending_curated: None,
             pending_health: None,
             first_images: Vec::new(),
+            brief: String::new(),
+            turn_evidence: Vec::new(),
             improve_home,
             tool_calls_run: 0,
             repairs: 0,
@@ -2083,7 +2101,7 @@ impl<'a> Agent<'a> {
     /// (C4), then the newest of the rest, capped. Both the prompt and the
     /// `skills` record read this list, so the log pins what the model saw.
     fn declared(&self) -> Vec<&crate::skills::Skill> {
-        declared_skills_priority(&self.skills, &self.priority_skills)
+        declared_skills_priority(&self.skills, &self.priority_skills, &self.brief)
     }
 
     /// The prompt a turn's request — and the compaction estimate — reads:
@@ -2446,6 +2464,22 @@ impl<'a> Agent<'a> {
     /// a second enumeration is a second answer to "what does this
     /// harness declare".
     pub fn base_declarations(skills: &[crate::skills::SkillRef]) -> Vec<crate::api::ToolSpec> {
+        Self::base_declarations_with(skills, crate::subagents::TurnCaps::compiled())
+    }
+
+    /// The same list, with the delegation turn bounds the caller's home
+    /// resolved.
+    ///
+    /// A separate entry point because the two callers want different
+    /// things: the live run renders the bounds its own home enforces, so
+    /// the declared `max-turns` maximum and the enforced one are the same
+    /// number; `fleet tools` and the face's settings card have no run
+    /// home and render the compiled pair. Hard rule 5's reconstruction
+    /// uses `compiled()` for the same reason and says so there.
+    pub fn base_declarations_with(
+        skills: &[crate::skills::SkillRef],
+        caps: crate::subagents::TurnCaps,
+    ) -> Vec<crate::api::ToolSpec> {
         let mut specs: Vec<crate::api::ToolSpec> =
             tools::ALL_TOOLS.iter().map(|tool| tool.spec()).collect();
         // The capability tools, in the live path's position: right after
@@ -2459,7 +2493,7 @@ impl<'a> Agent<'a> {
         specs.push(tools::recall_spec());
         specs.push(tools::mcp_resource_spec());
         specs.push(tools::mcp_prompt_spec());
-        specs.push(tools::subagent_spec());
+        specs.push(tools::subagent_spec(caps));
         specs.push(tools::convention_spec());
         specs.push(tools::plan_spec());
         specs.push(tools::deck_spec());
@@ -2505,6 +2539,11 @@ impl<'a> Agent<'a> {
     /// The pair is what the run-start `Declarations` record writes: the
     /// names the model saw, and the names it did not.
     fn declaration_set(&self) -> (Vec<crate::api::ToolSpec>, Vec<String>) {
+        // The delegation turn bounds this run's own home enforces, so the
+        // declared `max-turns` maximum is the one a call is judged
+        // against. The live path renders the home's pair; the
+        // reconstruction and the static listings render the compiled one.
+        let caps = crate::subagents::TurnCaps::for_home(delegation_home(&self.options).as_deref());
         let mut specs: Vec<crate::api::ToolSpec> = match &self.scope {
             Some(scope) => crate::tools::ALL_TOOLS
                 .iter()
@@ -2579,7 +2618,7 @@ impl<'a> Agent<'a> {
         // not a capability a run opts into. A child's scope never admits
         // it, which is the depth cap in its declarative half.
         if admitted(tools::SUBAGENT_TOOL) {
-            specs.push(tools::subagent_spec());
+            specs.push(tools::subagent_spec(caps));
         }
         // `improve` is declared on every run that carries a home. It
         // only files a proposal — the owner's `fleet improve apply` runs
@@ -3267,6 +3306,10 @@ impl<'a> Agent<'a> {
     }
 
     async fn run_task(&mut self, task: &str) -> Result<RunReport, AgentError> {
+        // The brief the skills index ranks against, set before any prompt
+        // is composed: `system_prompt` is built further down this function
+        // and reads `self.brief` through `declared()`.
+        self.brief = task.to_string();
         // A routed run announces its route once, before the first turn: the
         // headless surface prints the same fact, and the TUI's status bar
         // reads it. A plain client emits nothing here.
@@ -5213,7 +5256,7 @@ impl<'a> Agent<'a> {
         }
         // Phase 3: every result, in the batch's own order.
         for (index, call) in calls.iter().enumerate() {
-            let (approved, output, truncated) = match &prepared[index] {
+            let (approved, mut output, truncated) = match &prepared[index] {
                 Some(Prepared::Settled {
                     approved,
                     output,
@@ -5236,6 +5279,7 @@ impl<'a> Agent<'a> {
             // read.
             if approved && !output.starts_with("error") {
                 self.note_read(&call.function.name, &call.function.arguments);
+                self.note_evidence(call, &output);
                 if tools::resolve_name(&call.function.name)
                     .is_some_and(|(tool, _)| tool == Tool::Todo)
                 {
@@ -5243,6 +5287,15 @@ impl<'a> Agent<'a> {
                         serde_json::from_str::<serde_json::Value>(&call.function.arguments)
                     {
                         if let Some(items) = todo_items(&arguments) {
+                            // Every `[x]` is a claim, and a claim is worth
+                            // what backs it (2026-11-20, the OMH borrowings
+                            // plan's C5). The evidence is the turn's own
+                            // tool results — a command that exited 0, a
+                            // write that landed — so the harness can say
+                            // which ticks have something behind them
+                            // without asking the model for a receipt it
+                            // would only copy.
+                            output = evidence_annotated(output, &items, &self.turn_evidence);
                             store_todo(&self.todos, &items);
                             // The face's pane card reads this live; the
                             // log carries the same list as a `tasks`
@@ -5399,6 +5452,24 @@ impl<'a> Agent<'a> {
         plan_refusal(self.plan_mode, name)
     }
 
+    /// The declared WRITE scope's refusal for one call, or `None` when the
+    /// call is inside it, writes nothing, or this run carries no scope.
+    ///
+    /// Distinct from [`scope_refusal`](Self::scope_refusal) above, which
+    /// narrows *which tools* a child may call; this one narrows *which
+    /// files* a call may touch. A run with no node bound reaches the
+    /// approver exactly as it always has — this is a plan node's contract,
+    /// not a global one.
+    fn write_scope_refusal(&self, call: &ToolCall) -> Option<String> {
+        let scope = self.options.write_scope.as_ref()?;
+        let root = match &self.options.file_access {
+            FileAccess::Folder(root) => root.clone(),
+            FileAccess::Unrestricted => std::env::current_dir().ok()?,
+            _ => return None,
+        };
+        crate::approvals::scope_refusal(call, scope, &root)
+    }
+
     fn prepare_call(&mut self, call: &ToolCall) -> Result<Prepared, AgentError> {
         // A chat with no working folder has no filesystem access at
         // all. The refusal happens before the approval gate, because
@@ -5513,6 +5584,23 @@ impl<'a> Agent<'a> {
                     }
                 }
             }
+        }
+        // The declared write scope, checked before the gate is even
+        // asked: a call outside the node's declaration is refused by the
+        // harness, not offered to the owner as a choice. It answers only
+        // when this run carries a scope AND the call writes something, so
+        // an ordinary run reaches the approver exactly as it always has.
+        if let Some(refusal) = self.write_scope_refusal(call) {
+            // The same seam and the same shape `plan_mode_refusal` uses
+            // just below: a refusal the model reads on the ordinary
+            // `tool_result` path, before the owner is ever asked.
+            let _ = writeln!(self.progress, "\u{2192} {refusal}");
+            let _ = self.progress.flush();
+            return Ok(Prepared::Settled {
+                approved: false,
+                output: refusal,
+                truncated: false,
+            });
         }
         let approved = self.approver.approve(call);
         // The screening verdict, recorded after the decision: the gate's
@@ -6319,9 +6407,15 @@ impl<'a> Agent<'a> {
     /// tool's output rides, which is what puts the call and its outcome
     /// in the parent's log (hard rule 5).
     async fn run_subagent(&mut self, call: &ToolCall) -> Result<(String, bool), AgentError> {
-        let request = match crate::subagents::SubagentRequest::parse(&parse_arguments(
-            &call.function.arguments,
-        )) {
+        // The turn bounds this run's home configures. Resolved before the
+        // parse so a call's `max-turns` is judged against the ceiling the
+        // owner set, not a compiled-in one the schema would then disagree
+        // with.
+        let caps = crate::subagents::TurnCaps::for_home(delegation_home(&self.options).as_deref());
+        let request = match crate::subagents::SubagentRequest::parse(
+            &parse_arguments(&call.function.arguments),
+            caps,
+        ) {
             Err(error) => return Ok((format!("error: {error}"), false)),
             Ok(request) => request,
         };
@@ -8563,6 +8657,68 @@ impl Agent<'_> {
         (!todos.is_empty()).then(|| render_todo_block(&todos))
     }
 
+    /// Record that a call proved something, when it did.
+    ///
+    /// The two evidence-capable shapes OMH's `todo_evidence` resolves, and
+    /// for the same reason: a `bash` call reports its own exit status and a
+    /// write reports whether it landed, so both can be checked against the
+    /// result the loop already holds rather than against a claim about it.
+    /// A failed call records nothing — a tick over a failed command is the
+    /// exact pathology this exists to catch.
+    fn note_evidence(&mut self, call: &ToolCall, output: &str) {
+        let name = &call.function.name;
+        let Some((tool, _)) = tools::resolve_name(name) else {
+            return;
+        };
+        if output.starts_with("error") || output.contains("error[") {
+            return;
+        }
+        let proves = match tool {
+            Tool::Bash => {
+                // The tool prints the exit status; a non-zero one is a
+                // failure whatever the text says.
+                let exit_ok = output.contains("exit 0") || !output.contains("exit ");
+                if !exit_ok {
+                    return;
+                }
+                let command = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    .ok()
+                    .and_then(|arguments| {
+                        arguments
+                            .get("command")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_default();
+                let short: String = command
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(40)
+                    .collect();
+                format!("`{short}` exited 0")
+            }
+            Tool::WriteFile | Tool::Edit => {
+                let path = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    .ok()
+                    .and_then(|arguments| {
+                        arguments
+                            .get("path")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_default();
+                format!("`{path}` was written")
+            }
+            _ => return,
+        };
+        self.turn_evidence.push(Evidence {
+            tool: name.clone(),
+            proves,
+        });
+    }
+
     fn note_read(&self, name: &str, raw: &str) {
         if !tools::resolve_name(name).is_some_and(|(tool, _)| tool == Tool::ReadFile) {
             return;
@@ -8588,6 +8744,65 @@ impl Agent<'_> {
 /// explicit empty array is a replacement to empty. The parse lives
 /// beside the tool's schema, so the store, the event, and the record
 /// all read one shape.
+/// One result this run produced that could close a `todo` step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Evidence {
+    /// The tool that produced it.
+    tool: String,
+    /// A one-line reading of what it proved, shown beside the tick.
+    proves: String,
+}
+
+/// Annotate a `todo` result with which completed steps are backed by this
+/// run's own results.
+///
+/// A tick is a declaration; the rule this enforces is that a declaration
+/// should be checkable. Items are matched to evidence in order — the Nth
+/// completed item is closed by the Nth piece of evidence — which is the
+/// honest reading for a harness that cannot know which command a model
+/// meant. An item with no evidence behind it is marked explicitly rather
+/// than silently becoming done, and the closing count reports both.
+fn evidence_annotated(
+    output: String,
+    items: &[crate::session::TaskItem],
+    evidence: &[Evidence],
+) -> String {
+    let completed: Vec<&crate::session::TaskItem> = items
+        .iter()
+        .filter(|item| item.status == "completed")
+        .collect();
+    if completed.is_empty() {
+        return output;
+    }
+    let mut backed = 0usize;
+    let mut lines: Vec<String> = Vec::new();
+    let mut next_evidence = 0usize;
+    for line in output.lines() {
+        let Some(step) = line.strip_prefix("[x] ") else {
+            lines.push(line.to_string());
+            continue;
+        };
+        match evidence.get(next_evidence) {
+            Some(proved) => {
+                next_evidence += 1;
+                backed += 1;
+                lines.push(format!("[x] {step} \u{2014} verified ({})", proved.proves));
+            }
+            None => lines.push(format!(
+                "[x] {step} \u{2014} unverified (no passing command or landed write behind it)"
+            )),
+        }
+    }
+    let total = completed.len();
+    let mut text = lines.join("\n");
+    if total > 0 {
+        text.push_str(&format!(
+            "\n{backed}/{total} completed step(s) have evidence behind them\n"
+        ));
+    }
+    text
+}
+
 fn todo_items(arguments: &serde_json::Value) -> Option<Vec<crate::session::TaskItem>> {
     let items = arguments.get("items").and_then(|value| value.as_array())?;
     let mut next: Vec<crate::session::TaskItem> = Vec::new();
@@ -11163,6 +11378,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -11217,6 +11433,7 @@ mod tests {
     /// surface line, a short turn cap, and an unrestricted folder.
     fn routing_options(model: &str) -> AgentOptions {
         AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -11530,6 +11747,7 @@ mod tests {
         }
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -11619,6 +11837,7 @@ mod tests {
             .expect("the child log");
         let client = Client::new("http://127.0.0.1:1".to_string(), "test-key");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -11724,6 +11943,7 @@ mod tests {
             .unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -11820,6 +12040,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -12045,6 +12266,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -12163,6 +12385,7 @@ mod tests {
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let calib_root = scratch("vision-qc-calib");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -12263,6 +12486,7 @@ mod tests {
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let annotations = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -12355,6 +12579,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -12447,6 +12672,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -12537,6 +12763,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -12627,6 +12854,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -12712,6 +12940,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -12964,6 +13193,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -13041,6 +13271,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -13187,20 +13418,22 @@ mod tests {
                 ),
             })
             .collect();
-        let declared = declared_skills_priority(&skills, &["skill-00".to_string()]);
-        assert_eq!(declared.len(), SKILLS_PROMPT_CAP);
+        let declared = declared_skills_priority(&skills, &["skill-00".to_string()], "");
         assert_eq!(
             declared[0].name, "skill-00",
             "the room's own skill leads, whatever its age"
         );
-        // One held-back slot returns to the room: the tail shifts by one,
-        // so the next-oldest unnamed skill is what waits outside now.
+        // Every skill is declared, because these fixtures are tiny and the
+        // bound is now a token budget rather than a count (2026-11-20):
+        // 70 entries of a short description fit the 4,000-token index. The
+        // old assertion here pinned 60, which was the count cap talking.
+        assert_eq!(declared.len(), 70, "the budget fits these small entries");
         assert!(
-            !declared.iter().any(|skill| skill.name == "skill-01"),
-            "the room's own skill took one slot from the tail"
+            declared.iter().any(|skill| skill.name == "skill-01"),
+            "nothing is held back when the budget has room"
         );
-        // Without a room the newest leads, exactly as it always has.
-        let plain = declared_skills_priority(&skills, &[]);
+        // Without a room and with no brief, the newest still leads.
+        let plain = declared_skills_priority(&skills, &[], "");
         assert_eq!(plain[0].name, "skill-69");
     }
 
@@ -13451,12 +13684,15 @@ mod tests {
                 ),
             })
             .collect();
-        let declared = declared_skills_priority(&skills, &[]);
-        assert_eq!(declared.len(), SKILLS_PROMPT_CAP);
+        let declared = declared_skills_priority(&skills, &[], "");
         assert_eq!(declared[0].name, "skill-69", "the newest is first");
+        // The budget, not a count, decides how many: these 70 short entries
+        // all fit, so nothing is held back — the rule is now "whatever the
+        // budget holds, best-ranked first" (2026-11-20).
+        assert_eq!(declared.len(), 70);
         assert!(
-            !declared.iter().any(|skill| skill.name == "skill-09"),
-            "the oldest is held back"
+            declared.iter().any(|skill| skill.name == "skill-09"),
+            "the oldest is declared too when the budget has room"
         );
 
         // The prompt carries the declared list, trigger-shaped, and the
@@ -13465,6 +13701,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -13504,25 +13741,120 @@ mod tests {
         let prompt = agent.system_prompt(None);
         assert!(
             prompt.contains("- `skill-69` \u{2014} use when a description"),
-            "{prompt}"
+            "every entry fits the budget, so the newest is there: {prompt}"
         );
         assert!(
-            !prompt.contains("skill-09"),
-            "a held-back skill is not in the prompt"
+            prompt.contains("skill-09"),
+            "the oldest is there too when the budget has room: {prompt}"
         );
 
-        // The line names the held-back count and where the list lives; at
-        // the cap and under it there is no line at all.
-        assert_eq!(
-            skills_prompt_growth_line(SKILLS_PROMPT_CAP, SKILLS_PROMPT_CAP),
-            None
-        );
+        // The line names the held-back count and where the list lives. At
+        // or under what was declared there is no line at all.
+        assert_eq!(skills_prompt_growth_line(60, 60), None);
         assert_eq!(skills_prompt_growth_line(0, 0), None);
         let line = skills_prompt_growth_line(70, 60).expect("the growth line");
         assert!(line.contains("70 skills in the library"), "{line}");
         assert!(line.contains("10 held back"), "{line}");
         assert!(line.contains("`fleet skills` lists them all"), "{line}");
+        // The line names the ranking and the budget, not the retired count
+        // rule: "the newest 60" was true and was the defect.
+        assert!(
+            line.contains("best match this run's brief"),
+            "the line names the selection rule: {line}"
+        );
+        assert!(
+            line.contains(&crate::skills::SKILL_INDEX_TOKENS.to_string()),
+            "the line names the budget: {line}"
+        );
+        assert!(!line.contains("newest"), "{line}");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_tick_with_evidence_behind_it_reads_verified() {
+        use crate::session::TaskItem;
+        let items = vec![
+            TaskItem {
+                step: "run the tests".to_string(),
+                status: "completed".to_string(),
+            },
+            TaskItem {
+                step: "write the doc".to_string(),
+                status: "completed".to_string(),
+            },
+            TaskItem {
+                step: "ship it".to_string(),
+                status: "pending".to_string(),
+            },
+        ];
+        let evidence = vec![
+            Evidence {
+                tool: "bash".to_string(),
+                proves: "`cargo test` exited 0".to_string(),
+            },
+            Evidence {
+                tool: "write_file".to_string(),
+                proves: "`docs/x.md` was written".to_string(),
+            },
+        ];
+        let rendered =
+            String::from("[x] run the tests\n[x] write the doc\n[ ] ship it\n\n2/3 done\n");
+        let out = evidence_annotated(rendered, &items, &evidence);
+        assert!(
+            out.contains("run the tests \u{2014} verified (`cargo test` exited 0)"),
+            "{out}"
+        );
+        assert!(
+            out.contains("write the doc \u{2014} verified (`docs/x.md` was written)"),
+            "{out}"
+        );
+        assert!(
+            out.contains("ship it"),
+            "a pending item is untouched: {out}"
+        );
+        assert!(out.contains("2/2 completed step(s) have evidence"), "{out}");
+    }
+
+    #[test]
+    fn a_tick_with_nothing_behind_it_says_so() {
+        // The pathology this exists for: a run that marks an item done over
+        // no work, or ticks several items off one command. The mark stays;
+        // the word stops being free.
+        use crate::session::TaskItem;
+        let items = vec![
+            TaskItem {
+                step: "first".to_string(),
+                status: "completed".to_string(),
+            },
+            TaskItem {
+                step: "second".to_string(),
+                status: "completed".to_string(),
+            },
+        ];
+        let evidence = vec![Evidence {
+            tool: "bash".to_string(),
+            proves: "one command".to_string(),
+        }];
+        let rendered = String::from("[x] first\n[x] second\n\n2/2 done\n");
+        let out = evidence_annotated(rendered, &items, &evidence);
+        assert!(out.contains("first \u{2014} verified"), "{out}");
+        assert!(
+            out.contains("second \u{2014} unverified"),
+            "the second tick is one command's worth of claim past its evidence: {out}"
+        );
+        assert!(out.contains("1/2 completed step(s) have evidence"), "{out}");
+    }
+
+    #[test]
+    fn no_completed_item_leaves_the_result_untouched() {
+        use crate::session::TaskItem;
+        let items = vec![TaskItem {
+            step: "later".to_string(),
+            status: "pending".to_string(),
+        }];
+        let rendered = String::from("[ ] later\n\n0/1 done\n");
+        let out = evidence_annotated(rendered.clone(), &items, &[]);
+        assert_eq!(out, rendered, "nothing claimed, nothing annotated");
     }
 
     fn call(id: &str, name: &str, arguments: &str) -> ToolCall {
@@ -13617,6 +13949,7 @@ mod tests {
         let control_path = session_path.with_extension("control");
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -13678,6 +14011,7 @@ mod tests {
         let control_path = session_path.with_extension("control");
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -14111,6 +14445,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -14255,6 +14590,7 @@ mod tests {
                 Box::new(crate::memory::KeywordOnly),
             ));
             let options = AgentOptions {
+                write_scope: None,
                 principal: None,
                 session_id: None,
                 goal: None,
@@ -14444,6 +14780,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -14510,6 +14847,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -14784,6 +15122,7 @@ mod tests {
                 crate::session::Session::create(&home, "m").unwrap(),
             ));
             let options = AgentOptions {
+                write_scope: None,
                 principal: None,
                 session_id: None,
                 goal: None,
@@ -14865,6 +15204,7 @@ mod tests {
 You are auditing a change. Read the diff before you judge it.
 [ROLE OVERLAY END]";
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -14919,6 +15259,7 @@ You are auditing a change. Read the diff before you judge it.
         // Without the overlay the same construction is the constant.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -14991,6 +15332,7 @@ You are auditing a change. Read the diff before you judge it.
         let client = Client::new("http://127.0.0.1:9", "k");
         let line = crate::gui::prompt_line("http://127.0.0.1:3080");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -15036,6 +15378,7 @@ You are auditing a change. Read the diff before you judge it.
         // Without the line the same construction is the constant.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -15095,6 +15438,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -15154,6 +15498,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -15288,6 +15633,7 @@ You are auditing a change. Read the diff before you judge it.
         let id = session.id().to_string();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -15365,6 +15711,7 @@ You are auditing a change. Read the diff before you judge it.
         let id = session.id().to_string();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -15482,6 +15829,7 @@ You are auditing a change. Read the diff before you judge it.
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -15626,6 +15974,7 @@ You are auditing a change. Read the diff before you judge it.
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -15718,6 +16067,7 @@ You are auditing a change. Read the diff before you judge it.
             crate::session::Session::create(&home, "m").unwrap(),
         ));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -16321,6 +16671,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -16387,6 +16738,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -16464,6 +16816,7 @@ You are auditing a change. Read the diff before you judge it.
             resolved, decision,
         )));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -16528,6 +16881,7 @@ You are auditing a change. Read the diff before you judge it.
         // behaviour every run had before windows were declared.
         let plain = Client::new("http://127.0.0.1:9", "k");
         let plain_options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -16732,6 +17086,7 @@ You are auditing a change. Read the diff before you judge it.
         let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
         let session = Box::leak(Box::new(crate::session::Session::open(path).unwrap()));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,
@@ -17142,6 +17497,7 @@ You are auditing a change. Read the diff before you judge it.
             crate::session::Session::create(home, "m").unwrap(),
         ));
         let options = AgentOptions {
+            write_scope: None,
             principal: None,
             session_id: None,
             goal: None,

@@ -70,11 +70,20 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// The turn cap a delegation gets when it does not ask for one. Lower
-/// than a run's own [`crate::agent::DEFAULT_MAX_TURNS`] on purpose: a
-/// delegated task is one bounded piece of work, and a child that needs
-/// twenty turns to say what it found is a child whose goal was wrong.
-pub const SUBAGENT_TURN_CAP: usize = 20;
+/// The turn cap a delegation gets when it does not ask for one, and the
+/// fallback when the home configures none.
+///
+/// Lower than a run's own [`crate::agent::DEFAULT_MAX_TURNS`] only in
+/// spirit: a delegated task is one bounded piece of work, and a child
+/// that needs a hundred turns to say what it found is a child whose goal
+/// was wrong. It is 100 to match the parent's own ceiling, because a
+/// child that cannot finish what its parent could have finished is a
+/// child the parent has to redo — the 2026-11-20 owner ruling raised it
+/// from 20 on exactly that ground.
+///
+/// Read through [`crate::route::run_config`], so `delegation.max_turns`
+/// in config.json overrides it without a rebuild.
+pub const DEFAULT_CHILD_TURNS: usize = 100;
 
 /// The floor a depth-stepped turn cap never drops below. A depth-2
 /// chain cannot burn the parent's whole budget on one branch, and it
@@ -83,11 +92,15 @@ pub const SUBAGENT_TURN_CAP: usize = 20;
 /// what it did.
 pub const SUBAGENT_TURN_CAP_FLOOR: usize = 5;
 
-/// The bounds on a requested turn cap. The schema carries them too, but
-/// a bound only the schema carries is a bound a non-conforming caller
-/// ignores, so the parse carries them as well.
+/// The bounds on a requested turn cap's floor, and the compiled-in
+/// ceiling. The schema carries the ceiling too, but a bound only the
+/// schema carries is a bound a non-conforming caller ignores, so the
+/// parse carries them as well.
+///
+/// `DEFAULT_CHILD_TURNS_CEILING` is what a home that configures nothing
+/// enforces; `delegation.max_turns_ceiling` overrides it.
 pub const SUBAGENT_MIN_TURNS: usize = 1;
-pub const SUBAGENT_MAX_TURNS: usize = 50;
+pub const DEFAULT_CHILD_TURNS_CEILING: usize = 100;
 
 /// The delegation-depth cap: a subagent's own run sits at depth 1, a
 /// grandchild's at depth 2, and nothing sits deeper. Enforcement is
@@ -98,32 +111,76 @@ pub const SUBAGENT_MAX_TURNS: usize = 50;
 pub const SUBAGENT_MAX_DEPTH: usize = 2;
 
 /// The turn cap a delegated run at `depth` gets when its call did not
-/// ask for one: [`SUBAGENT_TURN_CAP`] at depth 1, halved at every level
-/// below, floored at [`SUBAGENT_TURN_CAP_FLOOR`].
+/// ask for one: `default` at depth 1, halved at every level below,
+/// floored at [`SUBAGENT_TURN_CAP_FLOOR`].
 ///
 /// The step down is the depth model's budget rule: a depth-2 chain
 /// cannot spend its parent's whole budget on one branch, and the
 /// halving is what makes that true of a chain of any length rather than
 /// of one particular depth. A depth-1 call that asks for nothing gets
-/// [`SUBAGENT_TURN_CAP`]; a depth-2 one gets half of it.
-pub fn turn_cap_for_depth(depth: usize) -> usize {
-    (SUBAGENT_TURN_CAP >> depth.saturating_sub(1)).max(SUBAGENT_TURN_CAP_FLOOR)
+/// `default`; a depth-2 one gets half of it.
+pub fn turn_cap_for_depth(depth: usize, default: usize) -> usize {
+    (default >> depth.saturating_sub(1)).max(SUBAGENT_TURN_CAP_FLOOR)
 }
 
 /// The turn cap a delegated run at `depth` is held to, whatever it
 /// asked for: the ordinary bound at depth 1 — `max-turns` still reads
-/// 1..=[`SUBAGENT_MAX_TURNS`], because a first-level delegation is the
-/// case this crate has always had — and the depth-stepped default below
-/// it.
+/// 1..=`ceiling`, because a first-level delegation is the case this
+/// crate has always had — and the depth-stepped default below it.
 ///
 /// The asymmetry is the point. Depth 1 is not tightened, because
 /// nothing about it changed; depth 2 is, because a depth-2 brief is a
 /// paraphrase of a paraphrase and its budget is the halved default
 /// rather than the full one.
-pub fn turn_ceiling(depth: usize) -> usize {
+pub fn turn_ceiling(depth: usize, default: usize, ceiling: usize) -> usize {
     match depth {
-        0 | 1 => SUBAGENT_MAX_TURNS,
-        _ => turn_cap_for_depth(depth),
+        0 | 1 => ceiling,
+        _ => turn_cap_for_depth(depth, default),
+    }
+}
+
+/// The two numbers a delegation's turn bounds resolve to, read once from
+/// the home's `delegation` section and carried together.
+///
+/// They travel as one value because they are one decision: a ceiling
+/// below the default makes the default unaskable, and a caller that
+/// passed them separately could do exactly that.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TurnCaps {
+    /// The cap an unasked child gets.
+    pub default: usize,
+    /// The most a call may ask for.
+    pub ceiling: usize,
+}
+
+impl TurnCaps {
+    /// The compiled-in pair, for a run with no home to configure it.
+    pub fn compiled() -> TurnCaps {
+        TurnCaps {
+            default: DEFAULT_CHILD_TURNS,
+            ceiling: DEFAULT_CHILD_TURNS_CEILING,
+        }
+    }
+
+    /// The pair a home configures. A run with no home gets the compiled
+    /// pair, which is the same shape every other home-read takes.
+    pub fn for_home(home: Option<&Path>) -> TurnCaps {
+        match home {
+            Some(home) => {
+                let config = crate::route::run_config(home);
+                TurnCaps {
+                    default: config.child_turns,
+                    ceiling: config.child_turns_ceiling,
+                }
+            }
+            None => TurnCaps::compiled(),
+        }
+    }
+}
+
+impl Default for TurnCaps {
+    fn default() -> TurnCaps {
+        TurnCaps::compiled()
     }
 }
 
@@ -137,8 +194,13 @@ pub fn turn_ceiling(depth: usize) -> usize {
 /// that outlived its parent's budget would spend turns on a run whose
 /// own answer is already written, so the bound is taken wherever it
 /// can be; `None` leaves the depth-stepped ceiling holding on its own.
-pub fn inherit_turn_cap(requested: usize, depth: usize, parent_remaining: Option<usize>) -> usize {
-    let bounded = requested.min(turn_ceiling(depth));
+pub fn inherit_turn_cap(
+    requested: usize,
+    depth: usize,
+    parent_remaining: Option<usize>,
+    caps: TurnCaps,
+) -> usize {
+    let bounded = requested.min(turn_ceiling(depth, caps.default, caps.ceiling));
     match parent_remaining {
         // A parent mid-call always has a turn left, but a log that
         // reads otherwise is not a reason to hand a child zero turns:
@@ -168,6 +230,7 @@ fn parent_remaining_turns(
     sessions_dir: &std::path::Path,
     parent: &str,
     depth: usize,
+    caps: TurnCaps,
 ) -> Option<usize> {
     if depth < 2 {
         return None;
@@ -181,7 +244,7 @@ fn parent_remaining_turns(
         return None;
     }
     let spent = turns_completed(&records);
-    Some(turn_cap_for_depth(depth - 1).saturating_sub(spent as usize))
+    Some(turn_cap_for_depth(depth - 1, caps.default).saturating_sub(spent as usize))
 }
 
 /// How long a goal reads in one progress line or an approval prompt.
@@ -1129,7 +1192,13 @@ pub struct SubagentRequest {
 
 impl SubagentRequest {
     /// Parse one call's arguments object.
-    pub fn parse(arguments: &serde_json::Value) -> Result<SubagentRequest, String> {
+    ///
+    /// `caps` is the pair the home resolved (`TurnCaps::for_home`): it
+    /// supplies the default when the call asks for no cap, and the
+    /// ceiling the call is refused above. Both ride the parse so the
+    /// bound is enforced, not merely declared — a bound only the schema
+    /// carries is a bound a non-conforming caller ignores.
+    pub fn parse(arguments: &serde_json::Value, caps: TurnCaps) -> Result<SubagentRequest, String> {
         // A call may name a declared node instead of carrying a goal: the
         // node's own approach is the task, which is what keeps the plan
         // document and the run from drifting. Naming a node with no goal
@@ -1176,16 +1245,17 @@ impl SubagentRequest {
             }
         };
         let max_turns = match arguments.get("max-turns") {
-            None | Some(serde_json::Value::Null) => SUBAGENT_TURN_CAP,
+            None | Some(serde_json::Value::Null) => caps.default,
             Some(value) => {
                 let asked = value.as_u64().filter(|asked| {
-                    *asked >= SUBAGENT_MIN_TURNS as u64 && *asked <= SUBAGENT_MAX_TURNS as u64
+                    *asked >= SUBAGENT_MIN_TURNS as u64 && *asked <= caps.ceiling as u64
                 });
                 match asked {
                     Some(asked) => asked as usize,
                     None => {
                         return Err(format!(
-                            "`max-turns` must be an integer between {SUBAGENT_MIN_TURNS} and {SUBAGENT_MAX_TURNS}"
+                            "`max-turns` must be an integer between {SUBAGENT_MIN_TURNS} and {}",
+                            caps.ceiling
                         ))
                     }
                 }
@@ -1842,7 +1912,26 @@ fn notice_once(progress: &mut dyn Write, line: String) {
 /// is found under the working directory's `docs/plans/`, the node moves
 /// to `Running`, and the re-dispatch ceiling is enforced by the graph
 /// itself. A node no plan carries is the named error.
-fn dispatch_node(cwd: &std::path::Path, node: &str) -> Result<(), String> {
+/// The write scope a dispatched node declares, resolved from its plan.
+///
+/// `paths` is what the node says it admits, and it is the contract its
+/// child's writes are held to (2026-11-20, the OMH borrowings plan's C3).
+/// An empty list is a node that declared nothing: the guard has nothing
+/// to hold it to and stays silent, which is the conservative reading —
+/// a node that named no scope never asked to be bounded.
+///
+/// A read-only node class is deliberately NOT modelled here: the graph
+/// carries no role or read-only field (`src/graph.rs`'s `Node` has id,
+/// cost, paths, capabilities, approach, status), so inventing one in the
+/// guard would be a second vocabulary for a fact the plan cannot state.
+/// When the plan format grows the field, `NodeScope` grows with it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NodeScope {
+    /// The paths the node admits, as the plan declared them.
+    pub paths: Vec<String>,
+}
+
+fn dispatch_node(cwd: &std::path::Path, node: &str) -> Result<NodeScope, String> {
     let plans = cwd.join("docs").join("plans");
     let Ok(entries) = std::fs::read_dir(&plans) else {
         return Err(format!(
@@ -1871,12 +1960,21 @@ fn dispatch_node(cwd: &std::path::Path, node: &str) -> Result<(), String> {
         if graph.graph.node(node).is_none() {
             continue;
         }
+        // The scope is read BEFORE the dispatch, from the same node the
+        // dispatch is about to mark running: one read, so the graph and
+        // the guard cannot disagree about what this node admitted.
+        let scope = match graph.graph.node(node) {
+            Some(declared) => NodeScope {
+                paths: declared.paths.clone(),
+            },
+            None => continue,
+        };
         graph
             .graph
             .dispatch(node)
             .map_err(|error| error.to_string())?;
         graph.save(&path).map_err(|error| error.to_string())?;
-        return Ok(());
+        return Ok(scope);
     }
     Err(format!("no plan carries the node `{node}`"))
 }
@@ -1899,6 +1997,25 @@ mod settle_tests {
         )
         .unwrap();
         root
+    }
+
+    #[test]
+    fn a_dispatch_resolves_the_nodes_declared_write_scope() {
+        // The scope the guard enforces comes from the same read that
+        // dispatches the node, so the graph and the guard cannot disagree
+        // about what the child was assigned.
+        let root = root_with_plan(
+            "scope",
+            r#"{ "id": "n-one", "cost": 1, "approach": "a", "serves": "C1",
+                 "prereqs": [], "paths": ["src/a.rs", "src/lib"], "capabilities": {} }"#,
+        );
+        let scope = dispatch_node(&root, "n-one").expect("dispatched");
+        assert_eq!(
+            scope.paths,
+            vec!["src/a.rs".to_string(), "src/lib".to_string()],
+            "the node's own declaration comes back verbatim"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -2272,9 +2389,19 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // past its re-dispatch ceiling is a named refusal — the parent
     // hears it before a child is spent on work the graph has already
     // given up on (C13).
+    // The node's declared write scope, resolved from the same read that
+    // dispatches it: the child is held to what its plan said it admits
+    // (2026-11-20). A node that declared nothing resolves to an empty
+    // scope, and the guard stays silent for it.
+    let mut node_scope: Option<crate::approvals::WriteScope> = None;
     if let Some(node_id) = &node {
-        if let Err(reason) = dispatch_node(&plan_root, node_id) {
-            return SubagentResult::refused(reason);
+        match dispatch_node(&plan_root, node_id) {
+            Ok(scope) => {
+                if !scope.paths.is_empty() {
+                    node_scope = Some(crate::approvals::WriteScope { paths: scope.paths });
+                }
+            }
+            Err(reason) => return SubagentResult::refused(reason),
         }
     }
     // The role, when the brief named one: resolved against the owner's
@@ -2367,8 +2494,14 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // model: a child cannot outspend the parent's own budget, and a
     // depth-2 brief is a paraphrase of a paraphrase with a budget to
     // match.
-    let parent_remaining = parent_remaining_turns(&sessions_dir, &parent_session, depth);
-    let max_turns = inherit_turn_cap(max_turns, depth, parent_remaining);
+    // The turn bounds as this home configures them: the default an
+    // unasked child gets and the ceiling a call is refused above. Read
+    // once here and carried as one value, because a ceiling below the
+    // default is a config that contradicts itself. A run with no home
+    // gets the compiled pair.
+    let caps = TurnCaps::for_home(Some(&run_home));
+    let parent_remaining = parent_remaining_turns(&sessions_dir, &parent_session, depth, caps);
+    let max_turns = inherit_turn_cap(max_turns, depth, parent_remaining, caps);
     // The chain, from the logs beside this one, and the label it draws.
     let chain = Chain::resolve(&sessions_dir, &parent_session, depth);
     let label = chain.label(&brief, &sessions_dir);
@@ -2623,6 +2756,10 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     };
 
     let options = AgentOptions {
+        // The node's declared write scope rides the child, so a write
+        // outside what the plan assigned it is refused while it happens
+        // rather than found by a verify node after both children ran.
+        write_scope: node_scope,
         // The child run is the capped one: its cap is the technical
         // bound the delegation branch keeps — a child that outlived
         // its parent's budget would spend turns on a run whose own
@@ -3411,30 +3548,108 @@ mod tests {
 
     #[test]
     fn the_turn_cap_default_steps_down_with_depth() {
-        assert_eq!(turn_cap_for_depth(1), SUBAGENT_TURN_CAP);
-        assert_eq!(turn_cap_for_depth(2), SUBAGENT_TURN_CAP / 2);
+        let caps = TurnCaps::compiled();
+        assert_eq!(turn_cap_for_depth(1, caps.default), caps.default);
+        assert_eq!(turn_cap_for_depth(2, caps.default), caps.default / 2);
         // The floor holds: a deep chain is starved, never silenced.
-        assert_eq!(turn_cap_for_depth(9), SUBAGENT_TURN_CAP_FLOOR);
+        assert_eq!(turn_cap_for_depth(9, caps.default), SUBAGENT_TURN_CAP_FLOOR);
         // Depth 1 keeps its own bound — a first-level delegation is the
         // case this crate has always had — and depth 2 is held to the
         // stepped-down default whatever it asked for.
-        assert_eq!(turn_ceiling(1), SUBAGENT_MAX_TURNS);
-        assert_eq!(turn_ceiling(2), SUBAGENT_TURN_CAP / 2);
+        assert_eq!(turn_ceiling(1, caps.default, caps.ceiling), caps.ceiling);
+        assert_eq!(
+            turn_ceiling(2, caps.default, caps.ceiling),
+            caps.default / 2
+        );
+        // The compiled pair is the owner's 2026-11-20 ruling: 100 both
+        // ways, so a child can finish what its parent could have.
+        assert_eq!(DEFAULT_CHILD_TURNS, 100);
+        assert_eq!(DEFAULT_CHILD_TURNS_CEILING, 100);
+        assert_eq!(caps.default, 100);
+        assert_eq!(caps.ceiling, 100);
+    }
+
+    #[test]
+    fn a_home_configures_both_child_bounds() {
+        use std::path::PathBuf;
+        let home = std::env::temp_dir().join(format!("fleet-child-caps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "delegation": { "max_turns": 120, "max_turns_ceiling": 150 } }"#,
+        )
+        .unwrap();
+        let caps = TurnCaps::for_home(Some(&home));
+        assert_eq!(caps.default, 120);
+        assert_eq!(caps.ceiling, 150);
+        // A call may now ask for 140 — above the compiled 100, which was
+        // the ceiling before this setting existed.
+        let asked =
+            SubagentRequest::parse(&serde_json::json!({ "goal": "go", "max-turns": 140 }), caps)
+                .unwrap();
+        assert_eq!(asked.max_turns, 140);
+        // Above the configured ceiling is refused by name, quoting the
+        // number the owner set rather than the compiled one.
+        let error =
+            SubagentRequest::parse(&serde_json::json!({ "goal": "go", "max-turns": 151 }), caps)
+                .unwrap_err();
+        assert!(error.contains("150"), "{error}");
+        assert!(!error.contains("100 "), "{error}");
+        // A ceiling under the default is raised to it, so the two numbers
+        // never contradict each other.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "delegation": { "max_turns": 90, "max_turns_ceiling": 40 } }"#,
+        )
+        .unwrap();
+        let corrected = TurnCaps::for_home(Some(&home));
+        assert_eq!(corrected.default, 90);
+        assert_eq!(corrected.ceiling, 90, "the ceiling rises to the default");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = PathBuf::new();
     }
 
     #[test]
     fn a_childs_cap_cannot_exceed_its_parents_remaining_turns() {
         // Enforced at construction, not asked of the model.
-        assert_eq!(inherit_turn_cap(30, 1, None), 30, "depth 1 is untouched");
-        assert_eq!(inherit_turn_cap(30, 2, None), SUBAGENT_TURN_CAP / 2);
+        let caps = TurnCaps::compiled();
+        assert_eq!(
+            inherit_turn_cap(30, 1, None, caps),
+            30,
+            "depth 1 is untouched"
+        );
+        // At depth 2 the stepped-down default holds whatever the call
+        // asked for: 30 is under it now that the default is 100, so the
+        // clamp is proven on a request that is actually above it.
+        assert_eq!(
+            inherit_turn_cap(caps.default, 2, None, caps),
+            caps.default / 2
+        );
+        assert_eq!(
+            inherit_turn_cap(30, 2, None, caps),
+            30,
+            "under the step, kept"
+        );
         // A parent with two turns left hands its child two turns.
-        assert_eq!(inherit_turn_cap(20, 2, Some(2)), 2);
+        assert_eq!(inherit_turn_cap(20, 2, Some(2), caps), 2);
         // A parent with plenty left still cannot lend more than the
-        // depth-stepped ceiling.
-        assert_eq!(inherit_turn_cap(20, 2, Some(19)), SUBAGENT_TURN_CAP / 2);
+        // depth-stepped ceiling: the step wins over the parent's own
+        // remaining turns whenever the parent has at least as many.
+        let stepped = caps.default / 2;
+        assert_eq!(
+            inherit_turn_cap(caps.default, 2, Some(stepped), caps),
+            stepped,
+            "the parent has exactly as much left as the step allows"
+        );
+        assert_eq!(
+            inherit_turn_cap(caps.default, 2, Some(caps.ceiling), caps),
+            stepped,
+            "a parent with more left still cannot exceed the step"
+        );
         // A log that reads as exhausted still hands the child one turn
         // rather than none.
-        assert_eq!(inherit_turn_cap(20, 2, Some(0)), SUBAGENT_MIN_TURNS);
+        assert_eq!(inherit_turn_cap(20, 2, Some(0), caps), SUBAGENT_MIN_TURNS);
     }
 
     #[test]
@@ -3458,29 +3673,37 @@ mod tests {
 
     #[test]
     fn a_goal_is_required_and_must_say_something() {
+        let caps = TurnCaps::compiled();
         for missing in [
             serde_json::json!({}),
             serde_json::json!({ "goal": "" }),
             serde_json::json!({ "goal": "   " }),
             serde_json::json!({ "goal": 7 }),
         ] {
-            let error = SubagentRequest::parse(&missing).unwrap_err();
+            let error = SubagentRequest::parse(&missing, caps).unwrap_err();
             assert!(error.contains("goal"), "{error}");
         }
     }
 
     #[test]
     fn the_turn_cap_defaults_and_is_bounded_both_ways() {
-        let asked = SubagentRequest::parse(&serde_json::json!({ "goal": "go" })).unwrap();
-        assert_eq!(asked.max_turns, SUBAGENT_TURN_CAP);
+        let caps = TurnCaps::compiled();
+        let asked = SubagentRequest::parse(&serde_json::json!({ "goal": "go" }), caps).unwrap();
+        assert_eq!(asked.max_turns, caps.default);
         let capped =
-            SubagentRequest::parse(&serde_json::json!({ "goal": "go", "max-turns": 7 })).unwrap();
+            SubagentRequest::parse(&serde_json::json!({ "goal": "go", "max-turns": 7 }), caps)
+                .unwrap();
         assert_eq!(capped.max_turns, 7);
-        for out_of_range in [0, 51, 1_000] {
-            let error = SubagentRequest::parse(&serde_json::json!({
-                "goal": "go",
-                "max-turns": out_of_range,
-            }))
+        // Above the compiled ceiling, not above the retired 50: the
+        // bound this refuses is the one the setting resolves.
+        for out_of_range in [0, (caps.ceiling + 1) as u64, 1_000] {
+            let error = SubagentRequest::parse(
+                &serde_json::json!({
+                    "goal": "go",
+                    "max-turns": out_of_range,
+                }),
+                caps,
+            )
             .unwrap_err();
             assert!(error.contains("max-turns"), "{error}");
         }
@@ -3488,6 +3711,7 @@ mod tests {
 
     #[test]
     fn an_inadmissible_tool_is_refused_by_name() {
+        let caps = TurnCaps::compiled();
         // The durable-write tools are never admissible: a child that
         // could write the memory corpus or retire a fact from it would
         // be a second writer of state the parent owns.
@@ -3496,10 +3720,13 @@ mod tests {
             tools::SUPERSEDE_TOOL,
             tools::IMPROVE_TOOL,
         ] {
-            let error = SubagentRequest::parse(&serde_json::json!({
-                "goal": "go",
-                "tools": ["bash", name],
-            }))
+            let error = SubagentRequest::parse(
+                &serde_json::json!({
+                    "goal": "go",
+                    "tools": ["bash", name],
+                }),
+                caps,
+            )
             .unwrap_err();
             assert!(error.contains(name), "{error}");
             assert!(error.contains("not admissible"), "{error}");
@@ -3507,30 +3734,40 @@ mod tests {
         // `subagent` IS admissible — the cap is two, and naming it opens a
         // second level — so the refusal that meets a depth-2 call is the
         // scope's, not the parse's.
-        let declared = SubagentRequest::parse(&serde_json::json!({
-            "goal": "go",
-            "tools": ["bash", tools::SUBAGENT_TOOL],
-        }))
+        let declared = SubagentRequest::parse(
+            &serde_json::json!({
+                "goal": "go",
+                "tools": ["bash", tools::SUBAGENT_TOOL],
+            }),
+            caps,
+        )
         .unwrap();
         assert!(declared
             .tools
             .unwrap()
             .contains(&tools::SUBAGENT_TOOL.to_string()));
         // A lane tool is refused the same way, by its namespaced name.
-        let error = SubagentRequest::parse(&serde_json::json!({
-            "goal": "go",
-            "tools": ["mcp__sem1__probe"],
-        }))
+        let error = SubagentRequest::parse(
+            &serde_json::json!({
+                "goal": "go",
+                "tools": ["mcp__sem1__probe"],
+            }),
+            caps,
+        )
         .unwrap_err();
         assert!(error.contains("mcp__sem1__probe"), "{error}");
     }
 
     #[test]
     fn a_repeated_tool_narrows_nothing_twice() {
-        let request = SubagentRequest::parse(&serde_json::json!({
-            "goal": "go",
-            "tools": ["bash", "bash", "read_file"],
-        }))
+        let caps = TurnCaps::compiled();
+        let request = SubagentRequest::parse(
+            &serde_json::json!({
+                "goal": "go",
+                "tools": ["bash", "bash", "read_file"],
+            }),
+            caps,
+        )
         .unwrap();
         let scope = Scope::child(request.tools.clone(), 1);
         assert_eq!(
@@ -3925,8 +4162,9 @@ mod tests {
 
     #[test]
     fn a_call_without_the_new_parts_composes_todays_message() {
-        let asked =
-            SubagentRequest::parse(&serde_json::json!({ "goal": "count the files" })).unwrap();
+        let caps = TurnCaps::compiled();
+        let asked = SubagentRequest::parse(&serde_json::json!({ "goal": "count the files" }), caps)
+            .unwrap();
         assert_eq!(asked.goal, "count the files");
         assert_eq!(asked.task, "count the files");
         assert_eq!(asked.approach, None);
@@ -3937,14 +4175,18 @@ mod tests {
 
     #[test]
     fn the_three_optional_parts_compose_into_the_childs_first_message() {
-        let asked = SubagentRequest::parse(&serde_json::json!({
-            "goal": "count the files",
-            "context": "the sessions live in ~/.fleet/sessions",
-            "output": "a number",
-            "approach": "use list_dir once",
-            "role": "reviewer",
-            "tools": ["bash"],
-        }))
+        let caps = TurnCaps::compiled();
+        let asked = SubagentRequest::parse(
+            &serde_json::json!({
+                "goal": "count the files",
+                "context": "the sessions live in ~/.fleet/sessions",
+                "output": "a number",
+                "approach": "use list_dir once",
+                "role": "reviewer",
+                "tools": ["bash"],
+            }),
+            caps,
+        )
         .unwrap();
         // The goal the caller composes is the child's first message, and
         // the task rides beside it for the row, the label, and the delta.
@@ -3965,14 +4207,16 @@ mod tests {
 
     #[test]
     fn a_part_that_is_not_a_string_is_a_typed_refusal() {
+        let caps = TurnCaps::compiled();
         for key in ["context", "output", "approach", "role"] {
-            let error =
-                SubagentRequest::parse(&serde_json::json!({ "goal": "go", key: 7 })).unwrap_err();
+            let error = SubagentRequest::parse(&serde_json::json!({ "goal": "go", key: 7 }), caps)
+                .unwrap_err();
             assert!(error.contains(key), "{error}");
         }
         // An empty part reads as no part: nothing was said.
         let asked =
-            SubagentRequest::parse(&serde_json::json!({ "goal": "go", "context": "   " })).unwrap();
+            SubagentRequest::parse(&serde_json::json!({ "goal": "go", "context": "   " }), caps)
+                .unwrap();
         assert_eq!(asked.context, None);
     }
 
@@ -3981,19 +4225,25 @@ mod tests {
         // A silent default is the one thing the role argument must never
         // be, so a value that names no role file is refused rather than
         // narrowed to whatever a loader would make of it.
+        let caps = TurnCaps::compiled();
         for role in ["../etc/passwd", "roles/reviewer", "a\\b"] {
-            let error = SubagentRequest::parse(&serde_json::json!({ "goal": "go", "role": role }))
-                .unwrap_err();
+            let error =
+                SubagentRequest::parse(&serde_json::json!({ "goal": "go", "role": role }), caps)
+                    .unwrap_err();
             assert!(error.contains("role"), "{error}");
         }
     }
 
     #[test]
     fn the_delegation_tool_is_declarable_now_that_the_cap_is_two() {
-        let asked = SubagentRequest::parse(&serde_json::json!({
-            "goal": "delegate onward",
-            "tools": ["bash", "subagent"],
-        }))
+        let caps = TurnCaps::compiled();
+        let asked = SubagentRequest::parse(
+            &serde_json::json!({
+                "goal": "delegate onward",
+                "tools": ["bash", "subagent"],
+            }),
+            caps,
+        )
         .unwrap();
         assert_eq!(
             asked.tools,
@@ -4121,6 +4371,7 @@ mod tests {
 
     #[test]
     fn the_parents_remaining_turns_are_read_off_its_own_log() {
+        let caps = TurnCaps::compiled();
         let dir = std::env::temp_dir().join(format!("fleet-turns-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         write_log(
@@ -4134,14 +4385,14 @@ mod tests {
         // A delegated parent that has spent three of its turns: the
         // depth-stepped default at its own depth, less those.
         assert_eq!(
-            parent_remaining_turns(&dir, "child-1", 2),
-            Some(turn_cap_for_depth(1) - 3)
+            parent_remaining_turns(&dir, "child-1", 2, caps),
+            Some(turn_cap_for_depth(1, caps.default) - 3)
         );
         // An ordinary parent's cap is its own run's business.
         write_log(&dir, "root-1", None, None, "ship the slice", 9);
-        assert_eq!(parent_remaining_turns(&dir, "root-1", 2), None);
+        assert_eq!(parent_remaining_turns(&dir, "root-1", 2, caps), None);
         // A depth-1 child has no delegated parent to read.
-        assert_eq!(parent_remaining_turns(&dir, "child-1", 1), None);
+        assert_eq!(parent_remaining_turns(&dir, "child-1", 1, caps), None);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -4804,9 +5055,13 @@ console.log(JSON.stringify({
     /// plan document cannot drift.
     #[test]
     fn a_call_may_name_a_declared_node_instead_of_a_goal() {
-        let with_node = SubagentRequest::parse(&serde_json::json!({
-            "node": "build-parser"
-        }))
+        let caps = TurnCaps::compiled();
+        let with_node = SubagentRequest::parse(
+            &serde_json::json!({
+                "node": "build-parser"
+            }),
+            caps,
+        )
         .expect("a node stands in for a goal");
         assert_eq!(with_node.node.as_deref(), Some("build-parser"));
         assert_eq!(
@@ -4815,22 +5070,25 @@ console.log(JSON.stringify({
         );
 
         // A goal still wins when both are given, and the node rides along.
-        let both = SubagentRequest::parse(&serde_json::json!({
-            "goal": "wire the parser into the CLI",
-            "node": "build-parser"
-        }))
+        let both = SubagentRequest::parse(
+            &serde_json::json!({
+                "goal": "wire the parser into the CLI",
+                "node": "build-parser"
+            }),
+            caps,
+        )
         .unwrap();
         assert_eq!(both.task, "wire the parser into the CLI");
         assert_eq!(both.node.as_deref(), Some("build-parser"));
 
         // Neither is a refusal that names both channels.
-        let neither = SubagentRequest::parse(&serde_json::json!({})).unwrap_err();
+        let neither = SubagentRequest::parse(&serde_json::json!({}), caps).unwrap_err();
         assert!(
             neither.contains("`goal`") && neither.contains("`node`"),
             "{neither}"
         );
         // An empty node is an absent node, not a goal of "".
-        let blank = SubagentRequest::parse(&serde_json::json!({"node": "   "})).unwrap_err();
+        let blank = SubagentRequest::parse(&serde_json::json!({"node": "   "}), caps).unwrap_err();
         assert!(blank.contains("`goal`"), "{blank}");
     }
 

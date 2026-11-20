@@ -77,8 +77,13 @@ ordinary `Session`:
   tool whose every call fails is not a tool);
 - the **goal as its first and only user message**;
 - the **scoped declarations**;
-- the **child's turn cap** (`SUBAGENT_TURN_CAP` = 20 by default, 1..=50
-  when asked).
+- the **child's turn cap**: `DEFAULT_CHILD_TURNS` = 100 by default and
+  1..=`DEFAULT_CHILD_TURNS_CEILING` = 100 when asked. Both numbers are
+  configurable per home — `delegation.max_turns` and
+  `delegation.max_turns_ceiling` in `config.json` — so raising the default or
+  letting a call ask for more is a settings change rather than a rebuild. A
+  depth-2 child gets half the default, floored at five turns, and neither
+  number can be lowered past that floor.
 
 The child's `start` record, verbatim from a real run:
 
@@ -151,6 +156,38 @@ call takes: the owner sees a subagent reach for something it was not
 given, and the harness refuses it. That also keeps the screening row the
 calibration stream carries as the gate's own verdict, rather than a
 second kind of verdict invented for the scope.
+
+### The write scope
+
+A child bound to a plan node is also held to the **files** that node
+declared. `dispatch_node` reads the node's `paths` from the same graph
+read that dispatches it, and the child carries them as a
+`WriteScope`; a `write_file`, `edit`, or `apply_patch` whose target falls
+outside that list is refused **before the approval gate is asked**, because
+it is not a choice the owner should be offered:
+
+```
+blocked: `src/b.rs` is outside this node's declared write scope (src/a.rs). Another node of the
+plan owns the files outside it, and two children writing one file overwrite each other. Do not
+retry this write and do not route it through the shell: finish what your scope covers and name
+the file you could not change in your final report, so the parent can repair or extend the plan.
+```
+
+Three properties hold it together. An entry naming a directory covers
+everything under it, whether or not that directory exists yet; an entry
+holding `*` or `?` is matched as a glob over the root-relative path, with
+`*` crossing `/` exactly as the delegation scope's own matcher does. A node
+that declared **no** paths declared nothing to hold it to, so the guard
+stays silent — and a run with no node bound carries no scope at all, which
+is why every ordinary run is byte-identical to the one it always had. The
+guard also fails open on a target it cannot resolve: a write it cannot
+judge is the path layer's refusal to make, not this one's.
+
+Before 2026-11-20 the declared paths were enforced only as a **dispatch
+lock**: `Graph::dispatch` refuses to start a node while a running sibling
+holds one of its paths, and nothing looked at what the running child
+actually wrote. A child that rewrote a sibling's file was found, if at all,
+by a verify node after both had finished.
 
 ## Depth
 

@@ -664,6 +664,344 @@ pub fn allowlistable(call: &ToolCall) -> bool {
     !asks_regardless(call) && !Gate::is_destructive(call)
 }
 
+// --- the declared write scope ------------------------------------------------
+
+/// One node's declared write scope, as the guard reads it.
+///
+/// The plan-tied graph records what a node admits (`src/graph.rs`'s
+/// `Node::paths`), and until 2026-11-20 that list was enforced only as a
+/// dispatch lock between concurrent siblings — `Graph::dispatch` refuses
+/// to start a node while a running sibling holds one of its paths, and
+/// nothing looked at what the running child actually wrote. This is the
+/// other half: a write whose target is outside the declaration is refused
+/// while it is being attempted, rather than discovered by a verify node
+/// after both children have finished.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteScope {
+    /// The paths the node admits, as its plan declared them. Empty is a
+    /// node that declared nothing, and the guard stays silent for it.
+    pub paths: Vec<String>,
+}
+
+impl WriteScope {
+    /// Whether a scope holds anything worth enforcing.
+    pub fn is_unbounded(&self) -> bool {
+        self.paths.is_empty()
+    }
+
+    /// Whether a resolved target is inside the declaration.
+    ///
+    /// Compared literally first — an entry naming the file itself, or a
+    /// directory the target sits under (whether or not that directory
+    /// exists yet). An entry holding `*` or `?` is also tried as a glob
+    /// over the root-relative path, with `*` crossing `/` as it does in
+    /// the delegation ledger's own scope matcher; brackets stay literal,
+    /// so `app/[slug]/page.tsx` covers itself and not `app/s/page.tsx`.
+    pub fn admits(&self, target: &std::path::Path, root: &std::path::Path) -> bool {
+        // The target arrives from `resolve_write_in_root`, which
+        // canonicalizes — and on macOS `/var` is a symlink to
+        // `/private/var`, so an uncanonicalized root here compares two
+        // spellings of one directory and refuses everything. The root is
+        // canonicalized once, the same way the resolver did.
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let root = canonical.as_path();
+        let relative = target
+            .strip_prefix(root)
+            .unwrap_or(target)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for entry in &self.paths {
+            let entry = entry.trim().trim_start_matches("./");
+            if entry.is_empty() {
+                continue;
+            }
+            // A glob entry is matched as a glob and never literally: the
+            // literal `starts_with` below would otherwise read `src/*.rs`
+            // as a directory named `*.rs` and cover the wrong tree.
+            if entry.contains('*') || entry.contains('?') {
+                if glob_match(entry, &relative) {
+                    return true;
+                }
+                continue;
+            }
+            // Literal: the file itself, or a directory the target sits
+            // under. The directory test does not require the directory to
+            // exist yet — a scope naming a directory a first write is
+            // about to create still covers that write.
+            let literal = root.join(entry);
+            if target == literal || target.starts_with(&literal) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// A tiny glob matcher: `*` matches any run of characters including `/`,
+/// `?` matches one, everything else is literal. Deliberately not a crate:
+/// the grammar is this small and a dependency would outweigh it.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    fn walk(pattern: &[char], text: &[char]) -> bool {
+        match pattern.split_first() {
+            None => text.is_empty(),
+            Some(('*', rest)) => (0..=text.len()).any(|skip| walk(rest, &text[skip..])),
+            Some(('?', rest)) => !text.is_empty() && walk(rest, &text[1..]),
+            Some((next, rest)) => {
+                text.first().is_some_and(|head| head == next) && walk(rest, &text[1..])
+            }
+        }
+    }
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    walk(&pattern, &text)
+}
+
+/// The write targets one tool call names, or empty for a call that writes
+/// nothing.
+///
+/// Read here rather than at each tool so the guard and the tool cannot
+/// disagree about what a call would touch: `write_file` and `edit` name
+/// one `path`, and `apply_patch` names one per section. A shell command is
+/// deliberately absent — the guard does not try to read a command line,
+/// the same line the delegation ledger's matcher draws.
+pub fn write_targets(call: &ToolCall) -> Vec<String> {
+    let name = crate::approvals::unlabel(call);
+    let arguments = match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+        Ok(arguments) => arguments,
+        Err(_) => return Vec::new(),
+    };
+    match crate::tools::Tool::from_name(&name.function.name) {
+        Some(crate::tools::Tool::WriteFile) | Some(crate::tools::Tool::Edit) => arguments
+            .get("path")
+            .and_then(|path| path.as_str())
+            .map(|path| vec![path.to_string()])
+            .unwrap_or_default(),
+        Some(crate::tools::Tool::ApplyPatch) => {
+            let Some(patch) = arguments.get("patch").and_then(|patch| patch.as_str()) else {
+                return Vec::new();
+            };
+            match crate::apply_patch::parse(patch) {
+                Ok(parsed) => parsed
+                    .changes
+                    .iter()
+                    .map(|change| match change {
+                        crate::apply_patch::Change::Add { path, .. }
+                        | crate::apply_patch::Change::Update { path, .. }
+                        | crate::apply_patch::Change::Delete { path } => path.clone(),
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Whether this process has already said that the scope guard could not
+/// resolve a target. One line, then silence: the write was allowed and
+/// the owner can see the first one.
+static UNRESOLVABLE_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Say once that the scope guard could not judge a target.
+fn warn_unresolvable_once(reason: &str) {
+    if UNRESOLVABLE_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    eprintln!(
+        "fleet: the write scope could not resolve a target ({reason}); that write was allowed, \
+         and further unresolved targets will not be reported"
+    );
+}
+
+/// The refusal a write outside its node's declaration reads, or `None`
+/// when the call is inside it (or touches nothing, or the node declared
+/// no scope).
+///
+/// The message is written as an instruction rather than an error: it names
+/// the file, the declared scope, and the escape hatch, and it closes the
+/// obvious workaround in the same sentence. A refusal that a model can
+/// rationalize around is a refusal that costs a turn and teaches nothing.
+pub fn scope_refusal(
+    call: &ToolCall,
+    scope: &WriteScope,
+    root: &std::path::Path,
+) -> Option<String> {
+    if scope.is_unbounded() {
+        return None;
+    }
+    for asked in write_targets(call) {
+        let target = match crate::tools::resolve_write_in_root(root, &asked) {
+            Ok(target) => target,
+            // An unresolvable target is the path layer's refusal, not this
+            // guard's: it fails open and the tool gives its own answer.
+            // Said once per process rather than once per call — a guard
+            // that wedges a run over its own blind spot is worse than the
+            // write it missed, and a line per call would be worse than
+            // both.
+            Err(reason) => {
+                warn_unresolvable_once(&reason);
+                continue;
+            }
+        };
+        if scope.admits(&target, root) {
+            continue;
+        }
+        return Some(format!(
+            "blocked: `{asked}` is outside this node's declared write scope ({}). Another node of \
+             the plan owns the files outside it, and two children writing one file overwrite each \
+             other. Do not retry this write and do not route it through the shell: finish what your \
+             scope covers and name the file you could not change in your final report, so the parent \
+             can repair or extend the plan.",
+            scope.paths.join(", ")
+        ));
+    }
+    None
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    use crate::api::{FunctionCall, ToolCall};
+
+    fn call(name: &str, arguments: &str) -> ToolCall {
+        ToolCall {
+            id: "c1".to_string(),
+            kind: "function".to_string(),
+            function: FunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        }
+    }
+
+    fn root(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("fleet-scope-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.rs"), "// a\n").unwrap();
+        std::fs::write(root.join("src/b.rs"), "// b\n").unwrap();
+        root
+    }
+
+    #[test]
+    fn a_write_outside_the_declared_scope_is_refused_by_name() {
+        let root = root("outside");
+        let scope = WriteScope {
+            paths: vec!["src/a.rs".to_string()],
+        };
+        let inside = call("write_file", r#"{"path":"src/a.rs","text":"x"}"#);
+        assert_eq!(
+            scope_refusal(&inside, &scope, &root),
+            None,
+            "a write inside the declaration passes"
+        );
+        let outside = call("write_file", r#"{"path":"src/b.rs","text":"x"}"#);
+        let refusal = scope_refusal(&outside, &scope, &root).expect("refused");
+        assert!(refusal.contains("src/b.rs"), "{refusal}");
+        assert!(refusal.contains("src/a.rs"), "names the scope: {refusal}");
+        assert!(
+            refusal.contains("Do not retry this write and do not route it through the shell"),
+            "closes the workaround: {refusal}"
+        );
+        assert!(
+            refusal.contains("final report"),
+            "names the escape hatch: {refusal}"
+        );
+        // The refused file is untouched on disk.
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/b.rs")).unwrap(),
+            "// b\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_directory_entry_covers_everything_under_it() {
+        let root = root("dir");
+        let scope = WriteScope {
+            paths: vec!["src".to_string()],
+        };
+        for path in ["src/a.rs", "src/b.rs", "src/deep/new.rs"] {
+            let target = call("write_file", &format!(r#"{{"path":"{path}","text":"x"}}"#));
+            assert_eq!(
+                scope_refusal(&target, &scope, &root),
+                None,
+                "{path} sits under the declared directory"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_glob_entry_matches_the_relative_path() {
+        let root = root("glob");
+        let scope = WriteScope {
+            paths: vec!["src/*.rs".to_string()],
+        };
+        let hit = call("write_file", r#"{"path":"src/b.rs","text":"x"}"#);
+        assert_eq!(
+            scope_refusal(&hit, &scope, &root),
+            None,
+            "the glob covers it"
+        );
+        // `*` crosses `/`, as the delegation ledger's own scope matcher
+        // does, so a nested file under the prefix is covered too.
+        let nested = call("write_file", r#"{"path":"src/deep/b.rs","text":"x"}"#);
+        assert_eq!(
+            scope_refusal(&nested, &scope, &root),
+            None,
+            "`*` crossing `/` keeps a nested file inside the prefix"
+        );
+        // What it does not cover is anything outside the prefix.
+        std::fs::create_dir_all(root.join("other")).unwrap();
+        let outside = call("write_file", r#"{"path":"other/b.rs","text":"x"}"#);
+        assert!(
+            scope_refusal(&outside, &scope, &root).is_some(),
+            "another directory is outside the declaration"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_unbounded_scope_and_a_non_writing_call_both_pass() {
+        let root = root("unbounded");
+        let unbounded = WriteScope { paths: Vec::new() };
+        let write = call("write_file", r#"{"path":"src/b.rs","text":"x"}"#);
+        assert_eq!(
+            scope_refusal(&write, &unbounded, &root),
+            None,
+            "a node that declared nothing is held to nothing"
+        );
+        let bounded = WriteScope {
+            paths: vec!["src/a.rs".to_string()],
+        };
+        for name in ["read_file", "bash", "grep", "glob", "list_dir"] {
+            let other = call(name, r#"{"path":"src/b.rs","command":"touch src/b.rs"}"#);
+            assert_eq!(
+                scope_refusal(&other, &bounded, &root),
+                None,
+                "{name} writes nothing this guard judges"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn apply_patch_is_judged_on_every_section() {
+        let root = root("patch");
+        let scope = WriteScope {
+            paths: vec!["src/a.rs".to_string()],
+        };
+        let patch = "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-// a\n+// a2\n*** Update File: src/b.rs\n@@\n-// b\n+// b2\n*** End Patch";
+        let arguments = serde_json::json!({ "patch": patch }).to_string();
+        let refusal = scope_refusal(&call("apply_patch", &arguments), &scope, &root)
+            .expect("a patch touching an unowned file is refused");
+        assert!(refusal.contains("src/b.rs"), "{refusal}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
