@@ -84,10 +84,22 @@ Pass 2 landed: **four more duplicate guards are gone** — `explain/tests`,
 `ENV_LOCK` and one `EnvVar`, both in `testsupport`; a scan for
 `static ENV_LOCK` returns only that module.
 
-Remaining: the bulk — `layerfs_tools` 10, `gui/server` 9, `armada/deploy` 8,
-`tools` 5, `layerfs_view` 5, `footprint_history` 5, `subagents` 4, and the
-rest of the 85 — most of which set variables for a *behaviour* rather than
-for a guard. The guard in AC2
+Remaining: the bulk. Surveyed properly before starting it, and the split is
+not what the first count suggested — whole-file test modules (`delegate/tests`,
+`judge/tests`, `testsupport`) carry no `#[cfg(test)]` marker inside them, so a
+naive scan reads them as production:
+
+- **~80 test sites** — `layerfs_tools` 9, `gui/server` 9, `armada/deploy` 7,
+  `tools` 5, `footprint_history` 5, `armada/join` 4, `gui/bridge` 4,
+  `subagents` 4, `judge` 3, `gui/mod` 3, `identity` 2, and others.
+- **5 production sites**, and only two are legitimate: `main.rs:36` loads the
+  `.env` once at startup; `shellpath.rs:118` is the documented PATH merge.
+  The other three are **KI-582**, logged: `layerfs_view::history()` writes the
+  machine environment into the process per call, which in the async face races
+  between concurrently opened projects.
+
+That last finding is why the survey was worth doing: the migration would have
+walked past it, because a production site is not a test-isolation problem. The guard in AC2
 lands **after** the bulk, per the ruling, so it never needs an 85-entry
 exemption list.
 
