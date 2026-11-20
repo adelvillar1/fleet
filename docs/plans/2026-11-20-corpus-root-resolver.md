@@ -16,9 +16,17 @@ waiting to happen a third time.
 ## Context
 
 - The rule, as fixed: resolve `FLEET_HOME`'s `memories/` first when it
-  exists, the cwd walk second (the repo's own corpus in development).
-- Two call sites implement it: `src/main.rs`'s `drive` and
-  `src/cron.rs`'s `execute`.
+  exists **and holds facts**, the cwd walk second (the repo's own corpus
+  in development).
+- **Status pass, 2026-11-20 (verified in the tree):** the resolver is
+  already one function with a testable seam —
+  `memory::resolve_root(cwd)` reads the home itself and delegates to
+  `memory::resolve_root_from(cwd, home)` (`src/memory.rs:957-1000`),
+  which holds the home-first rule and the `holds_facts` scaffold guard.
+  Both callers use it: `main.rs`'s `drive` (`src/main.rs:481`) and
+  `cron::execute` (`src/cron.rs:1681`). KI-074 and KI-087 are closed by
+  it. So the first two steps below are already true; this plan's
+  remaining work is the guard and the wiring test.
 - The corpus is load-bearing: 965 fact files, 964 indexed at this
   session's measurement.
 - The failure has a real blast radius: a scheduled run outside any

@@ -77,9 +77,15 @@ naming a family. The same four shapes keep returning:
    post-mortem says it "never fired because its fixture carried a long
    provider with a four-character shape": the guard tests fixtures, not
    the card builders' shape.
-2. **A corpus root resolved by two rules** — KI-074 then KI-087, whose
+**2. A corpus root resolved by two rules** — KI-074 then KI-087, whose
    fix note says the cron path "inherits the rule by construction (it
-   is a deliberate mirror of `drive`)". Two mirrors of one rule.
+   is a deliberate mirror of `drive`)". *(Corrected the same day, on
+   reading the code: the resolver is already one function —
+   `memory::resolve_root_from` holds the home-first rule with its
+   `holds_facts` guard, and both `drive` and `cron::execute` call it.
+   The "mirror" is of call sites, not of the rule. What remains is a
+   guard that keeps a third resolver from appearing — see
+   `docs/plans/2026-11-20-corpus-root-resolver.md`.)*
 3. **Controls that look live and do nothing** — KI-442/556/563 and the
    settings-card sweep (27 cards, 40 presses, five silent ones). Each
    fixed on its own surface.

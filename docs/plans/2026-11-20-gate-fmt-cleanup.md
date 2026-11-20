@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-20
 updated: 2026-11-20
 slug: gate-fmt-cleanup
@@ -64,10 +64,12 @@ not take.
       that the commit touches formatting only.)
 - [x] The commit is `src/`-only — no test, doc, or dependency change
       rides it.
-- [ ] `cargo clippy --all-targets -- -D warnings` and `cargo test` green
-      on the same tree. Clippy is green at the parent + in-flight tree
-      (measured this session); the four-leg evidence for `35e4612` is the
-      release cut's own gate run, in flight at this status pass.
+- [x] `cargo clippy --all-targets -- -D warnings` and `cargo test` green
+      on the same tree. Clippy was measured green this session; the
+      four-leg evidence for `35e4612` is the v0.8.22 cut itself — the tag
+      points at `35e4612` and `scripts/release.sh` refuses to tag on any
+      failing leg (it runs `cargo test` at `:227` and `cargo build
+      --release` at `:337`, each `exit 1` on failure).
 - [x] KI-571 is closed in `docs/known-issues.md`, naming `7d5cd8e` and the
       0-hunk re-measurement (ledger now reads 576 rows, 4 open).
 
