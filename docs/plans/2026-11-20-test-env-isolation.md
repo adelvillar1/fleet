@@ -25,6 +25,24 @@ isolation; the fixes are per-test.
 - The suite runs ~2,450 tests, most under default parallelism; the flake
   cost is a full-suite run to discover one test's isolation bug.
 
+## Status pass, 2026-11-20
+
+Two instances landed the same day this plan was written, both red in a
+full `cargo test` and green in isolation:
+
+- **KI-578** — three `armada::join` tests inherited the machine's git
+  default branch; fixed by pinning each bare repo's HEAD and asserting
+  every git exit status.
+- **KI-579** — `route::tests::an_exhausted_walk_names_each_cause_and_its_repair`
+  read the process env through `resolve`'s key fallback; fixed by naming
+  a variable nothing sets, with the roster's documented mapping pinned
+  by a pure assertion.
+
+Both fixes are per-test. The general guard this plan describes (a
+crate-wide serialization primitive for env- and cwd-sensitive tests,
+with the census as the list of what must take it) is still open, and
+these two rows are its evidence.
+
 ## Approach
 
 1. One support module behind `#[cfg(test)]` — the crate's existing test

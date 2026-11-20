@@ -575,13 +575,20 @@ mod tests {
         let seed = home.join("seed");
         std::fs::create_dir_all(&seed).unwrap();
         let run = |args: &[&str], cwd: &Path| {
-            std::process::Command::new("git")
+            let out = std::process::Command::new("git")
                 .args(args)
                 .current_dir(cwd)
                 .output()
-                .expect("git runs")
+                .expect("git runs");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed in {}: {}",
+                cwd.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         run(&["init", "--bare", "-q", remote.to_str().unwrap()], &home);
+        run(&["symbolic-ref", "HEAD", "refs/heads/master"], &remote);
         run(&["init", "-q"], &seed);
         std::fs::write(seed.join("a-fact.md"), "---\nname: a-fact\n---\n\nx\n").unwrap();
         run(&["add", "."], &seed);
@@ -645,13 +652,20 @@ mod tests {
             std::fs::create_dir_all(&work).unwrap();
             let bare = home.join(format!("{name}.git"));
             let run = |args: &[&str], cwd: &Path| {
-                std::process::Command::new("git")
+                let out = std::process::Command::new("git")
                     .args(args)
                     .current_dir(cwd)
                     .output()
-                    .expect("git runs")
+                    .expect("git runs");
+                assert!(
+                    out.status.success(),
+                    "git {args:?} failed in {}: {}",
+                    cwd.display(),
+                    String::from_utf8_lossy(&out.stderr)
+                );
             };
             run(&["init", "--bare", "-q", bare.to_str().unwrap()], &home);
+            run(&["symbolic-ref", "HEAD", "refs/heads/master"], &bare);
             run(&["init", "-q"], &work);
             std::fs::write(work.join(file), body).unwrap();
             run(&["add", "."], &work);
@@ -682,16 +696,23 @@ mod tests {
         .unwrap();
         let skills_bare = home.join("skills.git");
         let run = |args: &[&str], cwd: &Path| {
-            std::process::Command::new("git")
+            let out = std::process::Command::new("git")
                 .args(args)
                 .current_dir(cwd)
                 .output()
-                .expect("git runs")
+                .expect("git runs");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed in {}: {}",
+                cwd.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         run(
             &["init", "--bare", "-q", skills_bare.to_str().unwrap()],
             &home,
         );
+        run(&["symbolic-ref", "HEAD", "refs/heads/master"], &skills_bare);
         run(&["init", "-q"], &skills_work);
         run(&["add", "."], &skills_work);
         run(
@@ -772,19 +793,38 @@ mod tests {
     }
 
     /// A bare repo holding one mcp.json, ready to clone.
+    ///
+    /// KI-578: this helper ignored every git exit status, so a bare repo
+    /// whose HEAD named a branch the push never wrote produced an empty
+    /// clone and the test reported "carries no mcp.json" instead of the
+    /// git error. It also inherited the ambient default branch: `git
+    /// init` on this machine names `main`, the push wrote `master`, and
+    /// the clone checked out a HEAD that did not exist. The HEAD is now
+    /// set to the branch the push writes, and each call names its own
+    /// failure.
     fn registry_remote(root: &Path, name: &str, body: &str) -> PathBuf {
         let work = root.join(format!("{name}-work"));
         let bare = root.join(format!("{name}.git"));
         std::fs::create_dir_all(&work).unwrap();
         std::fs::write(work.join("mcp.json"), body).unwrap();
         let run = |args: &[&str], cwd: &Path| {
-            std::process::Command::new("git")
+            let out = std::process::Command::new("git")
                 .args(args)
                 .current_dir(cwd)
                 .output()
-                .expect("git runs")
+                .expect("git runs");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed in {}: {}",
+                cwd.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         run(&["init", "--bare", "-q", bare.to_str().unwrap()], root);
+        // The bare repo's HEAD is what a clone checks out. Set it to the
+        // branch the push writes rather than inheriting the machine's
+        // default branch name.
+        run(&["symbolic-ref", "HEAD", "refs/heads/master"], &bare);
         run(&["init", "-q"], &work);
         run(&["add", "."], &work);
         run(
@@ -881,11 +921,17 @@ mod tests {
         std::fs::remove_file(work.join("mcp.json")).unwrap();
         std::fs::write(work.join("README.md"), "not a registry").unwrap();
         let run = |args: &[&str], cwd: &Path| {
-            std::process::Command::new("git")
+            let out = std::process::Command::new("git")
                 .args(args)
                 .current_dir(cwd)
                 .output()
-                .expect("git runs")
+                .expect("git runs");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed in {}: {}",
+                cwd.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         run(&["add", "-A"], &work);
         run(

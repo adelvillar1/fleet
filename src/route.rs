@@ -5984,10 +5984,18 @@ mod tests {
             .find(|c| c.id == "deepseek")
             .unwrap();
         candidate.key_required = true;
+        // KI-579: `resolve` falls back to the process environment, and a
+        // sibling test elsewhere in this binary can set a provider key on
+        // the shared env mid-run — this test was red only in a full
+        // `cargo test` and green when run alone. Its point is "a required
+        // key is absent", not "deepseek's documented variable happens to
+        // be empty in this process", so it names a variable nothing sets
+        // and is deterministic under any test order.
+        candidate.key_env = "FLEET_TEST_KEY_NOT_SET".to_string();
         let resolved = resolve(std::slice::from_ref(&candidate), &HashMap::new());
         assert!(
             resolved[0].key.is_none(),
-            "the test home carries no deepseek key"
+            "a required key is absent, so the walk must name it"
         );
         let decision = RouteDecision {
             provider: "deepseek".to_string(),
@@ -6017,9 +6025,23 @@ mod tests {
             text.contains("no usable roster candidate remained"),
             "the exhaustion still names itself: {text}"
         );
+        // The repair renders the candidate's own variable (asserted
+        // above with the synthetic name this test sets), and the roster
+        // still maps deepseek to its documented variable — pinned here
+        // without reading the environment, so neither half of the
+        // guarantee depends on what another test leaves in the process.
         assert!(
-            text.contains("deepseek: no-key") && text.contains("set $DEEPSEEK_API_KEY"),
+            text.contains("deepseek: no-key") && text.contains("set $FLEET_TEST_KEY_NOT_SET"),
             "the walk names the cause and its repair: {text}"
+        );
+        assert_eq!(
+            default_roster()
+                .iter()
+                .find(|c| c.id == "deepseek")
+                .unwrap()
+                .key_env,
+            "DEEPSEEK_API_KEY",
+            "the roster names deepseek's documented variable"
         );
     }
 
