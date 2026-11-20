@@ -1,0 +1,9 @@
+# Build parallelism for this repo.
+#
+# Ten rustc workers on a 16 GiB machine will happily take more memory than the
+# machine has: a gate run was measured at 0.07 GiB free with 16.1M cumulative
+# pageouts, and Fleet's own admission control refused to start a run at
+# 0.38 GiB of headroom. Six workers (plus `sccache` for cross-worktree reuse)
+# leaves room for the rest of the work to keep running beside a build.
+[build]
+jobs = 6

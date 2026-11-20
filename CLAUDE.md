@@ -117,6 +117,20 @@ CLAUDE.local.md         gitignored: env var names, machine paths, local quirks (
 
 `cargo` is not on PATH on this machine — see the PATH line in `CLAUDE.local.md`.
 
+**Two loops, and only one of them is the gate.**
+
+- **The inner loop:** `cargo test -p fleet --lib <name>` for one test,
+  `cargo check -p fleet` for "does it compile", `sh scripts/face-dev.sh check`
+  for the face. No release build, no workspace, no LTO.
+- **The gate:** the four legs below, once, before a push that carries code.
+
+A session that runs `cargo build --release` to answer "does it compile" pays
+the link with no return — measured **3m45s warm, 20m21s from an empty
+target**, and its peak memory is what once starved this machine mid-gate
+(0.07 GiB free, 16.1M pageouts, and Fleet's own admission control refusing a
+run). `sccache` covers the cold case; `[build] jobs = 6` in
+`.cargo/config.toml` covers the memory; thin LTO covers the link.
+
 ```sh
 cargo test                          # the gate's core; the count is the run's own footer, not this file's
 cargo build --release               # binary at target/release/fleet

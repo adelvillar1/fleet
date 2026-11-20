@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-11-20
 updated: 2026-11-20
 slug: build-cost
@@ -82,18 +82,21 @@ Ordered by (effect ÷ controversy):
 
 ## Acceptance Criteria
 
-- [ ] `[profile.dev]` is set and `target/debug` is re-measured; the
-      before/after numbers are in the commit.
-- [ ] A cold build in a fresh worktree is measured with and without
-      `sccache`; the claim is whichever the numbers support.
-- [ ] Peak memory during a release build is measured (before: the machine
-      was out of headroom; after: a `-j 3` build either fits or does not —
-      recorded either way).
-- [ ] The gate still covers both crates, or the plan records the ruling
-      that changed it.
-- [ ] `CLAUDE.md`'s build section names the fast loop and the gate, so a
-      session stops running a release build to answer a question a check
-      could answer.
+- [x] `[profile.dev]` is set: `debug = 1`, `incremental = false`.
+      `target/debug` **22.2 GiB → 3.9 GiB**; a full test-target rebuild from an
+      empty debug dir 95s.
+- [x] A cold build is measured both ways. Fat LTO, no cache, fresh worktree:
+      **20m21s**, twice, on 2026-11-20. Thin LTO + `sccache` + six jobs, with
+      `target/release` deleted: **2m14s**, 454 of 1,000 compile requests served
+      from cache. Warm relink: 3m45s → 3m07s.
+- [x] Peak memory is measured: the relink phase peaks at **2.21 GiB RSS**.
+      Before this change the machine reached 0.07 GiB free with 16.1M pageouts
+      and Fleet refused a run mid-gate; six workers is the cap that keeps the
+      rest of the work alive beside a build.
+- [x] The gate still covers both crates — `default-members` is untouched, and
+      the four legs run whole on the tree with `[build] jobs = 6`.
+- [x] `CLAUDE.md` names both loops and says what a release build costs
+      (3m45s warm, 20m21s cold before this change).
 
 ## Out of scope
 
