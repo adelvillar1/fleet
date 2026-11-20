@@ -422,27 +422,57 @@ pub fn find_registration<'a>(
 /// path from the project's registration — set into the process once
 /// so every spawn inherits: the seven manual exports retire. Values
 /// are machine paths and a digest, never secrets.
-pub fn apply_env(machine: &Machine, registration: Option<&Registration>) {
-    let set = |name: &str, value: &std::path::Path| {
-        std::env::set_var(name, value.as_os_str());
-    };
-    set("LAYERFS_HOME", &machine.home);
-    set(
-        "LAYERFS_WORKER_ENDPOINT",
-        &machine.home.join("worker").join("endpoint.json"),
-    );
-    set("LAYERFS_IMAGE", Path::new(&machine.image));
-    set("LAYERFS_DAEMON", &machine.bundle.join("layerfs-daemon"));
+/// The environment a LayerFS child needs, as a map rather than a process
+/// mutation.
+///
+/// KI-582: `apply_env` wrote these into the process, so two views opened at
+/// once in the async face raced on one global and a child could inherit the
+/// other project's Store. A spawn takes this map instead; only bootstrap
+/// (a `.env` load, the PATH merge) still touches `std::env`.
+pub fn env_map(
+    machine: Option<&Machine>,
+    registration: Option<&Registration>,
+) -> Vec<(&'static str, std::ffi::OsString)> {
+    let mut out: Vec<(&'static str, std::ffi::OsString)> = Vec::new();
+    if let Some(machine) = machine {
+        out.push(("LAYERFS_HOME", machine.home.as_os_str().to_os_string()));
+        out.push((
+            "LAYERFS_WORKER_ENDPOINT",
+            machine
+                .home
+                .join("worker")
+                .join("endpoint.json")
+                .into_os_string(),
+        ));
+        out.push(("LAYERFS_IMAGE", std::ffi::OsString::from(&machine.image)));
+        out.push((
+            "LAYERFS_DAEMON",
+            machine.bundle.join("layerfs-daemon").into_os_string(),
+        ));
+    }
     if let Some(registration) = registration {
-        set("LAYERFS_STORE_PATH", &registration.store);
+        out.push((
+            "LAYERFS_STORE_PATH",
+            registration.store.as_os_str().to_os_string(),
+        ));
         // The Store's Docker volume — the wire's `deploy.volume`, which
         // a Workspace's Sandbox refuses to start without. It is the
         // store path's own volume name, the same derivation the
         // doctor's volume check makes.
-        set(
+        out.push((
             "LAYERFS_VOLUME",
-            Path::new(&store_volume(&registration.store)),
-        );
+            std::ffi::OsString::from(store_volume(&registration.store)),
+        ));
+    }
+    out
+}
+
+pub fn apply_env(machine: &Machine, registration: Option<&Registration>) {
+    // Kept for the callers that are themselves bootstrap (a subagent's first
+    // launch in this process). A surface that spawns one child per request
+    // passes `env_map` to that child instead — see KI-582.
+    for (name, value) in env_map(Some(machine), registration) {
+        std::env::set_var(name, value);
     }
 }
 

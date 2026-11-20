@@ -252,17 +252,9 @@ pub fn history(
     home: &Path,
     since: Option<&str>,
 ) -> Result<HistoryRead, String> {
-    // The composed environment, the same one the arm's spawns set:
-    // the face runs in whatever env it was launched in (a clean one,
-    // live), so the machine's facts are composed here rather than
-    // assumed — home, endpoint, image, daemon, and the project's own
-    // store path and volume.
-    let machine = crate::layerfs_tools::read_machine();
-    if let Ok(machine) = &machine {
-        crate::layerfs_tools::apply_env(machine, Some(registration));
-    } else {
-        std::env::set_var("LAYERFS_STORE_PATH", &registration.store);
-    }
+    // The composed environment travels with the child now, not the process
+    // (KI-582): `history` runs inside the async face, and two projects opened
+    // at once would otherwise race on one global `LAYERFS_STORE_PATH`.
 
     let args: Vec<&str> = since.into_iter().collect();
     let document = backend_answer(home, registration, &args)?;
@@ -976,11 +968,11 @@ fn backend_answer(
     args: &[&str],
 ) -> Result<serde_json::Value, String> {
     let machine = crate::layerfs_tools::read_machine();
-    if let Ok(machine) = &machine {
-        crate::layerfs_tools::apply_env(machine, Some(registration));
-    } else {
-        std::env::set_var("LAYERFS_STORE_PATH", &registration.store);
-    }
+    // KI-582: the composed environment is handed to this child, never written
+    // into the process. `backend_answer` runs per request inside the face, so
+    // a process-level write would race between two projects opened at once and
+    // could leak one project's Store into the other's child.
+    let envs = crate::layerfs_tools::env_map(machine.as_ref().ok(), Some(registration));
     // The scripts live in the LAYERFS home, which is not the fleet
     // home the caller handed us — the machine's own record says where,
     // and a machine without facts falls back to the caller's.
@@ -1012,6 +1004,8 @@ fn backend_answer(
         bundle.to_string_lossy().as_ref(),
     ]);
     command.args(args);
+    // The environment the child needs, on the child (KI-582).
+    command.envs(envs);
     let output = command
         .output()
         .map_err(|error| format!("the history script could not run: {error}"))?;
@@ -1398,6 +1392,47 @@ pub fn workspace_files(cwd: &Path, branch: &str, path: &str, page: u32) -> serde
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// KI-582: the composed environment belongs to the child, not to the
+    /// process. `history` runs per request inside the async face, so a
+    /// process-level write races between two projects opened at once and can
+    /// leak one project's Store into the other's child.
+    ///
+    /// Pinned as a source scan because the failure is invisible in a
+    /// single-threaded test: the wrong value only appears under concurrency.
+    #[test]
+    fn the_view_passes_the_environment_to_the_child_not_the_process() {
+        let source = include_str!("layerfs_view.rs");
+        // The needle is assembled so it is not a literal in this file: a
+        // source scan that matches its own text can never pass.
+        let call = concat!("layerfs_tools::apply", "_env(");
+        assert!(
+            !source.contains(call),
+            "layerfs_view must hand its environment to the spawn (`command.envs`), \
+             not write it into the process — KI-582"
+        );
+        assert!(
+            source.contains("command.envs(envs)"),
+            "the history child carries the composed environment"
+        );
+    }
+
+    /// The map itself touches nothing: the same facts, without the mutation.
+    #[test]
+    fn the_env_map_is_a_map_and_not_a_mutation() {
+        let _lock = crate::testsupport::env_lock();
+        let before = std::env::var_os("LAYERFS_STORE_PATH");
+        let pairs = crate::layerfs_tools::env_map(None, None);
+        assert!(
+            pairs.is_empty(),
+            "a machine-less, registration-less call names nothing"
+        );
+        assert_eq!(
+            std::env::var_os("LAYERFS_STORE_PATH"),
+            before,
+            "building the map must not write the process environment"
+        );
+    }
 
     struct EnvGuard {
         name: &'static str,
