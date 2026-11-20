@@ -98,8 +98,15 @@ Two things worth recording from the doing:
 - The field is `#[allow(dead_code)]` on purpose: the face reads the tints from
   the stylesheet, so the struct field exists to prove them, not to serve them.
 
-Still open in P0: `answerHead`, `carry`, `presence`, and the topbar's
-truths-only render.
+**P0, second item landed: `presence(persona)`.** One table carrying a
+persona's tint, glyph and state word; `huddleMark` draws from it and
+`HUDDLE_TINTS` is retired (three facts that had to agree became one that
+cannot disagree). An unknown persona still gets a mark — its own letter, the
+accent, a neutral word — because an empty disc is worse than an unnamed one.
+The harness asserts the contract from the DOM: a `designer` disc takes
+`var(--lane-4)`, 1484 checks.
+
+Still open in P0: `answerHead`, `carry`, and the topbar's truths-only render.
 
 ## Phases
 

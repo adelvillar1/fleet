@@ -12259,24 +12259,41 @@ import { node, svg, clip } from './core/dom.js';
   // derives the grouping once — the browser renders, it never decides.
   // ---------------------------------------------------------------
 
-  // One lane of the house palette per role (bot-app.md's ruling: the mark
-  // draws from the console's own lane scale), the lead on the accent.
-  var HUDDLE_TINTS = {
-    tower: 'var(--accent)',
-    scholar: 'var(--lane-0)',
-    clerk: 'var(--lane-1)',
-    auditor: 'var(--lane-2)',
-    presenter: 'var(--lane-3)',
-    designer: 'var(--lane-4)',
-    advocate: 'var(--lane-5)'
+  // The presence table (P0 of the face rethink): a persona's tint, its
+  // glyph and the word it says while it works — one place. They used to be
+  // three facts that had to agree: a tint map here, a glyph derived from the
+  // name at each call site, and a state word invented in the room. One table
+  // cannot disagree with itself.
+  var PRESENCE = {
+    tower: { tint: 'var(--accent)', glyph: 't', state: 'driving' },
+    scholar: { tint: 'var(--lane-0)', glyph: 's', state: 'reading' },
+    clerk: { tint: 'var(--lane-1)', glyph: 'c', state: 'filing' },
+    auditor: { tint: 'var(--lane-2)', glyph: 'a', state: 'checking' },
+    presenter: { tint: 'var(--lane-3)', glyph: 'p', state: 'drafting' },
+    designer: { tint: 'var(--lane-4)', glyph: 'd', state: 'sketching' },
+    advocate: { tint: 'var(--lane-5)', glyph: 'v', state: 'arguing' },
+    you: { tint: 'var(--accent)', glyph: 'y', state: 'here' }
   };
+
+  // A persona's presence, whatever it is called. An unknown name still gets
+  // a mark — its own first letter, the accent, a neutral word — because a
+  // disc with no glyph and a tint of nothing is worse than an unnamed one.
+  function presence(name) {
+    if (PRESENCE[name]) return PRESENCE[name];
+    return {
+      tint: 'var(--accent)',
+      glyph: String(name || '?').charAt(0).toLowerCase(),
+      state: 'present'
+    };
+  }
 
   // A member's mark: the serif initial on an opaque disc tinted from its
   // lane. An owner-supplied image replaces the initial when the role
   // carries one (C11); absent that, this is the whole identity.
   function huddleMark(name, size, avatar) {
     var disc = node('span', 'pmark' + (size ? ' ' + size : ''));
-    disc.style.setProperty('--tint', HUDDLE_TINTS[name] || 'var(--accent)');
+    var mark = presence(name);
+    disc.style.setProperty('--tint', mark.tint);
     disc.setAttribute('data-p', name || '');
     // An owner-supplied image replaces the initial where the role keeps
     // one (C11); the image is the mark's whole surface, so the disc stays
@@ -12287,7 +12304,7 @@ import { node, svg, clip } from './core/dom.js';
       img.src = avatar;
       disc.appendChild(img);
     } else {
-      disc.appendChild(document.createTextNode((name || '?').charAt(0)));
+      disc.appendChild(document.createTextNode(mark.glyph));
     }
     return disc;
   }

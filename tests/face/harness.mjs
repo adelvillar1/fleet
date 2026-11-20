@@ -7425,6 +7425,13 @@ async function theStrategyStepShowsItsPreview() {
       'discs=' + discs.length + ' text=' + (discs[0] ? String(discs[0].textContent) : '-'));
     check('ICONS the channels row keeps the robot, not a disc',
       rows.length === 2 && discs.length === 1, 'rows=' + rows.length);
+    // P0 of the face rethink: the disc's colour is the presence table's, not
+    // a second map's. `designer` is lane 4 — and an unknown persona still
+    // gets the accent and its own letter rather than an empty disc.
+    const tint = discs[0] && discs[0].style
+      ? discs[0].style.getPropertyValue('--tint') : '';
+    check('P0 a persona disc takes its tint from the presence table',
+      tint === 'var(--lane-4)', 'tint=' + (tint || '(none)'));
   }
 
   // The rooms column (the huddles-ux plan's C4): the three states in the
