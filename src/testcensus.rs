@@ -247,6 +247,46 @@ fn declared_modules(source: &str) -> Vec<String> {
     found
 }
 
+/// Does a module name match an accounting pattern?
+///
+/// A pattern is an exact name (`agent.rs`), a directory (`armada/*`), a
+/// suffix (`*/tests.rs`), or a directory subtree (`tui/**`). Patterns exist
+/// so a guard can exempt a *class* with one reason instead of enumerating
+/// eighty files one at a time — but every class still has to be written
+/// down with its reason, so nothing is silently exempt.
+pub(crate) fn matches(pattern: &str, module: &str) -> bool {
+    if pattern == module {
+        return true;
+    }
+    match pattern.strip_suffix("/**") {
+        Some(dir) => module.starts_with(&format!("{dir}/")),
+        None => match pattern.strip_prefix("*/") {
+            Some(suffix) => module.ends_with(&format!("/{suffix}")),
+            None => match pattern.strip_suffix("/*") {
+                // `armada/*` covers files directly in that directory, not
+                // deeper subtrees — `armada/**` is the recursive form.
+                Some(dir) => module
+                    .strip_prefix(&format!("{dir}/"))
+                    .is_some_and(|rest| !rest.contains('/')),
+                None => false,
+            },
+        },
+    }
+}
+
+/// The census modules matched by neither the guard's scan set nor its
+/// exemptions. Empty is the only healthy answer: anything else is a module
+/// the guard cannot say whether it should look at.
+pub(crate) fn unaccounted(scanned: &[&str], exempt: &[(&str, &str)]) -> Vec<&'static str> {
+    MODULES
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| {
+            !scanned.contains(name) && !exempt.iter().any(|(pattern, _)| matches(pattern, name))
+        })
+        .collect()
+}
+
 #[test]
 fn the_census_matches_the_crates_module_tree() {
     let tree = module_tree();
@@ -273,5 +313,33 @@ fn the_census_matches_the_crates_module_tree() {
     assert!(
         stale.is_empty(),
         "census entries naming no module file — remove or rename each: {stale:?}"
+    );
+}
+
+/// The accounting helper's own proof: an incomplete guard is named, a
+/// complete one is silent, and every pattern form expands.
+#[test]
+fn the_accounting_names_an_uncovered_module() {
+    assert!(matches("armada/*", "armada/join.rs"));
+    assert!(!matches("armada/*", "armada/deep/join.rs"));
+    assert!(matches("armada/**", "armada/deep/join.rs"));
+    assert!(matches("*/tests.rs", "judge/tests.rs"));
+    assert!(matches("agent.rs", "agent.rs"));
+
+    let everything: Vec<&str> = MODULES.iter().map(|(n, _)| *n).collect();
+    assert!(unaccounted(&everything, &[]).is_empty());
+
+    let uncovered = unaccounted(&["agent.rs"], &[("armada/**", "runs off a turn")]);
+    assert!(
+        uncovered.contains(&"calib.rs"),
+        "a gap is named: {uncovered:?}"
+    );
+    assert!(
+        !uncovered.contains(&"agent.rs"),
+        "the scan set is accounted"
+    );
+    assert!(
+        !uncovered.iter().any(|m| m.starts_with("armada/")),
+        "the exemption covers its class"
     );
 }

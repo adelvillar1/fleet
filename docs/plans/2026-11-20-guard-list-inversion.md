@@ -47,6 +47,30 @@ them; 113 modules are scanned by none of them. The guard migration below
 (the second half of this plan) is what closes that gap; it is not the
 table's job to decide what a guard asserts.
 
+## Status pass, 2026-11-20 (second)
+
+Steps 2 and 3 are landed for the delegation guard. `testcensus` gained
+`matches(pattern, module)` (exact, `dir/*`, `*/suffix`, `dir/**`) and
+`unaccounted(scanned, exempt)`, plus their own proof test.
+
+Measured before the change, then fixed: the delegation guard scanned **27
+of 142** modules from a hand-kept table — **115 modules it never looked
+at**. Scanning the whole census showed that expansion is nearly free: only
+six modules in the crate name the beat at all, four were already declared
+drivers, and the remaining three — `approvals.rs`, `onboard.rs`,
+`settings.rs` — name only its constants (`DELEGATE_TOOL`,
+`DELEGATE_BUDGET_USD_DAY`). They are now named drivers with their reasons,
+not silent omissions.
+
+`DRIVERS` is module-level, `CENSUS_EXEMPT_DRIVERS` names `main.rs` (the
+binary root, which the census cannot list), and
+`every_module_is_accounted_for` reds on a driver that names no module —
+the typo direction the union check would otherwise miss.
+`delegate::tests`: **54 passed, 0 failed**, scan set 27 → 142.
+
+Still owed: the same inversion for `judge` (13 modules name it) and
+`explain` (8), then `structure-guards.md`'s convention.
+
 ## Approach
 
 1. Inventory the census-shaped guards: the three beat guards (judge,

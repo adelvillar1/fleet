@@ -1770,6 +1770,47 @@ fn a_cell_counts_its_zero_confidence_rows_and_names_the_reweighting_on_its_card(
 
 // --- the batch-only proof ---
 
+const DRIVERS: [&str; 7] = [
+    // The CLI dispatch and the graded scenario run the beat.
+    "main.rs",
+    "eval.rs",
+    // The beat's own file and its tests.
+    "delegate.rs",
+    "delegate/tests.rs",
+    // These three name the beat's CONSTANTS and nothing else: the
+    // approval gate must know `DELEGATE_TOOL` to recognise the call,
+    // and the settings writer and onboarding wizard bound a value by
+    // `DELEGATE_BUDGET_USD_DAY`. They never reach the beat's execution
+    // path — found by this guard once it scanned the whole crate, where
+    // the 27-module list had never looked (KI-581).
+    "approvals.rs",
+    "onboard.rs",
+    "settings.rs",
+];
+
+/// Drivers that are not lib modules: `main.rs` is the binary's root, so the
+/// census — which walks `lib.rs` — does not list it. It is still a driver,
+/// because the CLI dispatch is what runs the beat.
+const CENSUS_EXEMPT_DRIVERS: [&str; 1] = ["main.rs"];
+
+#[test]
+fn every_module_is_accounted_for() {
+    // The scan set is the census, so no module escapes by omission. What
+    // this pins is the other direction: every driver names a real module,
+    // because a typo in DRIVERS would silently exempt nothing at all.
+    let names: Vec<&str> = crate::testcensus::MODULES.iter().map(|(n, _)| *n).collect();
+    for driver in DRIVERS {
+        assert!(
+            names.contains(&driver) || CENSUS_EXEMPT_DRIVERS.contains(&driver),
+            "a driver names no module file — the exemption is a typo: {driver}"
+        );
+    }
+    assert!(
+        crate::testcensus::unaccounted(&names, &[]).is_empty(),
+        "the scan set must cover the census"
+    );
+}
+
 #[test]
 fn no_synchronous_path_references_the_delegation_beat() {
     // The socket-guard test, in the sibling's shape: the synchronous
@@ -1782,43 +1823,19 @@ fn no_synchronous_path_references_the_delegation_beat() {
     // `api.rs` and `mcp.rs` are in the scanned set on purpose: the
     // sibling's proof omitted them, and they are the two modules a beat
     // most plausibly reaches for from inside a turn.
-    const MODULES: [(&str, &str); 27] = [
-        ("doctor.rs", include_str!("../doctor.rs")),
-        ("memory.rs", include_str!("../memory.rs")),
-        ("agent.rs", include_str!("../agent.rs")),
-        ("tools.rs", include_str!("../tools.rs")),
-        ("session.rs", include_str!("../session.rs")),
-        ("calib.rs", include_str!("../calib.rs")),
-        ("route.rs", include_str!("../route.rs")),
-        ("compaction.rs", include_str!("../compaction.rs")),
-        ("cron.rs", include_str!("../cron.rs")),
-        ("improve.rs", include_str!("../improve.rs")),
-        ("boards.rs", include_str!("../boards.rs")),
-        ("skills.rs", include_str!("../skills.rs")),
-        ("subagents.rs", include_str!("../subagents.rs")),
-        ("api.rs", include_str!("../api.rs")),
-        ("mcp.rs", include_str!("../mcp.rs")),
-        ("lanes.rs", include_str!("../lanes.rs")),
-        ("home.rs", include_str!("../home.rs")),
-        ("install.rs", include_str!("../install.rs")),
-        ("net.rs", include_str!("../net.rs")),
-        ("cli.rs", include_str!("../cli.rs")),
-        ("tui/mod.rs", include_str!("../tui/mod.rs")),
-        ("tui/app.rs", include_str!("../tui/app.rs")),
-        ("tui/ui/mod.rs", include_str!("../tui/ui/mod.rs")),
-        ("tui/ui/run.rs", include_str!("../tui/ui/run.rs")),
-        ("tui/events.rs", include_str!("../tui/events.rs")),
-        ("main.rs", include_str!("../main.rs")),
-        ("eval.rs", include_str!("../eval.rs")),
-    ];
+    // The scanned set is the census — every module file the crate compiles,
+    // not a hand-kept list of 27. The list this replaced was the exact blind
+    // spot plan 2026-11-20-guard-list-inversion exists for: 115 modules the
+    // guard never looked at, three of which do name the beat (below, now
+    // named rather than missed).
+
     // The beat's own legitimate in-crate callers, named rather than
     // inferred: the CLI dispatch in `main` and the graded scenario in
     // `eval`, plus the beat's own file and its tests. The guard above is
     // a source grep over a fixed module list, not a walk of the call
     // graph; what it proves is that no SYNCHRONOUS path names the beat,
     // and this names the ones that legitimately may.
-    const DRIVERS: [&str; 4] = ["main.rs", "eval.rs", "delegate.rs", "delegate/tests.rs"];
-    for (name, source) in MODULES {
+    for &(name, source) in crate::testcensus::MODULES {
         if DRIVERS.contains(&name) {
             continue;
         }
