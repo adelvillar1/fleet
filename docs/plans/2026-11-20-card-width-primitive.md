@@ -66,6 +66,15 @@ Measured inventory for the remaining work: four card builders in `calib`
 the cron, judge and delegate cards. `dashes_for` measured characters, not
 cells, and is fixed.
 
+All four `calib` builders are converted now: `op_card` wraps its detail and
+clips its header, `calibration_card` wraps the five body lines that carry a
+variable (`{line}`) rather than a number, and `spend_card` clips the one
+unbounded field on its row — the provider id. `stream_card` needed nothing:
+every line it draws is a count or a fixed phrase.
+
+Still owed: the text-scan guard (a new separator outside `cards`), and the
+cron/judge/delegate cards, which the inventory still has to enumerate.
+
 ## Approach
 
 1. Inventory every fixed-width card builder: `grep -rn 'CARD_WIDTH\|repeat("─")'`

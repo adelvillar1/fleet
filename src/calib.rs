@@ -3625,9 +3625,14 @@ fn spend_card(rows: &[ReadRow]) -> String {
             .iter()
             .filter(|(one, _)| *one == provider)
             .count();
+        // The provider is the only unbounded field on this row: a long id
+        // widened the card past its edge (KI-140). It clips with an ellipsis
+        // so the row keeps its numbers and the row count.
+        let shown = crate::cards::clip(provider, CARD_WIDTH / 3);
         card.push_str(&format!(
             "{DIM}\u{2502}{RESET} {TEXT}{provider}{RESET} {DIM}{billed} billed \u{b7} {cache_read} from cache \u{b7} {count} row{}\n",
-            plural(count)
+            plural(count),
+            provider = shown,
         ));
     }
     card.push_str(&format!("{DIM}\u{2514}\u{2500}\u{2518}{RESET}\n"));
@@ -4149,7 +4154,9 @@ fn calibration_card(cell: &CalibrationCell) -> String {
                 )
             };
             for line in wrap_detail(&note, CARD_WIDTH - 4) {
-                lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{line}{RESET}"));
+                for piece in crate::cards::fit(&line, CARD_WIDTH - 4) {
+                    lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{piece}{RESET}"));
+                }
             }
         }
         if cell.informs_failover() {
@@ -4165,7 +4172,9 @@ fn calibration_card(cell: &CalibrationCell) -> String {
                 ),
                 CARD_WIDTH - 4,
             ) {
-                lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{line}{RESET}"));
+                for piece in crate::cards::fit(&line, CARD_WIDTH - 4) {
+                    lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{piece}{RESET}"));
+                }
             }
         } else if cell.notes_companions() {
             // The companion note: the direction was right, the minima
@@ -4179,7 +4188,9 @@ fn calibration_card(cell: &CalibrationCell) -> String {
                 ),
                 CARD_WIDTH - 4,
             ) {
-                lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{line}{RESET}"));
+                for piece in crate::cards::fit(&line, CARD_WIDTH - 4) {
+                    lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{piece}{RESET}"));
+                }
             }
         }
     } else {
@@ -4199,10 +4210,14 @@ fn calibration_card(cell: &CalibrationCell) -> String {
             &format!("unfit \u{b7} needs {}", needs.join(" \u{b7} ")),
             CARD_WIDTH - 4,
         ) {
-            lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{line}{RESET}"));
+            for piece in crate::cards::fit(&line, CARD_WIDTH - 4) {
+                lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{piece}{RESET}"));
+            }
         }
         for line in wrap_detail("no score is drawn from this sample", CARD_WIDTH - 4) {
-            lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{line}{RESET}"));
+            for piece in crate::cards::fit(&line, CARD_WIDTH - 4) {
+                lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{piece}{RESET}"));
+            }
         }
     }
     lines.push(format!(
