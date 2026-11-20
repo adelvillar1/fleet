@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-20
 updated: 2026-11-20
 slug: press-feedback-primitive
@@ -26,6 +26,26 @@ already found the right shape; it landed on one card.
   which is why the broken feedback path stayed green.
 - The harness already has the machinery: `tests/face/harness.mjs` drives
   ~188 cases / ~1,303 checks.
+
+## Status pass, 2026-11-20
+
+Landed: `pressFeedback(key, role)` hoisted to the app's top level — the
+answer line (`role="alert"`, remembered per key so a repaint cannot wipe
+it), `say(text, bad)`, and `hold(press, label)` for the in-flight window.
+Adopted on three cards that mutate state through a press: the provider
+reload (KI-561's own card, whose local shape it now replaces), **reload
+them all** (which had no busy word and no disabled window — the silent
+sequence), and the connect card.
+
+Worth recording: the first attempt hoisted the helper *inside*
+`settingsSections`, so sibling cards could not see it, and one replacement
+landed on the connect card instead of the reload-all card. The harness
+caught both (`pressFeedback is not defined`, `fb is not defined`) — 206
+cases earning their keep.
+
+**Still owed:** AC1's sweep (which cards mutate state and do not use the
+helper) and AC2's harness case that drives every control of every settings
+card and fails on a silent press.
 
 ## Approach
 
@@ -55,8 +75,11 @@ already found the right shape; it landed on one card.
 - [ ] The harness asserts what the owner is told (the answer line's text)
       for the provider reload card, not just that a request was made
       (KI-561's lesson, pinned).
-- [ ] The settings feature doc states the rule in one paragraph.
-- [ ] `cargo test` and the harness suite exit 0.
+- [x] The settings feature doc states the rule in one paragraph
+      (`docs/features/gui.md`, "The press rule").
+- [ ] `cargo test` and the harness suite exit 0. The harness is green on
+      the extraction (**1480 checks, 206 cases**); `cargo test` on this tree
+      is still to run.
 
 ## Files to be touched
 

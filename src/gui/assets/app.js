@@ -22245,6 +22245,49 @@ import { node, svg, clip } from './core/dom.js';
   /// The declaration: id, icon, name, badge, changed and paint per
   /// section. The thirteen cards keep their bodies; only the page they
   /// share changed.
+  // --- the press contract (KI-442, KI-556, KI-561, KI-563) -------------
+  // A press either acts and says what happened, says why it cannot, or
+  // renders disabled. Never: looks live, produces nothing, says nothing.
+  //
+  // The answer is remembered per card rather than held in a node, because
+  // a successful act repaints the card from the home's own read — a
+  // sentence in a node that repaint rebuilt is a sentence nobody reads,
+  // which is the silent-feedback failure one layer down (KI-561).
+  function pressFeedback(key, role) {
+    var said = node('p', 'derivation');
+    said.setAttribute('role', 'alert');
+    said.dataset.role = role || 'press-answer';
+    var store = face.pressAnswers || (face.pressAnswers = {});
+    var remembered = store[key];
+    if (remembered) {
+      said.hidden = false;
+      said.textContent = remembered.text;
+      said.dataset.tone = remembered.bad ? 'bad' : 'good';
+    } else {
+      said.hidden = true;
+    }
+    return {
+      node: said,
+      say: function (text, bad) {
+        store[key] = { text: text, bad: !!bad };
+        said.hidden = false;
+        said.textContent = text;
+        said.dataset.tone = bad ? 'bad' : 'good';
+      },
+      // The in-flight window: the press says what it is doing and cannot
+      // be pressed again until it answers.
+      hold: function (press, label) {
+        var was = press.textContent;
+        press.disabled = true;
+        press.textContent = label;
+        return function () {
+          press.disabled = false;
+          press.textContent = was;
+        };
+      }
+    };
+  }
+
   function settingsSections(read) {
     var lists = read.lists || [];
     var rules = read.rules || [];
@@ -22465,13 +22508,11 @@ import { node, svg, clip } from './core/dom.js';
       // The card answers itself: a refusal or a discovery failure lands
       // here, on the surface the press was made, never only in the
       // conversation feed.
-      var said = node('p', 'derivation');
-      said.setAttribute('role', 'alert');
-      said.hidden = true;
+      // The connect card answers through the one press contract too.
+      var fb = pressFeedback('provider-connect', 'provider-answer');
+      var said = fb.node;
       function answer(text, bad) {
-        said.hidden = false;
-        said.textContent = text;
-        said.dataset.tone = bad ? 'bad' : 'good';
+        fb.say(text, bad);
       }
       var act = node('button', 'replay-button replay-resume', 'connect it');
       act.type = 'button';
@@ -22542,31 +22583,36 @@ import { node, svg, clip } from './core/dom.js';
         ['what happens', node('p', 'derivation',
           'the models are discovered from the provider and land on this surface with their windows.')],
         ['the write', act],
-        ['what it answered', said]
+        ['what it answered', fb.node]
       ];
     }
 
     /// Every account, asked again: one press refreshes the catalogs the
     /// owners' providers publish, and names the ones that did not answer.
     function reloadAllSections() {
-      var said = node('p', 'derivation');
-      said.setAttribute('role', 'alert');
-      said.hidden = true;
+      var fb = pressFeedback('provider-reload-all', 'provider-answer');
       var act = node('button', 'replay-button replay-resume', 'reload them all');
       act.type = 'button';
       act.dataset.act = 'provider-reload-all';
       act.addEventListener('click', function () {
+        if (act.disabled) return;
         var ids = ((read.catalog && read.catalog.providers) || [])
           .filter(function (one) { return one.kind !== 'lane' && one.enabled !== false; })
           .map(function (one) { return one.id; });
         var done = [];
         var failed = [];
+        // The press answers at once and holds itself: a sequence of network
+        // asks takes seconds, and a button that looks live through all of
+        // them is the silence KI-442 and KI-563 are made of.
+        var release = fb.hold(act, 'reloading\u2026');
+        fb.say('asking ' + ids.length + ' account' + (ids.length === 1 ? '' : 's') +
+          ' for their catalogues\u2026', false);
         var step = function (index) {
           if (index >= ids.length) {
-            said.hidden = false;
-            said.dataset.tone = failed.length ? 'bad' : 'good';
-            said.textContent = 'reloaded ' + done.length + ' of ' + ids.length +
-              (failed.length ? ' — ' + failed.join(', ') + ' did not answer' : '');
+            release();
+            fb.say('reloaded ' + done.length + ' of ' + ids.length +
+              (failed.length ? ' \u2014 ' + failed.join(', ') + ' did not answer' : ''),
+              failed.length > 0);
             readSettings(true);
             return;
           }
@@ -22589,7 +22635,7 @@ import { node, svg, clip } from './core/dom.js';
         ['what it does', node('p', 'derivation',
           'asks every account for its own catalogue and writes what it answers, with the windows the listing carries.')],
         ['the write', act],
-        ['what it answered', said]
+        ['what it answered', fb.node]
       ];
     }
 
@@ -23572,22 +23618,13 @@ import { node, svg, clip } from './core/dom.js';
     // repaints the card from the home's own read: a sentence held only in
     // a local node would be wiped by the very repaint that shows the new
     // catalog, which is the same silent-feedback failure one layer down.
-    var said = node('p', 'derivation');
-    said.setAttribute('role', 'alert');
-    said.dataset.role = 'provider-answer';
-    var remembered = face.providerAnswer;
-    if (remembered && remembered.id === provider.id) {
-      said.hidden = false;
-      said.textContent = remembered.text;
-      said.dataset.tone = remembered.bad ? 'bad' : 'good';
-    } else {
-      said.hidden = true;
-    }
+    // The card's answer line, through the one press contract: the remember-
+    // across-repaint detail that made KI-561 correct on this card is now the
+    // helper's, not this card's.
+    var fb = pressFeedback('provider:' + provider.id, 'provider-answer');
+    var said = fb.node;
     function answer(text, bad) {
-      face.providerAnswer = { id: provider.id, text: text, bad: !!bad };
-      said.hidden = false;
-      said.textContent = text;
-      said.dataset.tone = bad ? 'bad' : 'good';
+      fb.say(text, bad);
     }
     // The card is rebuilt from the home's own read, so a reloaded catalog
     // is what the owner then sees: the model rows, the windows the

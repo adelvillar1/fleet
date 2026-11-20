@@ -540,6 +540,15 @@ environment**. Every write goes through the one writer the CLI uses
 roles writer for the roles), and every value field is a pick from a
 catalog first.
 
+**The press rule.** A press either acts and says what happened, says in one
+sentence why it cannot, or renders disabled — never a control that looks
+live and produces no visible consequence (KI-442, KI-556, KI-561, KI-563).
+Cards render their answer through `pressFeedback` in `app.js`: the line
+carries `role="alert"`, and it is remembered per card because a successful
+write repaints the card from the home's own read — a sentence held only in a
+node the repaint rebuilt is a sentence nobody reads (KI-561). While a press
+is in flight it is disabled and says what it is doing.
+
 **The catalog.** `settings::catalog` is returned in `/api/settings` and
 is the one source every picker reads: every `provider/model` from the
 resolved roster plus every value the current `routing.json` names (a
