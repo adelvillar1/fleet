@@ -1,6 +1,6 @@
 # Fleet
 
-A native Rust agent for the DeepSeek API — and the intended home of a self-contained Rust harness for the whole Fleet-of-Ones ecosystem. Repo: `git@github.com:adelvillar1/fleet.git` (public, MIT). Status: **beta** — the owner's declaration, 2026-10-30 (the binary is 0.6.26; every cut is a shipping beta), with the owner's ruling of 2026-11-10: **fleet stays in beta until they have reliably executed a whole project on it** — no plan, recap, or session declares the beta over; that call is theirs and it is not on a plan's checklist. Every surface is in-repo — the eight rail pages, the conversation, delegation, the substrate's reads and writes — and the shakeout is the work mode now (see Today's state).
+A native Rust agent for the DeepSeek API — and the intended home of a self-contained Rust harness for the whole Fleet-of-Ones ecosystem. Repo: `git@github.com:adelvillar1/fleet.git` (public, MIT). Status: **beta** — the owner's declaration, 2026-10-30 (the binary's version is `Cargo.toml`'s — read it there rather than here: a number in prose goes stale within two cuts; every cut is a shipping beta), with the owner's ruling of 2026-11-10: **fleet stays in beta until they have reliably executed a whole project on it** — no plan, recap, or session declares the beta over; that call is theirs and it is not on a plan's checklist. Every surface is in-repo — the eight rail pages, the conversation, delegation, the substrate's reads and writes — and the shakeout is the work mode now (see Today's state).
 
 ## What Fleet is
 
@@ -16,7 +16,15 @@ The owner's intent (2026-10-13): Fleet is the self-contained Rust successor to t
 
 Verified inventory and per-repo state: [docs/architecture/ecosystem.md](docs/architecture/ecosystem.md). Current crate architecture: [docs/architecture/deep-dive-2026-10-15.md](docs/architecture/deep-dive-2026-10-15.md) (the current-state survey; `overview.md` is the slice-1 snapshot with a banner).
 
-## Today's state (2026-10-16)
+## Today's state
+
+**Read the numbers, do not trust them here.** This section carried
+"45 modules (~70k lines)", "2,357 passed", and "0.6.26". Measured
+2026-11-20: **139 module files, 261,880 lines in `src/`, 2,300 test
+attributes, 2,648 tests passing, 0.8.22**. Every one of those numbers was
+wrong by a factor when read — the section is a month old and the repo
+roughly quadrupled. The durable facts are below; the counts come from the
+commands listed there, not from this paragraph.
 
 - In-repo and green: `cargo test` → 2,357 passed, 4 ignored at the 0.6.26 cut; the gate runs whole locally — `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`, all four exit 0 (rustfmt and clippy were installed 2026-10-15, closing KI-007, and the first full clippy pass landed clean). The crate is 45 modules (~70k lines): the agent core, the five vendored lanes over the hand-rolled MCP client, multi-provider routing with the sys1 judgment and failover, the git-tracked memory substrate with six-channel recall, session-archive recall, skills, delegation to depth 2 with the dependency graph and cron, the calibration stream with its judge/delegate/explain beats and the eval corpus, the settings writer, and the ratatui TUI. The 2026-10-15 sessions landed the deep dive, its six-phase findings plan, and the dogfooding viability fixes (`docs/plans/2026-10-15-dogfooding-viability-fixes.md`: the bash wall-clock bound, the approval gate's label-blind class checks, the routing record's name, the consolidation fold's honesty, the torn-tail tolerance). 2026-10-16 landed the owner's own-home ruling (`docs/plans/2026-10-16-own-home-credentials.md`): credentials resolve from the process environment and `<FLEET_HOME>/.env` only, with the DeepSeek Harness credential-store leg and its helpers removed outright. 2026-10-16 also landed the router ruling (`docs/plans/2026-10-16-fleet-routes-through-its-own-router.md`): Fleet routes through the in-process `route::select` it owns — the `agnostic-router-kit` is the precursor, not a dependency, and its roster entry is gone entirely; the router board reads Fleet's own calibration rows and dials nothing.
 - Environmental blockers, none of them code:
@@ -110,7 +118,7 @@ CLAUDE.local.md         gitignored: env var names, machine paths, local quirks (
 `cargo` is not on PATH on this machine — see the PATH line in `CLAUDE.local.md`.
 
 ```sh
-cargo test                          # the gate's core: 1012 passed, 2 ignored at the last increment
+cargo test                          # the gate's core; the count is the run's own footer, not this file's
 cargo build --release               # binary at target/release/fleet
 cargo run --bin fleet -- doctor     # credentials, home, API, shell; masks the key to its last 4 chars
 cargo run --bin fleet -- run "<task>" --yes
