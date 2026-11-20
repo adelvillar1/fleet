@@ -315,6 +315,14 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         }
     };
     let dotenv = read_dotenv();
+    // The run names the corpus it resolved and the rule that chose it — on
+    // stderr, because this command's stdout is the machine-readable stream.
+    let corpus = fleet::memory::resolve_root_choice(&std::env::current_dir().unwrap_or_default());
+    eprintln!(
+        "fleet: corpus {} ({})",
+        corpus.path.display(),
+        corpus.reason.as_str()
+    );
     // KI-045: the pre-flight, named. Slice 1 required `DEEPSEEK_API_KEY`
     // and exited 2 with the doctor's credentials render; routing
     // replaced that with per-candidate key resolution, so a machine
@@ -484,7 +492,15 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     // runs even before routing has produced one.
     let user_home = std::env::var("HOME").ok();
     let calib_root = fleet::calib::resolve_root(&home, user_home.as_deref());
-    let memories_root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+    // Name the corpus and the rule that chose it: a run that silently adopts
+    // a foreign corpus is KI-074's failure, and one line makes it visible.
+    let corpus = fleet::memory::resolve_root_choice(&std::env::current_dir().unwrap_or_default());
+    println!(
+        "fleet: corpus {} ({})",
+        corpus.path.display(),
+        corpus.reason.as_str()
+    );
+    let memories_root = corpus.path;
     fleet::memory::spawn_homekeeping(
         memories_root,
         Some(home.clone()),

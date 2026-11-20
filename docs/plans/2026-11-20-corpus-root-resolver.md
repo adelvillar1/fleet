@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-20
 updated: 2026-11-20
 slug: corpus-root-resolver
@@ -69,8 +69,15 @@ log line.
       callers use it: `memory::resolve_root_from` holds the home-first walk
       with its `holds_facts` guard; `main.rs:487` (`drive`) and
       `cron.rs:1681` (`cron::execute`) both call `resolve_root`.
-- [ ] The root's reason (`home` / `walk` / `absent`) is available to the
-      caller and logged at the one place a run names its corpus.
+- [x] The root's reason (`home` / `walk` / `absent`) is available to the
+      caller and logged where a run names its corpus: `RootReason` and
+      `RootChoice` in `memory`, with `resolve_root`/`resolve_root_from`
+      delegating to `resolve_root_choice*` so no call site changed meaning.
+      `fleet chat` prints `fleet: corpus <path> (<rule>)`; `fleet run` writes
+      it to stderr, because that command's stdout is the event stream.
+      `the_resolver_names_the_rule_it_applied` pins all three reasons, and
+      pins that the home's empty scaffold does not win (KI-074's second
+      half).
 - [x] A text-scan guard reds when another module builds a `memories/` path:
       `memory::tests::the_corpus_root_has_one_rule`, which also pins the
       resolver to one definition. Writing it found six modules that join the
@@ -79,7 +86,7 @@ log line.
       exemption with its reason written beside it.
 - [x] The resolver's own tests stay green, including the two pinned
       reproductions from KI-074/KI-087 (`resolve_root_from`'s tests).
-- [ ] The full gate exits 0.
+- [x] The full gate exits 0: fmt 0, clippy 0, `cargo test` 2654 passed /\n      0 failed, `cargo build --release` 3m39s.
 
 ## Files to be touched
 

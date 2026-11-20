@@ -954,19 +954,62 @@ fn holds_facts(dir: &std::path::Path) -> bool {
         .any(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
 }
 
+/// Why a corpus root was chosen: the resolver's own account of the rule it
+/// applied. A run that cannot say which corpus it took is how KI-074 and
+/// KI-087 stayed invisible as long as they did — the path was right or
+/// wrong, and nothing said which rule produced it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootReason {
+    /// The fleet home's own `memories/`, which holds facts.
+    Home,
+    /// A `memories/` found by walking the working directory's ancestors.
+    Walk,
+    /// Nothing found: `cwd/memories`, the path a run would create.
+    Absent,
+}
+
+impl RootReason {
+    /// The word a log line uses: `home`, `walk`, `absent`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RootReason::Home => "home",
+            RootReason::Walk => "walk",
+            RootReason::Absent => "absent",
+        }
+    }
+}
+
+/// A resolved corpus root and the rule that chose it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootChoice {
+    pub path: std::path::PathBuf,
+    pub reason: RootReason,
+}
+
 pub fn resolve_root(cwd: &Path) -> PathBuf {
+    resolve_root_choice(cwd).path
+}
+
+/// The resolution with its reason, for the caller that names the corpus.
+pub fn resolve_root_choice(cwd: &Path) -> RootChoice {
     let home = crate::home::fleet_home(
         std::env::var("FLEET_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
     )
     .ok();
-    resolve_root_from(cwd, home.as_deref())
+    resolve_root_choice_from(cwd, home.as_deref())
 }
 
 /// The resolution behind its own seam, so the home-first rule is
 /// testable without mutating the process environment every other test
 /// in the binary reads.
 pub fn resolve_root_from(cwd: &Path, home: Option<&Path>) -> PathBuf {
+    resolve_root_choice_from(cwd, home).path
+}
+
+/// The rule and the reason together: home-first, then the ancestor walk,
+/// then the path a run would create. `RootReason` says what each means.
+pub fn resolve_root_choice_from(cwd: &Path, home: Option<&Path>) -> RootChoice {
     // KI-087 (and KI-074's root cause): the fleet home's own corpus is
     // the one this process's runs belong to, so it is checked BEFORE
     // the working directory's ancestor walk. A run started outside any
@@ -981,14 +1024,20 @@ pub fn resolve_root_from(cwd: &Path, home: Option<&Path>) -> PathBuf {
         // shadows it — the failure this rule itself introduced before
         // the check was added.
         if own.is_dir() && holds_facts(&own) {
-            return own;
+            return RootChoice {
+                path: own,
+                reason: RootReason::Home,
+            };
         }
     }
     let mut dir = cwd.to_path_buf();
     for _ in 0..ANCESTOR_LIMIT {
         let candidate = dir.join(MEMORIES_DIR);
         if candidate.is_dir() {
-            return candidate;
+            return RootChoice {
+                path: candidate,
+                reason: RootReason::Walk,
+            };
         }
         let Some(parent) = dir.parent() else { break };
         let parent = parent.to_path_buf();
@@ -997,7 +1046,10 @@ pub fn resolve_root_from(cwd: &Path, home: Option<&Path>) -> PathBuf {
         }
         dir = parent;
     }
-    cwd.join(MEMORIES_DIR)
+    RootChoice {
+        path: cwd.join(MEMORIES_DIR),
+        reason: RootReason::Absent,
+    }
 }
 
 /// `secs:nanos:len` of the file, the index's freshness key: a changed
@@ -13635,6 +13687,47 @@ mod tests {
             "the block names the overflow: {rendered}"
         );
         assert!(rendered.contains("tier-overflow"), "the marker renders");
+    }
+
+    /// The resolver names the rule it applied, and the home's empty scaffold
+    /// does not win (KI-074's second half).
+    #[test]
+    fn the_resolver_names_the_rule_it_applied() {
+        let root = scratch("rule-reason");
+
+        // Absent: nothing found, so the path a run would create.
+        let empty = root.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let absent = resolve_root_choice_from(&empty, None);
+        assert_eq!(absent.reason, RootReason::Absent);
+        assert_eq!(absent.path, empty.join("memories"));
+
+        // Walk: a corpus above the working directory.
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join("memories")).unwrap();
+        std::fs::write(repo.join("memories/a.md"), "---\nname: a\n---\n\nx\n").unwrap();
+        let deep = repo.join("deep/deeper");
+        std::fs::create_dir_all(&deep).unwrap();
+        let walked = resolve_root_choice_from(&deep, None);
+        assert_eq!(walked.reason, RootReason::Walk);
+        assert_eq!(walked.path, repo.join("memories"));
+
+        // Home: the fleet home's own corpus wins over the walk.
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join("memories")).unwrap();
+        std::fs::write(home.join("memories/h.md"), "---\nname: h\n---\n\nx\n").unwrap();
+        let chose = resolve_root_choice_from(&deep, Some(&home));
+        assert_eq!(chose.reason, RootReason::Home);
+        assert_eq!(chose.path, home.join("memories"));
+
+        // A scaffold under the home must not win: it holds no facts.
+        let scaffold = root.join("scaffold-home");
+        std::fs::create_dir_all(scaffold.join("memories")).unwrap();
+        assert_eq!(
+            resolve_root_choice_from(&deep, Some(&scaffold)).reason,
+            RootReason::Walk,
+            "an empty memories/ under the home is a scaffold, not a corpus"
+        );
     }
 
     /// The corpus root has one rule (KI-074, KI-087).
