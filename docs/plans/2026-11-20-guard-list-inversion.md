@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-20
 updated: 2026-11-20
 slug: guard-list-inversion
@@ -31,6 +31,21 @@ identity, and today that silently changes what the guards scan).
 - The 156 `include_str!` sites total (per the OMH dive) are not in scope:
   most are content scans, not module-census guards. The inversion applies
   to the census guards first.
+
+## Status pass, 2026-11-20
+
+Step 1 landed: `src/testcensus.rs` carries the census — one table of
+**142 module files** (`include_str!`-literal, so a missing file is a
+compile error), a run-time walk of `lib.rs` plus every nested `mod`
+declaration, and `the_census_matches_the_crates_module_tree`, which
+asserts the table and the walked tree agree in **both directions**. The
+test's first run reddened naming `testcensus.rs` itself — the intended
+behaviour, and the self-registration is now in the table.
+
+Measured at this pass: the three beat guards scan 30 module files between
+them; 113 modules are scanned by none of them. The guard migration below
+(the second half of this plan) is what closes that gap; it is not the
+table's job to decide what a guard asserts.
 
 ## Approach
 
