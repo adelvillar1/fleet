@@ -80,10 +80,18 @@ draw. All 45 call `cards::rule(width)` now, and
 repeat to `desk.rs`, which the guard named — `["desk.rs"]` — before it was
 removed.
 
-Still owed: the cron/judge/delegate cards' *content* (they draw through
-`cards::rule` for the border but still build their own rows, so a long field
-there can still widen a line), and the plan's AC1 wording about "every card
-builder renders through the one helper".
+Judge and cron are converted too: the judgment card wraps its body lines and
+clips its title to half the card, and the cron card clips the job name the
+same way (its task already wrapped through `skills::wrap_detail`). Delegate's
+rows are still hand-built; that and the plan's AC1 wording ("every card
+builder renders through the one helper") remain.
+
+**A bug this plan's own test missed, found by judge's:** `fit` measured each
+word by summing `UnicodeWidthChar` over its characters, so an ANSI colour
+sequence counted as visible text and a line that fitted wrapped anyway —
+judge's card tests caught it as two broken layouts. `fit` is escape-aware
+now, the property test carries a coloured fixture, and
+`wrapping_carries_colour_through` asserts a sequence is never split.
 
 ## Approach
 

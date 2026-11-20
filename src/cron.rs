@@ -2800,10 +2800,13 @@ fn is_scheduled_run_of(path: &Path, job: &str) -> bool {
 fn card(home: &Path, job: &Job, now: Minute) -> String {
     let state = if job.enabled { "enabled" } else { "disabled" };
     let state_color = if job.enabled { OK } else { WARN };
+    // A job name is the owner's text and has no bound: it clips to half the
+    // card, and the dashes are computed from what is actually drawn.
+    let shown = crate::cards::clip(&job.name, CARD_WIDTH / 2);
     let header = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{name}{RESET} {DIM}{dashes} {state_color}{state}{RESET} {DIM}\u{2510}{RESET}",
-        name = job.name,
-        dashes = dashes_for(&format!(" {} ", job.name), state),
+        name = shown,
+        dashes = dashes_for(&format!(" {} ", shown), state),
     );
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{}{RESET}", job.schedule));

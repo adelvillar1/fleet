@@ -1279,12 +1279,19 @@ fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String
         subtitle,
         CARD_WIDTH.saturating_sub(title.chars().count() + 8),
     );
-    let dashes = dashes_for(title, &plain(&right));
+    // A disposition or title longer than half the card used to widen the
+    // header; it clips, and the dashes are computed from the clipped text.
+    let title = crate::cards::clip(title, CARD_WIDTH / 2);
+    let dashes = dashes_for(&title, &plain(&right));
     let mut out = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{title}{RESET} {DIM}{dashes} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}\n"
     );
+    // Body lines wrap rather than truncate: a card that drops the tail of
+    // its own evidence is a card that lies by omission (KI-140).
     for line in body {
-        out.push_str(&format!("{DIM}\u{2502}{RESET} {line}\n"));
+        for piece in crate::cards::fit(&line, CARD_WIDTH - 4) {
+            out.push_str(&format!("{DIM}\u{2502}{RESET} {piece}\n"));
+        }
     }
     out.push_str(&format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}\n",

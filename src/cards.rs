@@ -59,10 +59,10 @@ pub fn fit(text: &str, width: usize) -> Vec<String> {
     let mut line = String::new();
     let mut line_width = 0usize;
     for word in text.split(' ') {
-        let word_width: usize = word
-            .chars()
-            .map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0))
-            .sum();
+        // Measured with the same escape-aware rule as `width_of`: a body
+        // line carries colour, and counting an SGR sequence as visible text
+        // wrapped lines that fit (found by judge's card tests).
+        let word_width = width_of(word);
         let space = usize::from(!line.is_empty());
         if line_width + space + word_width <= width {
             if space == 1 {
@@ -81,8 +81,22 @@ pub fn fit(text: &str, width: usize) -> Vec<String> {
             line_width = word_width;
             continue;
         }
-        // A word wider than the line: hard-split it by cells.
+        // A word wider than the line: split it by cells, carrying any escape
+        // sequence through without charging it a cell.
+        let mut in_escape = false;
         for c in word.chars() {
+            if in_escape {
+                line.push(c);
+                if ('@'..='~').contains(&c) {
+                    in_escape = false;
+                }
+                continue;
+            }
+            if c == '\u{1b}' {
+                in_escape = true;
+                line.push(c);
+                continue;
+            }
             let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
             if line_width + w > width && !line.is_empty() {
                 lines.push(std::mem::take(&mut line));
@@ -175,6 +189,9 @@ mod tests {
             "\u{1f680}\u{1f680}\u{1f680}\u{1f680}",
             "e\u{301}e\u{301}e\u{301}e\u{301}",
             "provider acme-dev with a very long display name that goes on and on",
+            // Colour must not be charged as content: `fit` wrapped lines that
+            // fitted because an SGR sequence counted as visible cells.
+            "\u{1b}[90mdisagreed\u{1b}[0m \u{1b}[1mthe owner's grading is the ground truth\u{1b}[0m",
         ];
         for width in 20..=120usize {
             for fixture in fixtures {
@@ -198,6 +215,22 @@ mod tests {
         assert_eq!(width_of(&cut), 10);
         assert!(cut.ends_with('\u{2026}'), "{cut:?}");
         assert_eq!(clip("\u{65e5}\u{672c}\u{8a9e}", 4), "\u{65e5}\u{2026}");
+    }
+
+    /// Colour survives a wrap: the escape sequences are carried, never
+    /// split mid-sequence by a hard break.
+    #[test]
+    fn wrapping_carries_colour_through() {
+        let text = format!("{}{}\u{1b}[0m", "\u{1b}[90m", "c".repeat(120));
+        for line in fit(&text, 30) {
+            assert!(
+                !line.contains('\u{1b}')
+                    || line.contains("\u{1b}[90m")
+                    || line.contains("\u{1b}[0m"),
+                "a split escape sequence: {line:?}"
+            );
+            assert!(width_of(&line) <= 30, "{line:?}");
+        }
     }
 
     /// Wrapping never drops text: the cells survive the wrap.
