@@ -11954,6 +11954,25 @@ async function theConnectCardSaysWhatHappened() {
     good && good.textContent);
 }
 
+// P0 of the face rethink: the topbar tells the truth or keeps quiet. A fresh
+// home has no route, no run and nothing measured — so it carries no pills and
+// no zeroes. A strip of "no route yet · 0 · 0% · idle" reads like a fault
+// report on a machine that is working perfectly.
+async function theTopbarKeepsQuietOnAFreshHome() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush(200);
+  const route = page.IDS['route-pill'];
+  const state = page.IDS['state-pill'];
+  const stats = page.IDS['top-stats'];
+  check('P0 a fresh home shows no route pill',
+    !!route && route.hidden === true, route ? 'hidden=' + route.hidden : 'no pill');
+  check('P0 a fresh home shows no state pill',
+    !!state && state.hidden === true, state ? 'hidden=' + state.hidden : 'no pill');
+  check('P0 a fresh home shows no zero stat strip',
+    !!stats && stats.hidden === true, stats ? 'hidden=' + stats.hidden : 'no strip');
+}
+
   // The palette's "later" label (the rail's own audit): the label belongs
   // to a destination not yet built, and BUILT is the one list the rail
   // does not derive — it drifted, calling two built surfaces (design,
@@ -16641,6 +16660,7 @@ const cases = [
   ['CA2b opening a run in flight loads its view', openingARunInFlightLoadsItsView],
   ['CA3/CA4 the run-scoped controls say their scope', theRunScopedControlsSayTheirScope],
   ['CA-C3 the connect card says what happened', theConnectCardSaysWhatHappened],
+  ['P0 the topbar keeps quiet on a fresh home', theTopbarKeepsQuietOnAFreshHome],
   ['SWEEP every settings press acts or answers', everySettingsPressSaysSomething],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],

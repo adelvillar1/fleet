@@ -1194,6 +1194,7 @@ import { node, svg, clip } from './core/dom.js';
     settingsRail: document.getElementById('settings-rail'),
     settingsBoard: document.getElementById('settings-board'),
     routePill: document.getElementById('route-pill'),
+    topStats: document.getElementById('top-stats'),
     statePill: document.getElementById('state-pill'),
     spend: document.getElementById('spend'),
     context: document.getElementById('context'),
@@ -3688,6 +3689,15 @@ import { node, svg, clip } from './core/dom.js';
     el.contextMeter.dataset.level = pct >= 90 ? 'imminent' : pct >= 60 ? 'high' : 'calm';
     el.contextMeter.title = contextDetail();
     if (el.context) el.context.title = contextDetail();
+
+    // P0 of the face rethink: the topbar tells the truth or keeps quiet. A
+    // fresh home has no route, no run and nothing measured, so it shows no
+    // pills and no zeroes — "no route yet · 0 · 0% · idle" is a strip of
+    // numbers that reads like a fault report on a machine that is fine.
+    var freshHome = !face.session && !face.running && !face.stop && !face.route;
+    if (el.routePill) el.routePill.hidden = freshHome;
+    if (el.statePill) el.statePill.hidden = freshHome;
+    if (el.topStats) el.topStats.hidden = freshHome;
 
     if (face.route) {
       el.routePill.textContent = face.route.provider;

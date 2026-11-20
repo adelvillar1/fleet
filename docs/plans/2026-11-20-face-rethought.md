@@ -130,7 +130,17 @@ Its coverage was already there and I nearly duplicated it: `C5 Enter inserts
 the reference into the sentence` asserts the insert landed *and* that the file
 pane opened — `carry`'s whole contract. The extraction keeps it green.
 
-Only the topbar's truths-only render is left in P0.
+**P0, fifth item landed: the topbar keeps quiet.** A fresh home has no route,
+no run and nothing measured, so it shows no pills and no zeroes — the old strip
+read "no route yet · 0 · 0% · idle", which is a fault report on a machine that
+is working perfectly. Red-proved by removing the three hide lines: the case
+failed on all three, naming each.
+
+**P0 is complete** (5 of 5). The harness carries 1489 checks across 208 cases,
+including the fresh-home case, the board-head contract, the persona tint and
+the carry.
+
+Next: P1 — the conversation: one field, the receipts gutter, fork-at-turn.
 
 ## Phases
 
