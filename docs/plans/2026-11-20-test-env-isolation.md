@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-20
 updated: 2026-11-20
 slug: test-env-isolation
@@ -25,7 +25,7 @@ isolation; the fixes are per-test.
 - The suite runs ~2,450 tests, most under default parallelism; the flake
   cost is a full-suite run to discover one test's isolation bug.
 
-## Status pass, 2026-11-20
+## Status pass, 2026-11-20 (superseded)
 
 Two instances landed the same day this plan was written, both red in a
 full `cargo test` and green in isolation:
@@ -42,6 +42,30 @@ Both fixes are per-test. The general guard this plan describes (a
 crate-wide serialization primitive for env- and cwd-sensitive tests,
 with the census as the list of what must take it) is still open, and
 these two rows are its evidence.
+
+## Status pass, 2026-11-20 (scoping)
+
+Measured before starting, because the plan names "the known offenders" and
+the tree disagrees:
+
+- **85 call sites** of `std::env::set_var` / `std::env::remove_var` across
+  ~20 modules — `layerfs_tools` 10, `gui/server` 9, `armada/deploy` 8,
+  `tools` 5, `layerfs_view` 5, `footprint_history` 5, `subagents` 4, and
+  four each in `judge/tests`, `gui/bridge`, `explain/tests`,
+  `delegate/tests`, `armada/join`.
+- Only **3** go through an `unsafe { }` wrapper; the rest are the plain
+  calls, so the guard in AC2 would red on 82 sites the moment it lands.
+
+That changes the shape of this plan: it is a migration of 85 sites, not of
+"the known offenders plus a guard". The guard should land **after** the
+support module and the bulk migration, or it needs 85 named exemptions —
+and 85 exemptions is a list nobody reads, which is the failure mode
+`guard-list-inversion` was built to avoid.
+
+Two instances are already closed and are the evidence base: **KI-578**
+(a test inheriting the machine's git default branch — fixed by pinning the
+default, not by env) and **KI-579** (`route`'s test reading a provider key
+from the process env — fixed by naming a variable nothing sets).
 
 ## Approach
 
