@@ -190,13 +190,15 @@ fn admit_principal(
             journal_guard(home, &frame, "denied", &name);
             return Err(format!(
                 "the principal `{}` is not granted `{}` here: {name}",
-                frame.principal,
-                frame.verb
+                frame.principal, frame.verb
             ));
         }
         Decision::StepUpRequired => {
             journal_guard(home, &frame, "step_up", "step-up required");
-            return Err(format!("the `{}` verb requires step-up approval", frame.verb));
+            return Err(format!(
+                "the `{}` verb requires step-up approval",
+                frame.verb
+            ));
         }
     }
     // A local call carries no signed assertion, so a privileged verb is

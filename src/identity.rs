@@ -436,7 +436,10 @@ mod tests {
         link_device(&home, "phone-1", &operator).unwrap();
         assert_eq!(principal_for_device(&home, "phone-1").unwrap(), operator);
         // An empty name is the default run, not a refusal.
-        assert_eq!(principal_for_device(&home, "  ").unwrap(), PrincipalId::owner());
+        assert_eq!(
+            principal_for_device(&home, "  ").unwrap(),
+            PrincipalId::owner()
+        );
         fs::remove_dir_all(&home).ok();
     }
 

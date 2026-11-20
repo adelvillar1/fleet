@@ -15575,12 +15575,8 @@ async fn drive_run(
         tokio::task::spawn_blocking(move || {
             let root = folder
                 .as_deref()
-                .map(|granted| {
-                    crate::memory::resolve_root_from(granted, Some(&run_home))
-                })
-                .unwrap_or_else(|| {
-                    crate::memory::resolve_root_from(&run_home, Some(&run_home))
-                });
+                .map(|granted| crate::memory::resolve_root_from(granted, Some(&run_home)))
+                .unwrap_or_else(|| crate::memory::resolve_root_from(&run_home, Some(&run_home)));
             std::sync::Arc::new(crate::memory::Memory::load(&root))
         })
         .await
@@ -15660,6 +15656,7 @@ async fn drive_run(
     })
     .unwrap_or_default();
     let options = AgentOptions {
+        write_scope: None,
         principal: principal.as_deref().map(crate::identity::PrincipalId::new),
         // The session's standing objective, read per run so a change reaches
         // the next run with no restart.

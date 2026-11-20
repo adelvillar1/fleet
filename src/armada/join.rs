@@ -292,9 +292,12 @@ pub fn inherit_servers(home: &Path, remote: &str) -> Result<(usize, usize), Stri
         ));
     }
     // The shared file may sit at the repo root or under a `mcp/` directory.
-    let shared_path = [scratch.join("mcp.json"), scratch.join("mcp").join("mcp.json")]
-        .into_iter()
-        .find(|path| path.exists());
+    let shared_path = [
+        scratch.join("mcp.json"),
+        scratch.join("mcp").join("mcp.json"),
+    ]
+    .into_iter()
+    .find(|path| path.exists());
     let Some(shared_path) = shared_path else {
         let _ = std::fs::remove_dir_all(&scratch);
         return Err(format!(
@@ -399,9 +402,7 @@ pub fn skills_dir(home: &Path) -> PathBuf {
             return PathBuf::from(named);
         }
     }
-    let user_home = std::env::var("HOME").unwrap_or_else(|_| {
-        home.to_string_lossy().into_owned()
-    });
+    let user_home = std::env::var("HOME").unwrap_or_else(|_| home.to_string_lossy().into_owned());
     PathBuf::from(user_home).join(".agents").join("skills")
 }
 
@@ -410,8 +411,7 @@ pub fn skills_dir(home: &Path) -> PathBuf {
 /// would silently read.
 fn clone_skills(remote: &str, dest: &Path) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("the skills home: {error}"))?;
+        std::fs::create_dir_all(parent).map_err(|error| format!("the skills home: {error}"))?;
     }
     let output = std::process::Command::new("git")
         .arg("clone")
@@ -444,7 +444,10 @@ pub fn report(joined: &JoinReport) -> String {
     let skills = if joined.skills_cloned {
         format!("skills_cloned=true ({} loaded)", joined.skills_loaded)
     } else if joined.skills_loaded > 0 {
-        format!("skills_cloned=false ({} already local)", joined.skills_loaded)
+        format!(
+            "skills_cloned=false ({} already local)",
+            joined.skills_loaded
+        )
     } else {
         "skills=0 — this instance runs on its own skills, not the fleet's".to_string()
     };
@@ -467,12 +470,7 @@ pub fn report(joined: &JoinReport) -> String {
     format!(
         "armada join: sid={} install={} corpus_cloned={} {} {} registered_at={} — un-calibrated \
          until it settles dispatches",
-        joined.sid,
-        joined.install_id,
-        joined.corpus_cloned,
-        skills,
-        tools,
-        joined.registered_at
+        joined.sid, joined.install_id, joined.corpus_cloned, skills, tools, joined.registered_at
     )
 }
 
@@ -556,7 +554,10 @@ mod tests {
             (HEARTBEAT_SECS_ENV, "soon"),
         ]))
         .expect_err("refused");
-        assert!(refused.contains("not a whole number of seconds"), "{refused}");
+        assert!(
+            refused.contains("not a whole number of seconds"),
+            "{refused}"
+        );
     }
 
     #[test]
@@ -585,10 +586,21 @@ mod tests {
         std::fs::write(seed.join("a-fact.md"), "---\nname: a-fact\n---\n\nx\n").unwrap();
         run(&["add", "."], &seed);
         run(
-            &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"],
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "seed",
+            ],
             &seed,
         );
-        run(&["remote", "add", "origin", remote.to_str().unwrap()], &seed);
+        run(
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+            &seed,
+        );
         run(&["push", "-q", "origin", "HEAD:master"], &seed);
 
         let instance = scratch("instance");
@@ -644,7 +656,15 @@ mod tests {
             std::fs::write(work.join(file), body).unwrap();
             run(&["add", "."], &work);
             run(
-                &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"],
+                &[
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "user.name=t",
+                    "commit",
+                    "-qm",
+                    "seed",
+                ],
                 &work,
             );
             run(&["remote", "add", "origin", bare.to_str().unwrap()], &work);
@@ -668,14 +688,28 @@ mod tests {
                 .output()
                 .expect("git runs")
         };
-        run(&["init", "--bare", "-q", skills_bare.to_str().unwrap()], &home);
+        run(
+            &["init", "--bare", "-q", skills_bare.to_str().unwrap()],
+            &home,
+        );
         run(&["init", "-q"], &skills_work);
         run(&["add", "."], &skills_work);
         run(
-            &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"],
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "seed",
+            ],
             &skills_work,
         );
-        run(&["remote", "add", "origin", skills_bare.to_str().unwrap()], &skills_work);
+        run(
+            &["remote", "add", "origin", skills_bare.to_str().unwrap()],
+            &skills_work,
+        );
         run(&["push", "-q", "origin", "HEAD:master"], &skills_work);
 
         let instance = scratch("skills-instance");
@@ -694,7 +728,12 @@ mod tests {
         unsafe { std::env::remove_var("FLEET_SKILLS_DIR") };
 
         assert!(joined.skills_cloned, "the boot cloned the shared library");
-        assert_eq!(joined.skills_loaded, 1, "the instance can load the skill: {}", report(&joined));
+        assert_eq!(
+            joined.skills_loaded,
+            1,
+            "the instance can load the skill: {}",
+            report(&joined)
+        );
         assert!(
             report(&joined).contains("skills_cloned=true"),
             "the boot line says the instance is as smart as its siblings: {}",
@@ -749,7 +788,15 @@ mod tests {
         run(&["init", "-q"], &work);
         run(&["add", "."], &work);
         run(
-            &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"],
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "seed",
+            ],
             &work,
         );
         run(&["remote", "add", "origin", bare.to_str().unwrap()], &work);
@@ -809,8 +856,7 @@ mod tests {
                   "server_name":"cloudflare-api","server_version":"1","tools":4}}}}"#,
         )
         .unwrap();
-        let (inherited, added) =
-            inherit_servers(&home, remote.to_str().unwrap()).expect("merged");
+        let (inherited, added) = inherit_servers(&home, remote.to_str().unwrap()).expect("merged");
         assert_eq!((inherited, added), (1, 0), "nothing new to add");
         let (_, entry) = crate::mcp_registry::read_servers(&home)
             .expect("parses")
@@ -843,7 +889,15 @@ mod tests {
         };
         run(&["add", "-A"], &work);
         run(
-            &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "swap"],
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "swap",
+            ],
             &work,
         );
         run(&["push", "-q", "origin", "HEAD:master"], &work);

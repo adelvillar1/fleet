@@ -609,17 +609,21 @@ mod tests {
         // And each says where it actually stands — no class claims a
         // transport it does not have.
         let summary = class_summary();
-        assert!(summary.contains("memories: synced with the corpus"), "{summary}");
+        assert!(
+            summary.contains("memories: synced with the corpus"),
+            "{summary}"
+        );
         assert!(summary.contains("skills: its own repo"), "{summary}");
         assert!(summary.contains("mcp.json: its own repo"), "{summary}");
         // Nothing in the shared set may be private.
         for class in &names {
-            assert!(!PRIVATE.contains(class), "`{class}` is both shared and private");
+            assert!(
+                !PRIVATE.contains(class),
+                "`{class}` is both shared and private"
+            );
         }
         for must in ["grants.json", "vault.json", "identity.json", "sessions"] {
             assert!(PRIVATE.contains(&must), "`{must}` must stay private");
         }
     }
-
-
 }

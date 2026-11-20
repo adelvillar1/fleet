@@ -44,7 +44,8 @@ const SERVED: &[ToolVerb] = &[
     ToolVerb {
         name: "roster_read",
         verb: Verb::State,
-        description: "the flagship's roster: instances, liveness, capacity, and settled reliability",
+        description:
+            "the flagship's roster: instances, liveness, capacity, and settled reliability",
     },
     ToolVerb {
         name: "instance_state",
@@ -235,7 +236,10 @@ pub fn respond(home: &Path, request: &Value) -> Option<Value> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             call(home, &name, &arguments, now)
                 .map(|result| json!({"content": [{"type": "text", "text": result.to_string()}]}))
         }
@@ -290,7 +294,11 @@ mod tests {
         ] {
             assert!(names.contains(&expected), "missing {expected} in {names:?}");
         }
-        assert_eq!(names.len(), 10, "the endpoint serves the ten verbs: {names:?}");
+        assert_eq!(
+            names.len(),
+            10,
+            "the endpoint serves the ten verbs: {names:?}"
+        );
     }
 
     #[test]

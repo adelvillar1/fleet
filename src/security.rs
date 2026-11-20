@@ -376,8 +376,8 @@ pub fn grant_template(
     if scope.trim().is_empty() {
         return Err(format!("refused: {what} names no scope"));
     }
-    let mut store = GrantStore::load(home)
-        .map_err(|error| format!("cannot read the grant store: {error}"))?;
+    let mut store =
+        GrantStore::load(home).map_err(|error| format!("cannot read the grant store: {error}"))?;
     let expanded = template.grants(principal, scope);
     if expanded.is_empty() {
         return Err(format!(
@@ -861,7 +861,10 @@ mod tests {
         let first = grant_template(&home, "alice", RoleTemplate::Auditor, "org", false).unwrap();
         assert_eq!(first.rows, 1);
         let again = grant_template(&home, "alice", RoleTemplate::Auditor, "org", false).unwrap();
-        assert_eq!(again.rows, 0, "a second grant of the same template adds nothing");
+        assert_eq!(
+            again.rows, 0,
+            "a second grant of the same template adds nothing"
+        );
         let gone = grant_template(&home, "alice", RoleTemplate::Auditor, "org", true).unwrap();
         assert_eq!(gone.rows, 1, "the revoke removed the row it granted");
         let store = GrantStore::load(&home).unwrap();
@@ -882,7 +885,11 @@ mod tests {
         }
         // Nothing was written by either refused act.
         let store = GrantStore::load(&home).unwrap();
-        assert!(store.grants.is_empty(), "a refused act wrote rows: {:?}", store.grants);
+        assert!(
+            store.grants.is_empty(),
+            "a refused act wrote rows: {:?}",
+            store.grants
+        );
         fs::remove_dir_all(&home).ok();
     }
 
@@ -910,9 +917,14 @@ mod tests {
         fs::write(GrantStore::path(&home), "{ not json").unwrap();
         let refused = grant_template(&home, "owner", RoleTemplate::Operator, "instance", false)
             .expect_err("the boundary answers first");
-        assert!(refused.contains("no governance act can grant or revoke"), "{refused}");
-        assert!(!refused.contains("cannot read the grant store"), "{refused}");
+        assert!(
+            refused.contains("no governance act can grant or revoke"),
+            "{refused}"
+        );
+        assert!(
+            !refused.contains("cannot read the grant store"),
+            "{refused}"
+        );
         fs::remove_dir_all(&home).ok();
     }
-
 }
