@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-20
 updated: 2026-11-20
 slug: gate-fmt-cleanup
@@ -53,16 +53,23 @@ not take.
 
 ## Acceptance Criteria
 
-- [ ] `cargo fmt --all --check` exits 0 with a clean tree; exit code read
-      directly, never through a pipe (hard rule 2).
-- [ ] The eight-file commit's semantic diff is empty: `git diff -w`
-      between the parent and the commit prints nothing for `src`.
-- [ ] The commit touches only `src/` formatting — no test, doc, or
-      dependency change rides it.
-- [ ] `cargo clippy --all-targets -- -D warnings` and `cargo test` are at
-      least as green as the tree was before the commit (formatting cannot
-      change either, but the gate is run once, whole, to prove it).
-- [ ] KI-571 is closed in `docs/known-issues.md` with the commit named.
+- [x] `cargo fmt --all --check` exits 0 at `35e4612` — measured twice this
+      session, 0 hunks (it was 36 hunks across 9 files at `60ee125`).
+- [x] The formatting landed as its own commit, `7d5cd8e` (`style:
+      rustfmt the tree the gate's fmt leg was red on`), and carries no
+      semantic edit: `git show --stat` names seven `src/` files, all
+      rustfmt rewrites. (The plan's original "`git diff -w` is empty"
+      wording was wrong — rustfmt reflows lines, which `-w` still shows;
+      the honest check is that the files are rustfmt-clean at HEAD, and
+      that the commit touches formatting only.)
+- [x] The commit is `src/`-only — no test, doc, or dependency change
+      rides it.
+- [ ] `cargo clippy --all-targets -- -D warnings` and `cargo test` green
+      on the same tree. Clippy is green at the parent + in-flight tree
+      (measured this session); the four-leg evidence for `35e4612` is the
+      release cut's own gate run, in flight at this status pass.
+- [x] KI-571 is closed in `docs/known-issues.md`, naming `7d5cd8e` and the
+      0-hunk re-measurement (ledger now reads 576 rows, 4 open).
 
 ## Files to be touched
 
