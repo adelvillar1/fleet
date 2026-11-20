@@ -877,6 +877,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             }
                         };
                         let options = AgentOptions {
+                            write_scope: None,
                             principal: None,
                             goal: None,
                             model: model.clone(),

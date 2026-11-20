@@ -142,6 +142,10 @@ pub enum Command {
     /// awareness the owner asked for (2026-11-09): deterministic for the
     /// bounds, a sys1 judgment for the ambiguous.
     Footprint(FootprintOptions),
+    /// Every bound Fleet states in more than one place, checked against
+    /// its own producer. A report, not a gate: the suite owns the
+    /// assertions (2026-11-20, the OMH borrowings plan's C4).
+    Drift,
     /// The recovery mode (the failsafe plan's C7): restore every
     /// settings file whose current form is broken from its
     /// last-known-good stamp, then name the health probes' fresh
@@ -1191,6 +1195,7 @@ usage:
                                 apply a role template for a principal; `mcp`
                                 serves the ten control verbs as MCP tools
   fleet footprint [--json] [--class <name>] [--path <dir>] [--estimate]
+  fleet drift                    every bound stated in more than one place
                   [--settle <kib>] [--record]
                                 what this process tree holds right now —
                                 memory, processes, disk — graded against its
@@ -1292,6 +1297,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "doctor" => parse_doctor(rest),
         "recover" => no_flags(rest, Command::Recover),
         "footprint" => parse_footprint(rest),
+        "drift" => no_flags(rest, Command::Drift),
         "ki" => parse_ki(rest),
         "install" => parse_install(rest),
         "reload" => parse_reload(rest),

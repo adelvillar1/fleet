@@ -192,7 +192,7 @@ fn render_settings(frame: &mut Frame<'_>, app: &App) {
     };
     let area = centered_sized(
         SETTINGS_MODAL_PERCENT,
-        settings_height(lines.len()),
+        settings_height(lines.len(), frame.area().height),
         frame.area(),
     );
     frame.render_widget(Clear, area);
@@ -207,12 +207,25 @@ fn render_settings(frame: &mut Frame<'_>, app: &App) {
     }
     let visible = inner.height as usize;
     if lines.len() > visible {
-        let hidden = lines.len() - visible + 1;
-        lines.truncate(visible.saturating_sub(1));
-        lines.push(Line::from(Span::styled(
-            format!(" +{hidden} more"),
-            Style::new().fg(palette::DIM),
-        )));
+        // The footer is the pane's affordance — what `enter`, `r` and
+        // `esc` do — so it survives truncation. A settings row added
+        // after the footer was written is what pushes content past the
+        // clamp, and an owner who cannot see the keys owns a pane that
+        // reads as dead rather than full. The last two lines are kept,
+        // and what was held back is counted above them, so nothing is
+        // dropped silently (hard rule 12's degradation rule, applied to
+        // a pane rather than a lane).
+        let footer = lines.split_off(lines.len().saturating_sub(SETTINGS_FOOTER_LINES));
+        let room = visible.saturating_sub(footer.len() + 1);
+        let hidden = lines.len().saturating_sub(room);
+        lines.truncate(room);
+        if hidden > 0 {
+            lines.push(Line::from(Span::styled(
+                format!(" +{hidden} more"),
+                Style::new().fg(palette::DIM),
+            )));
+        }
+        lines.extend(footer);
     }
     frame.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
@@ -223,8 +236,16 @@ fn render_settings(frame: &mut Frame<'_>, app: &App) {
 /// rather than being cut silently. The two list sections made the pane
 /// taller than a fixed share of a 24-row frame, and a card clipped by
 /// its own modal is the failure the boards already learned from.
-fn settings_height(lines: usize) -> u16 {
-    (lines as u16).saturating_add(4).clamp(4, 44)
+///
+/// The cap is the frame's own height, not a constant. It was a flat 44
+/// until the delegation bounds added a thirty-second knob: at that
+/// moment the pane's content crossed 44 on a 60-row terminal and the
+/// provider cards were clipped while sixteen rows of frame sat unused.
+/// `centered_sized` already takes `min(area.height)`, so the frame is
+/// the only honest ceiling — a cap below it clips content for no gain,
+/// and a cap above it does nothing.
+fn settings_height(lines: usize, frame_height: u16) -> u16 {
+    (lines as u16).saturating_add(4).clamp(4, frame_height)
 }
 
 /// The editor's lines: the buffer as one line, with the row's own
@@ -454,7 +475,7 @@ fn render_settings_confirm(frame: &mut Frame<'_>, app: &App) {
     ]));
     let area = centered_sized(
         SETTINGS_CONFIRM_PERCENT,
-        settings_height(lines.len()),
+        settings_height(lines.len(), frame.area().height),
         frame.area(),
     );
     frame.render_widget(Clear, area);
@@ -2024,6 +2045,12 @@ fn explain_height(lines: usize) -> u16 {
 /// file the beat wrote and hands the state machine its lines.
 /// The settings modal's width, as a percentage of the frame.
 const SETTINGS_MODAL_PERCENT: u16 = 70;
+
+/// The rows at the foot of the settings pane that name the knob count and
+/// the keys. They are kept when the pane overflows, because the pane's
+/// whole affordance lives in them — a truncated pane that dropped them
+/// would read as dead rather than full.
+const SETTINGS_FOOTER_LINES: usize = 2;
 
 /// The destructive confirmation's width, as a share of the frame: the
 /// same share the sessions picker takes, so the two overlays read as

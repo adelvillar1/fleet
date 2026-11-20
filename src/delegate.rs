@@ -344,7 +344,12 @@ pub async fn rerun(
         node: None,
         goal: brief.task.clone(),
         tools: None,
-        max_turns: crate::subagents::turn_ceiling(1),
+        // The delegate beat runs one child at depth 1 under the home's own
+        // bounds, the same pair `subagents::run` would resolve.
+        max_turns: {
+            let caps = crate::subagents::TurnCaps::for_home(Some(home));
+            crate::subagents::turn_ceiling(1, caps.default, caps.ceiling)
+        },
         approver: &mut approver,
         progress: &mut progress,
         ui_tx: None,

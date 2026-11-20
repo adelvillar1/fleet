@@ -918,28 +918,46 @@ struct RunsEntry {
 struct DelegationEntry {
     #[serde(default)]
     max_turns: Option<usize>,
+    #[serde(default)]
+    max_turns_ceiling: Option<usize>,
 }
 
 /// The resolved run knobs, with the defaults applied.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RunConfig {
+    /// The main session's fallback ceiling. The main loop is uncapped by
+    /// turns, so this reaches no bound of its own; it stays because the
+    /// face's card reads it.
     pub max_turns: usize,
+    /// The cap an unasked delegated child runs under
+    /// (`delegation.max_turns`).
+    pub child_turns: usize,
+    /// The most a delegated child's call may ask for with `max-turns`
+    /// (`delegation.max_turns_ceiling`).
+    pub child_turns_ceiling: usize,
 }
 
 impl Default for RunConfig {
     fn default() -> RunConfig {
         RunConfig {
             max_turns: crate::agent::DEFAULT_MAX_TURNS,
+            child_turns: crate::subagents::DEFAULT_CHILD_TURNS,
+            child_turns_ceiling: crate::subagents::DEFAULT_CHILD_TURNS_CEILING,
         }
     }
 }
 
 /// The run knobs this home configures, the way [`skills_config`] reads
-/// its own: the compiled defaults, overridden by the `runs` section of
-/// config.json when it names values. A missing or malformed file is the
-/// defaults — the same silence `skills_config` keeps. A named value
-/// above the compiled default clamps to it, because "config can only
-/// lower" is what makes the setting a bound and not a wish.
+/// its own: the compiled defaults, overridden by the `delegation`
+/// section of config.json when it names values. A missing or malformed
+/// file is the defaults — the same silence `skills_config` keeps.
+///
+/// One correction is applied on the way out, and it is a refusal rather
+/// than a clamp: a ceiling below the default would make the default
+/// larger than the largest askable cap, which is a config that
+/// contradicts itself. The ceiling is raised to the default and named,
+/// so the effective numbers always agree rather than one silently
+/// governing the other.
 pub fn run_config(home: &Path) -> RunConfig {
     let mut config = RunConfig::default();
     let Ok(text) = std::fs::read_to_string(home.join("config.json")) else {
@@ -957,10 +975,22 @@ pub fn run_config(home: &Path) -> RunConfig {
         // Config is authoritative for the child bound (the 2026-11-05
         // ruling): the main loop is uncapped, so the clamp that once
         // guarded a global ceiling has nothing to guard — the owner's
-        // value is the bound.
+        // value is the bound. A zero asks for no value at all.
         if turns > 0 {
             config.max_turns = turns;
+            config.child_turns = turns;
         }
+    }
+    if let Some(ceiling) = delegation.max_turns_ceiling {
+        if ceiling > 0 {
+            config.child_turns_ceiling = ceiling;
+        }
+    }
+    // A ceiling under the default would make the default unaskable: the
+    // child would run at the default while the schema promised a smaller
+    // maximum. The ceiling wins, so the two numbers agree.
+    if config.child_turns_ceiling < config.child_turns {
+        config.child_turns_ceiling = config.child_turns;
     }
     config
 }

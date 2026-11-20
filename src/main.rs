@@ -194,6 +194,18 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Doctor(options)) => doctor_command(&options),
         Ok(Command::Recover) => recover_command(),
         Ok(Command::Footprint(options)) => footprint_command(&options),
+        Ok(Command::Drift) => {
+            // The registry's report, read by exit code like every other
+            // verb: a drifted bound is worth a non-zero exit so a script
+            // can notice, and the text says what to check.
+            let text = fleet::drift::report();
+            print!("{text}");
+            if text.contains("finding(s)") {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
         Ok(Command::Ki(options)) => ki_command(&options),
         Ok(Command::Install(options)) => install_command(&options),
         Ok(Command::Reload(options)) => reload_command(&options),
@@ -3506,6 +3518,7 @@ async fn drive(
         Err(error) => return Err(AgentError::Registry(error)),
     };
     let options = AgentOptions {
+        write_scope: None,
         principal: None,
         capped: false,
         health_note: true,
@@ -4222,9 +4235,7 @@ fn armada_command(action: fleet::cli::ArmadaAction) -> ExitCode {
                 };
             };
             let Some(provider) = fleet::armada::deploy::Provider::parse(&provider_name) else {
-                eprintln!(
-                    "armada deploy: unknown provider `{provider_name}` (docker|openship)"
-                );
+                eprintln!("armada deploy: unknown provider `{provider_name}` (docker|openship)");
                 return ExitCode::from(1);
             };
             let Some(name) = name else {
@@ -4236,22 +4247,19 @@ fn armada_command(action: fleet::cli::ArmadaAction) -> ExitCode {
                 return ExitCode::from(1);
             };
             let Some(remote) = remote else {
-                eprintln!("armada deploy: a container deploy names the shared corpus with --remote");
+                eprintln!(
+                    "armada deploy: a container deploy names the shared corpus with --remote"
+                );
                 return ExitCode::from(1);
             };
-            let spec = match fleet::armada::deploy::service_spec(
-                provider,
-                &name,
-                &image,
-                &remote,
-                None,
-            ) {
-                Ok(spec) => spec,
-                Err(refusal) => {
-                    eprintln!("armada deploy: {refusal}");
-                    return ExitCode::from(1);
-                }
-            };
+            let spec =
+                match fleet::armada::deploy::service_spec(provider, &name, &image, &remote, None) {
+                    Ok(spec) => spec,
+                    Err(refusal) => {
+                        eprintln!("armada deploy: {refusal}");
+                        return ExitCode::from(1);
+                    }
+                };
             match fleet::armada::deploy::provision(&home, &spec, dry_run) {
                 Ok(provisioned) => {
                     println!("armada deploy: {} — {}", spec.preview(), provisioned.handle);
@@ -4267,8 +4275,7 @@ fn armada_command(action: fleet::cli::ArmadaAction) -> ExitCode {
             }
         }
         ArmadaAction::Join { once } => {
-            let home = match fleet::armada::join::home_from_env(&fleet::armada::join::process_env)
-            {
+            let home = match fleet::armada::join::home_from_env(&fleet::armada::join::process_env) {
                 Ok(home) => home,
                 Err(refusal) => {
                     eprintln!("{refusal}");

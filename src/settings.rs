@@ -196,7 +196,20 @@ pub const SETTINGS: &[Setting] = &[
         key: "delegation.max_turns",
         kind: Kind::Count,
         file: File::Config,
-        summary: "The turn bound a delegated child runs under. The main session is                   uncapped by turns (context health is the long-run bound); a child                   that outlived its parent's budget would spend turns on a run whose                   own answer is already written, so the delegation branch keeps its                   cap — the owner's value here is authoritative.",
+        summary: "The turn cap an unasked delegated child gets. A child that \
+                  outlived its parent's budget would spend turns on a run whose own \
+                  answer is already written, so the delegation branch keeps a cap; \
+                  this is the one it gets when its call asks for none. A depth-2 \
+                  child gets half, floored at five turns.",
+    },
+    Setting {
+        key: "delegation.max_turns_ceiling",
+        kind: Kind::Count,
+        file: File::Config,
+        summary: "The most a call may ask for with `max-turns`. A call above this is \
+                  refused by name rather than silently clamped, so the declared \
+                  bound and the enforced one stay the same number. Never below the \
+                  default, which would make the default unaskable.",
     },
     Setting {
         key: "skills.retire_after_sessions",
@@ -613,8 +626,14 @@ pub fn compiled_default(key: &str) -> Option<String> {
         // the prompting mode, which the pin below checks rather than
         // trusting this comment (it caught the first draft's claim).
         "approvals" => Some(crate::approvals::resolve(None, None).label().to_string()),
-        // `agent::DEFAULT_MAX_TURNS` — the child bound's fallback.
-        "delegation.max_turns" => Some(crate::agent::DEFAULT_MAX_TURNS.to_string()),
+        // `subagents::DEFAULT_CHILD_TURNS` — the cap an unasked child gets.
+        "delegation.max_turns" => Some(crate::subagents::DEFAULT_CHILD_TURNS.to_string()),
+        // `subagents::DEFAULT_CHILD_TURNS_CEILING` — the most a call may ask
+        // for. The card's revert must return to a number the harness names,
+        // not to whatever the last owner happened to set.
+        "delegation.max_turns_ceiling" => {
+            Some(crate::subagents::DEFAULT_CHILD_TURNS_CEILING.to_string())
+        }
         // `skills::DEFAULT_RETIRE_AFTER_SESSIONS`.
         "skills.retire_after_sessions" => {
             Some(crate::skills::DEFAULT_RETIRE_AFTER_SESSIONS.to_string())
@@ -962,14 +981,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         assert!(find("delegation.max_turns").is_some());
+        assert!(find("delegation.max_turns_ceiling").is_some());
         assert!(find("runs.max_turns").is_none());
         set(&home, "delegation.max_turns", "30").unwrap();
         let read = crate::route::run_config(&home);
         assert_eq!(read.max_turns, 30);
+        assert_eq!(read.child_turns, 30, "the same value bounds a child");
         // Config is authoritative for the child bound: a value above the
         // compiled default is the owner's, not clamped away.
         set(&home, "delegation.max_turns", "500").unwrap();
         assert_eq!(crate::route::run_config(&home).max_turns, 500);
+        assert_eq!(crate::route::run_config(&home).child_turns, 500);
+        // The ceiling is its own row, and raising it is what lets a call
+        // ask for more than the compiled bound.
+        set(&home, "delegation.max_turns_ceiling", "900").unwrap();
+        let wide = crate::route::run_config(&home);
+        assert_eq!(wide.child_turns, 500);
+        assert_eq!(wide.child_turns_ceiling, 900);
+        // A ceiling under the default is raised to it rather than left
+        // contradicting it.
+        set(&home, "delegation.max_turns_ceiling", "100").unwrap();
+        assert_eq!(
+            crate::route::run_config(&home).child_turns_ceiling,
+            500,
+            "a ceiling under the default rises to the default"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -978,9 +1014,21 @@ mod tests {
         // settings-ux U2: the read's default is what a revert returns
         // the key to, so each entry is tied to the constant the code
         // itself falls back on — a copy that drifts fails here.
+        // The child bound is `subagents`', not `agent::DEFAULT_MAX_TURNS`:
+        // the two were the same number and answered different questions,
+        // which is how the setting came to bound nothing on the path it
+        // named (2026-11-20).
         assert_eq!(
             compiled_default("delegation.max_turns").as_deref(),
-            Some(crate::agent::DEFAULT_MAX_TURNS.to_string().as_str())
+            Some(crate::subagents::DEFAULT_CHILD_TURNS.to_string().as_str())
+        );
+        assert_eq!(
+            compiled_default("delegation.max_turns_ceiling").as_deref(),
+            Some(
+                crate::subagents::DEFAULT_CHILD_TURNS_CEILING
+                    .to_string()
+                    .as_str()
+            )
         );
         assert_eq!(
             compiled_default("skills.retire_after_sessions").as_deref(),

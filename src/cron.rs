@@ -1568,6 +1568,7 @@ pub async fn execute(
         }
     }
     let options = AgentOptions {
+        write_scope: None,
         principal: None,
         session_id: None,
         goal: None,
