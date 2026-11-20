@@ -446,6 +446,46 @@ fn a_lanes_fail_open_parses_its_status_and_names_its_reason() {
 
 // --- the batch-only proof ---
 
+/// Modules that name the explanation beat by design. Each is off the turn
+/// path, and each names the beat for a reason that is written here rather
+/// than left to a reader's guess. Found by scanning the whole census: the
+/// 27-module list this guard used to carry had never looked at most of them.
+const DRIVERS: [&str; 9] = [
+    // The beat's own file and its tests.
+    "explain.rs",
+    "explain/tests.rs",
+    // The graded scenario rehearses the beat against its seam.
+    "eval.rs",
+    // The anomalies pass spends this lane on the narration of its findings
+    // (`anomalies::pass`, reached from the CLI's anomalies verb only).
+    "anomalies.rs",
+    // The face reads the beat's card (`latest_card`) and draws its verdict.
+    "tui/mod.rs",
+    "tui/ui/mod.rs",
+    // `gui/related.rs` names the guard itself in a doc comment.
+    "gui/related.rs",
+    // Both bound a value by `EXPLAIN_BUDGET_USD_DAY` and never run the beat.
+    "onboard.rs",
+    "settings.rs",
+];
+
+/// The scan set is the census, so nothing escapes by omission; what this
+/// pins is the other direction, that every driver names a real module.
+#[test]
+fn every_module_is_accounted_for() {
+    let names: Vec<&str> = crate::testcensus::MODULES.iter().map(|(n, _)| *n).collect();
+    for driver in DRIVERS {
+        assert!(
+            names.contains(&driver),
+            "a driver names no module file — the exemption is a typo: {driver}"
+        );
+    }
+    assert!(
+        crate::testcensus::unaccounted(&names, &[]).is_empty(),
+        "the scan set must cover the census"
+    );
+}
+
 #[test]
 fn no_synchronous_path_references_the_explanation_beat() {
     // The socket-guard test, in the sibling's shape: the synchronous
@@ -453,19 +493,10 @@ fn no_synchronous_path_references_the_explanation_beat() {
     // the session log, the calibration stream's writers and readers —
     // never name this module. A beat that spends a lane ask must be
     // unreachable from a path that runs on every turn.
-    for (name, source) in [
-        ("doctor.rs", include_str!("../doctor.rs")),
-        ("memory.rs", include_str!("../memory.rs")),
-        ("agent.rs", include_str!("../agent.rs")),
-        ("tools.rs", include_str!("../tools.rs")),
-        ("session.rs", include_str!("../session.rs")),
-        ("calib.rs", include_str!("../calib.rs")),
-        ("route.rs", include_str!("../route.rs")),
-        ("compaction.rs", include_str!("../compaction.rs")),
-        ("cron.rs", include_str!("../cron.rs")),
-        ("improve.rs", include_str!("../improve.rs")),
-        ("boards.rs", include_str!("../boards.rs")),
-    ] {
+    for &(name, source) in crate::testcensus::MODULES {
+        if DRIVERS.contains(&name) {
+            continue;
+        }
         assert!(
             !source.contains("explain::"),
             "{name} names the explanation beat"

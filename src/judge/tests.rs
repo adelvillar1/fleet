@@ -1546,6 +1546,55 @@ fn a_cell_counts_its_zero_confidence_rows_and_names_the_reweighting_on_its_card(
 
 // --- the batch-only proof ---
 
+/// Modules that name the judgment beat by design, each off the turn path.
+/// Several reach its lane plumbing (`LaneSession`, `lane_spec`,
+/// `JUDGE_LANE`) rather than the beat itself — that plumbing lives here and
+/// the other beats borrow it. Found by scanning the whole census; the
+/// hand-kept list this guard used to carry had never looked at most of them.
+const DRIVERS: [&str; 13] = [
+    // The beat's own file and its tests.
+    "judge.rs",
+    "judge/tests.rs",
+    // The graded scenario runs the beat against its seam.
+    "eval.rs",
+    // The anomalies pass opens the lane for its own triage.
+    "anomalies.rs",
+    // The approval gate asks once per held action, only for calls the
+    // standing class already flagged (`judge_destructive`).
+    "approvals.rs",
+    // `delegate.rs` names the beat in a doc comment (the routing beat's
+    // one source and one session); `delegate/tests.rs` is the sibling
+    // beat's own guard, which names the word "judge" in its scan.
+    "delegate.rs",
+    "delegate/tests.rs",
+    // The desk, the dream pass and the extract pass borrow the lane spec.
+    "desk.rs",
+    "dream.rs",
+    "extract.rs",
+    // The face reads a disposition.
+    "gui/bridge.rs",
+    // Both bound a value by `JUDGE_BUDGET_USD_DAY`.
+    "onboard.rs",
+    "settings.rs",
+];
+
+/// The scan set is the census, so nothing escapes by omission; what this
+/// pins is the other direction, that every driver names a real module.
+#[test]
+fn every_module_is_accounted_for() {
+    let names: Vec<&str> = crate::testcensus::MODULES.iter().map(|(n, _)| *n).collect();
+    for driver in DRIVERS {
+        assert!(
+            names.contains(&driver),
+            "a driver names no module file — the exemption is a typo: {driver}"
+        );
+    }
+    assert!(
+        crate::testcensus::unaccounted(&names, &[]).is_empty(),
+        "the scan set must cover the census"
+    );
+}
+
 #[test]
 fn no_synchronous_path_references_the_judgment_beat() {
     // The socket-guard test, in the sibling's shape: the synchronous
@@ -1553,26 +1602,10 @@ fn no_synchronous_path_references_the_judgment_beat() {
     // the session log, the calibration stream's writers and readers, and
     // the routing walk — never name this module. A beat that spends a
     // lane ask must be unreachable from a path that runs on every turn.
-    for (name, source) in [
-        ("doctor.rs", include_str!("../doctor.rs")),
-        ("memory.rs", include_str!("../memory.rs")),
-        ("agent.rs", include_str!("../agent.rs")),
-        ("tools.rs", include_str!("../tools.rs")),
-        ("session.rs", include_str!("../session.rs")),
-        ("calib.rs", include_str!("../calib.rs")),
-        ("route.rs", include_str!("../route.rs")),
-        ("compaction.rs", include_str!("../compaction.rs")),
-        ("cron.rs", include_str!("../cron.rs")),
-        ("improve.rs", include_str!("../improve.rs")),
-        ("boards.rs", include_str!("../boards.rs")),
-        ("skills.rs", include_str!("../skills.rs")),
-        ("subagents.rs", include_str!("../subagents.rs")),
-        ("tui/mod.rs", include_str!("../tui/mod.rs")),
-        ("tui/app.rs", include_str!("../tui/app.rs")),
-        ("tui/ui/mod.rs", include_str!("../tui/ui/mod.rs")),
-        ("tui/ui/run.rs", include_str!("../tui/ui/run.rs")),
-        ("tui/events.rs", include_str!("../tui/events.rs")),
-    ] {
+    for &(name, source) in crate::testcensus::MODULES {
+        if DRIVERS.contains(&name) {
+            continue;
+        }
         assert!(
             !source.contains("judge::"),
             "{name} names the judgment beat"
