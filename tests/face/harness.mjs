@@ -14726,6 +14726,21 @@ async function theSpineFeedsTheLensesAndThePivotStaysInPlace() {
       ' tasks=' + boardPage.calls.filter((c) => c.url === '/api/tasks').length);
   page.hash('#/board');
   await flush(120);
+  // P0 of the face rethink: every board head renders through `answerHead` —
+  // eyebrow, display title, the sentence, and no count inside it. A number in
+  // the head is an instrument, and instruments sit beside it, never inside
+  // the sentence the owner reads.
+  check('P0 the answer head carries eyebrow, title and sentence',
+    page.rows('.page-head').length >= 1 &&
+      page.rows('.page-head .page-eyebrow').length >= 1 &&
+      page.rows('.page-head .page-title').length >= 1 &&
+      page.rows('.page-head .page-note').length >= 1,
+    page.rows('.page-head').length + ' heads');
+  check('P0 the answer head carries no count strip',
+    page.rows('.page-head .badge').length === 0 &&
+      page.rows('.page-head .surface-strip').length === 0,
+    page.rows('.page-head .badge').length + ' badges / ' +
+      page.rows('.page-head .surface-strip').length + ' strips');
   // The pivot renders in place: the address reflects the lens, and the
   // workspace spine is re-read to project it — never a foreign panel.
   const nodes = page.IDS['tissue-graph'].querySelectorAll('.tissue-node');

@@ -111,11 +111,13 @@ head — eyebrow · display title · the sentence · the verb — with `pageHead
 kept as its positional door so all seven call sites render through it and the
 classes the stylesheet names stay put.
 
-**Its harness case is not landed, and that is a finding, not an omission:**
-the harness never paints a board (KI-583 — a probe on `#/bots` reported zero
-`.page-head` and zero `.page-title`), so no board-level builder can be pinned
-until a board fixture exists. 1484 checks pass over the refactor; the contract
-is unpinned.
+Its harness case **is** landed, and getting there corrected an error of mine:
+the first probe opened `#/bots` and `#/huddles`, which are not the board route,
+reported zero heads, and I logged "the harness never paints a board". Wrong —
+`#/board` paints one. KI-583 is closed as a coverage gap that no longer exists:
+the contract case now asserts eyebrow, title and sentence are present and that
+no `.badge` or `.surface-strip` rides inside the head, red-proved by removing
+the sentence from the builder. Harness 1486 checks, 207 cases.
 
 Still open in P0: `carry`, and the topbar's truths-only render.
 
