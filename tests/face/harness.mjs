@@ -11789,6 +11789,81 @@ async function theRunScopedControlsSayTheirScope() {
 // forward; a success names the models that landed. The owner's own model
 // list rides the entry either way — a provider that publishes no listing
 // is connectable with the models the owner names.
+// The press rule, swept rather than sampled (KI-442, KI-556, KI-561,
+// KI-563): every control on every settings card either acts — a request
+// goes out — or changes what the card says, or is rendered disabled. A
+// press that does none of those is the silent class, and this case fails it
+// by name without a human reading the cards.
+async function everySettingsPressSaysSomething() {
+  const doc = {
+    type: 'settings', read_at: 'now',
+    scalars: [
+      { key: 'pin', value: '', kind: 'text', source: 'default', summary: 'the pin' },
+      { key: 'runs.max_turns', value: 12, kind: 'number', source: 'default', summary: 'turns' },
+    ],
+    lists: [], rules: [], env: [], cron: [], soul: { present: false, text: '' },
+    router: { pin: '', judged: [], tiers: [], min_confidence: 0.5,
+      default_workload: 'quick', allow_api_models: false, roster: [] },
+    catalog: { models: [], providers: [] },
+    roles: { dir: '/tmp', entries: [] }, vault: { names: [] },
+    lanes: { lanes: [] }, servers: { servers: [] },
+    tools: { calls_per_turn: 40, deferred_above: 32, definition_tokens: 9000, disabled: [] },
+    telegram: { present: false, source: 'unset' }, service: {},
+  };
+  const page = boot({
+    width: 1440, hash: '#/settings',
+    settingsReply: () => ({ status: 200, body: { type: 'settings_write', wrote: { ok: true } } }),
+    documents: { settings: doc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  page.open();
+  await flush(120);
+  const items = page.rows('.cfg-item');
+  check('SWEEP the settings board carries cards to press',
+    items.length > 5, String(items.length));
+  const silent = [];
+  let pressed = 0;
+  let acted = 0;
+  for (const item of items) {
+    item.click();
+    await flush(20);
+    const card = page.el('dock-object-body');
+    if (!card) continue;
+    for (const press of card.find((one) => one.name === 'button')) {
+      if (press.disabled) continue;
+      const said = () => card.find((one) => one.dataset && one.dataset.role &&
+        /answer/.test(String(one.dataset.role)))
+        .map((one) => String(one.textContent || '')).join('|');
+      const words = () => card.find((one) => one.name === 'p')
+        .map((one) => String(one.textContent || '')).join('|');
+      const calls = page.calls.length;
+      const saidBefore = said();
+      const wordsBefore = words();
+      pressed += 1;
+      press.click();
+      await flush(30);
+      const went = page.calls.length > calls;
+      const spoke = said() !== saidBefore;
+      const changed = words() !== wordsBefore;
+      const held = press.disabled === true;
+      if (went || spoke || changed || held) {
+        acted += 1;
+      } else {
+        silent.push(item.dataset.item + ' \u2192 ' +
+          String(press.textContent || press.dataset.act || '(unnamed)').slice(0, 40));
+      }
+    }
+  }
+  // A sweep that pressed nothing would pass the check below vacuously, and
+  // that is precisely the failure mode KI-561 taught: a green case that
+  // never exercised the thing it claims to cover.
+  check('SWEEP the sweep itself pressed the cards', pressed > 5,
+    String(pressed) + ' presses');
+  check('SWEEP every settings press acts, answers, or is disabled',
+    silent.length === 0,
+    silent.length ? silent.join(' \u00b7 ') : pressed + ' pressed, ' + acted + ' answered');
+}
+
 async function theConnectCardSaysWhatHappened() {
   const settingsDoc = {
     type: 'settings', read_at: 'now',
@@ -16544,6 +16619,7 @@ const cases = [
   ['CA2b opening a run in flight loads its view', openingARunInFlightLoadsItsView],
   ['CA3/CA4 the run-scoped controls say their scope', theRunScopedControlsSayTheirScope],
   ['CA-C3 the connect card says what happened', theConnectCardSaysWhatHappened],
+  ['SWEEP every settings press acts or answers', everySettingsPressSaysSomething],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
 

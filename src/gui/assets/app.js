@@ -22595,7 +22595,6 @@ import { node, svg, clip } from './core/dom.js';
       act.type = 'button';
       act.dataset.act = 'provider-reload-all';
       act.addEventListener('click', function () {
-        if (act.disabled) return;
         var ids = ((read.catalog && read.catalog.providers) || [])
           .filter(function (one) { return one.kind !== 'lane' && one.enabled !== false; })
           .map(function (one) { return one.id; });
@@ -27581,9 +27580,11 @@ import { node, svg, clip } from './core/dom.js';
   // renderSections walks the list. The apply button lives in the About
   // pane; the card's link carries the owner there.
   function updateSections(update) {
-    var said = node('p', 'derivation');
-    said.setAttribute('role', 'alert');
-    said.hidden = true;
+    // The update card answers through the one press contract: its sentence
+    // used to live in this node, so the repaint that follows a successful
+    // check replaced it — silent feedback one layer down (KI-561).
+    var fb = pressFeedback('update', 'press-answer');
+    var said = fb.node;
     var act = node('button', 'replay-button replay-resume', 'check the release feed');
     act.type = 'button';
     act.addEventListener('click', function () {
@@ -27596,27 +27597,21 @@ import { node, svg, clip } from './core/dom.js';
         .then(function (document) {
           face.settings = document;
           var fresh = document.update || {};
-          said.hidden = false;
           if (fresh.refused) {
-            said.dataset.tone = 'bad';
-            said.textContent = 'the feed did not answer: ' +
+            fb.say('the feed did not answer: ' +
               (fresh.refused.reason || 'no reason given') +
-              ' \u2014 no answer is not up to date';
+              ' \u2014 no answer is not up to date', true);
           } else if (fresh.candidate) {
-            said.dataset.tone = 'good';
-            said.textContent = 'the feed names ' + fresh.candidate +
-              ' \u2014 the About pane carries the apply button';
+            fb.say('the feed names ' + fresh.candidate +
+              ' \u2014 the About pane carries the apply button', false);
           } else {
-            said.dataset.tone = 'good';
-            said.textContent = 'nothing newer \u2014 this build answers the feed';
+            fb.say('nothing newer \u2014 this build answers the feed', false);
           }
           act.disabled = false;
           if (face.panel === 'settings') paintSettings();
         })
         .catch(function () {
-          said.hidden = false;
-          said.dataset.tone = 'bad';
-          said.textContent = 'the check did not land \u2014 is the face still running?';
+          fb.say('the check did not land \u2014 is the face still running?', true);
           act.disabled = false;
         });
     });

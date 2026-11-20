@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-20
 updated: 2026-11-20
 slug: press-feedback-primitive
@@ -43,9 +43,10 @@ landed on the connect card instead of the reload-all card. The harness
 caught both (`pressFeedback is not defined`, `fb is not defined`) — 206
 cases earning their keep.
 
-**Still owed:** AC1's sweep (which cards mutate state and do not use the
-helper) and AC2's harness case that drives every control of every settings
-card and fails on a silent press.
+Landed after that pass: the update-check card was the last settings card
+painting its answer into a local node (so the repaint after a successful
+check wiped it — KI-561 one layer down); it uses the helper now. The sweep
+case exists and is red-proved.
 
 ## Approach
 
@@ -67,19 +68,27 @@ card and fails on a silent press.
 
 ## Acceptance Criteria
 
-- [ ] One helper renders the answer/busy/disabled shape; every card that
-      mutates state through a press uses it (the sweep enumerates them).
-- [ ] The harness case drives every control of every settings card and
-      fails on a press that changes nothing and says nothing — red-proved
-      against KI-563's shape.
-- [ ] The harness asserts what the owner is told (the answer line's text)
-      for the provider reload card, not just that a request was made
-      (KI-561's lesson, pinned).
+- [x] One helper renders the answer/busy/disabled shape, and every settings
+      card that mutates state through a press uses it: provider reload,
+      connect, reload-all, and the update-check card. A scan of the app for
+      local registers of `role="alert"` finds only two left, and neither is
+      a card: `paintInbox` and `paintSurfaceDock` answer refusals for the
+      composer and the dock.
+- [x] The harness case `SWEEP every settings press acts or answers` opens
+      every settings card and presses every enabled button, failing on one
+      that sends no request, changes no sentence, and is not disabled. It
+      carries a self-check (`pressed > 5`) so it cannot pass vacuously.
+      Red-proved: a temporary `return;` at the top of reload-all's handler
+      failed it with `provider-reload-all -> reload them all`; the revert
+      re-ran green (1483 checks, 207 cases).
+- [x] The harness asserts what the owner is told for the provider reload:
+      KI-561's own case pins the sentence and the listing's count, not that a
+      request was made.
 - [x] The settings feature doc states the rule in one paragraph
       (`docs/features/gui.md`, "The press rule").
-- [ ] `cargo test` and the harness suite exit 0. The harness is green on
-      the extraction (**1480 checks, 206 cases**); `cargo test` on this tree
-      is still to run.
+- [x] `cargo test` and the harness suite exit 0: **2654 passed, 0 failed**
+      and **1483 checks across 207 cases**; fmt, clippy `-D warnings` and the
+      release build are green on the same tree.
 
 ## Files to be touched
 
