@@ -1144,7 +1144,7 @@ fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String
     }
     out.push_str(&format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}\n",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     ));
     // The footer is a caption, not a card line: it wraps to the house
     // width so the whole card reads inside 80 columns.
@@ -1175,7 +1175,7 @@ fn wrap_block(text: &str, width: usize) -> Vec<String> {
 fn inner_rule() -> String {
     format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH.saturating_sub(4))
+        crate::cards::rule(CARD_WIDTH.saturating_sub(4))
     )
 }
 
@@ -1185,7 +1185,7 @@ fn inner_rule() -> String {
 /// the house width exactly, so nothing clips at 80 columns.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 5).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 5).max(1))
 }
 
 /// The verdict's shape, as the card's first section: what was judged,

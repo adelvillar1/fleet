@@ -2156,7 +2156,7 @@ fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String
     }
     out.push_str(&format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}\n",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     ));
     for line in wrap_detail(footer, CARD_WIDTH) {
         out.push_str(&format!("{DIM}{line}{RESET}\n"));
@@ -2170,14 +2170,14 @@ fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String
 /// at 80 columns.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 5).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 5).max(1))
 }
 
 /// The inner rule a card's section divider draws.
 fn inner_rule() -> String {
     format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH.saturating_sub(4))
+        crate::cards::rule(CARD_WIDTH.saturating_sub(4))
     )
 }
 
@@ -2772,7 +2772,7 @@ fn calibration_card(cell: &DelegationCell) -> String {
     ));
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2),
+        crate::cards::rule(CARD_WIDTH - 2),
         DIM = palette::DIM,
         RESET = palette::RESET
     );

@@ -2126,7 +2126,7 @@ pub fn render_hits(hits: &[ScoredHit], instruction: &str) -> String {
         }
         out.push_str(&format!(
             "{DIM}\u{2514}{}\u{2518}{RESET}\n",
-            "\u{2500}".repeat(CARD_WIDTH - 2)
+            crate::cards::rule(CARD_WIDTH - 2)
         ));
     }
     out.push_str(&format!(
@@ -2185,7 +2185,7 @@ pub fn render_list(summaries: &[crate::session::SessionSummary]) -> String {
         }
         out.push_str(&format!(
             "{DIM}\u{2514}{}\u{2518}{RESET}\n",
-            "\u{2500}".repeat(CARD_WIDTH - 2)
+            crate::cards::rule(CARD_WIDTH - 2)
         ));
     }
     out.push_str(&format!(
@@ -2199,7 +2199,7 @@ pub fn render_list(summaries: &[crate::session::SessionSummary]) -> String {
 /// The dash run that pads a card header so its right edge aligns.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
 /// A workspace path with the home prefix folded to `~`. A path outside
@@ -2326,7 +2326,7 @@ pub fn render_detail(id: &str, created: &str, records: &[crate::session::Record]
         };
         out.push_str(&format!(
             "\n{DIM}\u{2514}{}\u{2518}{RESET} {color}{stop}{RESET} {DIM}\u{b7} {turns} turn{turn_plural} \u{b7} {calls} call{call_plural} \u{b7} {failed} failed{RESET}\n",
-            "\u{2500}".repeat(CARD_WIDTH - 2),
+            crate::cards::rule(CARD_WIDTH - 2),
             stop = last_outcome,
             turn_plural = if turns == 1 { "" } else { "s" },
             call_plural = if calls == 1 { "" } else { "s" },

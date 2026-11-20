@@ -72,8 +72,18 @@ variable (`{line}`) rather than a number, and `spend_card` clips the one
 unbounded field on its row — the provider id. `stream_card` needed nothing:
 every line it draws is a count or a fixed phrase.
 
-Still owed: the text-scan guard (a new separator outside `cards`), and the
-cron/judge/delegate cards, which the inventory still has to enumerate.
+The rule moved too. `"\u{2500}".repeat(n)` was spelled in **45 places across
+17 modules** — the plan expected four builders in `calib` plus cron, judge
+and delegate; the tree had seventeen modules computing how much box to
+draw. All 45 call `cards::rule(width)` now, and
+`the_rule_has_one_home` refuses a new one: red-proved by adding a stray
+repeat to `desk.rs`, which the guard named — `["desk.rs"]` — before it was
+removed.
+
+Still owed: the cron/judge/delegate cards' *content* (they draw through
+`cards::rule` for the border but still build their own rows, so a long field
+there can still widen a line), and the plan's AC1 wording about "every card
+builder renders through the one helper".
 
 ## Approach
 

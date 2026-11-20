@@ -598,7 +598,7 @@ fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String
     const WIDTH: usize = 72;
     let right = bound(subtitle, WIDTH.saturating_sub(title.chars().count() + 8));
     let dashes = WIDTH.saturating_sub(title.chars().count() + right.chars().count() + 8);
-    let rule = "\u{2500}".repeat(dashes);
+    let rule = crate::cards::rule(dashes);
     let mut out = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{title}{RESET} {DIM}{rule} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}\n"
     );
@@ -607,7 +607,7 @@ fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String
     }
     out.push_str(&format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}\n",
-        "\u{2500}".repeat(WIDTH - 4)
+        crate::cards::rule(WIDTH - 4)
     ));
     out.push_str(&format!("{DIM}{footer}{RESET}\n"));
     out

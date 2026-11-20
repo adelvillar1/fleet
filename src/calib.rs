@@ -3513,7 +3513,7 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
     ));
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     );
     let mut card = format!("{header}\n");
     for line in lines {
@@ -3831,7 +3831,7 @@ fn dashes_for(left: &str, right: &str) -> String {
     // Measured in display cells, not characters: a CJK op name is two cells
     // a character, and counting characters made the rule too long.
     let used = crate::cards::width_of(left) + crate::cards::width_of(right) + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
 /// The judgment op's facts on the stream's own card: the right/wrong
@@ -3937,7 +3937,7 @@ fn stream_card(root: &Path, rows: &[ReadRow]) -> String {
     ];
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     );
     let mut card = format!("{header}\n");
     for line in lines {
@@ -4233,7 +4233,7 @@ fn calibration_card(cell: &CalibrationCell) -> String {
     ));
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2),
+        crate::cards::rule(CARD_WIDTH - 2),
         DIM = palette::DIM,
         RESET = palette::RESET
     );

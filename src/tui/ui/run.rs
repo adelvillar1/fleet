@@ -473,8 +473,8 @@ pub(super) fn plan_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         return Vec::new();
     };
     let width = width.max(20);
-    let head_rule: String = "\u{2500}".repeat(width.saturating_sub(14));
-    let foot_rule: String = "\u{2500}".repeat(width.saturating_sub(38).max(1));
+    let head_rule: String = crate::cards::rule(width.saturating_sub(14));
+    let foot_rule: String = crate::cards::rule(width.saturating_sub(38).max(1));
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled(

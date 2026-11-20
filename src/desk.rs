@@ -1350,7 +1350,7 @@ use crate::cards::CARD_WIDTH;
 /// One desk project's card: the name, the binding, the stage marks, the
 /// shape, the evidence status — the `fleet desk` listing.
 pub fn card(desk: &DeskProject) -> String {
-    let line = "\u{2500}".repeat(CARD_WIDTH);
+    let line = crate::cards::rule(CARD_WIDTH);
     let mut out = String::new();
     out.push_str(&format!("{}\n", desk.name));
     out.push_str(&format!("{line}\n"));

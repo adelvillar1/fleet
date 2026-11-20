@@ -2853,7 +2853,7 @@ fn card(home: &Path, job: &Job, now: Minute) -> String {
     }
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     );
     let mut out = format!("{header}\n");
     for line in lines {
@@ -2869,7 +2869,7 @@ fn card(home: &Path, job: &Job, now: Minute) -> String {
 /// card family's own helper, in the shape `skills` writes it.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
 /// The English plural for a count, the way the card family carries it.

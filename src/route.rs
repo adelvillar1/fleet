@@ -4554,7 +4554,7 @@ fn render_card(entry: &Resolved, is_head: bool) -> String {
         "{DIM}\u{2514}{bottom}\u{2518}{RESET}",
         DIM = palette::DIM,
         RESET = palette::RESET,
-        bottom = "\u{2500}".repeat(CARD_WIDTH - 2)
+        bottom = crate::cards::rule(CARD_WIDTH - 2)
     );
     let mut card = format!("{header}\n");
     for line in lines {
@@ -4570,7 +4570,7 @@ fn render_card(entry: &Resolved, is_head: bool) -> String {
 /// ASCII ids and labels used here.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
 /// Strip ANSI escapes for a width measurement (the header's right edge is

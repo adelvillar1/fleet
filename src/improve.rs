@@ -2677,7 +2677,7 @@ fn render_card(proposal: &Proposal) -> String {
     ));
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     );
     let mut card = format!("{header}\n");
     for line in lines {
@@ -2693,7 +2693,7 @@ fn render_card(proposal: &Proposal) -> String {
 /// skills card family's own.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
 /// Render the lesson store as house cards: the name and the confidence
@@ -2744,7 +2744,7 @@ pub fn render_lessons(lessons: &[Lesson]) -> String {
         ));
         card.push_str(&format!(
             "{DIM}\u{2514}{}\u{2518}{RESET}\n",
-            "\u{2500}".repeat(CARD_WIDTH - 2)
+            crate::cards::rule(CARD_WIDTH - 2)
         ));
         out.push_str(&card);
     }

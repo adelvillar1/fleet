@@ -1899,7 +1899,7 @@ fn plain_width(text: &str) -> usize {
 /// one-dash floor is never reached.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 5).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 5).max(1))
 }
 
 /// A card in the house shape — `┌─┐ │ └─┘`, the ANSI palette, the width
@@ -1920,7 +1920,7 @@ fn card(title: &str, right: &str, right_color: &str, body: Vec<String>, footer: 
     }
     out.push_str(&format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}\n",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     ));
     // The footer is a caption, not a card line: it wraps to the house
     // width so the whole card reads inside 80 columns.

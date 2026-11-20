@@ -1319,7 +1319,7 @@ fn open_card(item: &OpenItem) -> String {
     }
     card.push_str(&format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}\n",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     ));
     card
 }
@@ -1348,7 +1348,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 /// The dash run that pads a card header so its right edge aligns.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
 /// The English plural for a count.

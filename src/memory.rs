@@ -6729,7 +6729,7 @@ fn render_card(fact: &Fact) -> String {
     ));
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     );
     let mut card = format!("{header}\n");
     for line in lines {
@@ -6964,7 +6964,7 @@ fn render_recall_card(hit: &ScoredFact, width: usize) -> String {
     }
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     );
     let mut card = format!("{header}\n");
     for line in lines {
@@ -7038,7 +7038,7 @@ pub fn render_consolidation(result: &Consolidation) -> String {
         }
         let bottom = format!(
             "{DIM}\u{2514}{}\u{2518}{RESET}",
-            "\u{2500}".repeat(CARD_WIDTH - 2)
+            crate::cards::rule(CARD_WIDTH - 2)
         );
         let mut card = format!("{header}\n");
         for line in lines {
@@ -7109,7 +7109,7 @@ pub fn render_archive(root: &Path) -> String {
 /// The dash run that pads a card header so its right edge aligns.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
 /// The G8 defect's close, pinned: a settings write to the env-var

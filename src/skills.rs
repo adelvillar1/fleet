@@ -1889,7 +1889,7 @@ fn render_card(skill: &Skill, usage: &UsageScan) -> String {
     }
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     );
     let mut card = format!("{header}\n");
     for line in lines {
@@ -1947,7 +1947,7 @@ fn render_proposal_card(proposal: &Proposal) -> String {
     ));
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
-        "\u{2500}".repeat(CARD_WIDTH - 2)
+        crate::cards::rule(CARD_WIDTH - 2)
     );
     let mut card = format!("{header}\n");
     for line in lines {
@@ -2132,7 +2132,7 @@ pub fn read_proposal(home: &Path, name: &str) -> Result<String, ProposalReadErro
 /// The dash run that pads a card header so its right edge aligns.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
-    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+    crate::cards::rule(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
 /// Wrap `text` into `width`-character chunks. Prose breaks at the last

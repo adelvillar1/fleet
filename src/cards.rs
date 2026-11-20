@@ -121,6 +121,16 @@ pub fn clip(text: &str, width: usize) -> String {
     out
 }
 
+/// The rule a card draws between its corners: `width` cells of `─`.
+///
+/// Every module used to spell this itself — `"\u{2500}".repeat(n)`, 44 sites
+/// across 17 modules — so the character, and the arithmetic that decides how
+/// much of it to draw, lived in seventeen places. `the_rule_has_one_home`
+/// refuses a new one.
+pub fn rule(width: usize) -> String {
+    "\u{2500}".repeat(width.max(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +208,21 @@ mod tests {
         let joined: String = lines.join("");
         assert_eq!(joined, id, "no character is lost");
         assert!(lines.len() > 1, "a 90-character word spans lines");
+    }
+
+    /// The rule has one home. A module that spells the box character itself
+    /// can drift from the house width, and seventeen of them did (45 sites
+    /// before `rule` existed).
+    #[test]
+    fn the_rule_has_one_home() {
+        let offenders: Vec<&str> = MODULES
+            .iter()
+            .filter(|(name, source)| *name != "cards.rs" && source.contains("\"\\u{2500}\".repeat"))
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "modules repeating the box character — call `cards::rule(width)`: {offenders:?}"
+        );
     }
 }
