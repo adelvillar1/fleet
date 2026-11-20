@@ -206,7 +206,8 @@ pub fn service_spec(
     }
     if corpus_remote.trim().is_empty() {
         return Err(
-            "a deploy names the corpus remote — an instance with no corpus starts empty".to_string(),
+            "a deploy names the corpus remote — an instance with no corpus starts empty"
+                .to_string(),
         );
     }
     Ok(ServiceSpec {
@@ -242,15 +243,17 @@ pub fn provision(home: &Path, spec: &ServiceSpec, dry_run: bool) -> Result<Provi
             steps: vec![("preview".to_string(), spec.preview())],
         });
     }
+    // The journal records the steps of a provision that RETURNED:
+    // `Result::inspect` fires on `Ok` only, so a refused deploy journals
+    // nothing — the rule the test below pins.
     match spec.provider {
         Provider::Docker => provision_docker(spec),
         Provider::OpenShip => provision_openship(spec),
     }
-    .map(|provisioned| {
+    .inspect(|provisioned| {
         for (step, outcome) in &provisioned.steps {
             journal_step(home, &spec.name, step, outcome);
         }
-        provisioned
     })
 }
 
@@ -392,8 +395,11 @@ fn provision_openship(spec: &ServiceSpec) -> Result<Provisioned, String> {
     }
 
     // The deployment.
-    match call_openship(&token, "post_deployments", json!({ "body": { "projectId": project } }))
-    {
+    match call_openship(
+        &token,
+        "post_deployments",
+        json!({ "body": { "projectId": project } }),
+    ) {
         Ok(reply) => {
             let handle = reply
                 .get("data")
@@ -461,9 +467,9 @@ fn call_openship(token: &str, tool: &str, arguments: Value) -> Result<Value, Str
         .set("Content-Type", "application/json")
         .send_string(&payload.to_string());
     let body = match reply {
-        Ok(response) => response.into_string().map_err(|error| {
-            format!("the openship reply could not be read: {error}")
-        })?,
+        Ok(response) => response
+            .into_string()
+            .map_err(|error| format!("the openship reply could not be read: {error}"))?,
         Err(ureq::Error::Status(code, response)) => {
             let said = response.into_string().unwrap_or_default();
             return Err(format!(
@@ -563,6 +569,15 @@ pub fn journal_governance(home: &Path, note: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The lock the two OpenShip refusal tests take, because they write
+    /// `OPENSHIP_PROJECT` and `OPENSHIP_TOKEN` through `std::env::set_var`
+    /// — process-wide state that `cargo test`'s threads share. Without it
+    /// the two race: whichever unsets the variable first makes the other
+    /// read the next refusal, so one of them failed on every full-suite
+    /// run at HEAD (which one varied, so it read as flake rather than as
+    /// the class it is).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn scratch(tag: &str) -> PathBuf {
         static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -713,8 +728,14 @@ mod tests {
         )
         .expect("a complete spec");
         assert_eq!(spec.mount, "/data");
-        assert_eq!(spec.volume, "box-1", "the volume defaults to the instance name");
-        assert_eq!(spec.env_keys(), vec!["FLEET_HOME", "FLEET_SID", "FLEET_CORPUS_REMOTE"]);
+        assert_eq!(
+            spec.volume, "box-1",
+            "the volume defaults to the instance name"
+        );
+        assert_eq!(
+            spec.env_keys(),
+            vec!["FLEET_HOME", "FLEET_SID", "FLEET_CORPUS_REMOTE"]
+        );
         // The preview names the SHAPE and never a value: a deploy log must
         // not be able to leak the join material into a scrollback. That is
         // why the corpus remote is absent from it even though it is not a
@@ -722,7 +743,10 @@ mod tests {
         // "this one is fine to print" is a judgement that eventually errs.
         let preview = spec.preview();
         assert!(preview.contains("box-1"), "{preview}");
-        assert!(preview.contains("FLEET_CORPUS_REMOTE"), "the keys are named: {preview}");
+        assert!(
+            preview.contains("FLEET_CORPUS_REMOTE"),
+            "the keys are named: {preview}"
+        );
         assert!(
             !preview.contains("git@host:mind.git"),
             "no value rides the preview: {preview}"
@@ -731,14 +755,14 @@ mod tests {
 
     #[test]
     fn a_spec_missing_its_name_image_or_corpus_is_refused_by_name() {
-        let no_name = service_spec(Provider::Docker, "  ", "img", "git@h:m.git", None)
-            .expect_err("refused");
+        let no_name =
+            service_spec(Provider::Docker, "  ", "img", "git@h:m.git", None).expect_err("refused");
         assert!(no_name.contains("names an instance"), "{no_name}");
-        let no_image = service_spec(Provider::Docker, "box", "", "git@h:m.git", None)
-            .expect_err("refused");
+        let no_image =
+            service_spec(Provider::Docker, "box", "", "git@h:m.git", None).expect_err("refused");
         assert!(no_image.contains("names an image"), "{no_image}");
-        let no_corpus = service_spec(Provider::Docker, "box", "img", "", None)
-            .expect_err("refused");
+        let no_corpus =
+            service_spec(Provider::Docker, "box", "img", "", None).expect_err("refused");
         assert!(no_corpus.contains("names the corpus remote"), "{no_corpus}");
     }
 
@@ -749,11 +773,19 @@ mod tests {
         let provisioned = provision(&home, &spec, true).expect("a dry run always answers");
         assert_eq!(provisioned.handle, "(dry run)");
         assert_eq!(provisioned.steps.len(), 1);
-        assert!(provisioned.steps[0].1.contains("would deploy"), "{:?}", provisioned.steps);
+        assert!(
+            provisioned.steps[0].1.contains("would deploy"),
+            "{:?}",
+            provisioned.steps
+        );
         // Nothing ran: no journal was written for a preview.
         let journal = crate::journal::Journal::open(&home).unwrap();
         assert!(
-            journal.replay(0).unwrap().iter().all(|e| e.kind != "provision"),
+            journal
+                .replay(0)
+                .unwrap()
+                .iter()
+                .all(|e| e.kind != "provision"),
             "a dry run journaled a step"
         );
         std::fs::remove_dir_all(&home).ok();
@@ -762,6 +794,7 @@ mod tests {
     #[test]
     fn an_openship_deploy_without_a_project_is_refused_by_name() {
         // SAFETY: this test owns these variables for its duration.
+        let _env = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         unsafe {
             std::env::remove_var("OPENSHIP_PROJECT");
             std::env::set_var("OPENSHIP_TOKEN", "opsh_pat_test");
@@ -784,7 +817,11 @@ mod tests {
         // Nothing ran, so nothing was journaled.
         let journal = crate::journal::Journal::open(&home).unwrap();
         assert!(
-            journal.replay(0).unwrap().iter().all(|e| e.kind != "provision"),
+            journal
+                .replay(0)
+                .unwrap()
+                .iter()
+                .all(|e| e.kind != "provision"),
             "a refused deploy journaled a step"
         );
         unsafe { std::env::remove_var("OPENSHIP_TOKEN") };
@@ -796,6 +833,7 @@ mod tests {
         // The project is named, so this exercises the NEXT refusal: no
         // credential. A deploy with no bearer cannot authenticate, and the
         // refusal says where a token comes from.
+        let _env = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         unsafe {
             std::env::set_var("OPENSHIP_PROJECT", "a-project");
             std::env::remove_var("OPENSHIP_TOKEN");
