@@ -42,6 +42,30 @@ that declares its own `const CARD_WIDTH` fails
 **2435 passed / 0 failed**; the card surfaces' own width assertions (20 of
 them) were unchanged and every one still passes.
 
+## Status pass, 2026-11-20 (second)
+
+The measuring and fitting primitives are in `cards`, each with its own test:
+
+- `width_of` — display cells, ANSI colour stripped, CJK two cells, combining
+  marks none. Every `chars().count()` width check in this crate was wrong for
+  a CJK name, which is how KI-140 stayed green.
+- `fit(text, width)` — wraps, never truncates; hard-splits a word that cannot
+  fit. Property-tested at **every width 20..120** against a 90-character id,
+  CJK, emoji and combining marks.
+- `clip(text, width)` — for a field that cannot wrap, ending in `…` so the
+  loss is visible.
+
+First builder converted: `calib::op_card`. Its detail lines now wrap through
+`fit`, and its header clips to half the card. The card-level test is the
+red-proof the plan asked for: before the fix, `op_card` with a 120-character
+op name rendered a **133-cell line against a 72-cell card**; after it, every
+line fits.
+
+Measured inventory for the remaining work: four card builders in `calib`
+(`op_card` done; `spend_card`, `stream_card`, `calibration_card` to go) plus
+the cron, judge and delegate cards. `dashes_for` measured characters, not
+cells, and is fixed.
+
 ## Approach
 
 1. Inventory every fixed-width card builder: `grep -rn 'CARD_WIDTH\|repeat("─")'`

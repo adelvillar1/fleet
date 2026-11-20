@@ -3488,14 +3488,23 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
         _ => Vec::new(),
     };
     let header_right = format!("{} row{}", op_rows.len(), plural(op_rows.len()));
+    // The header cannot wrap, so it clips: an op name longer than half the
+    // card used to widen the whole line (133 cells against a 72-cell card,
+    // measured by `a_long_op_name_never_widens_the_card`).
+    let shown = crate::cards::clip(op, CARD_WIDTH / 2);
     let header = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{op}{RESET} {DIM}{dashes} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}",
-        op = op,
-        dashes = dashes_for(&format!(" {op} "), &header_right),
+        op = shown,
+        dashes = dashes_for(&format!(" {shown} "), &header_right),
         right = header_right,
     );
+    // Wrapped, not truncated: a detail line longer than the card used to run
+    // past its right edge and lose its tail (KI-140). `cards::fit` measures
+    // in display cells, so a CJK provider name is two cells a character and
+    // the wrap respects it.
     let mut lines: Vec<String> = detail
         .iter()
+        .flat_map(|line| crate::cards::fit(line, CARD_WIDTH - 4))
         .map(|line| format!("{DIM}\u{2502}{RESET} {TEXT}{line}{RESET}"))
         .collect();
     lines.push(format!(
@@ -3814,7 +3823,9 @@ fn explain_detail(rows: &[&ReadRow]) -> Vec<String> {
 
 /// The dash run that pads a card header so its right edge aligns.
 fn dashes_for(left: &str, right: &str) -> String {
-    let used = left.chars().count() + right.chars().count() + 2;
+    // Measured in display cells, not characters: a CJK op name is two cells
+    // a character, and counting characters made the rule too long.
+    let used = crate::cards::width_of(left) + crate::cards::width_of(right) + 2;
     "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
@@ -5920,5 +5931,28 @@ mod tests {
             "{rendered}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// KI-078's shape, at the card's own builder: a long id in the header
+    /// and a long provider in the body must never make a line wider than the
+    /// card. Every line is measured in display cells, not characters.
+    #[test]
+    fn a_long_op_name_never_widens_the_card() {
+        let long = "a-very-long-provider-id-".repeat(5);
+        let row: ReadRow = serde_json::from_str(&format!(
+            r#"{{"ts":"2026-11-20T00:00:00Z","op":"{long}","provider":"{long}"}}"#
+        ))
+        .expect("a row");
+        let card = op_card(&long, &[row]).expect("a card");
+        let mut widest = 0;
+        for line in card.lines() {
+            let cells = crate::cards::width_of(line);
+            widest = widest.max(cells);
+            assert!(
+                cells <= CARD_WIDTH,
+                "{cells} cells against a {CARD_WIDTH}-cell card: {line:?}"
+            );
+        }
+        assert!(widest > 0, "the card rendered");
     }
 }
