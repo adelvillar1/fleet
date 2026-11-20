@@ -140,6 +140,37 @@ failed on all three, naming each.
 including the fresh-home case, the board-head contract, the persona tint and
 the carry.
 
+### P1, scoped 2026-11-20 (measured, not estimated)
+
+The composer does not need trimming; it needs a rebuild, and the numbers say
+how much:
+
+- **19 visible buttons** in the composer block (`run-perms`, `run-mode`,
+  `run-provider`, `run-folder`, `run-goal`, `run-goal-btn`, `plan`,
+  `dispatch`, `send`, `composer-steer`, `composer-btw`, `composer-dictate`,
+  `composer-add-bot`, `doc-open`, `attach`, `paste`, plus three inside the
+  folder and goal popovers), and **three hidden**.
+- **Two textareas** (`task` and the goal popover's input).
+- **Three popovers** (`folder-pop`, `doc-pop`, `goal-pop`) with their own
+  submit and cancel buttons.
+
+P1's target is one text field, a cycling mode chip, a folder chip, and `send`
+as the only filled button — so the shape of the work is:
+
+1. `run-mode` + `run-perms` collapse into **one cycling chip** (ask → autonomous
+   → full access), which is a permission control and therefore the one that
+   must never be hidden or ambiguous.
+2. `plan`, `run-goal`/`run-goal-btn` become `/` commands; the `goal-pop`
+   textarea goes with them.
+3. `dispatch`, `steer`, `btw`, `dictate`, `add-bot`, `doc-open`, `paste`,
+   `attach` are audited one by one: keep, fold into the `/` list, or delete.
+   The AC is "no more than three controls beside send", so most of these are
+   deletions, and each deletion is a decision about a habit the owner has.
+
+That is a surface rebuild with a permission control in the middle of it, so it
+lands as its own pass — the same way P0's topbar did — rather than as the tail
+of a long session.
+
 Next: P1 — the conversation: one field, the receipts gutter, fork-at-turn.
 
 ## Phases
