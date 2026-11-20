@@ -146,6 +146,19 @@ fact to `memoryDoc` (or any sibling document) shifts every count
 assertion that reads it. The assertions live beside their checks;
 search for the count strings when the fixture changes.
 
+
+## G. The corpus root's one rule
+
+`memory::tests::the_corpus_root_has_one_rule` refuses a module that builds a
+`memories/` path of its own — by the constant or by the literal — and pins
+`resolve_root_from` to exactly one definition. The rule it protects is
+home-first with a `holds_facts` scaffold check, then the cwd walk (KI-074,
+KI-087: two mirrors of one rule that drifted).
+
+**Trigger:** any `MEMORIES_DIR` or `join("memories")` outside `memory.rs`.
+The exemption list is six entries, each with its reason — `corpus.rs` is the
+sync's unconditional root (D29); the other five are scratch homes in tests.
+
 ## The loop that uses this
 
 `scripts/edit-preflight.sh [paths...]` — defaults to the working

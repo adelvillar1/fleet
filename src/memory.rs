@@ -13636,4 +13636,49 @@ mod tests {
         );
         assert!(rendered.contains("tier-overflow"), "the marker renders");
     }
+
+    /// The corpus root has one rule (KI-074, KI-087).
+    ///
+    /// `resolve_root_from` holds the home-first walk and its `holds_facts`
+    /// scaffold guard; both defects happened because a second call site
+    /// mirrored the first and drifted, and the cron path inherited the wrong
+    /// one. `MEMORIES_DIR` is public, so nothing but this test stops a third
+    /// module from walking for it. Every exemption below carries its reason.
+    #[test]
+    fn the_corpus_root_has_one_rule() {
+        const EXEMPT: [(&str, &str); 6] = [
+            (
+                "corpus.rs",
+                "`corpus_root` is the sync's unconditional root: D29's sync \
+                 moves this tree and creates it, so it does not test for facts",
+            ),
+            ("armada/deploy.rs", "test scaffolding: a scratch home"),
+            ("gui/bridge.rs", "test scaffolding: a scratch repo"),
+            ("gui/spine.rs", "test scaffolding: a scratch root"),
+            ("improve.rs", "test scaffolding: `scratch_corpus`"),
+            ("memory_pull.rs", "test scaffolding: scratch stores"),
+        ];
+        let offenders: Vec<&str> = crate::testcensus::MODULES
+            .iter()
+            .filter(|(name, source)| {
+                *name != "memory.rs"
+                    && !EXEMPT.iter().any(|(exempt, _)| exempt == name)
+                    && (source.contains("MEMORIES_DIR") || source.contains("join(\"memories\")"))
+            })
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "modules resolving a corpus root of their own — call \
+             `memory::resolve_root` instead: {offenders:?}"
+        );
+        let definers = crate::testcensus::MODULES
+            .iter()
+            .filter(|(_, source)| source.contains("fn resolve_root_from("))
+            .count();
+        assert_eq!(
+            definers, 1,
+            "the corpus root's rule has one definition, and it is not mirrored"
+        );
+    }
 }

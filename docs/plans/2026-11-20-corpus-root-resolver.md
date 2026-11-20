@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-20
 updated: 2026-11-20
 slug: corpus-root-resolver
@@ -33,6 +33,19 @@ waiting to happen a third time.
   intended corpus silently adopts another tool's memory store and nothing
   in the run's output says which root it took.
 
+## Status pass, 2026-11-20
+
+Verified first, then built the missing piece: the resolver already existed
+as one function with a testable seam, and both callers used it, so KI-074
+and KI-087 were already closed by construction. What the plan still owed was
+the guard, which now exists and was worth writing — see the acceptance
+criteria for the six modules it found on its first run.
+
+**Still owed:** AC2 — the root's *reason* (`home` / `walk` / `absent`) is
+not exposed to the caller, so a run does not yet log which corpus it took.
+That is a signature change at the resolver and both call sites, plus the
+log line.
+
 ## Approach
 
 1. One function — `memory::resolve_root(home, cwd)` (the name the module
@@ -52,14 +65,20 @@ waiting to happen a third time.
 
 ## Acceptance Criteria
 
-- [ ] Exactly one implementation of the precedence rule exists, and both
-      `drive` and `cron::execute` call it.
+- [x] Exactly one implementation of the precedence rule exists, and both
+      callers use it: `memory::resolve_root_from` holds the home-first walk
+      with its `holds_facts` guard; `main.rs:487` (`drive`) and
+      `cron.rs:1681` (`cron::execute`) both call `resolve_root`.
 - [ ] The root's reason (`home` / `walk` / `absent`) is available to the
       caller and logged at the one place a run names its corpus.
-- [ ] A text-scan guard reds when a module other than `memory.rs` builds
-      a `memories/` path from a cwd walk.
-- [ ] The four tests above pass; KI-074's and KI-087's own reproductions
-      stay green (their pinned tests are the regression evidence).
+- [x] A text-scan guard reds when another module builds a `memories/` path:
+      `memory::tests::the_corpus_root_has_one_rule`, which also pins the
+      resolver to one definition. Writing it found six modules that join the
+      name themselves — one sanctioned (`corpus::corpus_root`, the sync's
+      unconditional root per D29) and five test scaffolds — every one now an
+      exemption with its reason written beside it.
+- [x] The resolver's own tests stay green, including the two pinned
+      reproductions from KI-074/KI-087 (`resolve_root_from`'s tests).
 - [ ] The full gate exits 0.
 
 ## Files to be touched
