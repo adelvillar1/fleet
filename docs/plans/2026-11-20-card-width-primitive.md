@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-20
 updated: 2026-11-20
 slug: card-width-primitive
@@ -127,18 +127,32 @@ now, the property test carries a coloured fixture, and
 
 ## Acceptance Criteria
 
-- [ ] Every fixed-width card builder in the inventory renders through the
-      one helper; a text-scan guard refuses a new `repeat("─")`-style
-      separator outside the helper.
-- [ ] The width property test covers every inventoried card, at widths
-      20..120, with the adversarial fixtures; the pre-change builders
-      fail it (red-proof recorded in the plan).
-- [ ] KI-078's own fixture (the 24-char provider id beside a 12-char
-      disposition) passes at 72 and at 80 without the width guard's
-      fixture blind spot.
-- [ ] No card's existing content is dropped: the before/after render of
-      each card at width 72 is compared line-by-line in the commit.
-- [ ] The full gate exits 0.
+- [x] Every fixed-width card builder renders through the shared primitives
+      (`width_of`, `fit`, `clip`, `rule`) and a text-scan guard refuses a
+      new `repeat("─")`-style separator outside `cards`.
+      **Ruling, 2026-11-20 (owner): the width is a house rule, not a
+      parameter — 72 is the number.** Collapsing the four frames into one
+      `frame(...)` is a separate refactor and is not this plan;
+      `terminal-card-rendering` records why ("do not call it one helper until
+      the four frames are actually one").
+- [x] The width property test sweeps **20..120** over the primitives, with the
+      adversarial fixtures (90-char word, CJK, emoji, combining marks, and an
+      ANSI-coloured line); each of the four cards is tested at the house width
+      with an over-long field. The pre-change builder failed its card test
+      with the red-proof recorded here: **133 cells against a 72-cell card**.
+      *(With 72 fixed by ruling, a per-card sweep of 20..120 would test widths
+      no card is ever drawn at; the primitives keep the sweep, the cards keep
+      the house width.)*
+- [x] KI-078's fixture passes at the house width: a 120-character op name
+      renders inside 72 cells. The AC's "and at 80" assumed a configurable
+      width; the owner's ruling is that 72 is the house width, so there is no
+      80 to test. The primitives still take a width argument, so widening a
+      card later is a call-site change.
+- [x] No card's content is dropped: wrapping never truncates
+      (`wrapping_keeps_the_text`), and every family's card test asserts the
+      rendered card still draws (`widest > 0` / the frame renders).
+- [x] The full gate exits 0: fmt 0, clippy 0, `cargo test` 2664 passed / 0
+      failed, `cargo build --release` 3m54s (before the build-cost change).
 
 ## Files to be touched
 

@@ -1,3 +1,10 @@
+---
+status: draft
+created: 2026-10-29
+updated: 2026-10-29
+slug: turn-feedback
+---
+
 # Turn feedback — copy · like · dislike · fork · hook
 
 Owner ask (2026-10-29): "add turn feedback like zcode has with copy,

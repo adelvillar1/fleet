@@ -1,3 +1,10 @@
+---
+status: draft
+created: 2026-10-29
+updated: 2026-10-29
+slug: workspace-history-truth
+---
+
 # Workspace history — the worker revived, the absence named, the visuals made true
 
 Owner ask (2026-10-29): "review workspace history — it's giving this error … I also need to make sure that the visualizations stay true to the LayerFS project."
