@@ -83,8 +83,15 @@ removed.
 Judge and cron are converted too: the judgment card wraps its body lines and
 clips its title to half the card, and the cron card clips the job name the
 same way (its task already wrapped through `skills::wrap_detail`). Delegate's
-rows are still hand-built; that and the plan's AC1 wording ("every card
-builder renders through the one helper") remain.
+frame is converted too — body wrapped, title clipped, its three warning rows
+and two dim rows wrapped — so all four card families in the tree measure in
+cells.
+
+Remaining: a family-level test per frame (the `calib` card has one; judge,
+cron and delegate are proven by their existing suites plus the primitives'
+property test, not by a test that hands them an over-long field), and AC1's
+wording ("every card builder renders through the one helper" — the border
+does, the row shape is still per-family).
 
 **A bug this plan's own test missed, found by judge's:** `fit` measured each
 word by summing `UnicodeWidthChar` over its characters, so an ANSI colour
