@@ -12,6 +12,71 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.22 — 2026-11-20
+
+Delegation you can size, skills chosen by your brief instead of by file
+modification time, and four bounds that can no longer drift in silence.
+
+**Delegated child caps are configurable, and the cap is 100.**
+`delegation.max_turns` had existed for weeks with a comment saying it
+bounded children, and it bounded nothing: it read into the main loop's
+`max_turns`, and the main loop is `capped: false`, so on the one path it
+reached it did nothing while the delegation path — where a cap is real —
+never read it. Meanwhile two hard-coded constants did all the work:
+default 20, ceiling 50. Now `delegation.max_turns` (100) is what an
+unasked child gets and `delegation.max_turns_ceiling` (100) is the most a
+call may ask for; a call above the owner's ceiling is refused by name
+quoting *their* number, and the subagent schema renders the resolved pair
+instead of a literal. A ceiling set below the default is raised to it, so
+the two never contradict each other. Depth still halves.
+
+**Skills are ranked, not recency-cut.** The run's declared skill list was
+`newest 60 by file mtime`, which put seven sibling video-composition
+skills at ranks 55–62 on every run and told the model nothing about the
+other 400. It is now ranked against the brief through the tool router's
+own lexical ranker — pure, offline, no lane, no model call — and bounded
+by a **token budget** (4,000) rather than a count, because the count said
+nothing about what the entries cost. Measured on this machine's library:
+460 skills declare ~107 at ~3,992 tokens, the same spend with the right
+skills in it. What is held back is still loadable by name; the ranking
+curates what the model is *told about*, never what it may load.
+
+**A plan node's declared paths are a write boundary.** They were enforced
+only as a dispatch lock — two siblings could not start at once on one
+path — and nothing looked at what the running child actually wrote. A
+child bound to a node now carries its `paths`, and a `write_file`, `edit`
+or `apply_patch` outside them is refused before the approval gate, with
+the refusal written as an instruction that names the file, the scope, and
+the escape hatch. A node that declared nothing is held to nothing, and a
+target the guard cannot resolve fails open with one warning.
+
+**`fleet drift`.** The structure-guards doc published
+`MAX_DEFINITION_TOKENS` as 10,050 for five crossings while the constant
+said 10,800 — the document sessions read *before their first compile* was
+wrong, and nothing failed. Ten rows now each read their real producer and
+name the sites that state them (paths, never line numbers, because line
+numbers drift); a text-scan test fails on exactly that disagreement, and
+was red-proofed by reverting the doc.
+
+**A tick is checkable.** A completed `todo` item now renders `verified`
+or `unverified` against the run's own tool results — a command that
+exited 0, a write that landed — bound by the harness rather than taken
+from the model. An item with nothing behind it stays visible as a claim.
+
+Smaller things in the same pass: the settings modal's height cap was a
+flat 44 rows whatever the frame, so a 32nd knob clipped the provider
+cards while sixteen rows of a 60-row terminal sat unused (KI-573); the
+gate's fmt leg was red on seven files no session owned (KI-571); a clippy
+lint and an env race in the armada tests kept the full suite from being
+green on any machine (KI-572, KI-574); and `fleet run` sessions were
+found to grow their checkpoint store with no reclaim timer (KI-575,
+logged, not yet fixed).
+
+One correction worth stating: this release's originating deep dive
+claimed 404 skills were "unloadable by name". They were not — `use_skill`
+always reached the whole library — and the dive is corrected in place
+(KI-576). The real defect was discovery, which the ranking fixed.
+
 ## v0.8.21 — 2026-11-19
 
 Armada becomes a fleet you can actually grow: containerized instances, roles,
