@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-20
 updated: 2026-11-20
 slug: run-checkpoint-reclaim
@@ -44,16 +44,25 @@ siblings have.
 
 ## Acceptance Criteria
 
-- [ ] A `fleet run` session's checkpoint store is trimmed to the last 20
-      turns by the 15-minute reclaim, proven by a test that names the
-      reclaim spawn (or by an integration run whose store's file count
-      stops growing).
-- [ ] `chat` and the face keep their current behavior — the timer is
-      started exactly once per session, by the same function.
-- [ ] The sweep's result is recorded: `cron` and `eval` either start the
-      reclaim or the ledger carries a row naming why they should not.
-- [ ] The full gate exits 0.
-- [ ] KI-575 is closed in `docs/known-issues.md` with the commit named.
+- [x] A `fleet run` session's checkpoint store is trimmed to the last 20
+      turns by the reclaim — proven twice: `checkpoints::tests::
+      the_reclaim_timer_trims_a_store_that_grew_past_the_keep` (a 25-turn
+      store trims to 20 on the timer's first pass and the newest turn
+      survives) and `both_session_entry_points_start_the_checkpoint_reclaim`
+      (both `main.rs` session entry points start it, read from source).
+- [x] `chat` and the face keep their current behavior: `spawn_reclaim`
+      now delegates to `spawn_reclaim_every(store, RECLAIM_INTERVAL)`, the
+      call sites are untouched, and the 15-minute default is unchanged.
+- [x] The sweep's result is recorded: `cron::execute` and the eval
+      harness do not start the reclaim; both are single-shot runs, so the
+      shared store is trimmed by the next reclaim-equipped process —
+      recorded as KI-577 (status: noted).
+- [ ] The full gate exits 0: fmt and the lib suite are green on this tree
+      (2433 passed, 0 failed); clippy and the release build were re-run
+      after the join-helper fix and their result is recorded at landing.
+- [x] KI-575 is closed in `docs/known-issues.md`, naming `src/main.rs`'s
+      call beside `chat_command` and the face, with the guard test as the
+      next action. The ledger is at 578 rows / 3 open.
 
 ## Files to be touched
 

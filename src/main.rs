@@ -395,6 +395,12 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         prepared.decision.how.label(),
         prepared.decision.model
     );
+    // KI-575: the checkpoints' own timer, beside the chat's and the
+    // face's. A run writes up to 64 MB per turn and each session keeps
+    // its last twenty, but `run` — the mode the harness itself drives —
+    // was the one entry point that never started the reclaim, so its
+    // store grew for the life of the run.
+    fleet::checkpoints::spawn_reclaim(home.join("checkpoints"));
     let skills = load_skills(user_home.as_deref(), &home);
     let outcome = drive(
         &prepared,

@@ -70,6 +70,16 @@ pub const RECLAIM_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// when it does: the debris is the owner's disk, so the report is the
 /// owner's.
 pub fn spawn_reclaim(store: PathBuf) {
+    spawn_reclaim_every(store, RECLAIM_INTERVAL);
+}
+
+/// [`spawn_reclaim`] with its interval named, so the timer itself is
+/// testable. A test cannot wait a quarter of an hour, and a retention
+/// pass no test ever exercises is the same defect class this timer
+/// exists to end (KI-478's trigger bug: the policy was right, the
+/// trigger was missing). Production passes [`RECLAIM_INTERVAL`]; only
+/// `#[cfg(test)]` callers pass anything else.
+pub fn spawn_reclaim_every(store: PathBuf, every: Duration) {
     std::thread::spawn(move || loop {
         let (removed, reclaimed) = prune_live(&store, KEEP_TURNS, STORE_CAP_BYTES);
         if removed > 0 {
@@ -79,7 +89,7 @@ pub fn spawn_reclaim(store: PathBuf) {
                 human_bytes(reclaimed),
             );
         }
-        std::thread::sleep(RECLAIM_INTERVAL);
+        std::thread::sleep(every);
     });
 }
 
@@ -1036,6 +1046,57 @@ mod tests {
         let listed = list(&store, "s-1");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0], snapshot);
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    /// KI-575: `run` is the mode the harness itself drives, and it was the
+    /// one session-creating entry point that never started this timer —
+    /// its store grew for the life of the run while `chat` and the face
+    /// trimmed theirs. The wiring is pinned where it can rot: both entry
+    /// points in `main.rs` must start the reclaim.
+    #[test]
+    fn both_session_entry_points_start_the_checkpoint_reclaim() {
+        let source = include_str!("main.rs");
+        let (run_side, chat_side) = source
+            .split_once("async fn chat_command")
+            .expect("main.rs carries chat_command");
+        assert!(
+            run_side.contains("checkpoints::spawn_reclaim("),
+            "the run path must start the checkpoint reclaim (KI-575)"
+        );
+        assert!(
+            chat_side.contains("checkpoints::spawn_reclaim("),
+            "the chat path must start the checkpoint reclaim"
+        );
+    }
+
+    /// The timer's own behaviour, not just its policy: a store that grew
+    /// past the keep is trimmed to it on the timer's first pass, and the
+    /// newest turn — the one a rewind points at — survives.
+    #[test]
+    fn the_reclaim_timer_trims_a_store_that_grew_past_the_keep() {
+        let (tree, store) = scratch("reclaim-timer");
+        std::fs::write(tree.join("a.txt"), "one\n").unwrap();
+        for turn in 1..=25u64 {
+            capture(&tree, &store, "s-1", turn).unwrap();
+        }
+        assert_eq!(list(&store, "s-1").len(), 25);
+        spawn_reclaim_every(store.clone(), Duration::from_millis(200));
+        let deadline = std::time::Instant::now() + Duration::from_secs(6);
+        while std::time::Instant::now() < deadline && list(&store, "s-1").len() > KEEP_TURNS {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let kept = list(&store, "s-1");
+        assert_eq!(
+            kept.len(),
+            KEEP_TURNS,
+            "the timer keeps the last {KEEP_TURNS} turns"
+        );
+        assert!(
+            store.join("s-1/25").exists(),
+            "the newest turn is never evicted"
+        );
+        assert!(!store.join("s-1/1").exists(), "the oldest turns go first");
         let _ = std::fs::remove_dir_all(tree.parent().unwrap());
     }
 
