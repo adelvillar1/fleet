@@ -119,7 +119,18 @@ the contract case now asserts eyebrow, title and sentence are present and that
 no `.badge` or `.surface-strip` rides inside the head, red-proved by removing
 the sentence from the builder. Harness 1486 checks, 207 cases.
 
-Still open in P0: `carry`, and the topbar's truths-only render.
+**P0, fourth item landed: `carry(obj)`.** The composer's reference insert was
+inline inside the `@` completion; it is now `carry(one)` — replace the trailing
+token, save the draft, grow the field, close the list, fire the kind's follow-on
+(a file opens its pane, a session records its link), keep focus — and
+`insertReference` delegates to it. Every future card action lands through the
+same door, so spacing, drafts and focus cannot disagree between surfaces.
+
+Its coverage was already there and I nearly duplicated it: `C5 Enter inserts
+the reference into the sentence` asserts the insert landed *and* that the file
+pane opened — `carry`'s whole contract. The extraction keeps it green.
+
+Only the topbar's truths-only render is left in P0.
 
 ## Phases
 

@@ -30042,13 +30042,19 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
-  // Insert the highlighted reference: the trailing @token is replaced by
-  // the reference's text, and the kind's follow-on fires — a file opens
-  // its pane preview, a session records the link the sent message
-  // carries. The composer keeps focus: the owner is mid-sentence.
-  function insertReference(at) {
-    var one = face.references[at];
-    if (!one) return;
+  // P0 of the face rethink: **one way to carry an object into the composer.**
+  //
+  // The reference arrives as an object — `{insert, follow, value}` — and the
+  // carry does the whole job: the trailing `@token` is replaced rather than
+  // duplicated, the draft is saved, the field grows, the list closes, the
+  // kind's follow-on fires (a file opens its pane, a session records the link
+  // the sent message carries), and the caret stays where the owner is typing.
+  //
+  // A card action, a completion row and a palette pick all land identically
+  // because they all end here; a surface that appends its own reference is a
+  // surface that will disagree about spacing, drafts and focus.
+  function carry(one) {
+    if (!one || !one.insert) return false;
     var value = el.task.value;
     var atMatch = value.match(/(^|\s)(@[^\s@]*)$/);
     if (atMatch) {
@@ -30068,6 +30074,13 @@ import { node, svg, clip } from './core/dom.js';
       face.sessionRefs[one.insert] = one.value;
     }
     el.task.focus();
+    return true;
+  }
+
+  // Insert the highlighted completion row: it is carried like any other
+  // object, through the one path above.
+  function insertReference(at) {
+    return carry(face.references[at]);
   }
 
   function paintCommands() {
