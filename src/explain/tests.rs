@@ -252,46 +252,27 @@ fn failed_scenario_row(root: &Path, failed: &str, sha: &str) {
 
 #[test]
 fn the_budget_is_a_named_constant_the_config_can_only_lower() {
-    // The env-mutating test serializes on this: `cargo test` runs a
-    // module's tests on threads, and a `set_var` in one must not be
-    // visible to another mid-flight.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    struct EnvVar {
-        previous: Option<std::ffi::OsString>,
-    }
-    impl EnvVar {
-        fn set(value: &str) -> EnvVar {
-            let previous = std::env::var_os(EXPLAIN_BUDGET_ENV);
-            std::env::set_var(EXPLAIN_BUDGET_ENV, value);
-            EnvVar { previous }
-        }
-    }
-    impl Drop for EnvVar {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(EXPLAIN_BUDGET_ENV, value),
-                None => std::env::remove_var(EXPLAIN_BUDGET_ENV),
-            }
-        }
-    }
+    // The shared guard: one lock and one RAII restore for the whole crate
+    // (KI-561's neighbours taught the class; `testsupport` is the answer).
+    use crate::testsupport::{env_lock, EnvVar};
 
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-    std::env::remove_var(EXPLAIN_BUDGET_ENV);
+    let _guard = env_lock();
+    let _cleared = EnvVar::unset(EXPLAIN_BUDGET_ENV);
     assert_eq!(budget_usd_day(), EXPLAIN_BUDGET_USD_DAY);
     // The cap's value is the stated one: roughly 275 synthesized asks
     // at the sibling's measured per-ask spend.
     assert_eq!(EXPLAIN_BUDGET_USD_DAY, 0.50);
     assert!((EXPLAIN_BUDGET_USD_DAY / EXPLAIN_ESTIMATED_ASK_USD - 277.7).abs() < 1.0);
     // The owner's config lowers it.
-    let _lower = EnvVar::set("0.05");
+    let _lower = EnvVar::set(EXPLAIN_BUDGET_ENV, "0.05");
     assert_eq!(budget_usd_day(), 0.05);
     // And can never raise it: a value above the constant, a junk value,
     // and a negative one all read as the constant.
-    let _higher = EnvVar::set("99.0");
+    let _higher = EnvVar::set(EXPLAIN_BUDGET_ENV, "99.0");
     assert_eq!(budget_usd_day(), EXPLAIN_BUDGET_USD_DAY);
-    let _junk = EnvVar::set("not-a-number");
+    let _junk = EnvVar::set(EXPLAIN_BUDGET_ENV, "not-a-number");
     assert_eq!(budget_usd_day(), EXPLAIN_BUDGET_USD_DAY);
-    let _negative = EnvVar::set("-1");
+    let _negative = EnvVar::set(EXPLAIN_BUDGET_ENV, "-1");
     assert_eq!(budget_usd_day(), EXPLAIN_BUDGET_USD_DAY);
 }
 

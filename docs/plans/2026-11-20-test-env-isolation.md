@@ -79,9 +79,15 @@ First cluster migrated: **`lanes`** — its private `ENV_LOCK` and `EnvVar`
 duplicate are gone, and all five of its environment tests take the shared
 lock. Its own 25 tests pass unchanged.
 
-Remaining passes: `explain/tests` and `delegate/tests` and `judge/tests` (each
-carries its own copy of the same guard), then the bulk — `layerfs_tools` 10,
-`gui/server` 9, `armada/deploy` 8, and the rest of the 85. The guard in AC2
+Pass 2 landed: **four more duplicate guards are gone** — `explain/tests`,
+`home`, `mcp_registry`, and `lanes` (pass 1). The crate now has exactly one
+`ENV_LOCK` and one `EnvVar`, both in `testsupport`; a scan for
+`static ENV_LOCK` returns only that module.
+
+Remaining: the bulk — `layerfs_tools` 10, `gui/server` 9, `armada/deploy` 8,
+`tools` 5, `layerfs_view` 5, `footprint_history` 5, `subagents` 4, and the
+rest of the 85 — most of which set variables for a *behaviour* rather than
+for a guard. The guard in AC2
 lands **after** the bulk, per the ruling, so it never needs an 85-entry
 exemption list.
 

@@ -1542,37 +1542,8 @@ mod tests {
     use super::*;
     use crate::settings::{remove_server, set_server, set_server_enabled};
 
-    /// The env-mutating tests serialize on this, the lanes' own pattern:
-    /// `cargo test` runs a module's tests on threads, and a `set_var` in
-    /// one must not be visible to another mid-flight.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Set `name` for the duration of the guard, restoring whatever was
-    /// there before — including its absence — on the way out.
-    struct EnvVar {
-        name: String,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl EnvVar {
-        fn set(name: &str, value: &str) -> EnvVar {
-            let previous = std::env::var_os(name);
-            std::env::set_var(name, value);
-            EnvVar {
-                name: name.to_string(),
-                previous,
-            }
-        }
-    }
-
-    impl Drop for EnvVar {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(&self.name, value),
-                None => std::env::remove_var(&self.name),
-            }
-        }
-    }
+    // The shared guard: one lock and one RAII restore for the whole crate.
+    use crate::testsupport::{env_lock, EnvVar};
 
     fn scratch(tag: &str) -> PathBuf {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1719,7 +1690,7 @@ mod tests {
     #[test]
     fn enabled_specs_resolve_names_through_the_env_and_the_dotenv() {
         let home = scratch("specs");
-        let _held = ENV_LOCK.lock().unwrap();
+        let _held = env_lock();
         let _own = EnvVar::set("FLEET_TEST_MARKER_KEY", "from-env");
         let weather = json!({
             "program": "python3",

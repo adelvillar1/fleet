@@ -338,32 +338,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Set `name` for the duration of the guard, restoring whatever was
-    /// there before — including its absence — on the way out.
-    struct EnvVar {
-        name: String,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl EnvVar {
-        fn set(name: &str, value: &str) -> EnvVar {
-            let previous = std::env::var_os(name);
-            std::env::set_var(name, value);
-            EnvVar {
-                name: name.to_string(),
-                previous,
-            }
-        }
-    }
-
-    impl Drop for EnvVar {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(&self.name, value),
-                None => std::env::remove_var(&self.name),
-            }
-        }
-    }
+    // The shared guard: one lock and one RAII restore for the whole crate.
+    use crate::testsupport::EnvVar;
 
     #[test]
     fn home_prefers_fleet_home_env() {
@@ -421,10 +397,9 @@ mod tests {
     /// home is named in the environment.
     #[test]
     fn resolve_setting_reads_fleets_home_and_no_other_harnesss_store() {
-        // The env-mutating test serializes on the same lock the other
-        // modules use; `cargo test` runs a module's tests on threads.
-        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+        // The shared lock: `cargo test` runs a module's tests on threads, and
+        // every env-touching test in the crate takes this one.
+        let _guard = crate::testsupport::env_lock();
 
         let name = "FLEET_TEST_HARNESS_ONLY_KEY";
         // Its own directory: the sibling dotenv test shares the pid-keyed
