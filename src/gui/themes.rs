@@ -305,6 +305,27 @@ pub fn measure(name: &str) -> Option<ThemeReport> {
             failing.push((named, ratio));
         }
     }
+    // P7: the persona tints are text backgrounds too — a disc carries the
+    // seat's initial — so they enter the same report the picker's card
+    // shows. A theme whose sixth hue is 4.4:1 against its own ink is a
+    // blocked theme, not a ship-with-warning.
+    if let Some(ink) = theme
+        .text
+        .iter()
+        .find(|(token, _)| token == "--dsw-alias-ink")
+        .map(|(_, colour)| *colour)
+    {
+        for (token, tint) in &theme.personas {
+            let ratio = contrast(*tint, ink);
+            worst = worst.min(ratio);
+            let named = token_name(token);
+            if ratio >= MIN_TEXT {
+                passing.push((named, ratio));
+            } else {
+                failing.push((named, ratio));
+            }
+        }
+    }
     passing.sort_by(|left, right| right.1.total_cmp(&left.1));
     failing.sort_by(|left, right| left.1.total_cmp(&right.1));
     Some(ThemeReport {
@@ -357,6 +378,75 @@ mod tests {
                     MIN_TEXT
                 );
             }
+        }
+    }
+
+    /// P7: the tints are declared in the theme's own block, not inherited
+    /// from the `:root` base. A theme that forgets one inherits night's
+    /// hue on a light ground — the exact failure the four-theme guard
+    /// exists to catch, and one a merged-map read cannot see.
+    fn declared_personas(name: &str) -> Vec<String> {
+        let opener = if name == "night" {
+            ":root {".to_string()
+        } else {
+            format!(":root[data-theme=\"{name}\"] {{")
+        };
+        let mut inside = false;
+        let mut found = Vec::new();
+        for line in STYLES.lines() {
+            let trimmed = line.trim();
+            if trimmed == opener {
+                inside = true;
+                continue;
+            }
+            if inside && trimmed == "}" {
+                break;
+            }
+            if !inside {
+                continue;
+            }
+            if let Some((key, _)) = trimmed.split_once(':') {
+                let key = key.trim();
+                if key.starts_with("--dsw-alias-persona-") {
+                    found.push(key.to_string());
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn every_theme_block_declares_its_own_six_persona_tints() {
+        for name in THEMES {
+            let declared = declared_personas(name);
+            assert_eq!(
+                declared.len(),
+                6,
+                "`{name}` declares {declared:?} in its own block, not six"
+            );
+            for seat in 1..=6 {
+                let token = format!("--dsw-alias-persona-{seat}");
+                assert!(
+                    declared.contains(&token),
+                    "`{name}` does not declare {token} itself — it would inherit another theme's hue"
+                );
+            }
+        }
+    }
+
+    /// The tints are in the report the picker reads, not only in a test:
+    /// a theme card that says "holds" while a disc is unreadable is the
+    /// lie the report exists to prevent.
+    #[test]
+    fn the_persona_tints_enter_the_themes_report() {
+        for report in measure_all() {
+            let measured = report
+                .passing
+                .iter()
+                .chain(report.failing.iter())
+                .filter(|(token, _)| token.starts_with("persona "))
+                .count();
+            assert_eq!(measured, 6, "`{}` reports {measured} tints", report.theme);
         }
     }
 

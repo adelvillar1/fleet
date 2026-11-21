@@ -138,6 +138,12 @@
   --dsw-alias-warn: rgb(255, 178, 36);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(45, 214, 191), rgb(55, 226, 164));
   --dsw-alias-on-accent: rgb(4, 18, 26);
+  /* P7: the scrim a door or a drawer lays over the page, and the ink a
+     tone-filled bead carries. Both are per-theme because a light ground
+     needs a different scrim than a dark one, and a dark red bead needs a
+     light label where a bright green one needs a dark one. */
+  --scrim: rgb(4 10 14 / 48%);
+  --on-tone: rgb(4, 18, 26);
   --lane-0: rgb(45, 214, 191);
   --lane-1: rgb(167, 139, 250);
   --lane-2: rgb(255, 178, 36);
@@ -252,6 +258,45 @@
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --fast: 120ms;
   --medium: 180ms;
+
+  /* --- P7: the room vocabulary -------------------------------------- */
+  /* A card is a room you enter, not a console you audit: one surface
+     tint, one hairline, one radius, one padding rhythm. The shadow tier
+     stays for overlays (a door, a palette), never for a card — a card
+     that separates itself three ways (border, shadow, its own ground)
+     reads as a widget, and this face is not a widget board. */
+  --room-bg: color-mix(in srgb, var(--dsw-alias-surface) 94%, var(--dsw-alias-page));
+  --room-border: 1px solid var(--dsw-alias-hairline);
+  --room-border-strong: 1px solid var(--dsw-alias-hairline-strong);
+  --room-radius: 12px;
+  --room-pad: 18px 20px 20px;
+  --room-gap: 12px;
+  --room-rule: 1px solid var(--dsw-alias-hairline);
+  /* A pane's dim is lighter than a door's: the stage stays readable
+     behind the pane, where a door is meant to stop the page. */
+  --scrim-soft: rgb(0 0 0 / 28%);
+
+  /* The display ladder: one voice for names, one for measurements, one
+     for eyebrows. Nothing else is allowed to look like a title. */
+  --title-surface: clamp(30px, 3.2vw, 40px);
+  --title-room: 24px;
+  --title-card: 17px;
+  --eyebrow-size: 10.5px;
+  --eyebrow-track: 0.16em;
+  --eyebrow-ink: var(--dsw-alias-ink-tertiary);
+  --measure-size: 13px;
+  --measure-ink: var(--dsw-alias-ink-secondary);
+
+  /* The six persona tints by seat, so a component names a seat and never
+     a colour. Each theme re-points `--dsw-alias-persona-N`; this tier is
+     the only door a component opens. */
+  --tint-1: var(--dsw-alias-persona-1);
+  --tint-2: var(--dsw-alias-persona-2);
+  --tint-3: var(--dsw-alias-persona-3);
+  --tint-4: var(--dsw-alias-persona-4);
+  --tint-5: var(--dsw-alias-persona-5);
+  --tint-6: var(--dsw-alias-persona-6);
+  --tint-ink: var(--dsw-alias-ink);
 }
 
 /* Day Watch (U5): the warm-paper inverse of Harbor Night. The surfaces
@@ -305,6 +350,8 @@
   --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(12, 156, 139), rgb(15, 168, 118));
   --dsw-alias-on-accent: rgb(4, 18, 26);
+  --scrim: rgb(24 26 29 / 34%);
+  --on-tone: rgb(255, 255, 255);
   --dsw-alias-ok: rgb(22, 110, 46);
   --dsw-alias-down: rgb(176, 36, 32);
   --dsw-alias-warn: rgb(122, 82, 8);
@@ -348,6 +395,8 @@
   --dsw-alias-warn: rgb(220, 166, 66);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(76, 113, 201), rgb(52, 88, 182));
   --dsw-alias-on-accent: rgb(255, 255, 255);
+  --scrim: rgb(0 0 0 / 55%);
+  --on-tone: rgb(12, 14, 18);
   --lane-0: rgb(45, 212, 191);
   --lane-1: rgb(167, 139, 250);
   --lane-2: rgb(251, 191, 36);
@@ -388,6 +437,8 @@
   --dsw-alias-warn: rgb(124, 82, 6);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(20, 60, 150), rgb(16, 48, 122));
   --dsw-alias-on-accent: rgb(255, 255, 255);
+  --scrim: rgb(0 0 0 / 60%);
+  --on-tone: rgb(255, 255, 255);
   /* The signal tier on a pure-white ground: the mockup's day set, the
      same eight hues the light themes carry (U4 — no theme invents a hue). */
   --ink: rgb(255, 255, 255);
@@ -950,7 +1001,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   position: fixed;
   inset: 0;
   z-index: 39;
-  background: rgb(12 14 18 / 42%);
+  background: var(--scrim);
   backdrop-filter: blur(2px);
 }
 
@@ -3910,7 +3961,7 @@ body[data-motion="off"] .composer .foot-btn.dictate.listening .foot-label::befor
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgb(14 16 20 / 34%);
+  background: var(--scrim);
   backdrop-filter: blur(3px);
 }
 
@@ -4139,7 +4190,7 @@ body[data-motion="off"] .composer .foot-btn.dictate.listening .foot-label::befor
   position: fixed;
   inset: 0;
   z-index: 20;
-  background: rgb(14 16 20 / 40%);
+  background: var(--scrim);
   backdrop-filter: blur(2px);
 }
 
@@ -6485,7 +6536,7 @@ pre.drawer-code {
      disabled — worse than being covered. */
   inset: 0 var(--pane-right, 0px) 0 0;
   z-index: 29;
-  background: rgb(0 0 0 / 28%);
+  background: var(--scrim-soft);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.16s ease;
@@ -7405,7 +7456,7 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgb(14 16 20 / 34%);
+  background: var(--scrim);
   backdrop-filter: blur(3px);
 }
 
@@ -9371,7 +9422,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgb(24 26 29 / 35%);
+  background: var(--scrim);
   z-index: 40;
 }
 .door .form {
@@ -9391,7 +9442,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
   border: 1px solid var(--dsw-alias-hairline);
   border-radius: 12px;
   padding: 22px 24px;
-  box-shadow: 0 18px 50px rgb(24 26 29 / 18%);
+  box-shadow: var(--shadow-2);
 }
 .door .form h2 {
   font-size: 22px;
@@ -9443,7 +9494,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
 }
 .convener .pick.on {
   border-color: var(--dsw-alias-accent);
-  background: rgb(37 78 176 / 8%);
+  background: var(--dsw-alias-accent-wash);
 }
 .convener .pick .voice {
   font-size: 12px;
@@ -10083,7 +10134,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
    dark themes, so a done bead's mark is dark ink there and white only on
    paper. Measured, not guessed — the mockup's instrument caught this. */
 :root[data-theme="console"] .dk-st.done .bead,
-:root[data-theme="console"] .dk-st.refused .bead { color: rgb(12, 14, 18); }
+:root[data-theme="console"] .dk-st.refused .bead { color: var(--on-tone); }
 .dk-st .slabel { font-size: 12px; color: var(--dsw-alias-ink-secondary); text-align: center; white-space: nowrap; }
 .dk-st.done .slabel { color: var(--dsw-alias-ink); }
 .dk-st.refused .slabel { color: var(--dsw-alias-down); font-weight: 600; }
@@ -10167,7 +10218,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .dk-btn.primary:hover { background: var(--dsw-alias-accent-deep); color: var(--dsw-alias-on-accent); }
 .dk-btn[disabled] { opacity: 0.5; cursor: default; }
 .dk-btn[disabled]:hover { border-color: var(--dsw-alias-hairline-strong); color: var(--dsw-alias-ink); }
-:root[data-theme="console"] .dk-btn.primary { color: rgb(12, 14, 18); }
+:root[data-theme="console"] .dk-btn.primary { color: var(--on-tone); }
 
 /* a section of the deliverable */
 .dk-sec {
