@@ -207,6 +207,26 @@ are not in the landing at all, so the AC holds — the comment is describing an
 older landing, and the case now pins the state that matters (the token plus the
 absence of a bar) rather than trusting the prose.
 
+**P1, the gutter: measured, not started.** Two facts decide its shape, and both
+are now answered — which is why the next pass can build instead of asking:
+
+1. **Nothing named `gutter` exists** in `app.js`, `index.html` or `app.css`. This
+   is a build, not coverage.
+2. **`skill` is a tool kind, not an event.** The log's event types are `turn`,
+   `routed`, `tool_call`, `tool_result`, `seat`, `memory`, `lane`, `delegation`,
+   `control`, `plan`, `artifact`, `finished`, `failed`. A skill call arrives as
+   `tool_call` carrying the kind — `SessionEvent` has `kind: Option<String>`
+   (`src/session.rs:1370`), and `agent::kind_of` is what computes it
+   (`src/agent.rs:355-367`). So the spine's five counts map to: route ← `routed`,
+   recall ← `memory`, skill ← `tool_call {kind: "skill"}`, approval ← `control`,
+   tools ← `tool_call`.
+
+3. **The log is flat.** `row()` appends every row straight to `face.stream` and
+   tags it with `face.lastTurn` (`src/gui/assets/app.js:1693-1699`). A 28 px spine
+   *per turn* therefore needs either a per-turn wrapper the 30-odd row builders
+   append into, or a margin spine positioned from row offsets. That is a change
+   to the log's own path, not a decoration beside it — so it is its own pass.
+
 Next: P1 — the conversation: one field, the receipts gutter, fork-at-turn.
 
 ## Phases
