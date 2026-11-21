@@ -2266,11 +2266,18 @@ pub struct ReadRow {
     #[serde(default)]
     pub ts: String,
     pub op: String,
-    /// The verify row's node id, and the gates that ran as
-    /// `name=passed` pairs, with the whole-row verdict. Defaults on
-    /// every other op — the face's verify section reads them.
+    /// The verify row's node id, the delegation row's plan node, and
+    /// the gates that ran as `name=passed` pairs, with the whole-row
+    /// verdict. Defaults on every other op — the face's verify section
+    /// reads them, and the delegation overlay joins on it.
     #[serde(default)]
     pub node: String,
+    /// The delegation row's brief shape — the shape half of the cell
+    /// key the child was routed under, and the "what was this child
+    /// asked to be" half of the why-this-child line. Empty on rows
+    /// written before the field existed and on every other op.
+    #[serde(default)]
+    pub brief_shape: String,
     /// The confusion a `learn_check` row carries — the learner's own
     /// account of where the step did not land. Empty on every other op.
     #[serde(default)]

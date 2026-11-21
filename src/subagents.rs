@@ -5040,6 +5040,108 @@ console.log(JSON.stringify({
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// The join the delegation overlay exists to read: a run bound to a
+    /// plan node lands its row WITH the node, and the overlay joins the
+    /// child's session to that node off the day's rows. If the threading
+    /// were dropped, every node would read `never spawned` — this test
+    /// is the one that red-proves it.
+    #[test]
+    fn the_row_joins_the_child_to_its_plan_node_for_the_overlay() {
+        // A home-shaped root: `home/logs` is the calibration root the
+        // overlay resolves to, so a row landed here is a row the
+        // overlay reads.
+        let home = std::env::temp_dir().join(format!("fleet-row-node-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let root = home.join("logs");
+        let stream = crate::calib::Stream::open(&root);
+        let brief = Brief {
+            task: "build the parser".to_string(),
+            approach: None,
+            context: None,
+            output: None,
+            role: None,
+        };
+        let result = SubagentResult {
+            degraded: None,
+            summary: "the parser is built".to_string(),
+            session: "child-node-1".to_string(),
+            log: PathBuf::from("/tmp/sessions/child-node-1.jsonl"),
+            turns: 2,
+            outcome: Outcome::Completed,
+            reason: None,
+            goal: String::new(),
+            delta: DeltaReport::default(),
+            workspace: None,
+        };
+        let chain = Chain {
+            parent: "root-1".to_string(),
+            root: "root-1".to_string(),
+            depth: 1,
+            lineage: vec!["root-1".to_string()],
+        };
+        let row = delegation_row(
+            &brief,
+            "bash",
+            Some("stepfun"),
+            Some("build-parser"),
+            &result,
+            &chain,
+            100,
+        );
+        assert_eq!(row.node.as_deref(), Some("build-parser"));
+        calib::record_delegation(&stream, row);
+        let (written, failed) = stream.finish();
+        assert_eq!((written, failed), (1, 0));
+
+        // The overlay, over the one declared node: the row's node
+        // joined the child's session to it, so the node reads spawned
+        // once — the declared shape — with the child's judged shape
+        // riding beside it.
+        let node = crate::boards::GraphNode {
+            id: "build-parser".to_string(),
+            cost: 1,
+            score: 1,
+            longest_chain: 1,
+            peak: 1,
+            status: "pending".to_string(),
+            state: "waiting".to_string(),
+            approach: None,
+            paths: Vec::new(),
+            capabilities: String::new(),
+            prereqs: Vec::new(),
+            unlock: crate::boards::UnlockShape {
+                score_zero: false,
+                resource_free: true,
+                deps_verified: true,
+                unlocked: false,
+                waiting: Vec::new(),
+                failed: Vec::new(),
+                unresolved: Vec::new(),
+                held: Vec::new(),
+            },
+            reason: None,
+            delta: None,
+            summary: false,
+        };
+        let nodes = vec![node];
+        let (overlays, divergences) = crate::boards::delegation_overlay(&home, &nodes);
+        let overlay = &overlays["build-parser"];
+        assert_eq!(
+            overlay.spawned_sessions,
+            vec!["child-node-1".to_string()],
+            "the row's node joined the child's session to the plan node"
+        );
+        assert_eq!(overlay.spawn_count, 1);
+        assert_eq!(overlay.divergence, None);
+        assert_eq!(overlay.brief_shape, "task");
+        assert_eq!(overlay.provider, "stepfun");
+        assert_eq!(overlay.outcome, "completed");
+        assert_eq!(divergences.never_spawned, 0);
+        assert_eq!(divergences.ran_twice, 0);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
     /// P6 C2: a call may name a declared plan node instead of carrying a
     /// goal, and the node's identity rides the request so the run and the
     /// plan document cannot drift.

@@ -1189,6 +1189,16 @@ pub struct NodeOverlay {
     /// the count past two) when more than one does, and `None` when the
     /// node spawned exactly one child — the shape the graph declared.
     pub divergence: Option<String>,
+    /// The child's own judged shape, from the row that named this
+    /// node: the brief's shape, the provider that served the child's
+    /// turns, and the row's outcome — the "what was this child
+    /// actually handed, on what, and how did it end" half of
+    /// why-this-child. The LATEST row wins: a node that ran twice
+    /// reports its most recent child, which is the run the graph's
+    /// state belongs to. Empty when no row joined.
+    pub brief_shape: String,
+    pub provider: String,
+    pub outcome: String,
 }
 
 /// The graph-level counts of the two divergences, over every
@@ -1227,17 +1237,23 @@ pub fn delegation_overlay(
     let root = crate::calib::resolve_root(home, user_home.as_deref());
     let day = crate::calib::today();
     let rows = crate::calib::read_op_day(&root, &day, crate::calib::OP_DELEGATION, 512);
-    let mut spawned_by_node: HashMap<String, Vec<String>> = HashMap::new();
+    // node id -> (session, brief shape, provider, outcome), in the
+    // rows' own order, oldest first — so the LAST entry is the most
+    // recent child, which is the run the node's state belongs to.
+    let mut spawned_by_node: HashMap<String, Vec<(String, String, String, String)>> =
+        HashMap::new();
     for row in &rows {
         let node = row.node.trim();
         let session = row.session.trim();
         if node.is_empty() || session.is_empty() {
             continue;
         }
-        spawned_by_node
-            .entry(node.to_string())
-            .or_default()
-            .push(session.to_string());
+        spawned_by_node.entry(node.to_string()).or_default().push((
+            session.to_string(),
+            row.brief_shape.trim().to_string(),
+            row.provider.trim().to_string(),
+            row.outcome.trim().to_string(),
+        ));
     }
     let mut overlays: HashMap<String, NodeOverlay> = HashMap::new();
     let mut divergences = Divergences::default();
@@ -1262,16 +1278,77 @@ pub fn delegation_overlay(
                 Some(format!("ran twice \u{d7}{more}"))
             }
         };
+        // The judged shape is the latest child's: the last row wins.
+        let latest = spawned.last();
         overlays.insert(
             node.id.clone(),
             NodeOverlay {
-                spawned_sessions: spawned,
+                spawned_sessions: spawned
+                    .iter()
+                    .map(|(session, ..)| session.clone())
+                    .collect(),
                 spawn_count,
                 divergence,
+                brief_shape: latest
+                    .map(|(_, shape, ..)| shape.clone())
+                    .unwrap_or_default(),
+                provider: latest
+                    .map(|(.., provider, _)| provider.clone())
+                    .unwrap_or_default(),
+                outcome: latest
+                    .map(|(.., outcome)| outcome.clone())
+                    .unwrap_or_default(),
             },
         );
     }
     (overlays, divergences)
+}
+
+/// The plan's frontmatter execution verdict — the declared workload the
+/// whole plan was judged to — matched to the declared graph by node
+/// ids, the way `dispatch_node` matches a node to its plan: the plan
+/// whose graph declares exactly these node ids is the plan this graph
+/// came from, and its `execution:` word is every node's
+/// why-this-child. A plan that names no verdict, a plan that drifted
+/// from its graph, and a graph no plan declares all read as `None`: the
+/// face omits the line rather than inventing one.
+pub fn declared_workload(plans_root: &Path, node_ids: &[String]) -> Option<String> {
+    let dir = plans_root.join("docs").join("plans");
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect();
+    // Name order, the way the board reads its plans: one match, not
+    // whichever the directory listed first.
+    paths.sort();
+    let declared: std::collections::BTreeSet<&str> = node_ids.iter().map(String::as_str).collect();
+    for path in paths {
+        let Ok(meta) = crate::plan_graph::read_meta(&path) else {
+            continue;
+        };
+        if !meta.status.generates_a_graph() {
+            continue;
+        }
+        let graph = match crate::plan_graph::PlanGraph::load(&path) {
+            Ok(loaded) => loaded,
+            Err(_) => match crate::plan_graph::PlanGraph::generate(&path) {
+                Ok(generated) => generated,
+                Err(_) => continue,
+            },
+        };
+        let plan_ids: std::collections::BTreeSet<&str> = graph
+            .graph
+            .nodes()
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
+        if plan_ids == declared {
+            return meta.execution.map(|verdict| verdict.as_str().to_string());
+        }
+    }
+    None
 }
 
 /// One log's opening record: what it runs, the `kind` that marks a
@@ -5904,11 +5981,24 @@ mod tests {
     }
 
     fn overlay_row(node: &str, session: &str) -> serde_json::Value {
+        overlay_row_shape(node, session, "", "", "completed")
+    }
+
+    /// One row with its judged shape on it — the why-this-child half.
+    fn overlay_row_shape(
+        node: &str,
+        session: &str,
+        brief_shape: &str,
+        provider: &str,
+        outcome: &str,
+    ) -> serde_json::Value {
         let mut row = serde_json::json!({
             "op": "delegation",
             "ts": "2026-11-21T09:00:00Z",
             "session": session,
-            "outcome": "completed",
+            "outcome": outcome,
+            "brief_shape": brief_shape,
+            "provider": provider,
         });
         if !node.is_empty() {
             row["node"] = serde_json::json!(node);
@@ -6087,6 +6177,98 @@ mod tests {
         assert!(!snapshot.nodes[1].summary, "an old node is dispatchable");
         let (overlays, _) = delegation_overlay(scratch.path(), &snapshot.nodes);
         assert!(overlays.contains_key("group"));
+    }
+
+    /// The why-this-child line's row half: the child's judged shape —
+    /// the brief's shape, the provider that served its turns, the
+    /// outcome — carried from the row that named the node, and the
+    /// latest row's shape when a node ran twice.
+    #[test]
+    fn the_overlay_carries_the_childs_judged_shape() {
+        let scratch = Scratch::new("overlay-shape");
+        write_delegation_rows(
+            scratch.path(),
+            &[
+                overlay_row_shape("n1", "c1", "task+approach", "stepfun", "completed"),
+                overlay_row_shape("n3", "c3a", "task+context", "stepfun", "max-turns"),
+                overlay_row_shape("n3", "c3b", "task+context", "zai-coding-plan", "completed"),
+                // An old row without the shape fields: tolerated, and
+                // its empties are read as empties, not dropped.
+                serde_json::json!({
+                    "op": "delegation",
+                    "ts": "2026-11-21T09:00:00Z",
+                    "session": "c2",
+                    "node": "n2",
+                }),
+            ],
+        );
+        let nodes = [
+            overlay_node("n1", false, "pending"),
+            overlay_node("n2", false, "pending"),
+            overlay_node("n3", false, "pending"),
+        ];
+        let (overlays, _) = delegation_overlay(scratch.path(), &nodes);
+        let n1 = &overlays["n1"];
+        assert_eq!(n1.brief_shape, "task+approach");
+        assert_eq!(n1.provider, "stepfun");
+        assert_eq!(n1.outcome, "completed");
+        // A node that ran twice reports its most recent child.
+        let n3 = &overlays["n3"];
+        assert_eq!(n3.brief_shape, "task+context");
+        assert_eq!(n3.provider, "zai-coding-plan");
+        assert_eq!(n3.outcome, "completed");
+        // The pre-field row's shape is an honest empty.
+        let n2 = &overlays["n2"];
+        assert_eq!(n2.spawned_sessions, vec!["c2".to_string()]);
+        assert_eq!(n2.brief_shape, "");
+        assert_eq!(n2.provider, "");
+        assert_eq!(n2.outcome, "");
+    }
+
+    /// The plan's own verdict, matched to the graph the way
+    /// `dispatch_node` matches a node: the plan whose graph declares
+    /// exactly these node ids. A drift and an unjudged plan both read
+    /// as no verdict.
+    #[test]
+    fn the_declared_workload_is_the_plans_own_execution_verdict() {
+        let scratch = Scratch::new("overlay-workload");
+        let plans = scratch.path().join("docs").join("plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        std::fs::write(
+            plans.join("2026-11-20-swarm.md"),
+            "---\nstatus: active\ncreated: 2026-11-20\nupdated: 2026-11-20\n\
+             slug: the-swarm\nexecution: swarm\n---\n\n# The swarm\n\n\
+             ```graph\n{ \"nodes\": [{\"id\":\"n1\",\"cost\":1},{\"id\":\"n2\",\"cost\":1}] }\n```\n",
+        )
+        .unwrap();
+        // The matching graph: the plan's own node ids.
+        let ids = vec!["n1".to_string(), "n2".to_string()];
+        assert_eq!(
+            declared_workload(scratch.path(), &ids).as_deref(),
+            Some("swarm"),
+            "the plan's verdict is the graph's declared workload"
+        );
+
+        // A drifted graph — the plan moved on — is honestly unmatched.
+        let drifted = vec!["n9".to_string()];
+        assert_eq!(declared_workload(scratch.path(), &drifted), None);
+
+        // A plan that names no verdict carries no workload.
+        std::fs::write(
+            plans.join("2026-11-20-unjudged.md"),
+            "---\nstatus: active\ncreated: 2026-11-20\nupdated: 2026-11-20\n\
+             slug: the-unjudged\n---\n\n# Unjudged\n\n\
+             ```graph\n{ \"nodes\": [{\"id\":\"u1\",\"cost\":1}] }\n```\n",
+        )
+        .unwrap();
+        let unjudged = vec!["u1".to_string()];
+        assert_eq!(declared_workload(scratch.path(), &unjudged), None);
+
+        // No plans directory at all: no verdict, not a refusal.
+        assert_eq!(
+            declared_workload(&scratch.path().join("nowhere"), &ids),
+            None
+        );
     }
 
     #[test]

@@ -1801,8 +1801,9 @@ impl Bridge {
     /// happens to be newest.
     pub async fn delegation(&self, session: &str) -> Value {
         let home = self.home.clone();
+        let cwd = self.cwd.clone();
         let session = session.to_string();
-        match tokio::task::spawn_blocking(move || delegation_read(&home, &session)).await {
+        match tokio::task::spawn_blocking(move || delegation_read(&home, &session, &cwd)).await {
             Ok(document) => document,
             Err(_) => json!({
                 "type": "delegation",
@@ -7295,7 +7296,7 @@ fn router_read(home: &std::path::Path) -> Value {
 /// nodes and the graph nodes ride through as they were read — the panel
 /// draws them, and a document that re-decided what a node's state was
 /// would be a second opinion about the graph's own facts.
-fn delegation_read(home: &std::path::Path, session: &str) -> Value {
+fn delegation_read(home: &std::path::Path, session: &str, plans_root: &std::path::Path) -> Value {
     let snapshot = crate::boards::read_delegation(home, session);
     // The workspace join: the day's delegation rows name the branch
     // each child's work stands on, so a row in this panel carries the
@@ -7304,12 +7305,15 @@ fn delegation_read(home: &std::path::Path, session: &str) -> Value {
     let branches = crate::layerfs_view::session_branches();
     let node = |node: &crate::boards::DelegationNode| delegation_node(node, &branches);
     // The overlay join: the same day's rows, joined on the plan node
-    // each row records, over the declared graph's nodes. The overlay is
-    // computed here and carried on the document — the face derives
-    // nothing the read can answer.
+    // each row records, over the declared graph's nodes — plus the
+    // plan's own declared workload, read off the plan the graph came
+    // from. Both are computed here and carried on the document — the
+    // face derives nothing the read can answer.
     let graph = snapshot.graph.as_ref().map(|graph| {
         let (overlays, divergences) = crate::boards::delegation_overlay(home, &graph.nodes);
-        graph_document(graph, &overlays, &divergences)
+        let node_ids: Vec<String> = graph.nodes.iter().map(|node| node.id.clone()).collect();
+        let workload = crate::boards::declared_workload(plans_root, &node_ids);
+        graph_document(graph, workload.as_deref(), &overlays, &divergences)
     });
     json!({
         "type": "delegation",
@@ -14614,6 +14618,7 @@ fn delegation_node(
 /// than derived on the page.
 fn graph_document(
     graph: &crate::boards::GraphSnapshot,
+    workload: Option<&str>,
     overlays: &std::collections::HashMap<String, crate::boards::NodeOverlay>,
     divergences: &crate::boards::Divergences,
 ) -> Value {
@@ -14629,6 +14634,13 @@ fn graph_document(
                 "spawned_sessions": overlay.spawned_sessions,
                 "spawn_count": overlay.spawn_count,
                 "divergence": overlay.divergence,
+                // The child's own judged shape — the row's brief shape,
+                // the provider that served the child's turns, and the
+                // outcome — the "what was this child actually handed,
+                // on what, and how did it end" half of the line.
+                "brief_shape": overlay.brief_shape,
+                "provider": overlay.provider,
+                "outcome": overlay.outcome,
             })
         });
         json!({
@@ -14643,6 +14655,11 @@ fn graph_document(
             "capabilities": node.capabilities,
             "prereqs": node.prereqs,
             "summary": node.summary,
+            // The plan's own declared workload: what the plan's
+            // judgment said this whole graph should run as. `None` when
+            // no plan named a verdict — the face omits it rather than
+            // inventing an owner.
+            "declared_workload": workload,
             "unlock": {
                 "score_zero": node.unlock.score_zero,
                 "resource_free": node.unlock.resource_free,
