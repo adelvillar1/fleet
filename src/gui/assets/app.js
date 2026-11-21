@@ -6134,70 +6134,12 @@ import { node, svg, clip } from './core/dom.js';
     return at.length >= 16 ? at.slice(11, 16) : (at || '\u2014');
   }
 
-  // The day column chart. One column per hour the ledger saw, its height
-  // the hour's calls, and the calls that did not serve stacked at the top
-  // in the down colour. An hour with no calls is not a zero-height column
-  // — the board already left those out, and a chart that drew them would
-  // be inventing the shape of a day it never saw. The width is the card's
-  // own, so the columns widen with the card instead of the whole chart
-  // being scaled up to it.
-  function dayChart(hours, wide, onHour) {
-    var wrap = node('div', 'chart');
-    var W = Math.max(240, Math.round(wide || 320)), H = 118, base = H - 18, top = 14, gap = 6;
-    var width = hours.length ? (W - gap * (hours.length - 1)) / hours.length : 0;
-    var most = hours.reduce(function (peak, column) { return Math.max(peak, column.calls); }, 0);
-    var plot = svgPlot(W, H, 'the day\u2019s calls by their own hour');
-    plot.appendChild(svg('line', { x1: 0, y1: base + 0.5, x2: W, y2: base + 0.5, class: 'chart-base' }));
-    hours.forEach(function (column, index) {
-      var x = index * (width + gap);
-      var full = most ? Math.round((column.calls / most) * (base - top)) : 0;
-      var bad = column.calls ? Math.round((column.errors / column.calls) * full) : 0;
-      if (full > 0) {
-        plot.appendChild(svg('rect', { x: x, y: base - full, width: width, height: Math.max(1, full),
-          rx: 2, class: 'chart-col', 'data-act': 'filter-hour' }));
-      }
-      if (bad > 0) {
-        plot.appendChild(svg('rect', { x: x, y: base - full, width: width, height: Math.max(1, bad),
-          rx: 2, class: 'chart-col', 'data-tone': 'down', 'data-act': 'filter-hour' }));
-      }
-      if (column.calls) {
-        var cap = svg('text', { x: x + width / 2, y: base - full - 4, class: 'chart-cap',
-          'text-anchor': 'middle' });
-        cap.textContent = column.calls > 999 ? tokens(column.calls) : String(column.calls);
-        plot.appendChild(cap);
-      }
-      var hour = svg('text', { x: x + width / 2, y: H - 5, class: 'chart-hour', 'text-anchor': 'middle' });
-      hour.textContent = String(column.hour).padStart(2, '0');
-      plot.appendChild(hour);
-      if (onHour) {
-        var hit = svg('rect', {
-          x: x - 2, y: top - 8, width: width + 4, height: base - top + 20,
-          fill: 'transparent', class: 'chart-hit', 'data-act': 'filter-hour',
-          role: 'button', tabindex: '0'
-        });
-        var title = svg('title');
-        title.textContent = String(column.hour).padStart(2, '0') + ':00 \u00b7 ' +
-          column.calls + ' calls \u00b7 ' + column.errors + ' failed';
-        hit.appendChild(title);
-        hit.addEventListener('click', function () { onHour(column.hour); });
-        hit.addEventListener('keydown', function (event) {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            onHour(column.hour);
-          }
-        });
-        plot.appendChild(hit);
-      }
-    });
-    wrap.appendChild(plot);
-    return wrap;
-  }
-
-  // The model-mix donut. Each segment is a dash of one circumference, so
-  // a model that took one call draws a hairline and one that took a third
-  // of the day draws an arc, and no path arithmetic is involved. The total
-  // is the day's calls, not its serves: the mix says where calls landed,
-  // and the ledger beside it already says how many served.
+  // The donut. Each segment is a dash of one circumference, so a slice
+  // that took one call draws a hairline and one that took a third
+  // draws an arc, and no path arithmetic is involved. The router's
+  // model-mix card retired with the day column chart (P4); the donut
+  // stays for the tower's harness mix, whose legend reads the shares
+  // the feed's own rows counted.
   function donut(models, onModel) {
     var wrap = node('div', 'donut');
     var R = 34, C = 2 * Math.PI * R;
@@ -6445,35 +6387,6 @@ import { node, svg, clip } from './core/dom.js';
     return el0;
   }
 
-  // The day: the ledger's own tiles and the day column chart.
-  function dayCard(read, wide) {
-    var el0 = boardCard(7, 'today\u2019s ledger', 'the board\u2019s read \u00b7 ' + clock(read.read_at));
-    var totals = read.totals;
-    if (!totals) {
-      el0.appendChild(node('p', 'board-empty',
-        'Nothing has been routed today. The chain above still stands, and this fills in as the day goes on.'));
-      return el0;
-    }
-    var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(tokens(totals.calls), 'calls'));
-    tiles.appendChild(tile(tokens(totals.ok), 'served', 'ok'));
-    tiles.appendChild(tile(tokens(totals.errors), 'failed', totals.errors ? 'down' : null));
-    tiles.appendChild(tile(totals.success_rate == null ? '\u2014' : totals.success_rate + '%', 'served rate'));
-    el0.appendChild(tiles);
-    if (read.hours && read.hours.length) {
-      var note = node('p', 'board-note',
-        'The day\u2019s calls by the hour their own stamp says. An hour with no calls is left out rather ' +
-        'than drawn as a zero.');
-      note.style.marginTop = '14px';
-      el0.appendChild(note);
-      el0.appendChild(dayChart(read.hours, wide, function (hour) {
-        face.routerHour = face.routerHour === hour ? null : hour;
-        paintRouter();
-      }));
-    }
-    return el0;
-  }
-
   // The cost×quality scatter: one point per (model × workload) the
   // day's route rows served. The quality axis is the calibration cell's
   // own weighted wrong-rate — lower is better — and the cost axis is
@@ -6596,21 +6509,6 @@ import { node, svg, clip } from './core/dom.js';
     return el0;
   }
 
-  // The model mix, as a donut and its legend: where the day's calls
-  // actually landed.
-  function mixCard(read) {
-    var el0 = boardCard(5, 'the model mix', 'the board\u2019s read');
-    if (!read.models || !read.models.length) {
-      el0.appendChild(node('p', 'board-empty', 'No model took a call today.'));
-      return el0;
-    }
-    el0.appendChild(donut(read.models, function (model) {
-      face.routerModel = face.routerModel === model ? '' : model;
-      paintRouter();
-    }));
-    return el0;
-  }
-
   // Today's route rows: the audit trail's own tail, newest first. A row
   // is the call, the walk it took, and where it landed.
   function rowsCard(read) {
@@ -6619,51 +6517,8 @@ import { node, svg, clip } from './core/dom.js';
       el0.appendChild(node('p', 'board-empty', 'No route rows today.'));
       return el0;
     }
-    var hour = face.routerHour;
-    var model = face.routerModel || '';
-    var shown = read.recent.filter(function (entry) {
-      if (hour != null && Number(String(entry.at).slice(11, 13)) !== hour) return false;
-      if (model && entry.model !== model) return false;
-      return true;
-    });
-    // The chart's own selection, named and removable: a filtered list
-    // with no visible cause is a list the owner cannot trust.
-    if (hour != null || model) {
-      var bar = node('div', 'filter-bar');
-      if (hour != null) {
-        var hourChip = node('button', 'filter-chip filter-chip-active',
-          String(hour).padStart(2, '0') + ':00 \u00d7');
-        hourChip.type = 'button';
-        hourChip.dataset.act = 'clear-filter';
-        hourChip.title = 'clear the hour filter';
-        hourChip.addEventListener('click', function () {
-          face.routerHour = null;
-          paintRouter();
-        });
-        bar.appendChild(hourChip);
-      }
-      if (model) {
-        var modelChip = node('button', 'filter-chip filter-chip-active', model + ' \u00d7');
-        modelChip.type = 'button';
-        modelChip.dataset.act = 'clear-filter';
-        modelChip.title = 'clear the model filter';
-        modelChip.addEventListener('click', function () {
-          face.routerModel = '';
-          paintRouter();
-        });
-        bar.appendChild(modelChip);
-      }
-      bar.appendChild(node('span', 'filter-count',
-        shown.length + ' of ' + read.recent.length + ' rows'));
-      el0.appendChild(bar);
-    }
-    if (!shown.length) {
-      el0.appendChild(node('p', 'board-empty',
-        'No route row today matches this filter. Clear it to see the rows.'));
-      return el0;
-    }
     var rows = node('div', 'rows');
-    shown.forEach(function (entry) {
+    read.recent.forEach(function (entry) {
       var line = node('div', 'rrow');
       line.dataset.act = 'inspect';
       line.appendChild(node('span', 'rrow-at', clock(entry.at)));
@@ -6897,9 +6752,12 @@ import { node, svg, clip } from './core/dom.js';
     left.appendChild(rowsCard(read));
     el.routerBoard.appendChild(left);
 
+    // The ledger's tiles read the totals, the scatter grades the day's
+    // models on the rail, and the hour column chart and the model donut
+    // retired (P4): a day's shape is the rows' own trail now, and the
+    // scatter's grade per (model × workload) says what the mix never
+    // could.
     var rail = [
-      dayCard(read, cardWide(el.routerBoard, 4)),
-      mixCard(read),
       scatterCard(read),
       mixSplitCard(read),
       cacheCard(read)

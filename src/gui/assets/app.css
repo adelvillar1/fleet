@@ -4514,15 +4514,6 @@ pre.drawer-code {
 /* Charts declare their own width and are never stretched past it. */
 .chart svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 
-.chart-base { stroke: var(--dsw-alias-hairline-strong); stroke-width: 0.75; }
-.chart-col { fill: var(--dsw-alias-accent); }
-.chart-col[data-tone="down"] { fill: var(--dsw-alias-down); }
-.chart-cap {
-  fill: var(--dsw-alias-ink-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
 .chart-hour {
   fill: var(--dsw-alias-ink-tertiary);
   font-size: 12px;

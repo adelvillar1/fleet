@@ -6990,7 +6990,7 @@ async function theStrategyStepShowsItsPreview() {
       judged: { cached: 0, errors: 1, fresh: 14 },
       models: [{ calls: 14, errors: 1, key: 'glm-5', model: 'glm-5', provider: 'glm-5', total_tokens: 0 }],
       payg: { allowed: true, providers: ['deepseek'] },
-      recent: [], tiers: [], totals: { calls: 14, errors: 1, ok: 13, success_rate: 0.93 },
+      recent: [], tiers: [], totals: { calls: 14, errors: 1, ok: 13, success_rate: 93 },
       workloads: [{ count: 14, workload: 'standard_code' }],
       // P4's scatter rides the document: one point per (model ×
       // workload), graded with the calibration cell or labelled with
@@ -7113,6 +7113,61 @@ async function theStrategyStepShowsItsPreview() {
     check('P4 the scatter draws one point per (model \u00d7 workload)',
       dots.length === 3,
       'dots: ' + dots.length);
+  }
+
+  // P4's retirement: the hour column chart and the model donut leave the
+  // router rail — the day's shape is the route rows' own trail, and the
+  // scatter grades what the mix never could. The wire keeps carrying
+  // `hours` and `models` for the shapes that still read them, so this
+  // case populates both and proves the router paints neither from them.
+  async function theRouterRetiresTheHourChartAndTheModelDonut() {
+    const routerDoc = {
+      type: 'router', read_at: 'now', refused: [], pin: null,
+      cache: { entries: 0, keyed: true, workloads: [] }, guidance: [],
+      hours: [{ calls: 4, errors: 1, hour: 9 }, { calls: 2, errors: 0, hour: 14 }],
+      judge: { default_workload: 'standard_code', lane: 'sys1' },
+      judged: { cached: 0, errors: 0, fresh: 6 },
+      models: [
+        { calls: 4, errors: 1, key: 'glm-5', model: 'glm-5', provider: 'glm-5', total_tokens: 0 },
+        { calls: 2, errors: 0, key: 'step-3.7-flash', model: 'step-3.7-flash',
+          provider: 'stepfun', total_tokens: 0 },
+      ],
+      payg: { allowed: true, providers: [] },
+      recent: [
+        { at: '2026-11-20T09:14:02Z', provider: 'stepfun', model: 'stepfun/step-3.7-flash',
+          outcome: 'served', ok: true, providers_used: ['stepfun'], workload: 'quick',
+          ms: 812, reason: null },
+        { at: '2026-11-20T09:15:41Z', provider: 'zai-coding-plan',
+          model: 'zai-coding-plan/GLM-5.3-Flash', outcome: 'failed', ok: false,
+          providers_used: ['stepfun'], workload: 'hard', ms: 3311, reason: 'upstream refused' },
+      ],
+      tiers: [], totals: { calls: 6, errors: 1, ok: 5, success_rate: 83 },
+      workloads: [{ count: 6, workload: 'standard_code' }],
+      scatter: [],
+    };
+    const page = boot({
+      hash: '#/router',
+      documents: {
+        router: routerDoc,
+        state: (asked) => emptyState(asked),
+        onboard: onboardDoc({ door: false }),
+      },
+    });
+    page.open();
+    await flush(120);
+    const board = page.IDS['router-board'];
+    check('P4 the hour column chart retired',
+      page.rows('.chart-col').length === 0 &&
+        String(board.textContent).indexOf('by the hour') === -1,
+      'chart columns: ' + page.rows('.chart-col').length);
+    check('P4 the model donut retired',
+      page.rows('.donut-seg').length === 0 && page.rows('.donut-track').length === 0,
+      'segments: ' + page.rows('.donut-seg').length);
+    // The rows card reads the whole trail now: no filter chips stand
+    // between the owner and the rows the day served.
+    check('P4 the route rows read the whole trail, unfiltered',
+      page.rows('.rrow').length === 2 && page.rows('.filter-chip').length === 0,
+      'rows: ' + page.rows('.rrow').length + ' chips: ' + page.rows('.filter-chip').length);
   }
 
 
@@ -17404,6 +17459,8 @@ const cases = [
   ['KI-422 an empty refused list is not a refusal', anEmptyRefusalListIsNotARefusal],
   ['P4 the router scatter grades what the day can grade',
     theRouterScatterGradesWhatTheDayCanGrade],
+  ['P4 the router retires the hour chart and the model donut',
+    theRouterRetiresTheHourChartAndTheModelDonut],
   ['HUDDLES the rooms column carries the three states and its rows', theHuddleRailCarriesTheThreeStates],
   ['C6 the shelf opens a deliverable in the pane', theShelfOpensThePanePreview],
   ['C8 the composer names who hears the draft', theComposerNamesWhoHearsIt],

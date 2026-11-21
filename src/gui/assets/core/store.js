@@ -61,8 +61,6 @@ export const face = {
     skillShowAll: false,
     towerFilter: 'all',
     towerDay: '',
-    routerHour: null,
-    routerModel: '',
     // The visit stamp, read before it is overwritten, so the home can
     // say what happened while the owner was away.
     lastVisit: '',
