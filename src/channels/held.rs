@@ -134,14 +134,17 @@ impl HoldStore {
     }
 
     /// File one delivery, newest first, and keep the store bounded. The
-    /// id is minted here so the caller does not have to.
+    /// id is minted here so the caller does not have to: the running
+    /// sequence names two holds apart within the same nanosecond, and
+    /// the FULL epoch nanos (the review's note 5) keep the tail from
+    /// repeating every second or across a restart.
     pub fn file(&mut self, inbound: &Inbound, at: &str) -> String {
         let seq = HOLD_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
+            .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let id = format!("h{seq:04}{nanos:09}");
+        let id = format!("h{seq:04}{nanos:019}");
         self.holds.insert(
             0,
             Hold {
@@ -296,6 +299,23 @@ mod tests {
     }
 
     // ---- the locked store (the adversarial review's FIX 1) ----
+
+    /// The id's tail is the FULL epoch nanos (the review's note 5): a
+    /// sub-second tail repeats every second and across restarts, so two
+    /// holds minted a second apart — or by two processes — could name
+    /// themselves the same.
+    #[test]
+    fn a_hold_id_carries_the_full_epoch_nanos() {
+        let mut store = HoldStore::default();
+        let id = store.file(&inbound("one", None), "at");
+        assert!(id.starts_with('h'));
+        // h + the four seq digits, then the nanos.
+        let nanos: u128 = id[5..].parse().expect("the id's numeric tail");
+        assert!(
+            nanos > 1_000_000_000_000_000_000,
+            "the id's tail is a sub-second number that repeats every second: {id}"
+        );
+    }
 
     /// A second take of the same id FAILS: the take was persisted by the
     /// first, so the store is already without it. Two successes here is
