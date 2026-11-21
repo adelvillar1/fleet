@@ -458,7 +458,31 @@ refreshed (`surface-router`, `surface-delegation`, `surface-memory`).
   iterates in the same run), a visual version diff beside the pins'
   fix thread, and the handoff packet as the primary press.
 
-### Status pass, 2026-11-21 — P3–P5 audited before building
+### The standing goal, restated — 2026-11-21
+
+The owner's directive after the v0.8.24 cut: **this plan is implemented end to
+end — every phase, no deferrals, no lazy shortcuts.** The earlier session goal
+covered P2–P5 only; that scoping is retired. The queue on the shared `app.js`
+is therefore, in order:
+
+1. **Laya sys1 integration** (in flight) — the one app.js writer while it runs.
+2. **P1's remainder** — the receipts gutter, the composer's nine controls (the
+   owner's per-control questions are answered by the agent with recorded
+   judgment in `docs/plans/UI-DECISIONS.md`, not deferred back), fork-at-turn,
+   artifact preview cards.
+3. **P6** — the six system surfaces with their ACs.
+4. **P7 wave two** — builder-side visual pass: surface shapes, icons,
+   four-sentence empty states, icons, the hand walk at 1180/900/720/460 with a
+   written note per surface, and the gallery refresh.
+
+(P7 wave one — the stylesheet and theme engine — runs in parallel on
+`app.css`/`themes.rs` and does not own `app.js`.)
+
+No phase is called complete until its rows are landed **and** its screenshot and
+hand-walk clauses are satisfied from the shipped build; status `active` until
+the whole table says so.
+
+## Status pass, 2026-11-21 — P3–P5 audited before building
 
 A read-only audit measured all **18** AC clauses against the tree (7 in P3, 6
 in P4, 5 in P5). Result: **not one is already implemented** — unlike P2, whose
@@ -489,7 +513,7 @@ The rest, in order of how much is missing:
 | P4 | delegation overlay with divergence tones | **landed** `8563f17` + `ef462cf` + `56daf8d` + `20bde1f` + `465eeea` — `DelegatedRunRow.node` (serde-default, old rows read `None`), the day's `OP_DELEGATION` rows joined to graph nodes as `overlay {spawned_sessions, spawn_count, divergence}` with a graph-level `divergences {never_spawned, ran_twice}`, `declared_workload` from the plan's `execution:` verdict carrying the child's judged shape as the why-this-child line, captions in the warn tone, and the FOLD harness case pins counts against a declared graph (9 checks). Red-proofs: dropping the node threading left the overlay empty (every node `never spawned`); deriving the word in the face made all three captions say it. |
 | P4 | memory: recall is the first block | **landed** `0166960` — flipped the case that asserted the opposite, red-proved |
 | P4 | why-this-recall breakdown | **landed** `354d886` + `87aa84c` — six channels recorded on the calib row (old lines decode to zeros and say so), served with their weights, summed against the score. Ranking untouched: no weight or `Score::compute` line changed. |
-| P4 | skills coverage map + fired feed | **not built** — the surface lists segment rows only |
+| P4 | skills coverage map + fired feed | **landed** `037494a4` + `119b68af` + `7bbfd4bd` — the document derives the coverage map (`boards::read_skills`): per skill `fired {count, last_at}` or nothing, an `unused` list, a newest-first `feed` of `{at, skill, session, surface}`, and a named `feed_reason` when nothing records fires; the face paints the fired/unused split (a skill with no fires reads "not used yet", never a failure), the feed, and — the honesty half — when no firing records exist the block prints **"declared only — nothing records fires"** instead of any zero-count claim. The harness pins both fixtures; red-proofs: the split lying ("3 fired" against a 2-and-1 document) and the basis dropped both failed by name. The child died in the opencode-go 429 after committing; the commits were verified and the row flipped before anyone re-ran the work. |
 | P5 | morning read: five lines, on the bots door | **landed** `11322a5` — five sentences derived purely from the second-brain document; a line whose section did not land prints that section's own refusal, never a zero. The repo's first `second-brain` fixture. |
 | P5 | workspace-history time scrubber | **landed** `b5c89d0c` + `46078ac6` — the document derives a `timeline` from the commits' own timestamps (hour buckets under a 3-day span, else day) and answers `at=<iso|ms>` with `as_of`/`covered`; the face's `canvas-range` asks for a moment and paints what came back (no client-side filtering), with the sentence reading `the newest · 3 of 3 changes` / `as of 14:32 · 2 of 3 changes` / `before the first change · 0 of 3` / `no changes recorded yet`. Red-proofs: filter no-op → `left: 3, right: 2`; coverage broken → harness named `as of 03:34 · 3 of 3` where the document said 2. |
 | P5 | practice from the graph's weakest link | **landed** `84ea702` — the weakest link is derived **in the document** (`boards.rs`), never the face: a failed run first, then a landed delta that cost the aggregate (by `diff_weight`, now carried on `DeltaShape`), then the unverified node closest to done that still names why it is held; summaries never rank. Both the delegation board's graph and the learning read carry `weakness`; the practice card prints the document's sentence and offers it as the default target while the manual start stays below it (pinned). Red-proofs: face wiring removed → 4 checks failed by name; ranking broken to "last node" → `left: second, right: first`. |
