@@ -14,10 +14,14 @@ answers `GET /api/version` so the owner asks the face what it is.
 
 ## v0.8.24 — 2026-11-21
 
-The face-rethought plan is complete: audited surface by surface, forty-some
-commits later every clause of P2 through P5 is landed with its own red-proof,
-and the gate on the cut commit reads **2695+ lib units, 0 failed, face 1655
-checks across 233 cases**.
+Sixty-one commits inside the face-rethought plan: every clause of **P2 through
+P5 landed with its own red-proof**, and the gate on the cut commit reads
+**2739 units, 0 failed, face 1655 checks across 233 cases**. The plan itself is
+**not complete and is not called complete**: its P1 remainder (the receipts
+gutter, the composer's nine controls, fork-at-turn), **P6** (settings, vault,
+plugins, calibration, about, armada) and **P7** (the visual pass — the appeal
+mandate) remain open by design. Earlier cuts' notes calling this plan finished
+were wrong and are corrected here.
 
 **The work surface holds its contract, adversarially.** An inbox triage the
 owner ruled into a deferral class shipped, was re-read by an adversarial review,
