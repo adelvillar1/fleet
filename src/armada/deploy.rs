@@ -570,14 +570,12 @@ pub fn journal_governance(home: &Path, note: &str) {
 mod tests {
     use super::*;
 
-    /// The lock the two OpenShip refusal tests take, because they write
-    /// `OPENSHIP_PROJECT` and `OPENSHIP_TOKEN` through `std::env::set_var`
-    /// — process-wide state that `cargo test`'s threads share. Without it
-    /// the two race: whichever unsets the variable first makes the other
-    /// read the next refusal, so one of them failed on every full-suite
-    /// run at HEAD (which one varied, so it read as flake rather than as
-    /// the class it is).
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // The OpenShip refusal tests used to keep their own lock here, because
+    // they write `OPENSHIP_PROJECT` and `OPENSHIP_TOKEN` — process-wide state
+    // that `cargo test`'s threads share, and without serialization whichever
+    // test unset the variable first made the other read the next refusal.
+    // They take `crate::testsupport::env_lock()` now: one lock for the crate,
+    // and the RAII values restore what was there (env-isolation pass 3).
 
     fn scratch(tag: &str) -> PathBuf {
         static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -793,12 +791,11 @@ mod tests {
 
     #[test]
     fn an_openship_deploy_without_a_project_is_refused_by_name() {
-        // SAFETY: this test owns these variables for its duration.
-        let _env = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-        unsafe {
-            std::env::remove_var("OPENSHIP_PROJECT");
-            std::env::set_var("OPENSHIP_TOKEN", "opsh_pat_test");
-        }
+        // The shared guard (env-isolation pass 3): one lock for the whole
+        // crate, and the RAII values restore whatever was there before.
+        let _lock = crate::testsupport::env_lock();
+        let _project = crate::testsupport::EnvVar::unset("OPENSHIP_PROJECT");
+        let _token = crate::testsupport::EnvVar::set("OPENSHIP_TOKEN", "opsh_pat_test");
         let spec = service_spec(
             Provider::OpenShip,
             "box-os",
@@ -824,7 +821,6 @@ mod tests {
                 .all(|e| e.kind != "provision"),
             "a refused deploy journaled a step"
         );
-        unsafe { std::env::remove_var("OPENSHIP_TOKEN") };
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -833,11 +829,9 @@ mod tests {
         // The project is named, so this exercises the NEXT refusal: no
         // credential. A deploy with no bearer cannot authenticate, and the
         // refusal says where a token comes from.
-        let _env = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-        unsafe {
-            std::env::set_var("OPENSHIP_PROJECT", "a-project");
-            std::env::remove_var("OPENSHIP_TOKEN");
-        }
+        let _lock = crate::testsupport::env_lock();
+        let _project = crate::testsupport::EnvVar::set("OPENSHIP_PROJECT", "a-project");
+        let _token = crate::testsupport::EnvVar::unset("OPENSHIP_TOKEN");
         let spec = service_spec(
             Provider::OpenShip,
             "box-tok",
@@ -853,7 +847,6 @@ mod tests {
             refused.contains("a read-only token cannot deploy"),
             "the refusal explains why a scope refusal may follow: {refused}"
         );
-        unsafe { std::env::remove_var("OPENSHIP_PROJECT") };
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -871,7 +864,8 @@ mod tests {
         )
         .unwrap();
         let home = scratch("openship-dry");
-        unsafe { std::env::remove_var("OPENSHIP_PROJECT") };
+        let _lock = crate::testsupport::env_lock();
+        let _project = crate::testsupport::EnvVar::unset("OPENSHIP_PROJECT");
         let provisioned = provision(&home, &spec, true).expect("a dry run answers");
         assert_eq!(provisioned.handle, "(dry run)");
         assert!(provisioned.steps[0].1.contains("would deploy"));

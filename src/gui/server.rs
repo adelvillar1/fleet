@@ -4955,13 +4955,16 @@ mod tests {
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
-        let prior = std::env::var("FLEET_LAYERFS_BUNDLE").ok();
-        std::env::set_var("FLEET_LAYERFS_BUNDLE", home.join("no-bundle"));
+        // The shared guard (env-isolation pass 3): the lock for the window,
+        // the RAII restore for the value — this test sets a process variable
+        // while an async server is serving, which is only safe if every other
+        // env test is serialized on the same lock.
+        let _lock = crate::testsupport::env_lock();
+        let _bundle = crate::testsupport::EnvVar::set(
+            "FLEET_LAYERFS_BUNDLE",
+            &home.join("no-bundle").to_string_lossy(),
+        );
         let refused = post(port, "/api/repair/layerfs", "", "{}");
-        match prior {
-            Some(value) => std::env::set_var("FLEET_LAYERFS_BUNDLE", value),
-            None => std::env::remove_var("FLEET_LAYERFS_BUNDLE"),
-        }
         assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
         assert!(refused.contains("is not there"), "{refused}");
         assert!(refused.contains("FLEET_LAYERFS_BUNDLE"), "{refused}");
@@ -5260,6 +5263,12 @@ mod tests {
     /// substrate's own absences (an unprovisioned machine, a CLI that
     /// cannot answer) ride the same rule, pinned by the view's own
     /// tests; what this endpoint test owns is the route and the shape.
+    // The environment lock is deliberately held across the awaits below: the
+    // variable must stay set for the whole request, and nothing inside the
+    // future takes the same lock — the tests that do are synchronous and wait
+    // on a different thread. Clippy's lint is right in general and wrong here,
+    // so it is silenced once, with the reason, rather than for the module.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test(flavor = "multi_thread")]
     async fn the_workspace_history_reads_name_a_folder_with_no_project() {
         // The read resolves the CONFIG's registrations, so the test
@@ -5269,8 +5278,10 @@ mod tests {
         // — the motivating case — and the test's premise must not
         // depend on the world it happens to run in.)
         let scratch = fresh_home();
-        let previous = std::env::var_os("FLEET_HOME");
-        std::env::set_var("FLEET_HOME", &scratch);
+        // The shared guard (env-isolation pass 3): the lock covers the window,
+        // the RAII value restores it however this test leaves.
+        let _lock = crate::testsupport::env_lock();
+        let _home = crate::testsupport::EnvVar::set("FLEET_HOME", &scratch.to_string_lossy());
         let home = router_home();
         let (token, port) = launch_over(home, fresh_home()).await;
         let reply = get(port, "/api/workspace-history", &token);
@@ -5338,10 +5349,6 @@ mod tests {
             "{document}"
         );
         assert!(!body.contains("api_key"), "{body}");
-        match previous {
-            Some(value) => std::env::set_var("FLEET_HOME", value),
-            None => std::env::remove_var("FLEET_HOME"),
-        }
     }
 
     /// A fact edits through the substrate's own rewriter: the named
@@ -5398,11 +5405,19 @@ mod tests {
     /// malformed day is the read's named refusal; and the ops the
     /// stream used to drop ride the document (the delegation row's
     /// fields, the embed timing's measurement).
+    // The environment lock is deliberately held across the awaits below: the
+    // variable must stay set for the whole request, and nothing inside the
+    // future takes the same lock — the tests that do are synchronous and wait
+    // on a different thread. Clippy's lint is right in general and wrong here,
+    // so it is silenced once, with the reason, rather than for the module.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test(flavor = "multi_thread")]
     async fn the_calibration_read_answers_the_day_it_is_given() {
         let scratch = fresh_home();
-        let previous = std::env::var_os("FLEET_HOME");
-        std::env::set_var("FLEET_HOME", &scratch);
+        // The shared guard (env-isolation pass 3): the lock covers the window,
+        // the RAII value restores it however this test leaves.
+        let _lock = crate::testsupport::env_lock();
+        let _home = crate::testsupport::EnvVar::set("FLEET_HOME", &scratch.to_string_lossy());
         // The read resolves the home the bridge carries: router_home's
         // config names its own logs root, so the fixture writes there.
         let home = router_home();
@@ -5496,10 +5511,6 @@ mod tests {
                 .contains("not a day"),
             "{bad}"
         );
-        match previous {
-            Some(value) => std::env::set_var("FLEET_HOME", value),
-            None => std::env::remove_var("FLEET_HOME"),
-        }
         let _ = std::fs::remove_dir_all(&calib_root);
     }
 

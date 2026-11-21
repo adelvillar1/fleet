@@ -84,6 +84,20 @@ Pass 2 landed: **four more duplicate guards are gone** — `explain/tests`,
 `ENV_LOCK` and one `EnvVar`, both in `testsupport`; a scan for
 `static ENV_LOCK` returns only that module.
 
+Pass 3 started (two of the largest clusters): **`gui/server`** (9 sites — three
+inline set/restore blocks, including one that mutated the environment while an
+async server was serving) and **`armada/deploy`** (7 sites — its private
+`ENV_LOCK` and its `unsafe { remove_var }` restores are gone). Both files now
+contain zero `std::env::set_var`.
+
+That pass also produced the pattern's one real hazard: `testsupport::env_lock`
+is a `std::sync::Mutex`, and two of the migrated tests are async — clippy's
+`await_holding_lock` caught the guard held across an await. The allowance is
+per-test with its reason (the variable must stay set for the whole request, and
+nothing inside the future takes the same lock), not module-wide. The full lib
+suite runs clean in 63s, so the lock does not deadlock under the real
+scheduler — which is the only evidence that matters for that lint.
+
 Remaining: the bulk. Surveyed properly before starting it, and the split is
 not what the first count suggested — whole-file test modules (`delegate/tests`,
 `judge/tests`, `testsupport`) carry no `#[cfg(test)]` marker inside them, so a
