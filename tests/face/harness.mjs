@@ -12592,39 +12592,161 @@ async function theZombieTabCannotHideASeatOrLoseTheReads() {
 /// drops the turn count rather than inventing a number its event never
 /// carried.
 async function theFreshnessSurfacesReadTheFoldCount() {
-  const delegationDoc = {
-    type: 'delegation',
-    depth_cap: 2,
-    live: null,
-    graph: null,
-    history: [
-      { id: 'root-folded', model: 'm', kind: 'subagent', depth: 0, goal: 'the folded run',
-        status: 'stopped', stop_reason: 'completed', turns: 4, compactions: 3, children: [] },
-      { id: 'root-fresh', model: 'm', kind: 'subagent', depth: 0, goal: 'the fresh run',
-        status: 'stopped', stop_reason: 'max-turns', turns: 12, compactions: 0, children: [] },
+  // The same trees the case has always read, plus the graph the overlay
+  // plan populates: three declared nodes, a live tree of two children,
+  // and the overlay the document carried — n1 spawned once, n2 never,
+  // n3 twice — with the graph-level counts the declared graph minus the
+  // run's log gives.
+  const history = [
+    { id: 'root-folded', model: 'm', kind: 'subagent', depth: 0, goal: 'the folded run',
+      status: 'stopped', stop_reason: 'completed', turns: 4, compactions: 3, children: [] },
+    { id: 'root-fresh', model: 'm', kind: 'subagent', depth: 0, goal: 'the fresh run',
+      status: 'stopped', stop_reason: 'max-turns', turns: 12, compactions: 0, children: [] },
+  ];
+  const unlock = (met) => ({
+    score_zero: met, resource_free: met, deps_verified: met, unlocked: met,
+    waiting: met ? [] : ['n1'], failed: [], unresolved: [], held: [],
+  });
+  const node = (id, extra) => ({
+    id, cost: 1, score: 1, peak: 3, status: 'pending', state: 'waiting',
+    approach: null, paths: [], capabilities: '', prereqs: [],
+    unlock: unlock(false), reason: null, delta: null, summary: false,
+    declared_workload: null, overlay: null, ...extra,
+  });
+  const populatedGraph = {
+    nodes: [
+      node('n1', {
+        status: 'running', state: 'running', unlock: unlock(true),
+        declared_workload: 'swarm',
+        overlay: {
+          spawned_sessions: ['sess-live-1'], spawn_count: 1, divergence: null,
+          brief_shape: 'task+approach', provider: 'stepfun', outcome: 'completed',
+        },
+      }),
+      node('n2', {
+        declared_workload: 'swarm',
+        overlay: {
+          spawned_sessions: [], spawn_count: 0, divergence: 'never spawned',
+          brief_shape: '', provider: '', outcome: '',
+        },
+      }),
+      node('n3', {
+        status: 'running', state: 'running', unlock: unlock(true),
+        declared_workload: 'swarm',
+        overlay: {
+          spawned_sessions: ['sess-live-2', 'sess-past-9'], spawn_count: 2,
+          divergence: 'ran twice', brief_shape: 'task+context',
+          provider: 'stepfun', outcome: 'completed',
+        },
+      }),
     ],
+    edges: [{ from: 0, to: 1 }],
+    critical_path: ['n1', 'n3'],
+    blocks_most_work: 'n3',
+    revisions: 0, diff_score: 0, replan: false,
+    divergences: { never_spawned: 1, ran_twice: 1, basis: "the day's delegation rows" },
   };
-  const page = boot({
+  const bootDelegation = (graph) => boot({
     width: 1440, hash: '#/delegation',
     documents: {
-      delegation: delegationDoc,
+      delegation: {
+        type: 'delegation', depth_cap: 2,
+        live: {
+          id: 'root-live', model: 'm', kind: 'subagent', depth: 0, goal: 'the live run',
+          status: 'running', children: [
+            { id: 'sess-live-1', model: 'm', kind: 'subagent', depth: 1,
+              goal: 'the n1 work', status: 'stopped', stop_reason: 'completed',
+              turns: 2, compactions: 0, children: [] },
+            { id: 'sess-live-2', model: 'm', kind: 'subagent', depth: 1,
+              goal: 'the n3 work', status: 'running', compactions: 0, children: [] },
+          ],
+        },
+        graph, history,
+      },
       state: (asked) => emptyState(asked),
       onboard: onboardDoc({ door: false }),
     },
   });
+
+  // The red-proof, first: the document the overlay plan started from —
+  // a graph with no overlay, no divergences, no declared workload —
+  // renders NO divergence word and NO why-this-child line. The face
+  // derives nothing; only a document that carries the words is drawn
+  // with them.
+  const plain = bootDelegation(null);
+  await flush();
+  plain.open();
+  await flush(120);
+  const plainText = plain.text('delegation-board');
+  check('PROOF a graph without an overlay renders no divergence word',
+    !plainText.includes('never spawned') && !plainText.includes('ran twice'),
+    plainText.includes('never spawned') ? 'the face invented the word' : 'none');
+
+  const page = bootDelegation(populatedGraph);
   await flush();
   page.open();
   await flush(120);
 
-  // The tree cards read the fold count, not the turn count: the folded
-  // run names its three folds, the fresh one says never folded, and no
-  // card says "turns".
   const text0 = page.text('delegation-board');
   check('FOLD the tree cards read the fold count',
     text0.includes('3 folds') && text0.includes('never folded'),
     text0.slice(0, 260));
   check('FOLD the tree cards dropped the turn count',
     !/\b\d+ turns\b/.test(text0), text0.slice(0, 200));
+
+  // P4: the node captions carry the divergence word — exactly one node
+  // says `never spawned` (n2) and exactly one says `ran twice` (n3) —
+  // and the why-this-child line rides the spawned node's caption.
+  const caps = page.rows('.graph-cap');
+  const saying = (word) => caps.filter((cap) => cap.textContent.includes(word)).length;
+  check('P4 one node caption says never spawned and one says ran twice',
+    saying('never spawned') === 1 && saying('ran twice') === 1,
+    caps.map((cap) => cap.textContent).join(' | '));
+  check('P4 the why-this-child words render on the spawned node',
+    caps.some((cap) => cap.textContent.includes('task+approach \u00b7 stepfun \u00b7 completed')),
+    caps.map((cap) => cap.textContent).join(' | '));
+
+  // P4: the graph-level counts equal declared minus spawned — one node
+  // never spawned, one ran twice — and the tiles render the counts the
+  // document carried, not ones the face counted.
+  const tiles = page.rows('.tile');
+  const counted = (label) => {
+    const tile = tiles.find((one) => one.textContent.includes(label));
+    return tile ? tile.children[0].textContent : 'no tile';
+  };
+  check('P4 the tiles render the document\u2019s divergence counts',
+    counted('never spawned') === '1' && counted('ran twice') === '1',
+    tiles.map((tile) => tile.textContent).join(' | '));
+
+  // P4: the link — the tree draws by session id, and the overlay names
+  // the spawned children by the same id, so the drawer can find a
+  // spawned child in the tree by name.
+  const treeIds = page.rows('.tree-node[data-session]')
+    .map((one) => one.getAttribute('data-session'));
+  check('P4 the tree draws by the session id the overlay names',
+    treeIds.includes('sess-live-1') && treeIds.includes('sess-live-2'),
+    treeIds.join(', '));
+  const n1 = page.rows('.graph-node')
+    .find((one) => one.textContent.includes('n1'));
+  check('P4 the spawned node opens', !!n1, page.rows('.graph-node').length);
+  if (n1) {
+    n1.click();
+    await flush(40);
+    const drawer = page.text('dock-object-body') || page.text('drawer-body');
+    check('P4 the drawer names the why-this-child line',
+      drawer.includes('why this child') &&
+        drawer.includes('swarm \u00b7 task+approach \u00b7 stepfun \u00b7 completed'),
+      drawer.slice(0, 200));
+    check('P4 the drawer offers the spawned session in the tree',
+      drawer.includes('find sess-live-1 in the tree'),
+      drawer.slice(0, 200));
+    const find = page.rows('#dock-object-body button')
+      .find((one) => one.textContent.includes('find sess-live-1 in the tree'));
+    if (find) {
+      find.click();
+      check('P4 the find press does not throw on the tree\u2019s own id', true, 'pressed');
+    }
+  }
 
   // The live branch line: a done event carrying a turn count names its
   // outcome and stops — the count is not a freshness claim.
