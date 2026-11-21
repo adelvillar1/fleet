@@ -11194,14 +11194,17 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
   page.open();
   await flush(80);
 
-  // The rail: needs you leads, the type sections the corpus holds
-  // follow (an empty type never renders), the tails close it.
+  // The rail: today's recall leads — what this run recalled is the first
+  // painted block (the rethought plan's P4 AC) — then needs you, then the
+  // type sections the corpus holds (an empty type never renders), the
+  // tails close it.
   const railRows = page.rows('.section-rail-row');
   const railText = railRows.map((row) => row.textContent);
-  check('MEM the rail leads with needs you and carries the type words',
+  check('MEM the rail leads with today\u2019s recall and carries needs you and the type words',
     railRows.length === 12 &&
-      railText[0].includes('needs you') &&
-      railText[1].includes('feedback') && railText[2].includes('project') &&
+      railText[0].includes('today') &&
+      railText[1].includes('needs you') &&
+      railText[2].includes('feedback') && railText[3].includes('project') &&
       railText.some((t) => t.includes('everything else')) &&
       railText.some((t) => t.includes('retired')) &&
       railText.some((t) => t.includes('archive')) &&
@@ -11216,11 +11219,17 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
     railText.join(' | '));
   check('MEM one section renders at a time',
     page.rows('.section-body').length === 1 &&
-      page.rows('.section-body')[0].dataset.section === 'needs-you',
+      page.rows('.section-body')[0].dataset.section === 'today',
     page.rows('.section-body').map((b) => b.dataset.section).join(','));
 
-  // The needs-you section names the four sets and offers the pass.
-  const board = page.text('memory-board');
+  // The needs-you section names the four sets and offers the pass. It is
+  // addressed — the recall section leads the rail now — so its queue is
+  // read at its own address, never the default one.
+  const needs = bootMemory('#/memory/needs-you');
+  await flush();
+  needs.open();
+  await flush(80);
+  const board = needs.text('memory-board');
   check('MEM the queue names all four sets and the exceptions',
     board.includes('the pass would compress') &&
       board.includes('the pass would fold') &&
@@ -11228,9 +11237,9 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
       board.includes('left alone \u2014 the missing companions') &&
       board.includes('run the cycle now'),
     board.slice(0, 200));
-  page.rows('.row-action-primary')[0].click();
+  needs.rows('.row-action-primary')[0].click();
   await flush(60);
-  const passPosted = page.calls.filter((call) =>
+  const passPosted = needs.calls.filter((call) =>
     call.url === '/api/memories/consolidate' && call.method === 'POST');
   check('MEM the press runs one pass',
     passPosted.length === 1, JSON.stringify(passPosted));
@@ -16709,9 +16718,10 @@ async function aboutIsOnTheRailAndAWaitingReleaseIsVisible() {
 }
 
 async function theSilentSurfaceActsNowAnswerWhereTheOwnerIsLooking() {
-  // 1. Intelligence: the needs-you card's pass.
+  // 1. Intelligence: the needs-you card's pass. The card is addressed —
+  // the recall section leads the rail now — so the boot lands on it.
   const memory = boot({
-    width: 1440, hash: '#/memory',
+    width: 1440, hash: '#/memory/needs-you',
     documents: { memory: memoryDoc, state: (asked) => emptyState(asked),
       onboard: onboardDoc({ door: false }) },
   });

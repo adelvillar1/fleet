@@ -7586,12 +7586,14 @@ import { node, svg, clip } from './core/dom.js';
   //
   // The surface is a rail of sections and one section's cards: the work
   // rail's idiom, the shared sectionRail helper, and a route that makes
-  // a section addressable. What needs you leads — the consolidation
-  // cycle's own queue, computed and written nowhere — then the
-  // substrate's own type words, then retired, the archive, and today's
-  // recall.
+  // a section addressable. Today's recall leads — what this run
+  // recalled is the first painted block (the rethought plan's P4 AC) —
+  // then what needs you (the consolidation cycle's own queue, computed
+  // and written nowhere), then the substrate's own type words, then
+  // retired and the archive.
 
-  /// The section the hash names, or the remembered one, or `needs-you`.
+  /// The section the hash names, or the remembered one, or `today` — the
+  /// recall section the rail leads with.
   function memorySectionId() {
     var parts = parseAddress().parts;
     if (parts[0] === 'memory' && parts[1]) return decodeURIComponent(parts[1]);
@@ -7599,7 +7601,7 @@ import { node, svg, clip } from './core/dom.js';
       var stored = window.localStorage.getItem('fleet-memory-section');
       if (stored) return stored;
     } catch (error) { }
-    return 'needs-you';
+    return 'today';
   }
 
   function rememberMemorySection(id) {
@@ -7659,7 +7661,18 @@ import { node, svg, clip } from './core/dom.js';
   function memorySections(read) {
     var facts = read.facts || [];
     var retired = facts.filter(function (fact) { return fact.retired; });
+    // The recall section leads: what this run recalled is the first
+    // painted block (the rethought plan's P4 AC), before the queue.
     var sections = [{
+      id: 'today', name: 'today\u2019s recall',
+      badge: (read.hits || []).length,
+      badgeTitle: (read.hits || []).length + ' hits',
+      paint: function () {
+        var recalls = face.events.filter(function (event) { return event.type === 'memory'; });
+        return [memHits(read, read.hits || [], recalls)];
+      }
+    },
+    {
       id: 'needs-you', name: 'needs you',
       badge: memoryPreviewTotal(read), badgeTitle: memoryPreviewTotal(read) + ' queued',
       paint: function () { return [memoryNeedsYou(read)]; }
@@ -7687,15 +7700,6 @@ import { node, svg, clip } from './core/dom.js';
         badge: (read.archive || []).length,
         badgeTitle: (read.archive || []).length + ' archived',
         paint: function () { return [memoryArchive(read)]; }
-      },
-      {
-        id: 'today', name: 'today\u2019s recall',
-        badge: (read.hits || []).length,
-        badgeTitle: (read.hits || []).length + ' hits',
-        paint: function () {
-          var recalls = face.events.filter(function (event) { return event.type === 'memory'; });
-          return [memHits(read, read.hits || [], recalls)];
-        }
       },
       // U40's segments: the lens is Intelligence — everything the
       // harness knows AND can do. Skills, Tools and Workflows ride the
@@ -7977,7 +7981,7 @@ import { node, svg, clip } from './core/dom.js';
         name: section.name, badge: section.badge, badgeTitle: section.badgeTitle
       };
     }), {
-      current: read ? memorySectionId() : 'needs-you',
+      current: read ? memorySectionId() : 'today',
       folded: !!face.memoryRailFolded,
       store: 'fleet-memory-rail',
       onPick: function (id) {
