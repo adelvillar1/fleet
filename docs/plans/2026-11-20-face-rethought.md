@@ -426,7 +426,7 @@ The rest, in order of how much is missing:
 | P3 | cast strip: disc + state word per member | **landed** `3a79e38` — `PRESENCE.state` existed unused |
 | P3 | turn spine in the persona's tint | **landed** `aa25e5a` |
 | P3 | `/breakout` `/distil` `/archive` from composer **and** head | **landed** `6d9732c` — head buttons existed, commands did not |
-| P3 | bots door: passport per paired peer + ≥10-event feed | building: `device_class` does not exist in the data model at all; last-heard/last-asked are derivable from the capped activity log with no migration |
+| P3 | bots door: passport per paired peer + ≥10-event feed | **landed** `6b69e98` + `ed7bd32` + `1f7150f` + `7995dc6` — `device_class` persisted with a `serde(default)` field (old stores load unchanged: proven by test), last-heard/last-asked derived from the capped activity log rather than a new store field, `acts`/`listens` aligned across both bridge documents, and the passport rows in the face. The live-pairing half still needs a run. |
 | P3 | "send myself a message" round trip | **not built** — zero hits for any self-delivery surface; the pairing route exists |
 | P4 | router cost×quality scatter + `ungraded` | **not built** — `grep scatter|ungraded` = 0; the hourly chart and donut the AC retires are still painted |
 | P4 | delegation overlay with divergence tones | **not built** — graph and run tree are two separate cards, no join, no tones |
