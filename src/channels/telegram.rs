@@ -452,7 +452,14 @@ mod tests {
     async fn a_telegram_message_runs_through_the_same_driver() {
         let home = temp_home("telegram-e2e");
         let mut store = PeerStore::default();
-        store.pair("4242", "Alejandro", "unused", Capability::Task, "stamp");
+        store.pair(
+            "4242",
+            "Alejandro",
+            "unused",
+            Capability::Task,
+            "stamp",
+            None,
+        );
         store.save(&home, "telegram").unwrap();
 
         let (mut bridge, _sources) = Bridge::detached(
@@ -571,7 +578,14 @@ mod tests {
     async fn an_observing_peer_is_told_why_its_task_was_refused() {
         let home = temp_home("telegram-observe");
         let mut store = PeerStore::default();
-        store.pair("4242", "Alejandro", "unused", Capability::Observe, "stamp");
+        store.pair(
+            "4242",
+            "Alejandro",
+            "unused",
+            Capability::Observe,
+            "stamp",
+            None,
+        );
         store.save(&home, "telegram").unwrap();
 
         let (mut bridge, _sources) = Bridge::detached(

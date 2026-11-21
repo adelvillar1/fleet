@@ -1080,6 +1080,7 @@ mod tests {
             "unused",
             Capability::Observe,
             "stamp",
+            None,
         );
         store.save(&home, "webhook").expect("the store");
         let peers = peers(&home, "webhook");

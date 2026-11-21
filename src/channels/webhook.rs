@@ -404,6 +404,7 @@ mod tests {
             Capability::Task,
             "stamp",
             Some(callback),
+            None,
         );
         store.save(&home, "webhook").unwrap();
         (home, token)
@@ -430,7 +431,7 @@ mod tests {
         let home = temp_home(tag);
         let mut store = PeerStore::default();
         let token = crate::channels::mint_peer_token().unwrap();
-        store.pair("abc", "the CI box", &token, capability, "stamp");
+        store.pair("abc", "the CI box", &token, capability, "stamp", None);
         store.save(&home, "webhook").unwrap();
         (home, token)
     }

@@ -17545,6 +17545,7 @@ mod tests {
             "unused",
             crate::channels::Capability::Task,
             "2026-10-20T00:00:00Z",
+            None,
         );
         store.save(&home, "webhook").expect("the webhook store");
         let mut pending = crate::channels::PendingStore::default();
@@ -17609,6 +17610,7 @@ mod tests {
             "unused",
             crate::channels::Capability::Task,
             "2026-10-20T00:00:00Z",
+            None,
         );
         webhook.save(&home, "webhook").expect("the webhook store");
         let mut telegram = crate::channels::PeerStore::default();
@@ -17618,6 +17620,7 @@ mod tests {
             "unused",
             crate::channels::Capability::Observe,
             "2026-10-20T00:00:00Z",
+            None,
         );
         telegram
             .save(&home, "telegram")
@@ -18970,6 +18973,7 @@ mod tests {
             "peer-token-xyz",
             crate::channels::Capability::Task,
             "2026-10-18T11:00:00Z",
+            None,
         );
         peers.save(&home, "webhook").unwrap();
 

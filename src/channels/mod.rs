@@ -140,6 +140,14 @@ pub struct PairedPeer {
     pub token_hash: String,
     pub capability: Capability,
     pub created_at: String,
+    /// What kind of thing the peer is, in one word or two — a chat, a
+    /// webhook client, a phone. The passport names it so the owner can
+    /// tell a person's phone from a CI box at a glance. Optional with a
+    /// serde default: a peers file written before this field existed
+    /// still loads, and the passport shows an honest blank for it
+    /// rather than refusing the whole store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_class: Option<String>,
     /// Where outcomes and seats go when a delivery names no callback of
     /// its own. A webhook client may name the callback per delivery — the
     /// body's own field wins — and this is the default it falls back to.
@@ -217,8 +225,19 @@ impl PeerStore {
 
     /// Pair a peer: the token is hashed here and never stored. The id is
     /// the digest's prefix, which is unique without a second random draw.
-    pub fn pair(&mut self, id: &str, name: &str, token: &str, capability: Capability, stamp: &str) {
-        self.pair_with(id, name, token, capability, stamp, None);
+    /// The device class is what the passport names the peer by — a chat,
+    /// a webhook client — and may be `None` when nobody knows it yet.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pair(
+        &mut self,
+        id: &str,
+        name: &str,
+        token: &str,
+        capability: Capability,
+        stamp: &str,
+        device_class: Option<&str>,
+    ) {
+        self.pair_with(id, name, token, capability, stamp, None, device_class);
     }
 
     /// The same pairing, with the peer's default callback. The plain
@@ -233,6 +252,7 @@ impl PeerStore {
         capability: Capability,
         stamp: &str,
         callback: Option<&str>,
+        device_class: Option<&str>,
     ) {
         let token_hash = crate::remote::pairing::hash_hex(token.as_bytes());
         self.peers.retain(|peer| peer.id != id);
@@ -243,6 +263,7 @@ impl PeerStore {
             capability,
             created_at: stamp.to_string(),
             callback: callback.map(str::to_string),
+            device_class: device_class.map(str::to_string),
         });
     }
 
@@ -455,6 +476,21 @@ pub struct Pairing {
     pub callback: Option<String>,
 }
 
+/// The device class a peer carries when nobody named one. Per channel,
+/// because the channels know what their peers are: a Telegram peer is a
+/// chat on someone's phone, a webhook peer is a service speaking HTTP.
+/// The pairing applies this so its existing callers — the CLI and the
+/// bridge, which pass a channel and nothing more — keep their shape and
+/// still stamp a class on the passport.
+pub fn default_device_class(channel: &str) -> String {
+    match channel {
+        "telegram" => "chat",
+        "webhook" => "webhook client",
+        other => other,
+    }
+    .to_string()
+}
+
 /// Pair a peer server-side: mint the token when the channel needs one,
 /// store only its digest, and hand the token back to be shown once.
 ///
@@ -507,7 +543,15 @@ pub fn pair(
     } else {
         (asked.clone(), mint_peer_token()?, None)
     };
-    store.pair_with(&id, name, &credential, capability, &stamp, callback);
+    store.pair_with(
+        &id,
+        name,
+        &credential,
+        capability,
+        &stamp,
+        callback,
+        Some(&default_device_class(channel)),
+    );
     store
         .save(home, channel)
         .map_err(|error| error.to_string())?;
@@ -1119,6 +1163,7 @@ mod tests {
             &token,
             Capability::Task,
             "2026-10-18T00:00:00Z",
+            None,
         );
         store.save(&home, "webhook").unwrap();
 
@@ -1140,19 +1185,77 @@ mod tests {
         std::fs::remove_dir_all(&home).ok();
     }
 
+    /// A peers file written before the passport's device class existed
+    /// still loads: the field is optional with a serde default, so an old
+    /// store reads back with a blank class instead of refusing the whole
+    /// roster — and a pairing stamps the channel's own default on the
+    /// peer it creates.
+    #[test]
+    fn a_peers_file_without_a_device_class_still_loads_and_a_pairing_stamps_one() {
+        let home = temp_home("device-class");
+        // The old shape, hand-written: no `device_class` anywhere.
+        std::fs::create_dir_all(home.join("channels")).unwrap();
+        std::fs::write(
+            PeerStore::path(&home, "webhook"),
+            r#"{
+  "peers": [
+    {
+      "id": "old-peer",
+      "name": "the CI box",
+      "token_hash": "deadbeef",
+      "capability": "task",
+      "created_at": "2026-10-18T00:00:00Z"
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+        let store = PeerStore::load(&home, "webhook").unwrap();
+        assert_eq!(store.peers.len(), 1);
+        assert_eq!(
+            store.peers[0].device_class, None,
+            "an old peer loads with a blank class"
+        );
+
+        // A pairing through the one door the surfaces share stamps the
+        // channel's own default: a webhook peer is a webhook client.
+        pair(&home, "webhook", "", "the new box", Capability::Task, None).expect("the pairing");
+        let store = PeerStore::load(&home, "webhook").unwrap();
+        let paired = store
+            .peers
+            .iter()
+            .find(|peer| peer.name == "the new box")
+            .expect("the newly paired peer");
+        assert_eq!(
+            paired.device_class.as_deref(),
+            Some("webhook client"),
+            "the pairing stamps the channel's default"
+        );
+        assert_eq!(default_device_class("telegram"), "chat");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
     #[test]
     fn the_policy_answers_from_the_store_and_refuses_by_name() {
         let home = temp_home("policy");
         let mut store = PeerStore::default();
         let actor = mint_peer_token().unwrap();
         let watcher = mint_peer_token().unwrap();
-        store.pair("actor", "the actor", &actor, Capability::Task, "stamp");
+        store.pair(
+            "actor",
+            "the actor",
+            &actor,
+            Capability::Task,
+            "stamp",
+            None,
+        );
         store.pair(
             "watcher",
             "the watcher",
             &watcher,
             Capability::Observe,
             "stamp",
+            None,
         );
         store.save(&home, "webhook").unwrap();
 
@@ -1236,7 +1339,7 @@ mod tests {
         let home = temp_home("dispatch");
         let mut store = PeerStore::default();
         let token = mint_peer_token().unwrap();
-        store.pair("abc", "the CI box", &token, Capability::Task, "stamp");
+        store.pair("abc", "the CI box", &token, Capability::Task, "stamp", None);
         store.save(&home, "webhook").unwrap();
         // The pairing edge: the peer acts for the owner (L5, D31).
         crate::identity::link_peer(
@@ -1283,7 +1386,7 @@ mod tests {
         let home = temp_home("watch");
         let mut store = PeerStore::default();
         let token = mint_peer_token().unwrap();
-        store.pair("abc", "the CI box", &token, Capability::Task, "stamp");
+        store.pair("abc", "the CI box", &token, Capability::Task, "stamp", None);
         store.save(&home, "webhook").unwrap();
 
         let (mut bridge, sources) = Bridge::detached(
@@ -1679,7 +1782,7 @@ mod tests {
         let home = temp_home("deliver");
         let mut store = PeerStore::default();
         let token = mint_peer_token().unwrap();
-        store.pair("abc", "the CI box", &token, Capability::Task, "stamp");
+        store.pair("abc", "the CI box", &token, Capability::Task, "stamp", None);
         store.save(&home, "webhook").unwrap();
 
         let (mut bridge, _sources) = Bridge::detached(
@@ -1733,6 +1836,7 @@ mod tests {
             &token,
             Capability::Observe,
             "stamp",
+            None,
         );
         store.save(&home, "webhook").unwrap();
 

@@ -4999,6 +4999,7 @@ mod tests {
             "unused",
             Capability::Task,
             "2026-10-20T00:00:00Z",
+            None,
         );
         store.save(&home, "webhook").unwrap();
         let mut pending = PendingStore::default();
