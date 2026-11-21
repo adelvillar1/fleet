@@ -284,6 +284,18 @@ today's timer-only card.
 
 ### P2 — Work, board, desk, inbox
 
+**Status 2026-11-21 — AC1 landed, measured first.** The derivation was already
+correct on both sides: `bridge::work_state` answers `interrupted` for an
+unfinished log whose last write is older than `LIVE_WINDOW_SECS` (600s, pinned by
+the Rust test at `bridge.rs:20072`), and `WORK_STATE_WORD` already carries the
+word. What was missing was the *face-side* case — and the existing sessions case
+seeded its `interrupted` row as a **background** row, which that same case
+asserts is filtered out of the work list, so the word had never once been
+rendered under assertion. `anInterruptedRowSaysSoInWords` seeds an interrupted
+conversation and asserts the row says it in words and never `unknown`; red-proved
+by pointing the map at `unknown`, which read
+`"…a run that never endedunknown·fleet·29darchive"`.
+
 - **Work**: three lanes (`needs you` / `working` / `background`), one
   line per row = state word + last event, hover preview (three lines +
   artifacts). Archive becomes a row state, not a button.

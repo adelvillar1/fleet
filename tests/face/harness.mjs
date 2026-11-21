@@ -12025,6 +12025,30 @@ async function theRunbarCoversItsFourControls() {
     'hidden=' + page.IDS['doc-pop'].hidden);
 }
 
+// P2's first acceptance: a conversation with no end record reads "interrupted"
+// in words. The server derives it (`bridge::work_state`: an unfinished log whose
+// last write is older than the live window) and the Rust test pins the
+// derivation; nothing pinned that the *face* says the word — and a row that
+// renders "unknown" or no state at all would have passed every existing check.
+async function anInterruptedRowSaysSoInWords() {
+  const sessions = {
+    type: 'sessions', read_at: 'now', current: '',
+    counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+    sessions: [row('int-1', 'interrupted', { title: 'a run that never ended' })],
+  };
+  const page = boot({
+    hash: '#/sessions',
+    documents: { sessions, state: (asked) => emptyState(asked) },
+  });
+  await flush();
+  page.open();
+  await flush(180);
+  const list = page.text('work-list');
+  check('P2 a row with no end record says interrupted in words',
+    /interrupted/.test(list) && !/unknown/.test(list),
+    JSON.stringify(list.slice(0, 200)));
+}
+
 // P0 of the face rethink: the topbar tells the truth or keeps quiet. A fresh
 // home has no route, no run and nothing measured — so it carries no pills and
 // no zeroes. A strip of "no route yet · 0 · 0% · idle" reads like a fault
@@ -16733,6 +16757,7 @@ const cases = [
   ['CA-C3 the connect card says what happened', theConnectCardSaysWhatHappened],
   ['P0 the topbar keeps quiet on a fresh home', theTopbarKeepsQuietOnAFreshHome],
   ['2B the runbar covers its four controls', theRunbarCoversItsFourControls],
+  ['P2 an interrupted row says so in words', anInterruptedRowSaysSoInWords],
   ['SWEEP every settings press acts or answers', everySettingsPressSaysSomething],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
