@@ -13416,6 +13416,8 @@ mod tests {
                 modified: Some(
                     std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(index),
                 ),
+                references: 0,
+                scripts: 0,
             })
             .collect();
         let declared = declared_skills_priority(&skills, &["skill-00".to_string()], "");
@@ -13682,6 +13684,8 @@ mod tests {
                 modified: Some(
                     std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(index),
                 ),
+                references: 0,
+                scripts: 0,
             })
             .collect();
         let declared = declared_skills_priority(&skills, &[], "");
@@ -15180,6 +15184,8 @@ mod tests {
             body: "body".to_string(),
             path: std::path::PathBuf::from("/x/SKILL.md"),
             modified: None,
+            references: 0,
+            scripts: 0,
         }]);
         let prompt = agent.system_prompt(None);
         assert!(prompt.starts_with(identity), "{prompt}");

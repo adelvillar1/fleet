@@ -2055,6 +2055,10 @@ pub struct SkillsSkill {
     /// skill the scan never saw used, which is the whole measure the
     /// substrate reports.
     pub uses: usize,
+    /// The progressive-disclosure half, counted by the loader at load:
+    /// files under the skill's own `references/` and `scripts/`.
+    pub references: usize,
+    pub scripts: usize,
     pub modified: String,
     pub path: String,
 }
@@ -2097,6 +2101,69 @@ pub struct SkillsMerge {
     pub threshold: f64,
 }
 
+/// One row of the skills coverage map: a skill's declared shape — what
+/// it is for and what it carries — with the fired figures the usage
+/// scan recorded, when it recorded any.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillsCoverageRow {
+    pub name: String,
+    /// When to use it: the frontmatter's own sentence.
+    pub description: String,
+    /// The task classes the frontmatter declares. Empty is
+    /// methodology-agnostic — the skill rides every class's discovery.
+    pub shapes: Vec<String>,
+    /// The progressive-disclosure half, counted by the loader at load:
+    /// files under the skill's own `references/` and `scripts/`. Never
+    /// a re-scan of the directory tree here.
+    pub references: usize,
+    pub scripts: usize,
+    /// The skill's own fired figures, present exactly when the scan
+    /// recorded at least one firing. Absent reads "not used yet".
+    pub fired: Option<SkillsFired>,
+}
+
+/// A skill's own fired figures: how many approved `use_skill` calls the
+/// scan saw, and the newest session stamp it saw one at.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillsFired {
+    pub count: usize,
+    pub last_at: String,
+}
+
+/// One firing in the feed, as the scan found it in a session log.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillsFiring {
+    pub at: String,
+    pub skill: String,
+    pub session: String,
+    pub surface: String,
+}
+
+/// The coverage map and the fired feed, derived in this read from the
+/// skill loader's own metadata plus the session logs' recorded firings
+/// — never on the face. When nothing fired, `basis` names what the map
+/// stands on instead: the declared half only.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillsCoverage {
+    /// How many sessions the usage scan actually read.
+    pub sessions: usize,
+    /// The named basis, present exactly when no firing is recorded.
+    pub basis: Option<String>,
+    /// The fired/unused split as two numbers, so the face paints the
+    /// document's split and never derives one.
+    pub fired_skills: usize,
+    pub unused_skills: usize,
+    pub rows: Vec<SkillsCoverageRow>,
+    /// The derived unused list, in library order — the actionable half:
+    /// what to learn next is what nothing reached for.
+    pub unused: Vec<String>,
+    /// The most recent firings, newest first.
+    pub feed: Vec<SkillsFiring>,
+    /// Why the feed is empty, when it is — a named reason, never a
+    /// silent zero.
+    pub feed_reason: Option<String>,
+}
+
 /// One read of the library, its skips, its proposals, and the curation
 /// candidates.
 #[derive(Debug, Clone, PartialEq)]
@@ -2105,6 +2172,8 @@ pub struct SkillsSnapshot {
     /// The canonical library this read loaded, named.
     pub canonical: String,
     pub skills: Vec<SkillsSkill>,
+    /// The coverage map and the fired feed, derived below.
+    pub coverage: SkillsCoverage,
     pub skips: Vec<SkillsSkip>,
     pub proposals: Vec<SkillsProposal>,
     pub merges: Vec<SkillsMerge>,
@@ -2155,7 +2224,6 @@ pub fn read_skills(canonical: Option<&Path>, home: &Path) -> SkillsSnapshot {
     let proposals = crate::skills::load_proposals(home);
     let retired = crate::skills::retired(home);
     let usage = crate::skills::scan_usage(home, SKILL_USAGE_SESSIONS);
-    let unused = usage.unused(&skills);
     let threshold = crate::skills::MERGE_SIMILARITY_THRESHOLD;
     // Each description is tokenized once and the pairs are scored off the
     // token sets: the same rule [`crate::skills::curate`] files a merge
@@ -2192,6 +2260,8 @@ pub fn read_skills(canonical: Option<&Path>, home: &Path) -> SkillsSnapshot {
             description: skill.description.clone(),
             category: crate::skills::category_of(&skill.name).to_string(),
             uses: usage.count(&skill.name),
+            references: skill.references,
+            scripts: skill.scripts,
             modified: skill
                 .modified
                 .map(|time| crate::session::iso_utc_stamp(time).unwrap_or_default())
@@ -2199,11 +2269,84 @@ pub fn read_skills(canonical: Option<&Path>, home: &Path) -> SkillsSnapshot {
             path: skill.path.display().to_string(),
         })
         .collect();
+    // The coverage map and the fired feed, from the two records this
+    // read already holds: the loader's own metadata (the declared shape,
+    // the references/scripts counts it counted at load) and the usage
+    // scan's recorded firings. When nothing fired, the map names the
+    // basis it stands on instead of a zero — "declared only", with the
+    // reason — and the feed carries that reason too, never a silent
+    // empty.
+    let unused: Vec<String> = skills
+        .iter()
+        .filter(|skill| usage.count(&skill.name) == 0)
+        .map(|skill| skill.name.clone())
+        .collect();
+    let fired_skills = skills.len() - unused.len();
+    let (basis, feed_reason) = if usage.feed.is_empty() {
+        let (basis, reason) = if usage.sessions == 0 {
+            (
+                "declared only \u{2014} nothing records fires".to_string(),
+                "no session logs scanned yet".to_string(),
+            )
+        } else {
+            (
+                format!(
+                    "declared only \u{2014} no recorded fires across the {} scanned session{}",
+                    usage.sessions,
+                    if usage.sessions == 1 { "" } else { "s" }
+                ),
+                format!(
+                    "no recorded fires across the {} scanned session{}",
+                    usage.sessions,
+                    if usage.sessions == 1 { "" } else { "s" }
+                ),
+            )
+        };
+        (Some(basis), Some(reason))
+    } else {
+        (None, None)
+    };
+    let rows: Vec<SkillsCoverageRow> = skills
+        .iter()
+        .map(|skill| SkillsCoverageRow {
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            shapes: skill.shapes.clone(),
+            references: skill.references,
+            scripts: skill.scripts,
+            fired: (usage.count(&skill.name) > 0).then(|| SkillsFired {
+                count: usage.count(&skill.name),
+                last_at: usage.last_at(&skill.name).unwrap_or_default().to_string(),
+            }),
+        })
+        .collect();
+    let coverage = SkillsCoverage {
+        sessions: usage.sessions,
+        basis,
+        fired_skills,
+        unused_skills: unused.len(),
+        rows,
+        unused,
+        feed: usage
+            .feed
+            .iter()
+            .map(|firing| SkillsFiring {
+                at: firing.at.clone(),
+                skill: firing.skill.clone(),
+                session: firing.session.clone(),
+                surface: firing.surface.clone(),
+            })
+            .collect(),
+        feed_reason,
+    };
+    let coverage_unused = coverage.unused_skills;
+    let coverage_sessions = coverage.sessions;
     SkillsSnapshot {
         read_at: now_stamp(),
         canonical: canonical
             .map(|dir| dir.display().to_string())
             .unwrap_or_default(),
+        coverage,
         skips: skips
             .iter()
             .map(|skip| SkillsSkip {
@@ -2211,8 +2354,8 @@ pub fn read_skills(canonical: Option<&Path>, home: &Path) -> SkillsSnapshot {
                 reason: skip.reason.clone(),
             })
             .collect(),
-        unused,
-        sessions: usage.sessions,
+        unused: coverage_unused,
+        sessions: coverage_sessions,
         retired,
         skills: loaded,
         proposals: proposals
@@ -6997,6 +7140,191 @@ mod tests {
             snapshot.refused[0].contains("no skills library resolved"),
             "{}",
             snapshot.refused[0]
+        );
+    }
+
+    /// A session log written under a chosen id and creation stamp, so a
+    /// test that depends on the oldest-first walk the scan runs can pin
+    /// the order instead of racing `Session::create`'s second-resolution
+    /// stamps against each other.
+    fn named_session_log(
+        home: &Path,
+        id: &str,
+        created: &str,
+        records: &[crate::session::Record],
+    ) -> PathBuf {
+        let start = crate::session::Record::Start {
+            v: 1,
+            model: "m".into(),
+            created: created.to_string(),
+            kind: None,
+            parent: None,
+            workspace: None,
+            personas: None,
+            principal: None,
+        };
+        let mut text = serde_json::to_string(&start).unwrap() + "\n";
+        for record in records {
+            text.push_str(&serde_json::to_string(record).unwrap());
+            text.push('\n');
+        }
+        let dir = crate::home::sessions_dir(home);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{id}.jsonl"));
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_skills_read_derives_the_coverage_map_and_the_fired_feed() {
+        let home = Scratch::new("skills-coverage-home");
+        let library = Scratch::new("skills-coverage-library");
+        for name in ["alpha", "beta", "gamma"] {
+            std::fs::create_dir_all(library.path().join(name)).unwrap();
+            std::fs::write(
+                library.path().join(format!("{name}/SKILL.md")),
+                skill_file(name, "write the docs for a slice"),
+            )
+            .unwrap();
+        }
+        // The older session fires alpha; the newer one fires beta. The
+        // stamps and ids are pinned so the newest-first feed order is a
+        // fact of the fixture, not of the clock.
+        named_session_log(
+            home.path(),
+            "20261120T100000Z-000001",
+            "2026-11-20T10:00:00Z",
+            &[
+                crate::session::Record::User {
+                    content: "t".into(),
+                },
+                crate::session::Record::Assistant {
+                    content: None,
+                    tool_calls: vec![crate::api::ToolCall {
+                        id: "a1".into(),
+                        kind: "function".into(),
+                        function: crate::api::FunctionCall {
+                            name: crate::tools::USE_SKILL_TOOL.into(),
+                            arguments: r#"{"name":"alpha"}"#.into(),
+                        },
+                    }],
+                    persona: None,
+                },
+                crate::session::Record::ToolResult {
+                    call_id: "a1".into(),
+                    name: "use_skill".into(),
+                    output: "the body".into(),
+                    truncated: false,
+                    approved: true,
+                },
+            ],
+        );
+        named_session_log(
+            home.path(),
+            "20261121T100000Z-000002",
+            "2026-11-21T10:00:00Z",
+            &[
+                crate::session::Record::User {
+                    content: "t".into(),
+                },
+                crate::session::Record::Assistant {
+                    content: None,
+                    tool_calls: vec![crate::api::ToolCall {
+                        id: "b1".into(),
+                        kind: "function".into(),
+                        function: crate::api::FunctionCall {
+                            name: crate::tools::USE_SKILL_TOOL.into(),
+                            arguments: r#"{"name":"beta"}"#.into(),
+                        },
+                    }],
+                    persona: None,
+                },
+                crate::session::Record::ToolResult {
+                    call_id: "b1".into(),
+                    name: "use_skill".into(),
+                    output: "the body".into(),
+                    truncated: false,
+                    approved: true,
+                },
+            ],
+        );
+
+        let snapshot = read_skills(Some(library.path()), home.path());
+
+        let coverage = &snapshot.coverage;
+        // The split: two fired, one not — the map's own numbers, carried
+        // so the face paints them and derives nothing.
+        assert_eq!(coverage.sessions, 2, "{coverage:?}");
+        assert_eq!(coverage.fired_skills, 2, "{coverage:?}");
+        assert_eq!(coverage.unused_skills, 1, "{coverage:?}");
+        assert_eq!(coverage.basis, None, "{coverage:?}");
+        assert_eq!(coverage.unused, vec!["gamma".to_string()], "{coverage:?}");
+        // Every declared skill is a row, each carrying its declared
+        // shape; the two fired rows carry their figures, gamma carries
+        // none rather than a zero.
+        assert_eq!(coverage.rows.len(), 3, "{coverage:?}");
+        let alpha = coverage
+            .rows
+            .iter()
+            .find(|row| row.name == "alpha")
+            .expect("the alpha row");
+        let alpha_fired = alpha.fired.as_ref().expect("alpha fired");
+        assert_eq!(alpha_fired.count, 1, "{coverage:?}");
+        assert_eq!(alpha_fired.last_at, "2026-11-20T10:00:00Z");
+        let gamma = coverage
+            .rows
+            .iter()
+            .find(|row| row.name == "gamma")
+            .expect("the gamma row");
+        assert!(gamma.fired.is_none(), "{coverage:?}");
+        // The feed is newest first and names where each firing happened.
+        assert_eq!(coverage.feed.len(), 2, "{coverage:?}");
+        assert_eq!(coverage.feed[0].skill, "beta", "{coverage:?}");
+        assert_eq!(coverage.feed[0].session, "20261121T100000Z-000002");
+        assert_eq!(coverage.feed[0].at, "2026-11-21T10:00:00Z");
+        assert_eq!(coverage.feed[1].skill, "alpha", "{coverage:?}");
+        assert!(coverage
+            .feed
+            .iter()
+            .all(|firing| firing.surface == "session"));
+        assert_eq!(coverage.feed_reason, None, "{coverage:?}");
+    }
+
+    #[test]
+    fn a_skills_read_with_no_recorded_fires_names_the_declared_basis() {
+        let home = Scratch::new("skills-coverage-bare-home");
+        let library = Scratch::new("skills-coverage-bare-library");
+        for name in ["alpha", "beta", "gamma"] {
+            std::fs::create_dir_all(library.path().join(name)).unwrap();
+            std::fs::write(
+                library.path().join(format!("{name}/SKILL.md")),
+                skill_file(name, "write the docs for a slice"),
+            )
+            .unwrap();
+        }
+
+        let snapshot = read_skills(Some(library.path()), home.path());
+
+        // No sessions, so no fires: the coverage names its basis — the
+        // declared half only — and the feed is empty with the reason,
+        // never a silent zero or a 0-count claim.
+        let coverage = &snapshot.coverage;
+        assert_eq!(coverage.sessions, 0, "{coverage:?}");
+        assert_eq!(
+            coverage.basis.as_deref(),
+            Some("declared only \u{2014} nothing records fires"),
+            "{coverage:?}"
+        );
+        assert_eq!(coverage.unused.len(), 3, "{coverage:?}");
+        assert!(
+            coverage.rows.iter().all(|row| row.fired.is_none()),
+            "{coverage:?}"
+        );
+        assert!(coverage.feed.is_empty(), "{coverage:?}");
+        assert_eq!(
+            coverage.feed_reason.as_deref(),
+            Some("no session logs scanned yet"),
+            "{coverage:?}"
         );
     }
 

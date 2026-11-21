@@ -99,6 +99,13 @@ pub struct Skill {
     /// The SKILL.md's mtime, for the surface's card. `None` when the
     /// metadata could not be read.
     pub modified: Option<SystemTime>,
+    /// How many files the skill's own `references/` and `scripts/`
+    /// directories carry — the progressive-disclosure half, counted by
+    /// the loader at load so a coverage read never re-scans what
+    /// loading already saw. Zero when the directory is absent, which
+    /// is the fact (the skill carries none), not an error.
+    pub references: usize,
+    pub scripts: usize,
 }
 
 /// One skill as the session log's `skills` record carries it: the two
@@ -177,13 +184,47 @@ pub struct Proposal {
 #[derive(Debug, Clone, Default)]
 pub struct UsageScan {
     per_skill: HashMap<String, usize>,
+    /// The newest session stamp the scan saw each skill fire at. The
+    /// scan walks newest first, so the first sight is the newest; a
+    /// skill the scan never saw fire is absent.
+    last_at: HashMap<String, String>,
+    /// The scan's own recorded firings, newest first, capped at
+    /// [`FEED_LIMIT`] — the feed the coverage document reads.
+    pub feed: Vec<Firing>,
     pub sessions: usize,
 }
+
+/// One recorded skill firing, as the scan found it: an approved
+/// `use_skill` call inside a session log. The log's own time resolution
+/// is the session — its records carry no per-call timestamp — so `at`
+/// is the session's creation stamp and never pretends to be the call's
+/// own moment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Firing {
+    pub at: String,
+    pub skill: String,
+    /// The session's own id, the join back to its log.
+    pub session: String,
+    /// Where the session ran, from the log's own records: `delegation`
+    /// on a child's log, `relay` on a channel peer's, else `session`.
+    pub surface: String,
+}
+
+/// How many firings the feed carries. The feed is a live view, not an
+/// archive — the session logs are the archive — so a bounded newest-first
+/// slice is what a surface reads.
+pub const FEED_LIMIT: usize = 12;
 
 impl UsageScan {
     /// How many times the scan saw this skill selected.
     pub fn count(&self, name: &str) -> usize {
         self.per_skill.get(name).copied().unwrap_or(0)
+    }
+
+    /// The newest session stamp the scan saw this skill fire at, or
+    /// `None` when it never did.
+    pub fn last_at(&self, name: &str) -> Option<&str> {
+        self.last_at.get(name).map(String::as_str)
     }
 
     /// How many of the scanned skills were never selected.
@@ -646,7 +687,10 @@ pub fn load_reported(canonical: &Path) -> (Vec<Skill>, Vec<SkillSkip>) {
             }
         };
         let modified = fs::metadata(&file).and_then(|meta| meta.modified()).ok();
-        match parse_document(&text).and_then(|document| live_skill(document, &name, file, modified))
+        let references = count_files(&path.join("references"));
+        let scripts = count_files(&path.join("scripts"));
+        match parse_document(&text)
+            .and_then(|document| live_skill(document, &name, file, modified, references, scripts))
         {
             Ok(skill) => skills.push(skill),
             Err(reason) => skips.push(SkillSkip { name, reason }),
@@ -664,6 +708,8 @@ fn live_skill(
     directory: &str,
     path: PathBuf,
     modified: Option<SystemTime>,
+    references: usize,
+    scripts: usize,
 ) -> Result<Skill, String> {
     let name = document.required("name")?;
     if name != directory {
@@ -695,7 +741,29 @@ fn live_skill(
         body: document.body,
         path,
         modified,
+        references,
+        scripts,
     })
+}
+
+/// How many files live under `dir`, recursively. A missing or unreadable
+/// directory counts zero — the count is the loader's own observation of
+/// what the skill carries, never an error.
+fn count_files(dir: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                count_files(&path)
+            } else {
+                1
+            }
+        })
+        .sum()
 }
 
 // --- shape-first discovery ---------------------------------------------------
@@ -1036,20 +1104,42 @@ pub fn scan_usage(home: &Path, sessions: usize) -> UsageScan {
         let Ok(records) = crate::session::replay(&summary.path) else {
             continue;
         };
+        // Where the session ran, from the log's own records — a child's
+        // `start` names its kind, a channel record names its peer — so
+        // the feed's surface word is the log's, never a guess.
+        let mut kind: Option<String> = None;
+        let mut channel: Option<String> = None;
         // Which calls were approved, by id: the join that makes the
         // count "the body entered context" rather than "the model
         // asked".
         let mut approved: HashMap<String, bool> = HashMap::new();
         for record in &records {
-            if let Record::ToolResult {
-                call_id,
-                approved: ok,
-                ..
-            } = record
-            {
-                approved.insert(call_id.clone(), *ok);
+            match record {
+                Record::ToolResult {
+                    call_id,
+                    approved: ok,
+                    ..
+                } => {
+                    approved.insert(call_id.clone(), *ok);
+                }
+                Record::Start { kind: child, .. } => {
+                    if child.is_some() {
+                        kind = child.clone();
+                    }
+                }
+                Record::Channel { channel: name, .. } => {
+                    channel = Some(name.clone());
+                }
+                _ => {}
             }
         }
+        let surface = if channel.is_some() {
+            "relay"
+        } else if kind.as_deref() == Some("subagent") {
+            "delegation"
+        } else {
+            "session"
+        };
         for record in &records {
             let Record::Assistant { tool_calls, .. } = record else {
                 continue;
@@ -1062,11 +1152,24 @@ pub fn scan_usage(home: &Path, sessions: usize) -> UsageScan {
                     continue;
                 }
                 if let Some(name) = requested_skill(&call.function.arguments) {
-                    *scan.per_skill.entry(name).or_insert(0) += 1;
+                    *scan.per_skill.entry(name.clone()).or_insert(0) += 1;
+                    // The scan walks newest first, so the first sight of
+                    // a skill is its newest firing; the feed keeps the
+                    // walk's order and is capped once, at the end.
+                    scan.last_at
+                        .entry(name.clone())
+                        .or_insert_with(|| summary.created.clone());
+                    scan.feed.push(Firing {
+                        at: summary.created.clone(),
+                        skill: name,
+                        session: summary.id.clone(),
+                        surface: surface.to_string(),
+                    });
                 }
             }
         }
     }
+    scan.feed.truncate(FEED_LIMIT);
     scan
 }
 
@@ -2668,6 +2771,8 @@ mod tests {
             body: "the body".to_string(),
             path: PathBuf::from("/x/SKILL.md"),
             modified: None,
+            references: 0,
+            scripts: 0,
         }];
         let found = use_skill_result(&skills, &serde_json::json!({ "name": "demo" }));
         assert_eq!(found, "the body");
@@ -3072,6 +3177,33 @@ mod tests {
         session.path().to_path_buf()
     }
 
+    /// A session log written under a chosen id and creation stamp, so a
+    /// test that depends on the oldest-first walk the scan runs can pin
+    /// the order instead of racing `Session::create`'s second-resolution
+    /// stamps against each other.
+    fn named_session_log(home: &Path, id: &str, created: &str, records: &[Record]) -> PathBuf {
+        let start = Record::Start {
+            v: 1,
+            model: "m".into(),
+            created: created.to_string(),
+            kind: None,
+            parent: None,
+            workspace: None,
+            personas: None,
+            principal: None,
+        };
+        let mut text = serde_json::to_string(&start).unwrap() + "\n";
+        for record in records {
+            text.push_str(&serde_json::to_string(record).unwrap());
+            text.push('\n');
+        }
+        let dir = crate::home::sessions_dir(home);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{id}.jsonl"));
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
     #[test]
     fn drafting_files_into_proposals_and_never_into_the_live_tree() {
         let home = scratch("draft");
@@ -3340,6 +3472,179 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    #[test]
+    fn the_usage_scan_collects_the_fired_feed_newest_first() {
+        let home = scratch("usage-feed");
+        write_skill(&home, "alpha", &good_skill("alpha", "d", "a"));
+        write_skill(&home, "beta", &good_skill("beta", "d", "b"));
+        write_skill(&home, "gamma", &good_skill("gamma", "d", "g"));
+        // The older session fires alpha twice; the newer one fires beta
+        // once and carries a denied alpha call that must stay out of the
+        // feed. The logs are written with their own stamps and ids so the
+        // oldest-first walk the scan runs is pinned, not accidental —
+        // two `Session::create` calls in one second do not order
+        // themselves.
+        named_session_log(
+            &home,
+            "20261120T100000Z-000001",
+            "2026-11-20T10:00:00Z",
+            &[
+                Record::User {
+                    content: "t".into(),
+                },
+                assistant(vec![
+                    tool_call("a1", crate::tools::USE_SKILL_TOOL, r#"{"name":"alpha"}"#),
+                    tool_call("a2", crate::tools::USE_SKILL_TOOL, r#"{"name":"alpha"}"#),
+                ]),
+                result("a1", "use_skill", "a"),
+                result("a2", "use_skill", "a"),
+            ],
+        );
+        named_session_log(
+            &home,
+            "20261121T100000Z-000002",
+            "2026-11-21T10:00:00Z",
+            &[
+                Record::User {
+                    content: "t".into(),
+                },
+                assistant(vec![tool_call(
+                    "b1",
+                    crate::tools::USE_SKILL_TOOL,
+                    r#"{"name":"beta"}"#,
+                )]),
+                result("b1", "use_skill", "b"),
+                assistant(vec![tool_call(
+                    "b2",
+                    crate::tools::USE_SKILL_TOOL,
+                    r#"{"name":"alpha"}"#,
+                )]),
+                Record::ToolResult {
+                    call_id: "b2".to_string(),
+                    name: "use_skill".to_string(),
+                    output: "denied: the user did not approve this call.".to_string(),
+                    truncated: false,
+                    approved: false,
+                },
+            ],
+        );
+        let scan = scan_usage(&home, 20);
+        assert_eq!(scan.sessions, 2, "{:?}", scan.feed);
+        assert_eq!(scan.feed.len(), 3, "{:?}", scan.feed);
+        // Newest first: the newer session's firing leads, whatever the
+        // log order on disk is.
+        assert_eq!(scan.feed[0].skill, "beta", "{:?}", scan.feed);
+        assert_eq!(scan.feed[0].session, "20261121T100000Z-000002");
+        assert_eq!(scan.feed[0].at, "2026-11-21T10:00:00Z");
+        assert_eq!(scan.feed[1].skill, "alpha");
+        assert_eq!(scan.feed[2].skill, "alpha");
+        assert_eq!(scan.feed[1].session, "20261120T100000Z-000001");
+        assert_eq!(scan.feed[1].at, "2026-11-20T10:00:00Z");
+        assert_eq!(scan.feed[0].surface, "session");
+        assert!(
+            !scan
+                .feed
+                .iter()
+                .any(|firing| firing.skill == "alpha" && firing.session == scan.feed[0].session),
+            "a denied selection must not be a firing: {:?}",
+            scan.feed
+        );
+        // The newest sight of alpha is alpha's own session, beta's
+        // denial notwithstanding.
+        assert_eq!(scan.last_at("alpha").unwrap(), "2026-11-20T10:00:00Z");
+        assert_eq!(scan.last_at("beta").unwrap(), "2026-11-21T10:00:00Z");
+        assert!(scan.last_at("gamma").is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_feed_names_the_surface_from_the_log_s_own_records() {
+        let home = scratch("usage-surface");
+        write_skill(&home, "alpha", &good_skill("alpha", "d", "a"));
+        let call = || {
+            assistant(vec![tool_call(
+                "c1",
+                crate::tools::USE_SKILL_TOOL,
+                r#"{"name":"alpha"}"#,
+            )])
+        };
+        // A child's log names its kind on the start record; a channel
+        // peer's log carries a channel record. Both are the log's own
+        // words, and an ordinary log needs neither.
+        let mut child = crate::session::Session::create(&home, "m").unwrap();
+        child
+            .record(&Record::Start {
+                v: 1,
+                model: "m".into(),
+                created: "c".into(),
+                kind: Some("subagent".into()),
+                parent: None,
+                workspace: None,
+                personas: None,
+                principal: None,
+            })
+            .unwrap();
+        child.record(&call()).unwrap();
+        child.record(&result("c1", "use_skill", "a")).unwrap();
+        let relay = session_log(
+            &home,
+            &[
+                Record::Channel {
+                    channel: "sms".into(),
+                    peer_id: "p".into(),
+                    peer: "the CI box".into(),
+                },
+                call(),
+                result("c1", "use_skill", "a"),
+            ],
+        );
+        // The ordinary log: no kind, no channel — the surface word is
+        // the default, not an absence.
+        let plain = session_log(
+            &home,
+            &[
+                Record::User {
+                    content: "t".into(),
+                },
+                call(),
+                result("c1", "use_skill", "a"),
+            ],
+        );
+        let _ = (relay, plain);
+        let scan = scan_usage(&home, 20);
+        assert_eq!(scan.sessions, 3, "{:?}", scan.feed);
+        let surfaces: Vec<&str> = scan
+            .feed
+            .iter()
+            .map(|firing| firing.surface.as_str())
+            .collect();
+        assert!(surfaces.contains(&"delegation"), "{:?}", scan.feed);
+        assert!(surfaces.contains(&"relay"), "{:?}", scan.feed);
+        assert!(surfaces.contains(&"session"), "{:?}", scan.feed);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_loader_counts_the_references_and_scripts_the_skill_carries() {
+        let home = scratch("loader-counts");
+        let rich = write_skill(&home, "rich", &good_skill("rich", "d", "body"));
+        let dir = rich.parent().unwrap();
+        std::fs::create_dir_all(dir.join("references/deep")).unwrap();
+        std::fs::write(dir.join("references/one.md"), "x").unwrap();
+        std::fs::write(dir.join("references/deep/two.md"), "x").unwrap();
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        std::fs::write(dir.join("scripts/run.sh"), "x").unwrap();
+        write_skill(&home, "bare", &good_skill("bare", "d", "body"));
+
+        let loaded = load(&canon(&home));
+        let rich = loaded.iter().find(|skill| skill.name == "rich").unwrap();
+        assert_eq!(rich.references, 2, "{rich:?}");
+        assert_eq!(rich.scripts, 1, "{rich:?}");
+        let bare = loaded.iter().find(|skill| skill.name == "bare").unwrap();
+        assert_eq!((bare.references, bare.scripts), (0, 0), "{bare:?}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     // --- the surface ---
 
     #[test]
@@ -3452,6 +3757,8 @@ mod tests {
             body: body.to_string(),
             path: PathBuf::from(format!("/tmp/{name}/SKILL.md")),
             modified: None,
+            references: 0,
+            scripts: 0,
         }
     }
 
@@ -3494,13 +3801,23 @@ mod tests {
     fn a_skill_declares_its_shapes_from_the_frontmatter() {
         let text = "---\nname: bkv-presentations\ndescription: the BKV deck methodology\nshapes: presentation, analysis\n---\n\nbody";
         let document = parse_document(text).unwrap();
-        let skill = live_skill(document, "bkv-presentations", PathBuf::from("/x"), None).unwrap();
+        let skill = live_skill(
+            document,
+            "bkv-presentations",
+            PathBuf::from("/x"),
+            None,
+            0,
+            0,
+        )
+        .unwrap();
         assert_eq!(skill.shapes, vec!["presentation", "analysis"]);
         let plain = live_skill(
             parse_document("---\nname: plain\ndescription: no shapes line\n---\n\nbody").unwrap(),
             "plain",
             PathBuf::from("/y"),
             None,
+            0,
+            0,
         )
         .unwrap();
         assert!(plain.shapes.is_empty());
@@ -3514,6 +3831,8 @@ mod tests {
                 "bkv-presentations",
                 PathBuf::from("/a"),
                 None,
+                0,
+                0,
             )
             .unwrap(),
             live_skill(
@@ -3521,6 +3840,8 @@ mod tests {
                 "grounded-citations",
                 PathBuf::from("/b"),
                 None,
+                0,
+                0,
             )
             .unwrap(),
             live_skill(
@@ -3528,6 +3849,8 @@ mod tests {
                 "generic-helper",
                 PathBuf::from("/c"),
                 None,
+                0,
+                0,
             )
             .unwrap(),
         ];
@@ -3552,6 +3875,8 @@ mod tests {
                 "decks",
                 PathBuf::from("/a"),
                 None,
+                0,
+                0,
             )
             .unwrap(),
             live_skill(
@@ -3559,6 +3884,8 @@ mod tests {
                 "agnostic",
                 PathBuf::from("/b"),
                 None,
+                0,
+                0,
             )
             .unwrap(),
         ];
@@ -3630,6 +3957,8 @@ mod tests {
                     name,
                     PathBuf::from(format!("/x/{name}")),
                     None,
+                    0,
+                    0,
                 )
                 .unwrap()
             })
@@ -3680,6 +4009,8 @@ mod tests {
             modified: Some(
                 std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(modified_secs),
             ),
+            references: 0,
+            scripts: 0,
         }
     }
 
