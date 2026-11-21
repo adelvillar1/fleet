@@ -401,6 +401,58 @@ refreshed (`surface-router`, `surface-delegation`, `surface-memory`).
   iterates in the same run), a visual version diff beside the pins'
   fix thread, and the handoff packet as the primary press.
 
+### Status pass, 2026-11-21 — P3–P5 audited before building
+
+A read-only audit measured all **18** AC clauses against the tree (7 in P3, 6
+in P4, 5 in P5). Result: **not one is already implemented** — unlike P2, whose
+first two ACs turned out to be missing cases over working code. Two of them
+contradict a *passing* test, so implementing them is a deliberate behaviour
+change that must flip the case:
+
+- **P3, the room row.** `roomRow` renders its snippet unconditionally, and
+  `HUDDLES the row carries its last line and its author` (`harness.mjs:7513`)
+  asserts exactly that. The AC requires the speaker's verb and **no** snippet
+  while a run holds the floor. *(Landed 2026-11-21: `7f172af` flipped the case
+  and added a companion proving parked rows keep their snippet.)*
+- **P4, memory.** The AC says recall is the first painted block; `memorySections`
+  leads with `needs-you` and `MEM the rail leads with needs you`
+  (`harness.mjs:10843`) pins it.
+
+The rest, in order of how much is missing:
+
+| Phase | AC | State measured 2026-11-21 |
+|---|---|---|
+| P3 | room row → speaker while running | **landed** `7f172af` |
+| P3 | cast strip: disc + state word per member | **landed** `3a79e38` — `PRESENCE.state` existed unused |
+| P3 | turn spine in the persona's tint | **landed** `aa25e5a` |
+| P3 | `/breakout` `/distil` `/archive` from composer **and** head | **landed** `6d9732c` — head buttons existed, commands did not |
+| P3 | bots door: passport per paired peer + ≥10-event feed | building: `device_class` does not exist in the data model at all; last-heard/last-asked are derivable from the capped activity log with no migration |
+| P3 | "send myself a message" round trip | **not built** — zero hits for any self-delivery surface; the pairing route exists |
+| P4 | router cost×quality scatter + `ungraded` | **not built** — `grep scatter|ungraded` = 0; the hourly chart and donut the AC retires are still painted |
+| P4 | delegation overlay with divergence tones | **not built** — graph and run tree are two separate cards, no join, no tones |
+| P4 | memory: recall is the first block | **not built** — and a passing case asserts the opposite |
+| P4 | why-this-recall breakdown | **not built** — the hit press shows raw `JSON.stringify`; every component is computed and then **discarded** |
+| P4 | skills coverage map + fired feed | **not built** — the surface lists segment rows only |
+| P5 | morning read: five lines, on the bots door | **not built** — no such read anywhere |
+| P5 | workspace-history time scrubber | **not built** — no scrubber; the only range input is an unrelated design slider |
+| P5 | practice from the graph's weakest link | **partial** — a practice card exists, but practice is manual: nothing computes graph weakness |
+| P5 | design run's review loop (eval scenario) | **needs a new eval rig**, not a harness case |
+| P5 | version diff as two versions' pixels | **partial** — both diffs are text/token diffs, no raster side-by-side |
+| all | screenshots refreshed (8 named images) | **stale** — every surface image is dated 2026-11-04; phone-width huddles does not exist |
+
+**Two corrections to this plan's own text**, both measured:
+
+1. **P4's "four weights" are six.** `memory::Score` carries `vector, keyword,
+   trajectory, history, freshness, provenance` — and its doc comment already
+   calls it "the 'why' the surface prints". The `.55/.25/.10/.10` figures in
+   the original P4 bullet are dead history. The AC should be restated as six
+   channels summing to the hit's total.
+2. **The passport's device class is not merely unrendered — it is unpersisted.**
+   `PairedPeer` carries id, name, token hash, capability, created_at and
+   callback; remote `Device` carries `last_seen_at` but channel peers do not.
+   So "last heard/asked" derive from the activity log (no migration) while
+   device class needs a `serde(default)` field that old stores read unchanged.
+
 **ACs.** The morning read is five lines sourced from the second-brain
 store (harness fixture) and available on the bots door; the scrubber's
 positions equal the substrate's ref order (fixture); practice card
