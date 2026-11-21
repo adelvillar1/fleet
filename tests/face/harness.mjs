@@ -6992,6 +6992,14 @@ async function theStrategyStepShowsItsPreview() {
       payg: { allowed: true, providers: ['deepseek'] },
       recent: [], tiers: [], totals: { calls: 14, errors: 1, ok: 13, success_rate: 0.93 },
       workloads: [{ count: 14, workload: 'standard_code' }],
+      // P4's scatter rides the document: one point per (model ×
+      // workload), graded with the calibration cell or labelled with
+      // the reason the day cannot grade it (KI-547).
+      scatter: [
+        { model: 'glm-5', provider: 'glm-5', workload: 'standard_code',
+          calls: 14, served: 13, latency_mean_ms: 900, latency_max_ms: 1904, tokens: null,
+          grade: null, ungraded: 'no judged rows' },
+      ],
     };
     const page = boot({
       hash: '#/router',
@@ -7029,6 +7037,82 @@ async function theStrategyStepShowsItsPreview() {
     check('KI-422 a refused router read is named',
       refusedText.indexOf('could not be read') !== -1,
       refusedText.slice(0, 160));
+  }
+
+  // P4's router scatter (KI-547's lesson, painted): one point per
+  // (model × workload), graded points plotted at their calibration
+  // cell's own wrong-rate and cost per right, and a pair the day
+  // cannot grade drawn under the literal word `ungraded` with its
+  // reason — never with a rate in the rate's place.
+  async function theRouterScatterGradesWhatTheDayCanGrade() {
+    const routerDoc = {
+      type: 'router', read_at: 'now', refused: [], pin: null,
+      cache: { entries: 0, keyed: true, workloads: [] }, guidance: [],
+      judge: { default_workload: 'standard_code', lane: 'sys1' },
+      judged: { cached: 0, errors: 0, fresh: 0 },
+      models: [], payg: { allowed: true, providers: [] },
+      recent: [], tiers: [],
+      totals: { calls: 4, errors: 1, ok: 3, success_rate: 75 },
+      workloads: [],
+      scatter: [
+        { model: 'stepfun/step-3.7-flash', provider: 'stepfun', workload: 'quick',
+          calls: 2, served: 2, latency_mean_ms: 778, latency_max_ms: 812, tokens: null,
+          grade: {
+            provider: 'stepfun', workload: 'quick', judged: 8, right: 6, wrong: 2,
+            insufficient: 0, waived: 0, overridden: 0,
+            weighted_wrong_rate: 0.2016, weighted_insufficient_rate: 0,
+            confidence_span: 0.35, zero_confidence: 0, fit: 'fit',
+            needs_rows: 0, needs_span: 0, informs_failover: false,
+            spend_usd: 0.0016, cost_per_right: 0.0002666666666666667,
+          },
+          ungraded: null },
+        { model: 'zai-coding-plan/GLM-5.3-Flash', provider: 'zai-coding-plan',
+          workload: 'standard_code',
+          calls: 1, served: 1, latency_mean_ms: 1904, latency_max_ms: 1904, tokens: null,
+          grade: null, ungraded: 'unfit: needs 6 rows' },
+        { model: 'stepfun/step-5-preview', provider: 'stepfun', workload: 'hard',
+          calls: 1, served: 0, latency_mean_ms: 3311, latency_max_ms: 3311, tokens: null,
+          grade: null, ungraded: 'no judged rows' },
+      ],
+    };
+    const page = boot({
+      hash: '#/router',
+      documents: {
+        router: routerDoc,
+        state: (asked) => emptyState(asked),
+        onboard: onboardDoc({ door: false }),
+      },
+    });
+    page.open();
+    await flush(120);
+    const text = String(page.IDS['router-board'].textContent);
+    // The graded point renders its cell's own figures: the wrong-rate
+    // it was judged at and the cost per correct call the cell reports.
+    check('P4 the scatter plots the graded point at its cell\u2019s own rate',
+      text.indexOf('20% wrong') !== -1,
+      text.slice(0, 240));
+    check('P4 the graded point carries the cell\u2019s cost and the latency mean',
+      text.indexOf('$0.000267 per right') !== -1 && text.indexOf('mean 778 ms') !== -1,
+      text.slice(0, 300));
+    // The ungraded pairs show the literal word and their reason, and
+    // no per-cent figure rides their rows: KI-547 says never rank a
+    // provider by a figure it does not report.
+    const rows = page.rows('.scatter-row');
+    const ungradedRows = rows.filter((one) => one.dataset && one.dataset.grade === 'ungraded');
+    check('KI-547 the ungraded pairs show the literal word and their reasons',
+      ungradedRows.length === 2 &&
+        ungradedRows.every((one) => String(one.textContent).includes('ungraded')) &&
+        text.indexOf('unfit: needs 6 rows') !== -1 && text.indexOf('no judged rows') !== -1,
+      ungradedRows.map((one) => String(one.textContent)).join(' | '));
+    check('KI-547 the ungraded pairs claim no rate',
+      ungradedRows.every((one) => !/%/.test(String(one.textContent))),
+      ungradedRows.map((one) => String(one.textContent)).join(' | '));
+    // And the scatter's points ride the plot as SVG circles — one per
+    // entry, three in all.
+    const dots = page.rows('.scatter-point');
+    check('P4 the scatter draws one point per (model \u00d7 workload)',
+      dots.length === 3,
+      'dots: ' + dots.length);
   }
 
 
@@ -17318,6 +17402,8 @@ const cases = [
   ['PALETTE the palette agrees with the rail', thePaletteAgreesWithTheRail],
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
   ['KI-422 an empty refused list is not a refusal', anEmptyRefusalListIsNotARefusal],
+  ['P4 the router scatter grades what the day can grade',
+    theRouterScatterGradesWhatTheDayCanGrade],
   ['HUDDLES the rooms column carries the three states and its rows', theHuddleRailCarriesTheThreeStates],
   ['C6 the shelf opens a deliverable in the pane', theShelfOpensThePanePreview],
   ['C8 the composer names who hears the draft', theComposerNamesWhoHearsIt],

@@ -6474,6 +6474,128 @@ import { node, svg, clip } from './core/dom.js';
     return el0;
   }
 
+  // The cost×quality scatter: one point per (model × workload) the
+  // day's route rows served. The quality axis is the calibration cell's
+  // own weighted wrong-rate — lower is better — and the cost axis is
+  // the cell's cost per correct call. The cost is the provider cell's
+  // figure: every model on one provider shares it, so the caption says
+  // so rather than splitting one figure into per-model precision, and a
+  // cell that graded nothing right renders "—" rather than a zero.
+  // KI-547's lesson is the plot's own law: a pair the day cannot grade —
+  // no judged rows, or an unfit sample that renders no score — draws in
+  // the idle tone under the word `ungraded` with its reason, claiming
+  // no position on the quality axis, because a figure the provider does
+  // not report must never be plotted as a zero.
+  function scatterCard(read) {
+    var el0 = boardCard(5, 'cost \u00d7 quality', 'the board\u2019s read',
+      'One point per model and workload. Quality is the judged wrong-rate, lower better; ' +
+      'cost is the provider cell\u2019s cost per correct call — the provider\u2019s models share ' +
+      'the cell\u2019s one figure, and a cell that graded nothing right renders \u201c\u2014\u201d rather ' +
+      'than a zero. A pair the day cannot grade draws ungraded and claims no rate.');
+    var points = read.scatter || [];
+    if (!points.length) {
+      el0.appendChild(node('p', 'board-empty',
+        'Nothing has been routed today, so there is nothing to place.'));
+      return el0;
+    }
+    var graded = points.filter(function (point) { return point.grade; });
+    var ungraded = points.filter(function (point) { return !point.grade; });
+    var money = function (cost) {
+      return '$' + (cost >= 0.01 ? cost.toFixed(2) : cost.toFixed(6));
+    };
+    var W = 280, H = 192, left = 38, right = 10, top = 14, base = 142;
+    var costs = graded.map(function (point) { return point.grade.cost_per_right; })
+      .filter(function (cost) { return cost != null && cost > 0; });
+    var maxCost = costs.length ? Math.max.apply(null, costs) : 0;
+    var plot = svgPlot(W, H,
+      'the day\u2019s models: cost per correct call against the judged wrong-rate');
+    // The quality axis is the judge's own scale, zero to a hundred per
+    // cent, so a point's height is its rate and never a rescaled
+    // fraction of the day's worst.
+    [0, 0.5, 1].forEach(function (step) {
+      var y = base - step * (base - top);
+      plot.appendChild(svg('line', { x1: left, y1: y + 0.5, x2: W - right, y2: y + 0.5,
+        class: 'scatter-guide' }));
+      var tick = label(left - 6, y + 3, 'chart-hour', Math.round(step * 100) + '%', 'end');
+      plot.appendChild(tick);
+    });
+    // The cost lane for cells that report no cost per right: the dashes
+    // say the axis does not reach here, and the figure renders \u2014.
+    var noCost = maxCost <= 0;
+    plot.appendChild(svg('line', { x1: left + 0.5, y1: top, x2: left + 0.5, y2: base,
+      class: 'scatter-lane' }));
+    plot.appendChild(label(left + 6, base + 12, 'chart-hour',
+      noCost ? '\u2014 no cost reported' : '$0', 'start'));
+    if (!noCost) {
+      plot.appendChild(label(W - right, base + 12, 'chart-hour', money(maxCost) + ' per right', 'end'));
+    }
+    graded.forEach(function (point) {
+      var cell = point.grade;
+      var reported = cell.cost_per_right != null && cell.cost_per_right > 0;
+      var x = reported ? left + (cell.cost_per_right / maxCost) * (W - right - left) : left + 0.5;
+      var y = base - cell.weighted_wrong_rate * (base - top);
+      var dot = svg('circle', {
+        cx: x.toFixed(1), cy: y.toFixed(1), r: 4,
+        fill: toneColour('live'), class: 'scatter-point'
+      });
+      var said = svg('title');
+      said.textContent = point.model + ' \u00d7 ' + point.workload +
+        ' \u00b7 wrong ' + Math.round(cell.weighted_wrong_rate * 100) + '%' +
+        ' \u00b7 ' + (reported ? money(cell.cost_per_right) + ' per right'
+          : '\u2014 no cost reported') +
+        (point.latency_mean_ms != null ? ' \u00b7 mean ' + point.latency_mean_ms + ' ms' : '');
+      dot.appendChild(said);
+      plot.appendChild(dot);
+    });
+    if (ungraded.length) {
+      // The band under the axis: not a rate, not a cost — a word and
+      // its reason. An ungraded pair claims no position on either axis
+      // (KI-547), so it rides no scale.
+      var band = base + 34;
+      plot.appendChild(label(left, band - 12, 'scatter-band', 'ungraded'));
+      ungraded.forEach(function (point, index) {
+        var dot = svg('circle', { cx: left + 62 + index * 16, cy: band - 16, r: 3.5,
+          fill: toneColour('idle'), class: 'scatter-point' });
+        var said = svg('title');
+        said.textContent = point.model + ' \u00d7 ' + point.workload +
+          ' \u00b7 ungraded \u00b7 ' + (point.ungraded || 'no judged rows');
+        dot.appendChild(said);
+        plot.appendChild(dot);
+      });
+    }
+    var wrap = node('div', 'scatter');
+    wrap.appendChild(plot);
+    el0.appendChild(wrap);
+    // The legend says each point's figures in the row's own words: the
+    // rate and cost a graded pair reports, the word and the reason an
+    // ungraded one carries — and never a rate where the day judged
+    // nothing.
+    var legend = node('ul', 'scatter-rows');
+    points.forEach(function (point) {
+      var item = node('li', 'scatter-row');
+      item.dataset.grade = point.grade ? 'graded' : 'ungraded';
+      item.appendChild(node('span', 'scatter-name',
+        point.model + ' \u00d7 ' + point.workload));
+      if (point.grade) {
+        var cell = point.grade;
+        var reported = cell.cost_per_right != null && cell.cost_per_right > 0;
+        item.appendChild(node('span', 'scatter-fig',
+          Math.round(cell.weighted_wrong_rate * 100) + '% wrong'));
+        item.appendChild(node('span', 'scatter-fig',
+          reported ? money(cell.cost_per_right) + ' per right' : '\u2014 per right'));
+      } else {
+        item.appendChild(node('span', 'scatter-fig scatter-ungraded', 'ungraded'));
+        item.appendChild(node('span', 'scatter-reason', point.ungraded || 'no judged rows'));
+      }
+      if (point.latency_mean_ms != null) {
+        item.appendChild(node('span', 'scatter-lat', 'mean ' + point.latency_mean_ms + ' ms'));
+      }
+      legend.appendChild(item);
+    });
+    el0.appendChild(legend);
+    return el0;
+  }
+
   // The model mix, as a donut and its legend: where the day's calls
   // actually landed.
   function mixCard(read) {
@@ -6778,6 +6900,7 @@ import { node, svg, clip } from './core/dom.js';
     var rail = [
       dayCard(read, cardWide(el.routerBoard, 4)),
       mixCard(read),
+      scatterCard(read),
       mixSplitCard(read),
       cacheCard(read)
     ];

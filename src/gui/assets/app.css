@@ -4556,6 +4556,52 @@ pre.drawer-code {
   white-space: nowrap;
 }
 
+/* The cost×quality scatter: guides are hairlines, the points are the
+   live tone when the cell is graded and the idle tone under the
+   `ungraded` word when the day cannot grade the pair. The dashes of the
+   no-cost lane say the axis does not reach there. */
+.scatter svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+
+.scatter-guide { stroke: var(--dsw-alias-hairline); stroke-width: 0.75; }
+.scatter-lane { stroke: var(--dsw-alias-hairline-strong); stroke-width: 0.75; stroke-dasharray: 3 3; }
+.scatter-point { transition: r 180ms var(--ease); }
+.scatter-band {
+  fill: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.scatter-rows { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 7px; min-width: 0; }
+.scatter-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.scatter-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scatter-fig {
+  margin-left: auto;
+  color: var(--dsw-alias-ink-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.scatter-ungraded { color: var(--dsw-alias-ink-tertiary); font-weight: 600; }
+.scatter-reason { color: var(--dsw-alias-warn); white-space: nowrap; }
+.scatter-lat { color: var(--dsw-alias-ink-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 /* ------------------------------------------------------------ the router */
 
 .chains { display: grid; gap: 7px; }
