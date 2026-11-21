@@ -14412,6 +14412,10 @@ import { node, svg, clip } from './core/dom.js';
     var text = node('span', 'member-text');
     text.appendChild(node('span', 'member-name', name));
     if (voice) text.appendChild(node('span', 'member-voice', voice));
+    // The state word (the face rethink's P3): every presence disc carries
+    // the word its persona says while it works — PRESENCE is the one
+    // table, so the disc's tint, glyph and word cannot disagree.
+    text.appendChild(node('span', 'member-state', presence(name).state));
     chip.appendChild(text);
     if (writing) chip.appendChild(node('span', 'member-pulse', 'writing'));
     return chip;

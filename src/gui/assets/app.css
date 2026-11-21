@@ -9139,6 +9139,14 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .member-text { display: grid; gap: 1px; }
 .member-name { font-size: 12px; font-weight: 600; }
 .member-voice { font-size: 12px; color: var(--dsw-alias-ink-tertiary); }
+/* The state word (the face rethink's P3): what the member says while it
+   works, straight from the presence table. */
+.member-state {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--dsw-alias-ink-tertiary);
+}
 .member.speaking .member-name { color: var(--dsw-alias-accent); }
 /* The door beside the members: a dashed chip, deliberately not a
    `.member`, so the row counts the members it has and not the way to

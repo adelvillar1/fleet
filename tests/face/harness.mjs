@@ -8172,6 +8172,56 @@ async function theStrategyStepShowsItsPreview() {
       page.window.location.hash);
   }
 
+  // The cast strip (the face rethink's P3): one presence disc per member,
+  // each carrying the state word the PRESENCE table gives it — the bot
+  // count equals the room record's members, and no disc goes wordless.
+  async function theCastStripCarriesEachMembersStateWord() {
+    const page = boot({
+      hash: '#/huddles/a1',
+      documents: {
+        huddles: {
+          type: 'huddles',
+          active: [{
+            id: 'a1', title: 'the-q3-board', goal: 'thrift\u2019s landing page',
+            personas: ['designer', 'scholar', 'auditor'], avatars: {}, state: 'working',
+            preview: 'x', from: 'designer', last_write: 1793807361, current: true,
+            awaiting_you: false, deliverables: 0,
+            knowledge: { recalled: 0, wrote: 0 }, parent: null, children: []
+          }],
+          inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
+        },
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          members: [
+            { name: 'designer', voice: 'makes pages' },
+            { name: 'scholar', voice: 'grounds every claim' },
+            { name: 'auditor', voice: 'checks every claim' }
+          ]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush(40);
+    const chips = page.IDS['room-members'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('member'));
+    check('P3 the cast strip carries the owner and every member',
+      chips.length === 4, 'chips=' + chips.length);
+    if (chips.length !== 4) return;
+    const words = chips.map((chip) => {
+      const state = chip.find((one) =>
+        String(one.className || '').split(/\s+/).includes('member-state'))[0];
+      return state ? String(state.textContent) : '';
+    });
+    check('P3 every presence disc carries its state word from the presence table',
+      words.join('|') === 'here|sketching|reading|checking', words.join('|'));
+    const marks = chips.map((chip) =>
+      chip.find((one) =>
+        String(one.className || '').split(/\s+/).includes('pmark')).length);
+    check('P3 one presence disc per member, the room record\u2019s own count',
+      marks.join(',') === '1,1,1,1', marks.join(','));
+  }
+
   // The settings persona card carries the owner's image too (C11) — the
   // same mark every other surface renders, now where the role is edited.
   async function thePersonaCardShowsTheOwnersImage() {
@@ -16893,6 +16943,7 @@ const cases = [
   ['P2 an interrupted row says so in words', anInterruptedRowSaysSoInWords],
   ['P2 the board\u2019s columns equal the derived states', theBoardColumnsEqualTheDerivedStates],
   ['P2 the desk lists every artifact the log names and nothing else', theDeskListsEveryArtifactTheLogNames],
+  ['P3 the cast strip carries one disc and a state word per member', theCastStripCarriesEachMembersStateWord],
   ['SWEEP every settings press acts or answers', everySettingsPressSaysSomething],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
