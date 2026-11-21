@@ -4485,6 +4485,21 @@ pre.drawer-code {
 
 .board-body { display: grid; gap: 16px; }
 
+/* The morning read (P5): five sentence rows, ruled apart, left-aligned
+   where a board's empty sentence is centred — these are facts, not a
+   placeholder. */
+.morning-line {
+  max-width: 70ch;
+  margin: 0;
+  padding: 9px 8px;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.morning-line + .morning-line { border-top: var(--card-hairline); }
+
+
 .board-empty {
   max-width: 62ch;
   margin: 0;

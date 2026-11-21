@@ -20483,6 +20483,90 @@ import { node, svg, clip } from './core/dom.js';
   // conversations ordered by what the owner must do, and the channels
   // section keeps the plumbing.
 
+  // -------------------------------------------------- the morning read
+  //
+  // P5's morning-read AC: the bots door's first rail row and a five-line
+  // panel, derived purely from the /api/second-brain document the face
+  // already reads (readBrain caches it into face.brain). The honesty rule
+  // is the second-brain panel's own: a line whose section did not land
+  // prints that section's refusal sentence from refused[] — never a zero
+  // standing in for an unread file — and an empty-but-present section
+  // says something true rather than decorating a zero. The rail paints
+  // before the read resolves, so every face.brain access is defensive.
+  var BRAIN_REFUSAL_FILES = {
+    attention: 'tower_data',
+    reports: 'reports_state',
+    harness: 'harness_state',
+    loops: 'loops_state'
+  };
+
+  // A section's refusal sentence: the refused[] entry that names the
+  // state file behind the section (the read names every refusal with the
+  // file's own path). The document's general refusal — a home that is
+  // not there — answers when no entry names the file.
+  function brainRefusal(brain, section) {
+    var said = (brain && brain.refused) || [];
+    var file = BRAIN_REFUSAL_FILES[section];
+    for (var i = 0; i < said.length; i++) {
+      if (file && String(said[i]).indexOf(file) !== -1) return said[i];
+    }
+    return said[0] || 'the read has not landed \u2014 the section did not say why';
+  }
+
+  function morningLines(brain) {
+    var doc = brain || {};
+    var lines = [];
+    // 1 needs-you: the queue's own count and its own counts.
+    var attention = doc.attention || null;
+    var counts = (attention && attention.counts) || {};
+    var total = attention ? (Number(attention.total) || 0) : 0;
+    lines.push(attention == null ? brainRefusal(doc, 'attention')
+      : (total
+        ? total + ' things need you \u2014 ' + (Number(counts.drift) || 0) + ' drift \u00b7 ' +
+          (Number(counts.stale) || 0) + ' stale \u00b7 ' + (Number(counts.handoff) || 0) +
+          ' handoffs \u00b7 ' + (Number(counts.conflicts) || 0) + ' conflicts'
+        : 'nothing needs you today'));
+    // 2 first: the queue's own priority order — drift, stale, handoff,
+    // conflicts — and its first row's own words.
+    var top = attention &&
+      (((attention.drift || [])[0]) || ((attention.stale || [])[0]) ||
+        ((attention.handoff || [])[0]) || ((attention.conflicts || [])[0])) || null;
+    var said = top ? [top.project, top.what, top.evidence].filter(function (part) {
+      return part != null && String(part).length;
+    }).join(' \u00b7 ') : '';
+    lines.push(attention == null ? brainRefusal(doc, 'attention')
+      : (said || 'nothing is queued first'));
+    // 3 in-flight: the reports file's own doing/verification/conflict
+    // counts.
+    var reports = doc.reports || null;
+    var doing = reports ? (Number(reports.doing_total) || 0) : 0;
+    var pending = reports ? (Number(reports.pending_verification) || 0) : 0;
+    var open = reports ? (Number(reports.open_conflicts) || 0) : 0;
+    lines.push(reports == null ? brainRefusal(doc, 'reports')
+      : (doing || pending || open
+        ? doing + ' in flight \u00b7 ' + pending + ' awaiting verification \u00b7 ' +
+          open + ' conflicts open'
+        : 'nothing in flight'));
+    // 4 last-ran: the harness log's newest event, in its own words.
+    var harness = doc.harness || null;
+    var last = harness && (harness.recent || [])[0];
+    lines.push(harness == null ? brainRefusal(doc, 'harness')
+      : (last
+        ? last.ts + ' ' + last.kind + ': ' + last.label + ' \u2014 ' + last.outcome
+        : 'no harness events yet'));
+    // 5 loops: the newest finding's own sentence, else the review the
+    // loops owe, else the quiet.
+    var loops = doc.loops || null;
+    var owed = 0;
+    ((loops && loops.loops) || []).forEach(function (row) {
+      owed += Number(row.pending_review) || 0;
+    });
+    lines.push(loops == null ? brainRefusal(doc, 'loops')
+      : (((loops.findings || [])[0]) ||
+        (owed ? owed + ' loop iterations await review' : 'the loops are quiet')));
+    return lines;
+  }
+
   function botsSectionId() {
     var parts = parseAddress().parts;
     if (parts[0] === 'bots' && parts[1]) return decodeURIComponent(parts[1]);
@@ -20500,7 +20584,17 @@ import { node, svg, clip } from './core/dom.js';
 
   function botsRailRows() {
     var conv = botsConversations();
-    var rows = (conv.personas || []).map(function (persona) {
+    // The morning read leads the door (P5's AC): five lines from the
+    // second-brain document, and the badge is the attention queue's own
+    // total. The rail paints before the read resolves, so the brain is
+    // read defensively — an unread file shows no badge, never a zero.
+    var attention = face.brain && face.brain.attention;
+    var rows = [{
+      id: 'morning-read', icon: 'bots', name: 'morning read',
+      badge: attention ? (Number(attention.total) || 0) : 0,
+      badgeTitle: 'the morning read'
+    }];
+    rows = rows.concat((conv.personas || []).map(function (persona) {
       var needs = (persona.needs || 0) + (persona.turned_back || 0);
       return {
         id: persona.name, initial: persona.name, avatar: persona.avatar,
@@ -20510,7 +20604,7 @@ import { node, svg, clip } from './core/dom.js';
           ? needs + ' need' + (needs === 1 ? 's' : '') + ' you'
           : (persona.sessions || []).length + ' conversations'
       };
-    });
+    }));
     rows.push({ id: 'channels', icon: 'bots', name: 'channels',
       badge: 0 });
     return rows;
@@ -21610,6 +21704,22 @@ import { node, svg, clip } from './core/dom.js';
       }
     });
     var chosen = botsSectionId();
+    if (chosen === 'morning-read') {
+      // The morning read (P5's AC): one card, exactly five sentence rows,
+      // from the second-brain document. The rail painted before the read
+      // resolved, so the brain is optional here — morningLines names what
+      // has not landed instead of standing a zero in for it.
+      var morningBody = node('div', 'section-body');
+      morningBody.dataset.section = 'morning-read';
+      var morningCard = boardCard(12, 'morning read', null,
+        'Five lines from the second brain \u2014 the queue, the work in flight, the harness and the loops.');
+      morningLines(face.brain).forEach(function (line) {
+        morningCard.appendChild(node('p', 'morning-line', line));
+      });
+      morningBody.appendChild(morningCard);
+      board.appendChild(morningBody);
+      return;
+    }
     if (chosen !== 'channels') {
       var persona = (conv.personas || []).filter(function (one) {
         return one.name === chosen;
@@ -28860,6 +28970,13 @@ import { node, svg, clip } from './core/dom.js';
         paintBots();
         readBots(true).then(paintBots);
         readAccess(true).then(paintBots);
+        // The morning read (P5's AC) rides the same arrival: the bots
+        // door's first rail row and its five-line panel are the
+        // second-brain document's, so the read is asked here and the
+        // repaint below is the one that fills the rail's badge. The rail
+        // painted before this resolves, which is why every face.brain
+        // access on the door is defensive.
+        readBrain(true).then(paintBots);
       },
       bundle: function () { mountBundle(face.focus ? face.focus.id : ''); },
       plugins: function () {

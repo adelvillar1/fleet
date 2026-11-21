@@ -7444,7 +7444,14 @@ async function theStrategyStepShowsItsPreview() {
       discs.length === 1 && String(discs[0].textContent) === 'd',
       'discs=' + discs.length + ' text=' + (discs[0] ? String(discs[0].textContent) : '-'));
     check('ICONS the channels row keeps the robot, not a disc',
-      rows.length === 2 && discs.length === 1, 'rows=' + rows.length);
+      rows.length === 3 && discs.length === 1, 'rows=' + rows.length);
+    // The morning read (P5's AC) leads the rail with the robot too — the
+    // two mark kinds stay apart there as well.
+    const morning = rows[0];
+    check('ICONS the morning read leads the rail without a disc',
+      !!morning && morning.dataset.section === 'morning-read' &&
+        !String(morning.textContent).includes('channels'),
+      morning ? morning.dataset.section : 'none');
     // P0 of the face rethink: the disc's colour is the presence table's, not
     // a second map's. `designer` is lane 4 — and an unknown persona still
     // gets the accent and its own letter rather than an empty disc.
@@ -7452,6 +7459,159 @@ async function theStrategyStepShowsItsPreview() {
       ? discs[0].style.getPropertyValue('--tint') : '';
     check('P0 a persona disc takes its tint from the presence table',
       tint === 'var(--lane-4)', 'tint=' + (tint || '(none)'));
+  }
+
+  // P5's morning-read AC: the bots door's first rail row is the morning
+  // read and its panel is exactly five sentence rows derived purely from
+  // the /api/second-brain document — pinned on the repo's FIRST
+  // `documents['second-brain']` fixture (the stub answered this key long
+  // before any case used it).
+  const morningBrainFixture = {
+    type: 'brain', read_at: 'now', home: '/home/x/second-brain',
+    attention: {
+      total: 3, counts: { drift: 1, stale: 1, handoff: 1, conflicts: 0 },
+      drift: [{ project: 'fleet', what: 'the ledger drifted',
+        evidence: '3 days behind', detail: 'the branch trails main', when: '2026-11-20' }],
+      stale: [{ project: 'tower', what: 'the plan went stale',
+        evidence: '12 days', detail: '', when: '2026-11-10' }],
+      handoff: [{ project: 'corpus', what: 'the handoff waits',
+        evidence: 'score 4', detail: '', when: '2026-11-19' }],
+      conflicts: [],
+    },
+    reports: { doing_total: 2, pending_verification: 1, open_conflicts: 0,
+      suppressed: 0, malformed: 0, events_total: 40, feed: [], trust: [] },
+    harness: { generated: '2026-11-21', loops: [],
+      recent: [{ ts: '09:00', kind: 'run', label: 'corpus refresh', outcome: 'done' }] },
+    loops: { derived_at: '2026-11-21',
+      loops: [{ name: 'recall', family: 'quality', verdict: 'right',
+        iterations: 4, pending_review: 2 }],
+      graded: [], findings: ['the recall loop keeps winning'] },
+    state_at: '2026-11-21', events_since: 2, pulse: { weeks: [] },
+    projects: [], commits: [], refused: [],
+  };
+
+  function morningBotsPage(brain) {
+    return boot({
+      width: 1440, hash: '#/bots/morning-read',
+      documents: {
+        channels: {
+          type: 'channels', read_at: 'now', service: {},
+          channels: [], activity: [], activity_bound: 0, waiting_seats: 0,
+          conversations: {
+            type: 'conversations', bound: 50, needs: 0, count: 0,
+            personas: [{ name: 'tower', needs: 0, turned_back: 0, sessions: [] }]
+          },
+        },
+        'second-brain': brain,
+        state: (asked) => emptyState(asked),
+      },
+    });
+  }
+
+  async function theMorningReadLeadsTheBotsDoor() {
+    const page = morningBotsPage(morningBrainFixture);
+    await flush();
+    page.open();
+    await flush(120);
+
+    // The rail row leads, and its badge is the attention queue's own
+    // total — the read lands after the rail paints, so this is the
+    // repaint-when-it-lands path filling the badge.
+    const rail = page.rows('#bots-rail .section-rail-row');
+    const first = rail[0];
+    check('READ the morning read leads the bots rail',
+      !!first && first.dataset.section === 'morning-read' &&
+        String(first.textContent).includes('morning read'),
+      rail.map((one) => one.textContent).join(' | '));
+    check('READ the rail row wears the queue\u2019s own total',
+      !!first && String(first.textContent).includes('3'),
+      first ? String(first.textContent) : 'none');
+
+    // Exactly five sentence rows, each derived from the fixture's own
+    // words — no second derivation in the browser.
+    const lines = page.rows('#bots-board .morning-line');
+    check('READ the morning read paints exactly five lines',
+      lines.length === 5, String(lines.length));
+    const said = lines.map((one) => String(one.textContent));
+    check('READ needs-you reads the queue\u2019s counts',
+      said[0] === '3 things need you \u2014 1 drift \u00b7 1 stale \u00b7 1 handoffs \u00b7 0 conflicts',
+      said[0]);
+    check('READ first reads the queue\u2019s top row in its own words',
+      said[1] === 'fleet \u00b7 the ledger drifted \u00b7 3 days behind', said[1]);
+    check('READ in-flight reads the reports counts',
+      said[2] === '2 in flight \u00b7 1 awaiting verification \u00b7 0 conflicts open', said[2]);
+    check('READ last-ran reads the harness log\u2019s newest event',
+      said[3] === '09:00 run: corpus refresh \u2014 done', said[3]);
+    check('READ loops reads the newest finding\u2019s sentence',
+      said[4] === 'the recall loop keeps winning', said[4]);
+  }
+
+  // Empty-but-present sections say something true: the honesty rule
+  // forbids a zero standing where the file says nothing is there.
+  async function theMorningReadSaysTheTrueEmpties() {
+    const page = morningBotsPage({
+      type: 'brain', read_at: 'now', refused: [],
+      attention: { total: 0, counts: { drift: 0, stale: 0, handoff: 0, conflicts: 0 },
+        drift: [], stale: [], handoff: [], conflicts: [] },
+      reports: { doing_total: 0, pending_verification: 0, open_conflicts: 0,
+        suppressed: 0, malformed: 0, events_total: 0, feed: [], trust: [] },
+      harness: { generated: '2026-11-21', loops: [], recent: [] },
+      loops: { derived_at: '2026-11-21', loops: [], graded: [], findings: [] },
+    });
+    await flush();
+    page.open();
+    await flush(120);
+    const lines = page.rows('#bots-board .morning-line');
+    const said = lines.map((one) => String(one.textContent));
+    check('READ an empty queue says so in words',
+      lines.length === 5 && said[0] === 'nothing needs you today', said.join(' | '));
+    check('READ an empty queue names nothing first',
+      said[1] === 'nothing is queued first', said[1]);
+    check('READ empty reports say nothing in flight',
+      said[2] === 'nothing in flight', said[2]);
+    check('READ a harness without events says so',
+      said[3] === 'no harness events yet', said[3]);
+    check('READ quiet loops say so',
+      said[4] === 'the loops are quiet', said[4]);
+  }
+
+  // The panel's own honesty rule (P5): a section that did not land prints
+  // that section's refusal sentence from refused[] — never a zero standing
+  // in for an unread file — while the sections that did land still derive.
+  async function theMorningReadRendersRefusalsNotZeros() {
+    const page = morningBotsPage({
+      type: 'brain', read_at: 'now',
+      refused: [
+        '/home/x/second-brain/tower_data.json does not exist',
+        'reports_state returned a payload the board cannot read',
+      ],
+      harness: { generated: '2026-11-21', loops: [],
+        recent: [{ ts: '08:30', kind: 'boot', label: 'the face woke', outcome: 'ok' }] },
+      loops: { derived_at: '2026-11-21',
+        loops: [{ name: 'gates', family: 'autonomy', verdict: 'right',
+          iterations: 7, pending_review: 3 }],
+        graded: [], findings: [] },
+    });
+    await flush();
+    page.open();
+    await flush(120);
+    const lines = page.rows('#bots-board .morning-line');
+    const said = lines.map((one) => String(one.textContent));
+    check('READ the unread queue prints its refusal, never a zero',
+      lines.length === 5 &&
+        said[0].includes('tower_data.json does not exist') &&
+        said[0].indexOf('0 things') === -1,
+      said.join(' | '));
+    check('READ the first line names the same refusal',
+      said[1].includes('tower_data.json does not exist'), said[1]);
+    check('READ the unread reports print their refusal, never a zero',
+      said[2].includes('reports_state returned a payload') &&
+        said[2].indexOf('0 in flight') === -1,
+      said[2]);
+    check('READ a landed section still derives its line',
+      said[3] === '08:30 boot: the face woke \u2014 ok', said[3]);
+    check('READ the loops\u2019 review still counts',
+      said[4] === '3 loop iterations await review', said[4]);
   }
 
   // The rooms column (the huddles-ux plan's C4): the three states in the
@@ -17288,6 +17448,10 @@ const cases = [
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
   ['BOTS the door renders passports and the feed keeps the last ten',
     theBotsDoorRendersPassportsAndTheFeedKeepsTheLastTen],
+  ['READ the morning read leads the bots door', theMorningReadLeadsTheBotsDoor],
+  ['READ the morning read says the true empties', theMorningReadSaysTheTrueEmpties],
+  ['READ the morning read renders refusals, not zeros',
+    theMorningReadRendersRefusalsNotZeros],
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
   ['LEARN the learning rail carries the four sections', theLearningRailCarriesTheFourSections],
