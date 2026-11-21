@@ -320,6 +320,39 @@ item's accept produces a conversation whose first record names the peer
 (fixture + red-proof against today's list); three screenshots refreshed
 (`surface-sessions`, a new `surface-board`, `surface-desk-drawer`).
 
+### P2 inbox — owner ruling 2026-11-21: triage, as a deferral class
+
+The AC ("an inbox item's accept produces a conversation whose first record names
+the peer") has exactly one reading that grounds all four of its prose facts —
+the inbound item's transcript inline, accept becoming a conversation, the card
+naming peer **and** capability, and "what the door heard": **channel-door
+traffic**. The owner ruled on 2026-11-21 that triage is wanted.
+
+The measured constraint that shapes it: a task-capable peer's delivery is
+**auto-accepted today** — `Driver::deliver` (`src/channels/mod.rs:984-1041`)
+authorizes, creates the peer's session and starts the run, and its own doc
+comment says so ("a delivery is accepted immediately"), with the D35 dispatch
+journaling at :1026-1039. So triage is built as a **deferral class**, not a
+replacement: a hold the owner can act on, leaving auto-run the default for
+anything not held.
+
+Two hard facts from the spec that the implementation must respect:
+
+1. **The first record already exists, on one path.** `Driver::session_for`
+   (`mod.rs:784-826`) writes `Record::Channel { channel, peer_id, peer }` as the
+   session's first record (`src/session.rs:402-418`) — the record whose own doc
+   says it is "what makes an inbox able to say 'via webhook · the CI box'". An
+   accept path that calls `Session::create` directly produces a first record
+   that does **not** name the peer, which is exactly the red-proof.
+2. **The activity log cannot be the transcript source.** Its `task` field is
+   only the first line capped at 120 characters (`src/channels/service.rs:186-194`),
+   so the card's inline transcript needs the held `Inbound` (channel, peer id and
+   name, full task, reply, at) or the session replay after acceptance.
+
+Also required: no list until three items exist (the card carries the state
+otherwise), and decline names its reason in the activity feed as a `refusal`
+line rather than a silent drop.
+
 ### P3 — The rooms and the bots (the owner's explicit ask)
 
 **The rooms stage.**
