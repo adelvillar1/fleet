@@ -5503,12 +5503,17 @@ impl Bridge {
                 let service = self.hosted_channels();
                 let accepting = op == "accept";
                 tokio::task::spawn_blocking(move || {
-                    let mut store = crate::channels::HoldStore::load(&home).map_err(|error| {
-                        format!("the held file could not be read: {error}")
-                    })?;
-                    let hold = store
-                        .take(&id)
-                        .ok_or_else(|| format!("no held delivery is keyed {key} — it resolved"))?;
+                    // The locked take: the hold leaves the store —
+                    // persisted — before anything runs, so a second
+                    // decision of the same key finds nothing to take
+                    // and the same inbound cannot be run or refused
+                    // twice, and there is no stale write-back after the
+                    // run to erase a hold a connection filed meanwhile.
+                    let hold = crate::channels::HoldStore::take_locked(&home, &id)
+                        .map_err(|error| format!("the held file could not be read: {error}"))?
+                        .ok_or_else(|| {
+                            format!("no held delivery is keyed {key} — it resolved")
+                        })?;
                     if accepting {
                         let Some(service) = service.as_ref() else {
                             return Err(
@@ -5526,9 +5531,16 @@ impl Bridge {
                         );
                         if let Err(refusal) = result {
                             // The run did not happen: the hold goes back,
-                            // so the decision is still the owner's to make.
-                            store.file(&hold.to_inbound(), &hold.at);
-                            store.save(&home).map_err(|error| {
+                            // so the decision is still the owner's to
+                            // make — through the same lock the take
+                            // used, so nothing filed meanwhile is lost
+                            // and the delivery is never waiting twice.
+                            crate::channels::HoldStore::file_locked(
+                                &home,
+                                &hold.to_inbound(),
+                                &hold.at,
+                            )
+                            .map_err(|error| {
                                 format!("the held file could not be written: {error}")
                             })?;
                             return Err(format!("the held delivery was refused: {refusal}"));
@@ -5550,9 +5562,7 @@ impl Bridge {
                             },
                         );
                     }
-                    store
-                        .save(&home)
-                        .map_err(|error| format!("the held file could not be written: {error}"))
+                    Ok::<(), String>(())
                 })
                 .await
                 .map_err(|_| "the inbox decision did not land".to_string())??;
@@ -16637,6 +16647,262 @@ mod goal_tests {
             .err();
         let stale = format!("no held delivery is keyed held:{id} — it resolved");
         assert_eq!(again.as_deref(), Some(stale.as_str()), "{again:?}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    // ---- the deferral class's races (the adversarial review's FIX 1) ----
+
+    /// One race rig: a home with a paired, linked webhook peer, a live
+    /// bridge whose channels are hosted, and the channel sink — the
+    /// shapes the webhook's per-connection tasks run concurrently in
+    /// production, and the shapes every race below decides between.
+    async fn held_race_rig(
+        tag: &str,
+    ) -> (
+        std::path::PathBuf,
+        Arc<Bridge>,
+        Arc<
+            dyn Fn(crate::channels::Inbound) -> Result<String, crate::channels::Refusal>
+                + Send
+                + Sync,
+        >,
+        tokio::sync::mpsc::UnboundedReceiver<Command>,
+    ) {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-inbox-race-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut store = crate::channels::PeerStore::default();
+        store.pair(
+            "abc",
+            "the CI box",
+            &crate::channels::mint_peer_token().unwrap(),
+            crate::channels::Capability::Task,
+            "stamp",
+            None,
+        );
+        store.save(&home, "webhook").unwrap();
+        crate::identity::link_peer(
+            &home,
+            "webhook",
+            "abc",
+            &crate::identity::PrincipalId::owner(),
+        )
+        .unwrap();
+        let mut bridge = detached(&home);
+        // The connect door's receiver: the agent commands' other end. It
+        // must live as long as the test — dropped early, `dispatch` has
+        // nowhere to send and every run reads "no agent behind it".
+        let door = bridge.connect();
+        let bridge = Arc::new(bridge);
+        let policy = crate::channels::Policy::new(home.clone());
+        let driver = Arc::new(crate::channels::Driver::new(Arc::clone(&bridge), policy));
+        let service = Arc::new(crate::channels::ChannelService::new(
+            Arc::clone(&bridge),
+            Arc::clone(&driver),
+            &crate::channels::ServiceConfig {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        ));
+        bridge.attach_channels(service.clone());
+        (home, bridge, service.sink(), door)
+    }
+
+    /// A held delivery, filed the way the sink files one.
+    fn filed_hold(home: &std::path::Path, id_out: &mut String) {
+        let mut holds = crate::channels::HoldStore::default();
+        *id_out = holds.file(
+            &crate::channels::Inbound {
+                peer: crate::channels::Peer::new("webhook", "abc", "the CI box"),
+                session: None,
+                task: "run the tests".to_string(),
+                reply: crate::channels::Reply::None,
+            },
+            "2026-11-21T10:00Z",
+        );
+        holds.save(home).unwrap();
+    }
+
+    /// FIX 1 (a), the double-run: two accepts of the same key in flight
+    /// at once — what the webhook's per-connection tasks make real. The
+    /// second take of the key must FAIL, not succeed: both takes
+    /// succeeding means the loser's refused run puts the same delivery
+    /// back in the store — a duplicate waiting to run again — and two
+    /// decision lines for one inbound.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_racing_accepts_of_one_hold_run_it_once() {
+        let (home, bridge, _sink, _door) = held_race_rig("double-run").await;
+        let mut id = String::new();
+        filed_hold(&home, &mut id);
+        let key = format!("held:{id}");
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let accept = |bridge: Arc<Bridge>, barrier: Arc<tokio::sync::Barrier>, key: String| {
+            tokio::spawn(async move {
+                barrier.wait().await;
+                bridge
+                    .inbox_op(&format!(r#"{{"op":"accept","key":"{key}"}}"#))
+                    .await
+            })
+        };
+        let first = accept(Arc::clone(&bridge), Arc::clone(&barrier), key.clone());
+        let second = accept(Arc::clone(&bridge), barrier, key);
+        let (first, second) = tokio::join!(first, second);
+        let (first, second) = (first.unwrap(), second.unwrap());
+        assert!(
+            first.is_err() ^ second.is_err(),
+            "both accepts succeeded — the hold was taken twice: {first:?} / {second:?}"
+        );
+        // One decision line for one inbound: a delivery or a refusal,
+        // never both — the loser's take must have failed before it ran
+        // or re-filed anything.
+        let decided = crate::channels::service::activity(&home, 50)
+            .into_iter()
+            .filter(|line| {
+                (line.kind == "delivery" || line.kind == "refusal")
+                    && line.peer_id.as_deref() == Some("abc")
+            })
+            .count();
+        assert_eq!(decided, 1, "the same inbound decided {decided} times");
+        // And the delivery ran exactly once, with nothing waiting to run
+        // it again: the store is empty after the race.
+        let store = crate::channels::HoldStore::load(&home).unwrap();
+        assert!(
+            store.holds.is_empty(),
+            "the racing accepts left a duplicate hold waiting to run again: {store:?}"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// FIX 1 (c), the accept-vs-decline race: both decisions take the
+    /// same hold at once, and both used to succeed — one running the
+    /// delivery while the other records a refusal for a delivery that
+    /// in fact ran. Exactly one decision may land.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_accept_and_a_decline_racing_one_hold_settle_one_decision() {
+        let (home, bridge, _sink, _door) = held_race_rig("accept-decline").await;
+        let mut id = String::new();
+        filed_hold(&home, &mut id);
+        let key = format!("held:{id}");
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let accepting = {
+            let bridge = Arc::clone(&bridge);
+            let barrier = Arc::clone(&barrier);
+            let key = key.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                bridge
+                    .inbox_op(&format!(r#"{{"op":"accept","key":"{key}"}}"#))
+                    .await
+            })
+        };
+        let declining = {
+            let bridge = Arc::clone(&bridge);
+            let barrier = Arc::clone(&barrier);
+            let key = key.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                bridge
+                    .inbox_op(&format!(
+                        r#"{{"op":"decline","key":"{key}","reason":"not now"}}"#
+                    ))
+                    .await
+            })
+        };
+        let (accepting, declining) = tokio::join!(accepting, declining);
+        let (accepting, declining) = (accepting.unwrap(), declining.unwrap());
+        assert!(
+            accepting.is_ok() ^ declining.is_ok(),
+            "both decisions succeeded — the hold was taken twice: \
+             {accepting:?} / {declining:?}"
+        );
+        // One decision line in the log: a delivery or an owner refusal,
+        // never both for the same inbound.
+        let decided = crate::channels::service::activity(&home, 50)
+            .into_iter()
+            .filter(|line| {
+                (line.kind == "delivery" || line.kind == "refusal")
+                    && line.peer_id.as_deref() == Some("abc")
+            })
+            .count();
+        assert_eq!(decided, 1, "the hold settled {decided} times");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// FIX 1 (b), the lost delivery: the webhook serves each connection
+    /// in its own task, so the sink keeps filing new holds while an
+    /// accept is anywhere between its take and its write-back. An
+    /// accept whose final write is a stale snapshot erases a hold the
+    /// sink filed in that window — while the peer was told the delivery
+    /// is held. Thirty rapid filings span the accept's whole path; every
+    /// one of them must survive.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_sink_filing_during_an_accept_is_never_clobbered() {
+        let (home, bridge, sink, _door) = held_race_rig("clobber").await;
+        crate::settings::set(&home, "channels.hold", "webhook").expect("the setting");
+        let mut id = String::new();
+        filed_hold(&home, &mut id);
+        let key = format!("held:{id}");
+        let accepting = {
+            let bridge = Arc::clone(&bridge);
+            let key = key.clone();
+            tokio::spawn(async move {
+                bridge
+                    .inbox_op(&format!(r#"{{"op":"accept","key":"{key}"}}"#))
+                    .await
+            })
+        };
+        // The webhook's other connections, each in its own task: rapid
+        // filings of fresh deliveries while the accept is in flight.
+        let filings = tokio::task::spawn_blocking(move || {
+            for n in 0..30 {
+                let inbound = crate::channels::Inbound {
+                    peer: crate::channels::Peer::new(
+                        "webhook",
+                        &format!("peer-{n}"),
+                        &format!("peer {n}"),
+                    ),
+                    session: None,
+                    task: format!("delivery {n}"),
+                    reply: crate::channels::Reply::None,
+                };
+                if let Err(refusal) = sink(inbound) {
+                    if !matches!(refusal, crate::channels::Refusal::Held) {
+                        panic!("the sink refused its own filing: {refusal}");
+                    }
+                }
+            }
+        });
+        let (accepting, filings) = tokio::join!(accepting, filings);
+        filings.expect("every filing landed");
+        accepting.unwrap().expect("the accept must land");
+        // Every hold the sink filed is still in the store, and the
+        // accepted one is gone.
+        let store = crate::channels::HoldStore::load(&home).unwrap();
+        for n in 0..30 {
+            let peer = format!("peer-{n}");
+            assert!(
+                store.holds.iter().any(|hold| hold.peer_id == peer),
+                "the sink's filing {peer} was clobbered by the accept's \
+                 stale write-back: {:?}",
+                store
+                    .holds
+                    .iter()
+                    .map(|h| h.peer_id.clone())
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            !store.holds.iter().any(|hold| hold.peer_id == "abc"),
+            "the accepted hold is still in the store"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 

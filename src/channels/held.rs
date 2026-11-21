@@ -67,6 +67,23 @@ pub struct HoldStore {
 /// same microsecond still name themselves apart.
 static HOLD_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The one lock every read-modify-write of the hold store holds. The
+/// sink files holds from one spawned task per webhook connection while
+/// the inbox's accept and decline each load, mutate and save in their
+/// own blocking task: unlocked, two accepts can both take the same key
+/// and run the same inbound twice, an accept's stale write-back can
+/// erase a hold a concurrent connection just filed, and an accept and a
+/// decline can both report success over one hold. Every mutation below
+/// — `file_locked`, `take_locked` — is one locked load → mutate → save
+/// step, so a second take of the same id fails rather than succeeds.
+static HOLD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn hold_lock() -> std::sync::MutexGuard<'static, ()> {
+    HOLD_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
 impl HoldStore {
     /// The store's path: `<home>/channels/held.json`.
     pub fn path(home: &Path) -> PathBuf {
@@ -151,6 +168,36 @@ impl HoldStore {
     pub fn take(&mut self, id: &str) -> Option<Hold> {
         let at = self.holds.iter().position(|hold| hold.id == id)?;
         Some(self.holds.remove(at))
+    }
+
+    /// File one delivery through the process-wide lock: the locked unit
+    /// is load → file → save, so a delivery filed while an accept is
+    /// anywhere in its own locked step is read fresh by that step and
+    /// survives it, and two filings never race one write-back.
+    pub fn file_locked(home: &Path, inbound: &Inbound, at: &str) -> std::io::Result<String> {
+        let _guard = hold_lock();
+        let mut store = Self::load(home)?;
+        let id = store.file(inbound, at);
+        store.save(home)?;
+        Ok(id)
+    }
+
+    /// Take one hold out through the process-wide lock, persisting the
+    /// take before the caller does anything with it. A second decision
+    /// of the same key therefore finds the store already without it —
+    /// a refusal, never a second run — and a hold a connection files
+    /// meanwhile is never erased by a stale write-back, because there
+    /// is no stale write-back: the take is the write-back. Returns
+    /// Ok(None) when no hold is keyed so; an error leaves the store as
+    /// it was, the hold still in it.
+    pub fn take_locked(home: &Path, id: &str) -> Result<Option<Hold>, std::io::Error> {
+        let _guard = hold_lock();
+        let mut store = Self::load(home)?;
+        let hold = store.take(id);
+        if hold.is_some() {
+            store.save(home)?;
+        }
+        Ok(hold)
     }
 }
 
@@ -245,6 +292,68 @@ mod tests {
             !store.holds.iter().any(|h| h.task == "task-0"),
             "the stalest hold is what the cap drops"
         );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    // ---- the locked store (the adversarial review's FIX 1) ----
+
+    /// A second take of the same id FAILS: the take was persisted by the
+    /// first, so the store is already without it. Two successes here is
+    /// the double-run.
+    #[test]
+    fn a_second_take_of_the_same_id_finds_nothing() {
+        let home = temp_home("double-take");
+        let mut store = HoldStore::default();
+        let id = store.file(&inbound("run once", None), "at");
+        store.save(&home).unwrap();
+        let first = HoldStore::take_locked(&home, &id)
+            .unwrap()
+            .expect("the first take");
+        assert_eq!(first.task, "run once");
+        let second = HoldStore::take_locked(&home, &id).unwrap();
+        assert!(
+            second.is_none(),
+            "the second take of the same id succeeded again: {second:?}"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A hold the sink files while an accept is inside its run survives
+    /// the accept: the accept's take was persisted before the run, its
+    /// re-file reads fresh, and there is no stale write-back to erase
+    /// the filing with. The reverse ordering — the filing first, the
+    /// accept's take after — is the same lock reading fresh.
+    #[test]
+    fn a_file_that_lands_during_an_accept_survives_it() {
+        let home = temp_home("clobber");
+        let mut store = HoldStore::default();
+        let id = store.file(&inbound("the accept's delivery", None), "at");
+        store.save(&home).unwrap();
+        // The accept: take, then the run (the sleep here), then the
+        // re-file a refused accept does — each step its own locked unit.
+        let accept_home = home.clone();
+        let accept = std::thread::spawn(move || {
+            let hold = HoldStore::take_locked(&accept_home, &id)
+                .unwrap()
+                .expect("the accept's hold");
+            // The run, in flight while the connection files its own.
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            HoldStore::file_locked(&accept_home, &hold.to_inbound(), &hold.at).unwrap()
+        });
+        // Give the accept its take, then file as the webhook's other
+        // connection does.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let filed = HoldStore::file_locked(&home, &inbound("filed mid-accept", None), "at")
+            .expect("the filing");
+        let refiled = accept.join().unwrap();
+        let store = HoldStore::load(&home).unwrap();
+        let ids: Vec<&str> = store.holds.iter().map(|hold| hold.id.as_str()).collect();
+        assert!(
+            ids.contains(&filed.as_str()),
+            "the hold the sink filed during the accept was clobbered: {ids:?}"
+        );
+        assert!(ids.contains(&refiled.as_str()));
+        assert_eq!(store.holds.len(), 2);
         std::fs::remove_dir_all(&home).ok();
     }
 }

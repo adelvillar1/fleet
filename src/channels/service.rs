@@ -619,13 +619,8 @@ impl ChannelService {
         Arc::new(move |inbound: Inbound| {
             if hold_wanted(&home, &inbound.peer) {
                 let at = crate::boards::now_stamp();
-                match crate::channels::HoldStore::load(&home)
-                    .ok()
-                    .and_then(|mut store| {
-                        let id = store.file(&inbound, &at);
-                        store.save(&home).ok().map(|_| id)
-                    }) {
-                    Some(id) => record(
+                match crate::channels::HoldStore::file_locked(&home, &inbound, &at) {
+                    Ok(id) => record(
                         &home,
                         Activity {
                             at,
@@ -642,7 +637,7 @@ impl ChannelService {
                     // neither run nor vanish, so it is refused with the
                     // failure said in the log — the owner repairs the
                     // store, the peer is told to hold on.
-                    None => record(
+                    Err(_) => record(
                         &home,
                         Activity {
                             at,
