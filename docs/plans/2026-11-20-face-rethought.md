@@ -171,6 +171,22 @@ That is a surface rebuild with a permission control in the middle of it, so it
 lands as its own pass — the same way P0's topbar did — rather than as the tail
 of a long session.
 
+**2B started: the permission pair is one cycling chip.** `run-mode` was a
+`<select>` inside `run-perms`, so the two "controls" were one control with a
+menu — three sentences to read to change one word. It is now a press: ask →
+autonomous → full access → ask, and **full access is skipped entirely without a
+working folder**, so the cycle cannot arm a grant the server would refuse. The
+chip's word is its own answer; the sentence behind it rides the title.
+
+Coverage: the run bar had **no case at all** for any of its four controls. It
+now has three — the chip's cycle, the folder door and the document door —
+including a no-folder lap proving full access is out of the cycle.
+
+The fourth (the route picker) cannot be covered: the fixture answers a generic
+`div` for `run-provider` and never populates a select's options. Recorded as
+**KI-584** rather than asserted on a stub, which would have been a green check
+proving nothing.
+
 Next: P1 — the conversation: one field, the receipts gutter, fork-at-turn.
 
 ## Phases

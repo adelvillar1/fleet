@@ -562,18 +562,19 @@
                may go, which provider serves it, and where it works. Each
                is one field showing only its current value. -->
           <span class="foot-fields">
-            <label class="runbar-field perm-field" id="run-perms" data-mode="ask">
+            <!-- One press, one step: ask before \u2192 autonomous \u2192 full
+                 access \u2192 ask before. A menu would ask the owner to
+                 read three sentences to change one word; the chip says where
+                 you stand and moves. -->
+            <button type="button" class="runbar-field perm-field" id="run-perms"
+                    data-mode="ask" aria-label="how much runs before asking — press to change">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 3.5l7 3V12c0 4.3-3 7.4-7 8.5-4-1.1-7-4.2-7-8.5V6.5z"></path>
                 <path d="M9 12l2 2 4-4"></path>
               </svg>
-              <select id="run-mode" aria-label="how much runs before asking">
-                <option value="ask">Ask before</option>
-                <option value="auto">Autonomous</option>
-                <option value="full">Full access</option>
-              </select>
-            </label>
+              <span id="run-mode-label">Ask before</span>
+            </button>
             <label class="runbar-field runbar-route" title="pin a provider for this chat — applies to the next run">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

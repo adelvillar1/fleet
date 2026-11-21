@@ -11954,6 +11954,57 @@ async function theConnectCardSaysWhatHappened() {
     good && good.textContent);
 }
 
+// 2B: the four runbar controls had no case between them. Each is one press
+// that must change what the next run does — and a control nobody presses is a
+// control nobody knows is broken.
+async function theRunbarCoversItsFourControls() {
+  const page = boot({ documents: {} });
+  page.open();
+  await flush(220);
+  const chip = page.IDS['run-perms'];
+  const label = page.IDS['run-mode-label'];
+
+  // The permission chip cycles its word, and says where it stands.
+  const first = label ? String(label.textContent).trim() : '';
+  chip.click();
+  await flush(60);
+  const second = label ? String(label.textContent).trim() : '';
+  check('2B the permission chip cycles its word on one press',
+    first === 'Ask before' && second !== first, first + ' -> ' + second);
+  check('2B the chip records the mode it landed on',
+    chip.dataset.mode && chip.dataset.mode !== 'ask', 'data-mode=' + chip.dataset.mode);
+
+  // Without a working folder, full access is not in the cycle at all.
+  chip.click();
+  await flush(60);
+  chip.click();
+  await flush(60);
+  check('2B no folder keeps full access out of the cycle',
+    chip.dataset.mode !== 'full',
+    'landed on ' + chip.dataset.mode + ' after a full lap');
+
+  // The route picker: pinning a provider records the pin on the face and marks
+  // the field active, which is what the collapsed icon reads.
+  // The route picker is NOT asserted here: the fixture cannot represent it.
+  // `page.IDS['run-provider']` answers a generic div, and a select's options
+  // are never populated, so any assertion would pass on a stub rather than on
+  // the control. Recorded as KI-584 — the honest gap, not a green check.
+
+  // The folder door opens the picker it names.
+  page.IDS['run-folder'].click();
+  await flush(120);
+  check('2B the folder door opens the folder picker',
+    page.IDS['folder-pop'].hidden === false,
+    'hidden=' + page.IDS['folder-pop'].hidden);
+
+  // The document door opens the document picker.
+  page.IDS['doc-open'].click();
+  await flush(120);
+  check('2B the document door opens the document picker',
+    page.IDS['doc-pop'].hidden === false,
+    'hidden=' + page.IDS['doc-pop'].hidden);
+}
+
 // P0 of the face rethink: the topbar tells the truth or keeps quiet. A fresh
 // home has no route, no run and nothing measured — so it carries no pills and
 // no zeroes. A strip of "no route yet · 0 · 0% · idle" reads like a fault
@@ -16661,6 +16712,7 @@ const cases = [
   ['CA3/CA4 the run-scoped controls say their scope', theRunScopedControlsSayTheirScope],
   ['CA-C3 the connect card says what happened', theConnectCardSaysWhatHappened],
   ['P0 the topbar keeps quiet on a fresh home', theTopbarKeepsQuietOnAFreshHome],
+  ['2B the runbar covers its four controls', theRunbarCoversItsFourControls],
   ['SWEEP every settings press acts or answers', everySettingsPressSaysSomething],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],

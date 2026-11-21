@@ -1255,7 +1255,7 @@ import { node, svg, clip } from './core/dom.js';
     workingLiveText: document.getElementById('working-live-text'),
     workingStop: document.getElementById('working-stop'),
     runPerms: document.getElementById('run-perms'),
-    runMode: document.getElementById('run-mode'),
+    runModeLabel: document.getElementById('run-mode-label'),
     runProvider: document.getElementById('run-provider'),
     runFolder: document.getElementById('run-folder'),
     docOpen: document.getElementById('doc-open'),
@@ -11090,15 +11090,11 @@ import { node, svg, clip } from './core/dom.js';
   // "auto" is the empty pin, and the destructive class still asks under
   // autonomous.
   function paintRunbar() {
-    if (!el.runMode && !el.runProvider) return;
-    // Full access is a grant only a working folder can bound: the option
-    // is disabled without one, and a mode left on full from before the
-    // folder was cleared falls back to ask rather than arming a run the
-    // server would refuse.
-    var full = el.runMode ? el.runMode.querySelector('option[value="full"]') : null;
-    if (full) full.disabled = !face.folder;
+    if (!el.runPerms && !el.runProvider) return;
+    // Full access is a grant only a working folder can bound, so a mode left
+    // on full from before the folder was cleared falls back to ask rather
+    // than arming a run the server would refuse.
     if (!face.folder && face.permissions === 'full') face.permissions = 'ask';
-    if (el.runMode) el.runMode.value = face.permissions;
     var modes = {
       ask: 'every tool call asks, except the rules you have remembered',
       auto: 'everything runs except the destructive class, which still asks',
@@ -11110,6 +11106,12 @@ import { node, svg, clip } from './core/dom.js';
     var scope = ' \u00b7 applies to the next run';
     if (el.runPerms) {
       el.runPerms.dataset.mode = face.permissions;
+      el.runPerms.setAttribute('aria-disabled', 'false');
+      if (el.runModeLabel) {
+        el.runModeLabel.textContent =
+          { ask: 'Ask before', auto: 'Autonomous', full: 'Full access' }[face.permissions] ||
+          'Ask before';
+      }
       el.runPerms.title = (modes[face.permissions] || 'how much runs before asking') + scope;
       if (!face.folder) el.runPerms.title += '; full access needs a working folder';
     }
@@ -11355,9 +11357,18 @@ import { node, svg, clip } from './core/dom.js';
       .catch(function () { });
   }
 
-  if (el.runMode) {
-    el.runMode.addEventListener('change', function () {
-      face.permissions = el.runMode.value;
+  // The permission chip: one press, one step. Full access is skipped when no
+  // working folder bounds it, so the cycle can never arm a grant the server
+  // would refuse — and the title says why the step is missing.
+  if (el.runPerms) {
+    el.runPerms.addEventListener('click', function () {
+      var order = face.folder ? ['ask', 'auto', 'full'] : ['ask', 'auto'];
+      var at = order.indexOf(face.permissions);
+      face.permissions = order[(at + 1) % order.length];
+      // The chip is its own answer: the word changes, and paintRunbar puts the
+      // sentence that word stands for in the title. Nothing else is said —
+      // `say` belongs to the settings cards, and a second line here would be
+      // the same sentence in two voices.
       paintRunbar();
     });
   }
