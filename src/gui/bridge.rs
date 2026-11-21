@@ -8965,7 +8965,7 @@ fn parse_capability(word: &str) -> Result<crate::channels::Capability, String> {
         "task" | "act" => Ok(crate::channels::Capability::Task),
         "observe" | "listen" => Ok(crate::channels::Capability::Observe),
         other => Err(format!(
-            "`{other}` is not a capability; `task` acts, `observe` listens"
+            "`{other}` is not a capability; a peer `acts` (task) or `listens` (observe)"
         )),
     }
 }
@@ -9015,8 +9015,8 @@ fn channels_read(home: &std::path::Path) -> Value {
                             "name": peer.name,
                             "device_class": peer.device_class,
                             "capability": match peer.capability {
-                                crate::channels::Capability::Task => "task",
-                                crate::channels::Capability::Observe => "observe",
+                                crate::channels::Capability::Task => "acts",
+                                crate::channels::Capability::Observe => "listens",
                             },
                             "paired": peer.created_at,
                             "last_heard": last_stamp(&peer.id, &["delivery", "refusal"]),
@@ -9110,8 +9110,8 @@ fn access_read(home: &std::path::Path) -> Value {
                                 "id": peer.id,
                                 "name": peer.name,
                                 "capability": match peer.capability {
-                                    crate::channels::Capability::Task => "may act",
-                                    crate::channels::Capability::Observe => "may only listen",
+                                    crate::channels::Capability::Task => "acts",
+                                    crate::channels::Capability::Observe => "listens",
                                 },
                                 "paired": peer.created_at,
                             })
@@ -17658,12 +17658,12 @@ mod tests {
             .find(|peer| peer["channel"] == "telegram")
             .expect("the telegram peer is named");
         assert_eq!(telegram_peer["id"], "4242");
-        assert_eq!(telegram_peer["capability"], "may only listen");
+        assert_eq!(telegram_peer["capability"], "listens");
         let webhook_peer = peers
             .iter()
             .find(|peer| peer["channel"] == "webhook")
             .expect("the webhook peer is named");
-        assert_eq!(webhook_peer["capability"], "may act");
+        assert_eq!(webhook_peer["capability"], "acts");
         std::fs::remove_dir_all(&home).ok();
     }
 
