@@ -13,12 +13,15 @@ dashboards see the same keys: `http_status`, `latency_ms`, `retries`,
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import json
 import os
 import re
+import select
 import socket
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -991,7 +994,12 @@ def _laya_wire(pid: str):
 
     The precedent is `_gliner_wire`'s subprocess leg (`decide_1b`): the model
     is loaded by the venv's own interpreter, in-process, with no HTTP hop and
-    no wire to re-encode. The difference is what the answer carries — laya
+    no wire to re-encode. One difference is forced by measurement: the child
+    is RESIDENT (`_LayaChild`), not one per call. Loading the reader peaks at
+    4.3 GiB and settles at 1.73 GiB, so a reload per call would put every
+    classify over `footprint.rs`'s 2 GiB ceiling; one load per lane lifetime
+    pays that transient once. The other difference is what the answer carries
+    — laya
     answers with a conformal `prediction_set`, a calibrated `abstain`, an
     `unbound` flag and a `route` word beside `choice`/`score`/`noul`, and all
     of them ride the Answer dict, because a wire that flattened them into
@@ -1030,38 +1038,17 @@ def _laya_wire(pid: str):
                 f"Laya venv not found at {venv_python} — `fleet install --provider laya` builds it"
             )
 
-        model = str(pcfg.get("laya_model") or "")
         max_chars = int(pcfg.get("laya_max_chars") or 200_000)
-        timeout = float(pcfg.get("laya_timeout_seconds") or 180)
         t0 = time.monotonic()
-        proc = subprocess.run(
-            [
-                str(venv_python),
-                "-c",
-                _LAYA_INLINE,
-                model,
-                text[:max_chars],
-                json.dumps(questions),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            parsed = _laya_child(cfg).ask(text[:max_chars], questions)
+        except Exception as exc:
+            telemetry["error_kind"] = "child"
+            telemetry["structured_ok"] = False
+            raise RuntimeError(f"Laya failed: {str(exc)[:300]}") from exc
         telemetry["latency_ms"] = int((time.monotonic() - t0) * 1000)
         telemetry["retries"] = 0
         telemetry["mode"] = "in-process"
-        if proc.returncode != 0:
-            telemetry["error_kind"] = "subprocess"
-            telemetry["stderr"] = (proc.stderr or "")[:300]
-            telemetry["structured_ok"] = False
-            raise RuntimeError(f"Laya failed: {(proc.stderr or '')[:300]}")
-        try:
-            parsed = json.loads(proc.stdout)
-        except json.JSONDecodeError:
-            telemetry["error_kind"] = "json"
-            telemetry["structured_ok"] = False
-            telemetry["stdout"] = (proc.stdout or "")[:200]
-            raise RuntimeError(f"Laya returned non-JSON: {(proc.stdout or '')[:200]!r}")
         if isinstance(parsed, dict) and parsed.get("error"):
             telemetry["error_kind"] = "provider"
             telemetry["structured_ok"] = False
@@ -1074,6 +1061,10 @@ def _laya_wire(pid: str):
                 usage.get("output_tokens") or 0
             )
         telemetry["structured_ok"] = True
+        # The child's own high-water mark, carried out on telemetry so the
+        # readiness probe can report the load transient without sampling.
+        if parsed.get("peak_rss_mib") is not None:
+            telemetry["peak_rss_mib"] = parsed["peak_rss_mib"]
         out = parse_laya(parsed, heads, questions)
         telemetry["abstained"] = sum(
             1 for a in out.values() if a.get("_declined") and "abstain" in str(a.get("_declined"))
@@ -1117,36 +1108,240 @@ def laya_questions(heads: list[Head]) -> dict[str, dict]:
     return out
 
 
-# The in-process leg: laya loaded by its own venv's interpreter. stdout is
-# captured while the model loads so a library banner cannot corrupt the
-# JSON the wire reads (the `_LOCAL_INLINE` precedent).
-_LAYA_INLINE = r"""
+# The resident child's own program: laya loaded ONCE by its venv's
+# interpreter, then one JSON line in and one out per ask.
+#
+# The model load is the reason this is a child rather than a per-call
+# subprocess: measured on this machine, loading the 0.8B reader peaks at
+# 4.3 GiB and settles at 1.73 GiB, so a reload per call would put every
+# classify over `footprint.rs`'s 2 GiB per-tree ceiling. A resident child
+# pays that once per lane lifetime and stays under it afterwards. The pipe
+# keeps it off the network (the `_LOCAL_INLINE` precedent's shape, held
+# open), and the child exits on stdin EOF, so it cannot outlive the lane.
+#
+# stdout is swapped for a buffer while the library loads — a banner or a
+# progress bar must not corrupt the protocol stream — and the protocol
+# writes through the saved handle.
+_LAYA_CHILD_PROGRAM = r"""
 import io, json, sys
 
-old_stdout = sys.stdout
+protocol = sys.stdout
 sys.stdout = io.StringIO()
+
+def reply(payload):
+    protocol.write(json.dumps(payload, default=str) + "\n")
+    protocol.flush()
 
 try:
     import laya
-
-    model = sys.argv[1]
-    text = sys.argv[2]
-    questions = json.loads(sys.argv[3])
-
-    agent = laya.Agent(model_id_or_path=model) if model else laya.Agent()
-    out = agent.predict(text, questions)
-    result = {
-        "answers": out.get("answers") or {},
-        "usage": out.get("usage") or {},
-        "latency_ms": out.get("latency_ms"),
-        "mode": out.get("mode"),
-    }
 except Exception as exc:
-    result = {"error": "%s: %s" % (type(exc).__name__, exc)}
+    reply({"ready": False, "error": "%s: %s" % (type(exc).__name__, exc)})
+    raise SystemExit(1)
 
-sys.stdout = old_stdout
-print(json.dumps(result, default=str))
+def _peak_mib():
+    # This process's peak resident size in MiB (macOS reports bytes).
+    try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except Exception:
+        return None
+    if not peak:
+        return None
+    divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
+    return round(peak / divisor, 1)
+
+
+model = sys.argv[1] if len(sys.argv) > 1 else ""
+agent = None
+reply({"ready": True})
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        request = json.loads(line)
+    except Exception as exc:
+        reply({"error": "bad request: %s" % exc})
+        continue
+    if request.get("op") == "close":
+        break
+    if request.get("op") == "ping":
+        reply({"pong": True, "loaded": agent is not None})
+        continue
+    try:
+        if agent is None:
+            agent = laya.Agent(model_id_or_path=model) if model else laya.Agent()
+        out = agent.predict(request["text"], request["questions"])
+        reply({
+            "answers": out.get("answers") or {},
+            "usage": out.get("usage") or {},
+            "latency_ms": out.get("latency_ms"),
+            "mode": out.get("mode"),
+            # The child measures its OWN high-water mark: a parent's
+            # RUSAGE_CHILDREN only counts children it has reaped, and a
+            # resident child is never reaped while it matters.
+            "peak_rss_mib": _peak_mib(),
+        })
+    except Exception as exc:
+        reply({"error": "%s: %s" % (type(exc).__name__, exc)})
 """
+
+
+class _LayaChild:
+    """
+    One laya model, loaded once, in a child process the lane owns.
+
+    Spawned lazily on the first ask and reused for every later one — the
+    "lazy singleton load" the wire needs, without importing laya into a
+    process whose interpreter cannot see it and without a server to
+    supervise. The protocol is one JSON line in, one out; the child exits
+    when this process closes its stdin, so a lane that dies takes its model
+    with it and leaves no orphan.
+
+    A child that has died is killed, forgotten and re-spawned exactly once
+    per ask: a wedged model is a named failure after that, never a silent
+    retry loop.
+    """
+
+    def __init__(self, python: Path, model: str, timeout: float):
+        self.python = python
+        self.model = model
+        self.timeout = timeout
+        self._proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def _spawn(self) -> subprocess.Popen:
+        proc = subprocess.Popen(
+            [str(self.python), "-u", "-c", _LAYA_CHILD_PROGRAM, self.model],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        ready = self._read_line(proc)
+        if not ready or not ready.get("ready"):
+            self._kill()
+            raise RuntimeError(
+                "laya child failed to start: "
+                + str((ready or {}).get("error") or "no handshake")
+            )
+        return proc
+
+    def _read_line(self, proc: subprocess.Popen) -> dict | None:
+        """One protocol line, bounded. `None` when the pipe closed."""
+        stream = proc.stdout
+        if stream is None:
+            return None
+        ready, _, _ = select.select([stream], [], [], self.timeout)
+        if not ready:
+            raise TimeoutError(f"laya child did not answer within {self.timeout:.0f}s")
+        line = stream.readline()
+        if not line:
+            return None
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            raise RuntimeError(f"laya child answered non-JSON: {line[:160]!r}")
+
+    def _kill(self) -> None:
+        proc, self._proc = self._proc, None
+        if proc is None:
+            return
+        for pipe in (proc.stdin, proc.stdout):
+            try:
+                if pipe:
+                    pipe.close()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        self._kill()
+
+    # -- the ask -----------------------------------------------------------
+
+    def ask(self, text: str, questions: dict) -> dict:
+        """One classify, over the resident model. Re-spawns once on a dead child."""
+        with self._lock:
+            last: Exception | None = None
+            for attempt in range(2):
+                if self._proc is None or self._proc.poll() is not None:
+                    self._proc = self._spawn()
+                proc = self._proc
+                try:
+                    assert proc.stdin is not None
+                    proc.stdin.write(json.dumps({"text": text, "questions": questions}) + "\n")
+                    proc.stdin.flush()
+                    reply = self._read_line(proc)
+                    if reply is None:
+                        raise RuntimeError("laya child closed its pipe")
+                    return reply
+                except Exception as exc:  # a dead or wedged child is replaced once
+                    last = exc
+                    self._kill()
+            raise RuntimeError(f"laya child failed twice: {last}")
+
+    def rss_mib(self) -> float | None:
+        """The child's current resident size, from `ps` — the steady number."""
+        proc = self._proc
+        if proc is None or proc.poll() is not None:
+            return None
+        try:
+            out = subprocess.run(
+                ["ps", "-o", "rss=", "-p", str(proc.pid)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            kib = int((out.stdout or "0").split()[0])
+        except Exception:
+            return None
+        return round(kib / 1024, 2) if kib else None
+
+
+# The resident children, keyed by (interpreter, model): one per lane, so a
+# second call never pays the load and a model change never reuses the wrong
+# weights.
+_LAYA_CHILDREN: dict[tuple[str, str], _LayaChild] = {}
+_LAYA_CHILDREN_LOCK = threading.Lock()
+
+
+def _laya_child(cfg: dict) -> _LayaChild:
+    """The resident child for this config, spawned on first use."""
+    python = _laya_venv_python(cfg)
+    model = str(cfg["providers"].get("laya_model") or "")
+    timeout = float(cfg["providers"].get("laya_timeout_seconds") or 180)
+    key = (str(python), model)
+    with _LAYA_CHILDREN_LOCK:
+        child = _LAYA_CHILDREN.get(key)
+        if child is None:
+            child = _LayaChild(python, model, timeout)
+            _LAYA_CHILDREN[key] = child
+        else:
+            child.timeout = timeout
+        return child
+
+
+def _close_laya_children() -> None:
+    """Close every resident child — the lane's exit path, and the tests'."""
+    with _LAYA_CHILDREN_LOCK:
+        children = list(_LAYA_CHILDREN.values())
+        _LAYA_CHILDREN.clear()
+    for child in children:
+        child.close()
+
+
+atexit.register(_close_laya_children)
 
 
 # ── ModernBERT eval provider (sentence-encoder similarity, no fine-tuning) ────

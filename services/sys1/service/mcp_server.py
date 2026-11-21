@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 
 def _add_sys1_src_to_path() -> None:
@@ -36,6 +37,127 @@ def task_for_arguments(arguments: dict, task_from_spec):
     if isinstance(spec, dict) and spec.get("id"):
         return task_from_spec(spec)
     return arguments.get("task", "change")
+
+
+# The probe's state: a short route-evidence record in the same shape the
+# judge's ask carries, so the round-trip exercises the real question rather
+# than a toy one. Its LABEL is never asserted — an engine may answer any
+# workload or abstain, and both are legal (KI-030: the handshake is not
+# provider health, and a probe must not pin the answer it hopes for).
+PROBE_STATE = (
+    "the workload shape the router judged: quick\n"
+    "how: judged\n"
+    "sys1 verdict: pass\n"
+    "reason: a single-file edit, small diff\n"
+    "model: glide\n"
+    "provider that served: glide\n"
+    "attempts, in order:\n- glide served ok\n"
+    "input chars: 412\n"
+    "input hash: 8f2c1a9b4d5e6f70\n"
+    "the run's outcome: ok (completed)\n"
+)
+
+
+def probe_providers(cfg: dict) -> dict:
+    """
+    The per-provider readiness report: `{provider_id: {name, available,
+    reason, …}}`, the shape Fleet's `parse_health_map` already renders
+    beside sdm1's and sem1's rows.
+
+    Laya is the one provider with a real round-trip here, because it is the
+    one whose availability is a model in a venv rather than a key in the
+    environment: `available` means a typed answer came back from
+    `laya.Agent().predict(...)` — venv ok, model loaded, the parse survived
+    — and `reason` carries the measured facts (the answer or the abstain,
+    the latency, the child's peak RSS). An abstain is a PASS: the engine
+    saying it should not decide is the semantics this provider was chosen
+    for, not a failure of the probe.
+    """
+    from sys1 import providers
+    from sys1.tasks import get_task
+
+    provider = providers.REGISTRY.get("laya")
+    if provider is None:
+        return {}
+    entry: dict = {"name": provider.name, "available": False, "reason": "not registered"}
+    venv = providers._laya_venv(cfg)
+    entry["venv"] = str(venv)
+    if not providers._laya_installed(cfg):
+        entry["reason"] = (
+            f"venv not installed in {venv} — `fleet install --provider laya` builds it"
+        )
+        return {"laya": entry}
+
+    task = get_task("route")
+    head = next((h for h in task.heads if h.id == "workload"), None)
+    if head is None:  # pragma: no cover — the task registry owns this head
+        entry["reason"] = "the route task carries no workload head"
+        return {"laya": entry}
+
+    telemetry: dict = {}
+    started = time.monotonic()
+    try:
+        answers = provider.classify(PROBE_STATE, [head], cfg, telemetry)
+    except Exception as exc:
+        entry["reason"] = f"venv ok, the round-trip failed: {str(exc)[:200]}"
+        entry["latency_ms"] = int((time.monotonic() - started) * 1000)
+        return {"laya": entry}
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    answer = answers.get("workload") or {}
+    label = answer.get("label")
+    confidence = answer.get("confidence")
+    declined = answer.get("_declined")
+
+    if label is None:
+        # An abstain (or a decline) is legal and is a PASS: the engine
+        # answered with a refusal rather than a confident wrong label.
+        entry["available"] = bool(declined) and telemetry.get("structured_ok", False)
+        entry["answer"] = "abstained"
+        said = answer.get("route_reason") or declined or "no label"
+        entry["reason"] = f"venv ok · model loaded · abstained ({said}) · {elapsed_ms} ms"
+    elif label not in head.labels:
+        entry["available"] = False
+        entry["answer"] = label
+        entry["reason"] = f"answered `{label}`, which is not in the head's declared set"
+    else:
+        entry["available"] = True
+        entry["answer"] = label
+        entry["confidence"] = confidence
+        prediction_set = answer.get("prediction_set")
+        extra = f" · set {len(prediction_set)}" if isinstance(prediction_set, list) else ""
+        entry["reason"] = (
+            f"venv ok · model loaded · answered {label} @ "
+            f"{confidence if confidence is not None else 'no confidence'}"
+            f"{extra} · {elapsed_ms} ms"
+        )
+    # Two memory facts, kept apart because they answer different questions:
+    # the child's load transient (a high-water mark, over the 2 GiB ceiling
+    # and paid once per lane lifetime) and its resident size now (what a
+    # running lane actually holds). Reporting one as the other is how a
+    # footprint claim goes wrong. Both come from the child itself: a parent's
+    # RUSAGE_CHILDREN only counts children it has reaped, and a resident
+    # child is never reaped while it matters.
+    peak = telemetry.get("peak_rss_mib")
+    steady = None
+    try:
+        steady = providers._laya_child(cfg).rss_mib()
+    except Exception:
+        steady = None
+    if steady is not None:
+        entry["rss_mib"] = steady
+    if peak is not None:
+        entry["peak_rss_mib"] = peak
+    memory = []
+    if steady is not None:
+        memory.append(f"RSS {steady} MiB")
+    if peak is not None:
+        memory.append(f"load peak {peak} MiB")
+    if memory:
+        entry["reason"] += " · " + " · ".join(memory)
+    entry["latency_ms"] = elapsed_ms
+    entry["mode"] = telemetry.get("mode")
+    return {"laya": entry}
 
 
 def main() -> None:
@@ -187,6 +309,17 @@ def main() -> None:
                             }
                         ]
                     ),
+                    {
+                        "name": "sys1_probe",
+                        "description": (
+                            "The lane's PROVIDER-level readiness report: for each provider whose "
+                            "availability is a model rather than a key, one real typed round-trip "
+                            "and the facts it measured (venv, model loaded, the answer or the "
+                            "abstain, latency, the child's peak RSS). The MCP handshake says the "
+                            "lane answers, not that its providers do — this is the difference."
+                        ),
+                        "inputSchema": {"type": "object", "properties": {}},
+                    },
                 ],
             })
         elif method == "tools/call":
@@ -207,6 +340,20 @@ def main() -> None:
                     result = {"ok": False, "code": "internal", "reason": str(exc)}
                 respond(req_id, {
                     "content": [{"type": "text", "text": json.dumps(result)}],
+                })
+                continue
+
+            if tool_name == "sys1_probe":
+                # KI-030: the handshake proves the lane answers; this is
+                # the provider-level truth beside it. Never raises: a
+                # provider that cannot answer is an entry with a reason,
+                # which is what the card renders.
+                try:
+                    report = probe_providers(cfg)
+                except Exception as exc:  # pragma: no cover — transport boundary
+                    report = {"laya": {"name": "Laya", "available": False, "reason": str(exc)}}
+                respond(req_id, {
+                    "content": [{"type": "text", "text": json.dumps(report)}],
                 })
                 continue
 

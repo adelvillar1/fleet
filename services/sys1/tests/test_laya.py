@@ -21,6 +21,7 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "src"))
+sys.path.insert(0, os.path.join(ROOT, "service"))
 
 from sys1 import providers  # noqa: E402
 from sys1.parsers import parse_laya  # noqa: E402
@@ -267,6 +268,37 @@ class TheAnswersLayaGives(unittest.TestCase):
         self.assertIsNone(out["workload"]["confidence"])
 
 
+class TheReadinessProbe(unittest.TestCase):
+    """KI-030: the handshake says the lane answers, never that a provider does."""
+
+    def test_a_missing_venv_is_the_probes_honest_failure(self):
+        import mcp_server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = _cfg(laya_venv=str(Path(tmp) / "absent"), laya_api_url="")
+            report = mcp_server.probe_providers(cfg)
+        entry = report["laya"]
+        self.assertFalse(entry["available"])
+        self.assertIn("not installed", entry["reason"])
+        self.assertIn("fleet install --provider laya", entry["reason"])
+        # The shape Fleet's parse_health_map reads: a name, a bool, a reason.
+        self.assertIsInstance(entry["name"], str)
+        self.assertIsInstance(entry["available"], bool)
+        self.assertIsInstance(entry["reason"], str)
+
+    def test_the_probe_reports_the_route_head_not_a_toy_question(self):
+        """The round trip asks the workload head the router actually asks."""
+        import mcp_server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = _cfg(laya_venv=str(Path(tmp) / "absent"), laya_api_url="")
+            # The probe refuses before it asks; the state it WOULD send is
+            # the judge's own evidence record, not a toy string.
+            self.assertIn("the workload shape the router judged", mcp_server.PROBE_STATE)
+            self.assertIn("the run's outcome", mcp_server.PROBE_STATE)
+            self.assertEqual(mcp_server.probe_providers(cfg)["laya"]["available"], False)
+
+
 def _laya_venv_python() -> Path:
     cfg = providers.load_config()
     return providers._laya_venv_python(cfg)
@@ -310,6 +342,45 @@ class TheLiveRoundTrip(unittest.TestCase):
             self.assertIn(field, answer, f"{field} missing from {answer}")
         self.assertIn("probabilities", answer)
         self.assertEqual(len(answer["probabilities"]), len(heads[0].labels))
+
+    def test_the_probe_reports_a_typed_round_trip_and_both_memory_facts(self):
+        import mcp_server
+
+        cfg = providers.load_config()
+        entry = mcp_server.probe_providers(cfg)["laya"]
+        self.assertTrue(entry["available"], entry)
+        self.assertIn("venv ok", entry["reason"])
+        self.assertIn("model loaded", entry["reason"])
+        # An abstain is a PASS: the engine declining to decide is the
+        # semantics, not a failure of the probe.
+        self.assertIn(entry["answer"], {"abstained"} | set(heads_labels()))
+        # Two memory facts, never conflated: the load transient (a
+        # high-water mark) and the resident size now.
+        self.assertIn("peak_rss_mib", entry, entry)
+        self.assertIn("rss_mib", entry, entry)
+        self.assertLess(entry["rss_mib"], entry["peak_rss_mib"])
+
+    def test_the_resident_child_is_reused_and_dies_on_close(self):
+        from sys1.tasks import get_task
+
+        cfg = providers.load_config()
+        head = next(h for h in get_task("route").heads if h.id == "workload")
+        text = "the workload shape the router judged: quick\nthe run's outcome: ok\n"
+        first = providers.REGISTRY["laya"].classify(text, [head], cfg, {})
+        child = providers._laya_child(cfg)
+        pid = child._proc.pid
+        second = providers.REGISTRY["laya"].classify(text, [head], cfg, {})
+        self.assertEqual(providers._laya_child(cfg)._proc.pid, pid, "one child, reused")
+        self.assertEqual(set(first), set(second))
+        providers._close_laya_children()
+        self.assertIsNone(child._proc, "closing forgets the child")
+        self.assertNotIn((str(providers._laya_venv_python(cfg)), str(cfg["providers"].get("laya_model") or "")), providers._LAYA_CHILDREN)
+
+
+def heads_labels():
+    from sys1.tasks import get_task
+
+    return [h.id for h in get_task("route").heads]
 
 
 if __name__ == "__main__":

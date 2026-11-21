@@ -657,7 +657,7 @@ def _laya_answer(head: Head, raw: Any, head_spec: dict) -> Answer:
                 "type": "noul",
                 "noul": None,
                 "probabilities": probs,
-                "_declined": f"laya {reason}",
+                "_declined": f"laya abstained: {reason}",
             }
         else:
             # No `confidence`: the probability of "true" IS the answer, and
@@ -676,7 +676,7 @@ def _laya_answer(head: Head, raw: Any, head_spec: dict) -> Answer:
                 "score": None,
                 "confidence": None,
                 "probabilities": probs,
-                "_declined": f"laya {reason}" if abstained else "no-score",
+                "_declined": f"laya abstained: {reason}" if abstained else "no-score",
             }
             answer.update(extras)
             return answer
@@ -702,7 +702,7 @@ def _laya_answer(head: Head, raw: Any, head_spec: dict) -> Answer:
             "label": None,
             "confidence": None,
             "probabilities": probs,
-            "_declined": f"laya {reason}",
+            "_declined": f"laya abstained: {reason}",
         }
         answer.update(extras)
         return answer

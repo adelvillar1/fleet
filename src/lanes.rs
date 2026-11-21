@@ -103,7 +103,13 @@ pub const LANES: &[Lane] = &[
             // child's own config loader picks the names out.
             "SYS1_",
         ],
-        health_tools: &[],
+        // KI-030: sys1 declared none until its first provider whose
+        // availability is a MODEL rather than a key. Laya runs in-process
+        // in its own venv, so nothing on the wire says whether it answers
+        // — `sys1_probe` does: one real typed round-trip, plus the venv,
+        // the loaded model, the latency and the child's peak RSS. The
+        // report rides `parse_health_map` beside sdm1's and sem1's rows.
+        health_tools: &["sys1_probe"],
     },
     Lane {
         name: "sdm1",
@@ -613,7 +619,12 @@ pub fn choices(lane: &str) -> Vec<LaneChoice> {
                 ),
                 choice("TOGETHER_API_KEY", "TOGETHER_API_KEY", "tev1", "key_env"),
                 choice("laya", "laya", "laya", "provider"),
-                choice("convai/laya", "laya", "laya", "model"),
+                // The provider's default is the library's own engine
+                // (`laya.Agent()`); naming one of its classic encoders
+                // switches the answer shape, so the card says so.
+                choice("laya engine (default)", "laya engine", "laya", "model"),
+                // The served-shape fallback the vendor entry assumed —
+                // used only when the venv is absent and this answers.
                 choice(
                     "http://127.0.0.1:8454/v1/chat/completions",
                     "laya loopback",
@@ -1628,7 +1639,11 @@ mod tests {
         assert_eq!(lane("blend1").health_tools, &["doctor"]);
         assert_eq!(lane("sdm1").health_tools, &["sdm1_health"]);
         assert_eq!(lane("sem1").health_tools, &["sem1_probe"]);
-        for name in ["sys1", "gen1", "browser"] {
+        // sys1's first provider whose availability is a model, not a key:
+        // the handshake cannot say whether laya answers, so the lane
+        // declares the tool that does.
+        assert_eq!(lane("sys1").health_tools, &["sys1_probe"]);
+        for name in ["gen1", "browser"] {
             assert!(
                 lane(name).health_tools.is_empty(),
                 "{name} exposes no provider health tool"
@@ -1656,6 +1671,45 @@ mod tests {
         assert_eq!(parsed[1].lane, "TabPFN v2");
         assert!(parse_health_map("not json").is_empty());
         assert!(parse_health_map("[1, 2]").is_empty());
+    }
+
+    /// sys1's own report carries more than the card draws — the venv, the
+    /// answer, the latency, the two memory facts — and every extra key is
+    /// ignored: the row is the name, the bool and the reason, exactly as
+    /// sdm1's and sem1's are.
+    #[test]
+    fn the_laya_row_renders_from_the_probes_own_report() {
+        let report = r#"{
+            "laya": {
+                "name": "Laya (Convai, in-process)",
+                "available": true,
+                "reason": "venv ok · model loaded · abstained (the engine abstains at risk 0.1) · 204 ms · RSS 541 MiB · load peak 4804.5 MiB",
+                "venv": "/Users/x/.fleet/venvs/laya",
+                "answer": "abstained",
+                "rss_mib": 541.34,
+                "peak_rss_mib": 4804.5,
+                "latency_ms": 204,
+                "mode": "in-process"
+            }
+        }"#;
+        let parsed = parse_health_map(report);
+        assert_eq!(parsed.len(), 1, "{parsed:?}");
+        assert_eq!(parsed[0].provider, "laya");
+        assert_eq!(parsed[0].lane, "Laya (Convai, in-process)");
+        assert!(parsed[0].available);
+        // The measured facts ride the reason, which is the card's own text.
+        for fact in ["venv ok", "model loaded", "abstained", "RSS", "load peak"] {
+            assert!(parsed[0].reason.contains(fact), "{}", parsed[0].reason);
+        }
+        // A missing venv is a row, not a missing row: the reason names the
+        // press, and the card draws it as unavailable.
+        let absent = parse_health_map(
+            r#"{"laya": {"name": "Laya", "available": false,
+                          "reason": "venv not installed in /x — `fleet install --provider laya` builds it"}}"#,
+        );
+        assert_eq!(absent.len(), 1);
+        assert!(!absent[0].available);
+        assert!(absent[0].reason.contains("fleet install --provider laya"));
     }
 
     #[test]
