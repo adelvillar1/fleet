@@ -12118,6 +12118,59 @@ async function theBoardColumnsEqualTheDerivedStates() {
     JSON.stringify(distinct));
 }
 
+// P2's third acceptance: the desk's made-here list is the session's log's
+// own artifact set and nothing else. The list derives from the state
+// document's deliverables (the log's own send_file records) and the log's
+// artifact events, deduped by path — so a name the log named twice stands
+// once, every name the log named stands, and a name the log never named
+// stands nowhere.
+async function theDeskListsEveryArtifactTheLogNames() {
+  const log = {
+    deliverables: [
+      { path: '/repo/the-notes.md', size: 12, note: '', from: 'archivist' },
+      { path: '/repo/frame.png', size: 4096, note: 'the cover', from: 'designer' },
+    ],
+    events: [
+      { type: 'artifact', path: '/repo/summary.txt', size: 88, note: 'handed over' },
+      { type: 'artifact', path: '/repo/the-notes.md', size: 12, note: 'again' },
+    ],
+  };
+  const named = ['/repo/the-notes.md', '/repo/frame.png', '/repo/summary.txt'];
+  const page = boot({
+    hash: '#/sessions/desk-1',
+    documents: {
+      state: (asked) => ({
+        ...emptyState(asked),
+        deliverables: log.deliverables,
+        events: log.events,
+      }),
+    },
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'receipts' },
+  });
+  await flush();
+  page.open();
+  await flush(180);
+  const rows = page.IDS['thread-pane-list'].querySelectorAll('.thread-row');
+  const madeRows = rows.filter((one) => {
+    const kind = one.querySelector('.thread-kind');
+    return kind && kind.textContent === 'deliverable';
+  });
+  const labels = madeRows.map((one) => one.querySelector('.thread-label').textContent);
+  check('P2 the made-here list is exactly the log\u2019s artifacts, once each',
+    labels.length === named.length &&
+      JSON.stringify(labels.slice().sort()) ===
+        JSON.stringify(named.map((path) => path.split('/').pop()).sort()),
+    JSON.stringify(labels));
+  named.forEach((path) => {
+    const name = path.split('/').pop();
+    check('P2 the log\u2019s ' + name + ' stands in the made-here list',
+      page.IDS['thread-pane-list'].textContent.includes(name), 'absent');
+  });
+  check('P2 a name the log never named stands nowhere in the list',
+    !page.IDS['thread-pane-list'].textContent.includes('ghost.md'),
+    'the phantom stood in the list');
+}
+
 // P0 of the face rethink: the topbar tells the truth or keeps quiet. A fresh
 // home has no route, no run and nothing measured — so it carries no pills and
 // no zeroes. A strip of "no route yet · 0 · 0% · idle" reads like a fault
@@ -16828,6 +16881,7 @@ const cases = [
   ['2B the runbar covers its four controls', theRunbarCoversItsFourControls],
   ['P2 an interrupted row says so in words', anInterruptedRowSaysSoInWords],
   ['P2 the board\u2019s columns equal the derived states', theBoardColumnsEqualTheDerivedStates],
+  ['P2 the desk lists every artifact the log names and nothing else', theDeskListsEveryArtifactTheLogNames],
   ['SWEEP every settings press acts or answers', everySettingsPressSaysSomething],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
