@@ -529,10 +529,17 @@ button, input, textarea, select { font: inherit; }
   white-space: nowrap;
 }
 
+/* The motion escape (P7): a real rule, not a comment. A 1ms duration
+   alone still loops an infinite animation, so the iteration count is
+   pinned to one and the delay to zero — a reduced-motion page paints
+   its final state once and stops. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 1ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
+    transition-delay: 0s !important;
     scroll-behavior: auto !important;
   }
 }
@@ -4425,8 +4432,7 @@ pre.drawer-code {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: border-color var(--fast) var(--ease), color var(--fast) var(--ease),
-    background var(--fast) var(--ease);
+  transition: border-color var(--fast) var(--ease);
 }
 
 .page-action:hover {
@@ -11803,9 +11809,12 @@ body[data-armada="off"] .surfaces-link[data-address="armada"] { display: none; }
   gap: 7px;
   cursor: grab;
   overflow: hidden;
-  transition: border-color var(--fast) var(--ease), transform var(--fast) var(--ease);
+  /* One transition per state change (P7): a card's hover is its border
+     warming, never a lift — a card that moves under the pointer reads
+     as an app, and this face is a desk. */
+  transition: border-color var(--fast) var(--ease);
 }
-.board-card:hover { border-color: var(--dsw-alias-hairline-strong); transform: translateY(-1px); }
+.board-card:hover { border-color: var(--dsw-alias-hairline-strong); }
 
 /* The running sweep (U14): a cyan light crosses the working card. */
 .board-card.running::after {

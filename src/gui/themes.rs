@@ -450,6 +450,29 @@ mod tests {
         }
     }
 
+    /// P7: the reduced-motion escape is a real media rule, not a comment.
+    /// A 1ms duration alone still loops an infinite animation; the pin
+    /// requires the iteration count and the delay too, so a reduced-motion
+    /// page paints its final state once and stops.
+    #[test]
+    fn the_motion_escape_is_a_real_media_rule() {
+        let at = STYLES
+            .find("@media (prefers-reduced-motion: reduce)")
+            .expect("the sheet declares a reduced-motion media rule");
+        let block = &STYLES[at..STYLES.len().min(at + 600)];
+        for required in [
+            "animation-duration",
+            "animation-iteration-count",
+            "animation-delay",
+            "transition-duration",
+        ] {
+            assert!(
+                block.contains(required),
+                "the reduced-motion rule does not set `{required}`"
+            );
+        }
+    }
+
     #[test]
     fn every_themes_text_clears_the_contrast_floor_on_every_surface() {
         let found = themes();
