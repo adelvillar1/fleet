@@ -5500,6 +5500,146 @@ async function aDismissedRowCanComeBack() {
     page.rows('.ib-row').length === 1, String(page.rows('.ib-row').length));
 }
 
+// IBC/deferral (the owner's 2026-11-21 ruling): a held inbound delivery
+// is one card naming the peer, the channel, the capability word and the
+// task in full, with two verbs — accept, or decline with a reason — and
+// the accept press posts the op for the server to route through the
+// driver. Below three holds the card stands alone; at three or more the
+// queue's list takes over.
+function heldRow(id, task, capability) {
+  return {
+    id: id, channel: 'webhook', peer_id: 'peer-' + id, peer: 'the CI box',
+    task: task, at: '2026-11-21T10:00Z', capability: capability || 'acts',
+    key: 'held:' + id, signature: 'webhook|peer-' + id + '|' + task,
+    label: 'the CI box · via webhook', class: 'held',
+  };
+}
+
+async function aHeldDeliveryIsOneCardWithTwoVerbsAndTheAcceptPosts() {
+  const after = inboxDoc({ held: [], total: 0 });
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: inboxDoc({
+      held: [heldRow('h0001', 'run the tests\ntwice over')],
+      total: 1,
+    }),
+    inboxReply: () => ({ status: 200, body: after }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const card = page.rows('.ib-held')[0];
+  check('IBC a held delivery below three is one card', Boolean(card),
+    page.rows('.ib-held, .ib-row').length + ' rows, no .ib-held card');
+  check('IBC the card names the peer, the channel and the capability',
+    Boolean(card) && card.textContent.includes('the CI box') &&
+      card.textContent.includes('via webhook') && card.textContent.includes('acts'),
+    card ? card.textContent.slice(0, 140) : 'no card');
+  check('IBC the card shows the task in full',
+    Boolean(card) && card.textContent.includes('run the tests') &&
+      card.textContent.includes('twice over'),
+    card ? card.textContent.slice(0, 140) : 'no card');
+  const buttons = card ? [...card.querySelectorAll('button')] : [];
+  const accept = buttons.find((b) => b.textContent === 'accept');
+  const decline = buttons.find((b) => b.textContent === 'decline');
+  check('IBC the card carries its two verbs', Boolean(accept && decline),
+    buttons.map((b) => b.textContent).join('|'));
+  accept.click();
+  await flush(80);
+  const posts = page.calls.filter((c) => c.url === '/api/inbox');
+  check('IBC the accept press posts its op and key',
+    posts.length === 1 && String(posts[0].body).includes('"op":"accept"') &&
+      String(posts[0].body).includes('"key":"held:h0001"'),
+    JSON.stringify(posts.map((c) => c.body)));
+  check('IBC the accepted hold leaves the pane on the reply',
+    page.rows('.ib-held').length === 0 && page.rows('.ib-row').length === 0,
+    String(page.rows('.ib-held').length) + ' cards, ' +
+      page.rows('.ib-row').length + ' rows');
+}
+
+async function aDeclinedHoldNamesItsReason() {
+  const after = inboxDoc({ held: [], total: 0 });
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: inboxDoc({
+      held: [heldRow('h0002', 'wipe the tree and rebuild')],
+      total: 1,
+    }),
+    inboxReply: () => ({ status: 200, body: after }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const card = page.rows('.ib-held')[0];
+  const decline = [...card.querySelectorAll('button')]
+    .find((b) => b.textContent === 'decline');
+  decline.click();
+  await flush(40);
+  const fresh = page.rows('.ib-held')[0];
+  const reason = fresh.querySelector('.ib-reason');
+  check('IBC the decline asks for its reason', Boolean(reason),
+    fresh ? [...fresh.querySelectorAll('input,button')].map((b) => b.placeholder || b.textContent).join('|') : 'no card');
+  const confirm = [...fresh.querySelectorAll('button')]
+    .find((b) => b.textContent === 'decline with reason');
+  check('IBC the reason field carries its confirm verb', Boolean(confirm),
+    [...fresh.querySelectorAll('button')].map((b) => b.textContent).join('|'));
+  reason.value = 'not today';
+  confirm.click();
+  await flush(80);
+  const posts = page.calls.filter((c) => c.url === '/api/inbox');
+  check('IBC the decline posts its op, key and reason',
+    posts.length === 1 && String(posts[0].body).includes('"op":"decline"') &&
+      String(posts[0].body).includes('"key":"held:h0002"') &&
+      String(posts[0].body).includes('"reason":"not today"'),
+    JSON.stringify(posts.map((c) => c.body)));
+}
+
+async function heldTurnsIntoAListAtThree() {
+  const two = inboxDoc({
+    held: [heldRow('h0001', 'one'), heldRow('h0002', 'two')],
+    total: 2,
+  });
+  const three = inboxDoc({
+    held: [heldRow('h0001', 'one'), heldRow('h0002', 'two'), heldRow('h0003', 'three')],
+    total: 3,
+  });
+  const page = boot({ width: 1440, hash: '#/inbox', documents: {
+    sessions: INBOX_SESSIONS, state: INBOX_STATE, inbox: two,
+  } });
+  await flush();
+  page.open();
+  await flush(80);
+  check('IBC two holds are two cards and no list',
+    page.rows('.ib-held').length === 2 && page.rows('.ib-group').length === 0,
+    page.rows('.ib-held').length + ' cards, ' + page.rows('.ib-group').length + ' groups');
+  // The same document at three holds: a separate boot, since the paint
+  // is the surface's own, not a state the case reaches into.
+  const listPage = boot({ width: 1440, hash: '#/inbox', documents: {
+    sessions: INBOX_SESSIONS, state: INBOX_STATE, inbox: three,
+  } });
+  await flush();
+  listPage.open();
+  await flush(80);
+  const listRows = listPage.rows('.ib-group .ib-row[data-class="held"]');
+  check('IBC three holds are a list, not cards',
+    listRows.length === 3 && listPage.rows('.ib-held').length === 0 &&
+      listPage.rows('.ib-group-head').map((h) => h.textContent).join('|')
+        .includes('held at the door'),
+    listRows.length + ' rows, ' + listPage.rows('.ib-held').length + ' cards, heads: ' +
+      listPage.rows('.ib-group-head').map((h) => h.textContent).join('|'));
+  // The list rows carry the same two verbs the cards do.
+  const accept = [...listRows[0].querySelectorAll('button')]
+    .find((b) => b.textContent === 'accept');
+  const decline = [...listRows[0].querySelectorAll('button')]
+    .find((b) => b.textContent === 'decline');
+  check('IBC the list rows carry the two verbs', Boolean(accept && decline),
+    [...listRows[0].querySelectorAll('button')].map((b) => b.textContent).join('|'));
+}
+
 
 // PWS (the project-work plan): both work surfaces are one pattern — the
 // projects rail, the artifact's work, and the thread with the composer.
@@ -17548,6 +17688,10 @@ const cases = [
   ['IBC a seat\u2019s menu only opens', aSeatsMenuOnlyOpens],
   ['IBC the keyboard walks the queue', theInboxKeyboardWalks],
   ['IBC a dismissed row can come back', aDismissedRowCanComeBack],
+  ['IBC a held delivery is one card with two verbs, and the accept posts',
+    aHeldDeliveryIsOneCardWithTwoVerbsAndTheAcceptPosts],
+  ['IBC a declined hold names its reason', aDeclinedHoldNamesItsReason],
+  ['IBC holds turn into a list at three', heldTurnsIntoAListAtThree],
   ['PWS the desk is projects, work and a thread', theDeskOrganisesByProjectAndThread],
   ['P1 the desk reaches design deliverables', theDeskReachesDesignDeliverables],
   ['P2 the health lens is visible and findable', theHealthLensIsVisibleAndFindable],

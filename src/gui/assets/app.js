@@ -5001,7 +5001,7 @@ import { node, svg, clip } from './core/dom.js';
 
   function inboxTotal(doc) {
     if (!doc) return 0;
-    return ['seats', 'onboarding', 'asks', 'cron', 'doctor'].reduce(function (sum, key) {
+    return ['seats', 'onboarding', 'asks', 'cron', 'doctor', 'held'].reduce(function (sum, key) {
       return sum + ((doc[key] || []).length);
     }, 0);
   }
@@ -5012,6 +5012,7 @@ import { node, svg, clip } from './core/dom.js';
   // document's key, the group's words, the row's tone, the filter chip.
   var INBOX_CLASSES = [
     { cls: 'seat', doc: 'seats', group: 'waiting for your answer', tone: 'seat', chip: 'answers' },
+    { cls: 'held', doc: 'held', group: 'held at the door', tone: 'held', chip: 'held' },
     { cls: 'onboard', doc: 'onboarding', group: 'setting fleet up', tone: 'setup', chip: 'setup' },
     { cls: 'ask', doc: 'asks', group: 'questions from the rooms', tone: 'ask', chip: 'questions' },
     { cls: 'cron', doc: 'cron', group: 'the machinery needs a decision', tone: 'bad', chip: 'machinery' },
@@ -5049,6 +5050,7 @@ import { node, svg, clip } from './core/dom.js';
     if (row.class === 'seat') return '#/sessions/' + encodeURIComponent(row.session || '');
     if (row.class === 'ask') return '#/huddles/' + encodeURIComponent(row.session || '');
     if (row.class === 'onboard') return onboardSurface(row);
+    if (row.class === 'held') return '#/inbox/held';
     return '#/settings';
   }
 
@@ -5056,8 +5058,9 @@ import { node, svg, clip } from './core/dom.js';
   // document, so the pane repaints from the same read the queue rides.
   // A refusal paints in the pane that asked — never the transcript two
   // panes away (the KI-483 lesson), and a press is never silent.
-  function inboxDecide(row, op) {
+  function inboxDecide(row, op, extra) {
     face.inboxOpen = null;
+    face.inboxDecline = null;
     // The press answers at once: the row goes (dismiss/archive) or comes
     // back (restore/undismiss) in the pane immediately, and the reply
     // reconciles. The read behind the reply is not instant — it probes
@@ -5065,7 +5068,7 @@ import { node, svg, clip } from './core/dom.js';
     // a dead button (the owner's own report, and the reason this exists).
     face.inboxActing = { key: row.key, op: op };
     paintInbox();
-    post('/api/inbox', { op: op, key: row.key }).then(function (reply) {
+    post('/api/inbox', Object.assign({ op: op, key: row.key }, extra || {})).then(function (reply) {
       face.inboxActing = null;
       if (reply.status !== 200) {
         face.inboxRefusal = (reply.body && reply.body.error) ||
@@ -5083,10 +5086,13 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
-  // The selection the keyboard moves: the visible rows, in paint order.
+  // The selection the keyboard moves: the visible rows, in paint order —
+  // the held cards first (they paint ahead of the queue), then the rows.
   function inboxRowsHere() {
     if (!el.inboxBody) return [];
-    return Array.prototype.slice.call(el.inboxBody.querySelectorAll('.ib-row'));
+    return Array.prototype.slice
+      .call(el.inboxBody.querySelectorAll('.ib-held'))
+      .concat(Array.prototype.slice.call(el.inboxBody.querySelectorAll('.ib-row')));
   }
 
   function inboxMove(step) {
@@ -5134,6 +5140,20 @@ import { node, svg, clip } from './core/dom.js';
       window.location.hash = inboxSurface(row);
     } }];
     if (row.class === 'seat') return verbs;
+    // A held delivery's verbs are the decision itself (the owner's
+    // 2026-11-21 ruling): no dismiss, no archive — the hold IS the
+    // queue, and accept or decline is what answers it.
+    if (row.class === 'held') {
+      verbs.push({ label: 'accept', hint: 'runs what the peer asked, as its own conversation',
+        run: function () { inboxDecide(row, 'accept'); } });
+      verbs.push({ label: 'decline', hint: 'says no, with the reason you name',
+        run: function () {
+          face.inboxOpen = null;
+          face.inboxDecline = row.key;
+          paintInbox();
+        } });
+      return verbs;
+    }
     verbs.push({ label: 'dismiss', hint: 'hides it until the fact changes',
       run: function () { inboxDecide(row, 'dismiss'); } });
     verbs.push({ label: 'archive', hint: 'keeps it under Archived',
@@ -5148,7 +5168,7 @@ import { node, svg, clip } from './core/dom.js';
   // scope: inbox rows have no project in their data, and inventing one would
   // be a lie the surface tells.
   var INBOX_SECTION_ICONS = {
-    seats: 'pending', onboarding: 'gate', asks: 'question',
+    seats: 'pending', held: 'inbox', onboarding: 'gate', asks: 'question',
     cron: 'schedule', doctor: 'verify'
   };
 
@@ -5354,7 +5374,16 @@ import { node, svg, clip } from './core/dom.js';
     var atlas = 0;
     var selected = Number(face.inboxAt) || 0;
     var age = function (at) { return at ? roomAge(at) : ''; };
+    // The deferral class (the owner's 2026-11-21 ruling): deliveries
+    // held at the door, painted ahead of the queue — the decision about
+    // someone's words outranks the machinery's reports. One card below
+    // three holds, a list at three or more.
+    var heldRows = doc.held || [];
+    if (heldRows.length && (!filter || filter === 'held')) {
+      paintHeld(heldRows, hiddenByAct);
+    }
     INBOX_CLASSES.forEach(function (kind) {
+      if (kind.cls === 'held') return; // painted above, its own shape
       var rows = doc[kind.doc] || [];
       if (!rows.length) return;
       if (filter && filter !== kind.cls) return;
@@ -5516,6 +5545,85 @@ import { node, svg, clip } from './core/dom.js';
       dg.appendChild(r);
     });
     el.inboxBody.appendChild(dg);
+  }
+
+  // The deferral class's own paint (the owner's 2026-11-21 ruling): the
+  // peer, the channel it came in on, its capability word, and the task
+  // inline in full — then the two verbs the decision is. Below three
+  // holds the row is one card each, because the task reads as words and
+  // not as a cell; at three or more the queue's list takes over, since a
+  // wall of cards is a wall of decisions nobody reads.
+  function paintHeld(rows, hiddenByAct) {
+    var visible = rows.filter(function (row) { return !hiddenByAct(row.key); });
+    if (!visible.length) return;
+    if (visible.length < 3) {
+      visible.forEach(function (row) { el.inboxBody.appendChild(heldNode(row, false)); });
+      return;
+    }
+    var g = node('div', 'ib-group');
+    var head = node('div', 'ib-group-head');
+    head.appendChild(node('span', null, 'held at the door'));
+    head.appendChild(node('span', 'n', String(visible.length)));
+    g.appendChild(head);
+    visible.forEach(function (row) { g.appendChild(heldNode(row, true)); });
+    el.inboxBody.appendChild(g);
+  }
+
+  // One held delivery, as a card (inList false) or as a queue row.
+  function heldNode(row, inList) {
+    var r = node('div', inList ? 'ib-row' : 'ib-held');
+    r.dataset.class = 'held';
+    r.dataset.tone = 'held';
+    r.dataset.key = row.key || '';
+    var what = node('div', 'ib-what');
+    what.appendChild(node('div', 'ib-title', (row.peer || 'a peer') + ' asks in'));
+    what.appendChild(node('div', 'ib-where',
+      'via ' + (row.channel || 'a channel') +
+      (row.capability ? ' \u00b7 ' + row.capability : '')));
+    what.appendChild(node('div', 'ib-task', row.task || ''));
+    what.appendChild(node('div', 'ib-age', whenWords(row.at)));
+    var act = node('div', 'ib-actions');
+    // The accept press posts the op and nothing else: the server, not
+    // the face, decides what the delivery becomes — the driver maps the
+    // peer to its conversation and writes its own first record, which is
+    // what lets the pane say "via webhook · the CI box" beside it.
+    var accept = node('button', 'primary', 'accept');
+    accept.type = 'button';
+    accept.title = 'runs what the peer asked, in a conversation that names them';
+    accept.addEventListener('click', function () { inboxDecide(row, 'accept'); });
+    act.appendChild(accept);
+    var decline = node('button', null, 'decline');
+    decline.type = 'button';
+    decline.title = 'says no, with the reason you name';
+    decline.addEventListener('click', function () {
+      face.inboxDecline = face.inboxDecline === row.key ? null : row.key;
+      paintInbox();
+    });
+    act.appendChild(decline);
+    if (face.inboxDecline === row.key) {
+      var reason = node('input', 'ib-reason');
+      reason.type = 'text';
+      reason.value = face.inboxDeclineReason || '';
+      reason.placeholder = 'why this is declined';
+      reason.setAttribute('aria-label', 'the reason the delivery is declined');
+      reason.addEventListener('input', function () { face.inboxDeclineReason = reason.value; });
+      reason.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          inboxDecide(row, 'decline', { reason: reason.value.trim() });
+        }
+      });
+      act.appendChild(reason);
+      var confirm = node('button', 'danger', 'decline with reason');
+      confirm.type = 'button';
+      confirm.addEventListener('click', function () {
+        inboxDecide(row, 'decline', { reason: reason.value.trim() });
+      });
+      act.appendChild(confirm);
+    }
+    r.appendChild(what);
+    r.appendChild(act);
+    return r;
   }
 
   // The pane's keyboard: the queue is a list, so j/k walk it, enter runs
