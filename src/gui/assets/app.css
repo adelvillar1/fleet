@@ -12078,3 +12078,47 @@ body[data-motion="off"] .board-card.running::after { animation: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------- P7: the room card
+   One card vocabulary across every surface P0–P5 added: one ground, one
+   hairline, one radius, one padding rhythm — and no shadow. A card
+   separates itself once; a border AND a shadow AND its own ground is
+   three separations, and three separations read as a widget. Shadows
+   stay on the things that float over the page (a door, a palette, a
+   menu), never on a card. "A room you enter, not a console you audit." */
+section.board-card,
+.suggest,
+.dk-owed,
+.stats-strip,
+.tiles,
+.surface-tool {
+  background: var(--room-bg);
+  border: var(--room-border);
+  border-radius: var(--room-radius);
+  box-shadow: none;
+}
+
+section.board-card {
+  display: grid;
+  align-content: start;
+  gap: var(--room-gap);
+  padding: var(--room-pad);
+}
+
+/* The kanban card is the dense tenant of the same vocabulary: it keeps
+   its compact padding because a column holds many, but it does not get
+   a shadow the surface card beside it refuses. */
+.board-card {
+  box-shadow: none;
+}
+
+/* The head sits on the card's own rhythm, not on the body's first line. */
+section.board-card > .board-head {
+  margin-bottom: 0;
+}
+
+@media (max-width: 720px) {
+  section.board-card {
+    padding: 15px 16px 16px;
+  }
+}
