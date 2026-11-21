@@ -390,6 +390,10 @@ pub async fn rerun(
                     root_session: row.session.clone(),
                     depth: 1,
                     reason: Some(reason),
+                    // The outcome probe re-runs the child's own brief, not
+                    // a plan node's — no node is named, and the row says
+                    // so rather than inheriting one from the judged row.
+                    node: None,
                 },
             );
             Ok(outcome.session.clone())

@@ -106,6 +106,7 @@ fn delegation_row(
         depth: 1,
         workspace_branch: String::new(),
         workspace: String::new(),
+        node: None,
     }
 }
 

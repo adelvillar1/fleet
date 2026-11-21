@@ -801,6 +801,15 @@ pub struct DelegatedRunRow {
     /// the join from a row back to the mount the child worked in.
     #[serde(default)]
     pub workspace: String,
+    /// The declared plan node this run executed, when the `subagent`
+    /// call named one. `None` — and absent from the line — for a run
+    /// delegated without a plan node, and for every row written before
+    /// the field existed: the reader treats an absent node the way it
+    /// treats an absent `workspace_branch` (tolerant, never dropped),
+    /// because a row the reader refuses is a run the overlay cannot
+    /// join.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
 }
 
 /// Record one delegated run to the stream and hand the stamped row
@@ -4706,6 +4715,7 @@ mod tests {
             depth: 1,
             workspace_branch: String::new(),
             workspace: String::new(),
+            node: None,
         };
         let line = serde_json::to_string(&Row::Delegation(row)).unwrap();
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -4723,6 +4733,64 @@ mod tests {
         // the new op has to be in the set for the row to be readable.
         assert!(OPS.contains(&OP_DELEGATION));
     }
+
+    /// The plan node rides the row only when the run named one: a row
+    /// without a `node` key — the pre-field shape, and the hand-written
+    /// fixture's — reads back as `None`, and a row that names one
+    /// round-trips it. The reader-side join is the same fact: the
+    /// op-bounded read hands the node back for a row that carries it and
+    /// an empty node for a row that does not, so the overlay can tell a
+    /// run the plan never named from one it did.
+    #[test]
+    fn a_delegation_row_without_a_node_reads_back_as_none_and_old_rows_do_too() {
+        // The pre-field shape, verbatim: no `node` key anywhere. The
+        // reader must not drop the row (the KI-164 class) and must not
+        // invent a node for it.
+        let old: DelegatedRunRow = serde_json::from_str(
+            "{\"op\":\"delegation\",\"ts\":\"t\",\"session\":\"c1\",\"outcome\":\"completed\"}",
+        )
+        .expect("an old row is not dropped");
+        assert_eq!(old.node, None);
+        assert_eq!(old.session, "c1");
+
+        // A row that names its node carries it on the line; a row that
+        // does not leaves the key off it (skip_serializing_if), so the
+        // absence is the fact and not an empty-string muddle.
+        let named = DelegatedRunRow {
+            session: "c1".to_string(),
+            node: Some("build-parser".to_string()),
+            ..Default::default()
+        };
+        let line = serde_json::to_string(&Row::Delegation(named)).unwrap();
+        assert!(line.contains("\"node\":\"build-parser\""), "{line}");
+        let unnamed = DelegatedRunRow {
+            session: "c2".to_string(),
+            ..Default::default()
+        };
+        let bare = serde_json::to_string(&Row::Delegation(unnamed)).unwrap();
+        assert!(!bare.contains("node"), "{bare}");
+
+        // The reader-side join, through the op-bounded read the boards
+        // use: the named row's node comes back, the old row's does not,
+        // and both rows survive the read.
+        let root = scratch("delegation-node-read");
+        let day = "2026-11-21";
+        let path = day_path(&root, day);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            format!("{bare}\n{line}\n", bare = bare.trim(), line = line.trim()),
+        )
+        .unwrap();
+        let rows = read_op_day(&root, day, OP_DELEGATION, 16);
+        assert_eq!(rows.len(), 2, "both rows read: {:?}", rows.len());
+        assert_eq!(rows[0].session, "c2");
+        assert_eq!(rows[0].node, "", "an old row reads as no node");
+        assert_eq!(rows[1].session, "c1");
+        assert_eq!(rows[1].node, "build-parser");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn the_four_stop_reasons_are_named_verbatim() {
         assert_eq!(TurnStop::Completed.label(), "completed");

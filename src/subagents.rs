@@ -2861,6 +2861,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
                         &brief,
                         &recorded_scope,
                         child_route.provider.as_deref(),
+                        node.as_deref(),
                         &result,
                         &chain,
                         started.elapsed().as_millis() as u64,
@@ -3039,6 +3040,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             &brief,
             &recorded_scope,
             child_route.provider.as_deref(),
+            node.as_deref(),
             &result,
             &chain,
             started.elapsed().as_millis() as u64,
@@ -3078,6 +3080,7 @@ fn delegation_row(
     brief: &Brief,
     scope: &str,
     provider: Option<&str>,
+    node: Option<&str>,
     result: &SubagentResult,
     chain: &Chain,
     duration_ms: u64,
@@ -3118,6 +3121,11 @@ fn delegation_row(
             .as_ref()
             .map(|workspace| workspace.ws.clone())
             .unwrap_or_default(),
+        // The declared plan node this call executes, when the call
+        // named one: the join from the row back to the graph node the
+        // plan declared — the one fact a session log's `start` record
+        // does not carry.
+        node: node.map(str::to_string),
     }
 }
 
@@ -4796,6 +4804,7 @@ console.log(JSON.stringify({
             &Brief::parse("do the work"),
             "bash",
             Some("test-model"),
+            None,
             &result,
             &chain,
             42,
@@ -4819,6 +4828,7 @@ console.log(JSON.stringify({
             &Brief::parse("do the work"),
             "bash",
             Some("test-model"),
+            None,
             &plain,
             &chain,
             42,
@@ -4986,6 +4996,7 @@ console.log(JSON.stringify({
             &brief,
             &scope.recorded(),
             Some("stepfun"),
+            None,
             &result,
             &chain,
             1_250,
