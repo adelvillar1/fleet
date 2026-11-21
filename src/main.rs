@@ -4605,6 +4605,30 @@ fn hygiene_command() -> ExitCode {
     }
     let swept = stale_process_sweep();
     println!("hygiene: {swept} orphaned fleet process(es) stopped");
+    // The keep-alive half: orphaned `tail -f /dev/null` processes. Not limited
+    // to Fleet's own — an orphan has no waiter, so stopping it cannot
+    // disrupt anything, and the goal is an environment in optimal shape. The
+    // rails are the exact command and a dead parent (see the module doc).
+    // Attribution is reported so the owner can see how much of the litter was
+    // the harness's; it is not a gate. FLEET_KEEPALIVE_DRY_RUN=1 → census only.
+    let keepalives = fleet::keepalive::orphans();
+    let swept_keepalives = fleet::keepalive::reap(&keepalives, fleet::keepalive::dry_run());
+    let theirs = swept_keepalives.attributed;
+    match (swept_keepalives.stopped, swept_keepalives.named) {
+        (0, 0) => println!("hygiene: no orphaned keep-alive processes"),
+        (0, named) => println!(
+            "hygiene: {named} orphaned keep-alive(s) found ({theirs} carrying a harness \
+             namespace) — census only; unset FLEET_KEEPALIVE_DRY_RUN to stop them"
+        ),
+        (stopped, 0) => println!(
+            "hygiene: {stopped} orphaned keep-alive(s) stopped ({theirs} carrying a harness \
+             namespace)"
+        ),
+        (stopped, named) => println!(
+            "hygiene: {stopped} orphaned keep-alive(s) stopped, {named} named ({theirs} \
+             carrying a harness namespace)"
+        ),
+    }
     ExitCode::SUCCESS
 }
 
