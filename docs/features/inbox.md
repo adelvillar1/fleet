@@ -1,17 +1,18 @@
 # The inbox
 
-One queue of everything waiting on the owner. Five machineries feed it, one
+One queue of everything waiting on the owner. Six machineries feed it, one
 read draws it, and the owner's decisions about a row are kept beside it.
 
 The surface is the Inbox page: two segments (Waiting and Archived), class
 filters with counts, one row per thing that needs a decision, and a context
 menu on every row.
 
-## The five classes
+## The six classes
 
 | Class | Read from | The row's own act |
 |---|---|---|
 | seat | the attached sessions' pending tool calls | once / always / deny |
+| held | inbound channel deliveries held for the owner's decision | accept / decline with a reason |
 | onboard | the onboarding ladder's incomplete steps | open that step's own surface |
 | ask | the rooms whose last `@you` went unanswered | answer in the room |
 | cron | jobs whose last run failed or was skipped | open the job |
@@ -19,7 +20,36 @@ menu on every row.
 
 Every row is read live: a seat disappears when it is answered, a step when it
 is done, an ask when the room is replied to, a job when its next run passes, a
-check when it passes. The inbox stores none of the five.
+check when it passes. The inbox stores none of the five — the held class is
+the exception: its rows are the `held.json` store itself, read live, so a hold
+leaves the queue exactly when the owner decides it.
+
+## The deferral class (the owner's 2026-11-21 ruling)
+
+An inbound delivery from a peer or channel listed in the settings key
+`channels.hold` (comma-separated channel names and `channel:peer` keys) does
+not auto-run. The channel sink files it in full — peer, channel, task, reply
+handle — in `<FLEET_HOME>/channels/held.json` before the driver sees it, logs
+a `held` activity line, and tells the peer the delivery is held rather than
+refused. Unconfigured is the default and means today's auto-run: anything
+unreadable in the config reads as empty, so a broken config can never hold
+everything. The hold carries everything the delivery had, because an accepted
+hold must be the same delivery the auto-run would have been.
+
+The card names the peer, the channel, the capability word (`acts`/`listens`,
+read off the peer's own roster), and the task inline in full. Below three
+holds each is one card; at three or more the queue's list takes over. A hold
+cannot be dismissed or archived — accept and decline are the decision.
+
+- **accept** — `POST /api/inbox` with `{"op":"accept","key":"held:<id>"}`. The
+  delivery runs through the channel driver's own door (`Driver::deliver`), so
+  the conversation it creates or resumes opens with the channel record that
+  names the peer — the same first record every auto-run writes, which is what
+  lets a pane say "via webhook · the CI box" beside the conversation. A hold
+  the driver refuses goes back in the store.
+- **decline** — `{"op":"decline","key":"held:<id>","reason":"…"}`. The hold
+  leaves the store and the activity log gains a `refusal` line carrying the
+  owner's reason. A decline without its reason is refused by name.
 
 ## The owner's decisions
 
@@ -58,18 +88,19 @@ the conversation".
 
 ## The read and the ops
 
-- `GET /api/owner-inbox` — one document: the five class arrays (each row with
+- `GET /api/owner-inbox` — one document: the six class arrays (each row with
   its `key`, `signature`, `label` and `class`), the `archived` list, and
   `total` (the waiting count, which is what the rail badge shows). Dismissed
   rows are filtered out of the arrays here, so every surface that reads this
   document agrees.
-- `POST /api/inbox` — `{ "op": "dismiss" | "archive" | "restore" | "undismiss",
-  "key": "<class>:<id>" }`. The answer is the fresh document. A malformed op, a
-  key the read no longer carries, or a restore of nothing archived is a `400`
-  with the reason named.
+- `POST /api/inbox` — `{ "op": "dismiss" | "archive" | "restore" | "undismiss" |
+  "accept" | "decline", "key": "<class>:<id>" }` (decline carries a
+  `"reason"`). The answer is the fresh document. A malformed op, a key the
+  read no longer carries, or a restore of nothing archived is a `400` with
+  the reason named.
 
 ## What the keys mean
 
-`<class>:<id>` — `seat:<session>`, `onboard:<step-id>`, `ask:<session>`,
-`cron:<job-name>`, `doctor:<check>`. The key names a row across reads; the
-signature says whether it is the same fact.
+`<class>:<id>` — `seat:<session>`, `held:<hold-id>`, `onboard:<step-id>`,
+`ask:<session>`, `cron:<job-name>`, `doctor:<check>`. The key names a row
+across reads; the signature says whether it is the same fact.
