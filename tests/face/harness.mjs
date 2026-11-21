@@ -11937,6 +11937,135 @@ async function theSkillsRailCarriesOneSectionAtATime() {
 }
 
 
+// The coverage map's documents: three declared skills, two of them with
+// recorded fires — and the same library with nothing recorded, where the
+// map must say its basis instead of a zero.
+const coverageDoc = (() => {
+  const skill = (name, uses) => ({
+    name, description: 'the ' + name + ' skill', category: 'building', uses,
+    modified: '2026-11-01', path: '/lib/' + name + '/SKILL.md',
+    body: 'the body of ' + name, references: 0, scripts: 0,
+  });
+  const skills = [
+    skill('alpha', 1), skill('beta', 2), skill('gamma', 0),
+  ];
+  return {
+    type: 'skills', read_at: 'now', canonical: '/lib', sessions: 20, unused: 1,
+    threshold: 0.8, curation_note: 'the note', refused: [], skills,
+    skips: [], proposals: [], merges: [], retired: [],
+    coverage: {
+      sessions: 20, basis: null, fired_skills: 2, unused_skills: 1,
+      rows: [
+        { name: 'alpha', description: 'the alpha skill', shapes: [],
+          references: 2, scripts: 0,
+          fired: { count: 1, last_at: '2026-11-20T10:00:00Z' } },
+        { name: 'beta', description: 'the beta skill', shapes: [],
+          references: 0, scripts: 1,
+          fired: { count: 2, last_at: '2026-11-21T10:00:00Z' } },
+        { name: 'gamma', description: 'the gamma skill', shapes: [],
+          references: 0, scripts: 0, fired: null },
+      ],
+      unused: ['gamma'],
+      feed: [
+        { at: '2026-11-21T10:00:00Z', skill: 'beta',
+          session: '20261121T100000Z-000002', surface: 'session' },
+        { at: '2026-11-20T10:00:00Z', skill: 'alpha',
+          session: '20261120T100000Z-000001', surface: 'delegation' },
+      ],
+      feed_reason: null,
+    },
+  };
+})();
+
+const declaredOnlyDoc = (() => {
+  const skill = (name) => ({
+    name, description: 'the ' + name + ' skill', category: 'building', uses: 0,
+    modified: '2026-11-01', path: '/lib/' + name + '/SKILL.md',
+    body: 'the body of ' + name, references: 0, scripts: 0,
+  });
+  const skills = [skill('alpha'), skill('beta'), skill('gamma')];
+  return {
+    type: 'skills', read_at: 'now', canonical: '/lib', sessions: 0, unused: 3,
+    threshold: 0.8, curation_note: 'the note', refused: [], skills,
+    skips: [], proposals: [], merges: [], retired: [],
+    coverage: {
+      sessions: 0,
+      basis: 'declared only \u2014 nothing records fires',
+      fired_skills: 0, unused_skills: 3,
+      rows: skills.map((skill) => ({
+        name: skill.name, description: skill.description, shapes: [],
+        references: 0, scripts: 0, fired: null,
+      })),
+      unused: ['alpha', 'beta', 'gamma'],
+      feed: [],
+      feed_reason: 'no session logs scanned yet',
+    },
+  };
+})();
+
+async function theSkillsCoveragePaintsTheDocumentAndNamesItsBasis() {
+  const bootSkills = (doc, hash) => boot({
+    width: 1440, hash,
+    documents: { skills: doc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+
+  // The fired half: the split is the document's own numbers, and the
+  // feed's rows stand in the order the document carried — newest first.
+  const fired = bootSkills(coverageDoc, '#/memory/skills');
+  await flush();
+  fired.open();
+  await flush(80);
+  const firedMap = fired.rows('.coverage')[0];
+  const firedText = firedMap ? String(firedMap.textContent) : '';
+  check('COV the split paints the document\u2019s two fired and one not',
+    firedText.includes('2 fired \u00b7 1 not used yet in 20 scanned sessions'),
+    firedText.slice(0, 140));
+  check('COV the unused list names gamma as not used yet',
+    firedText.includes('gamma') && firedText.includes('not used yet'),
+    firedText.slice(0, 200));
+  check('COV a skill with no fires is not painted as a failure',
+    !firedText.includes('never'),
+    firedText.slice(0, 200));
+  const feedRows = firedMap ? firedMap.querySelectorAll('[data-firing]') : [];
+  check('COV the feed stands newest first and names the firing',
+    feedRows.length === 2 &&
+      feedRows[0].dataset.firing === 'beta' &&
+      feedRows[1].dataset.firing === 'alpha' &&
+      String(feedRows[0].textContent).includes('2026-11-21T10:00:00Z') &&
+      String(feedRows[0].textContent).includes('20261121T100000Z-000002') &&
+      String(feedRows[1].textContent).includes('delegation'),
+    feedRows.length
+      ? [...feedRows].map((row) => String(row.textContent).slice(0, 60)).join(' | ')
+      : 'no feed rows');
+  check('COV a recorded basis prints no basis line',
+    !firedText.includes('declared only'),
+    firedText.slice(0, 200));
+
+  // The honesty half: nothing records fires, so the map says what it
+  // stands on and the feed names its emptiness — never a silent zero.
+  const declared = bootSkills(declaredOnlyDoc, '#/memory/skills');
+  await flush();
+  declared.open();
+  await flush(80);
+  const declaredMap = declared.rows('.coverage')[0];
+  const declaredText = declaredMap ? String(declaredMap.textContent) : '';
+  check('COV the no-fires map paints the named basis',
+    declaredText.includes('declared only \u2014 nothing records fires'),
+    declaredText.slice(0, 160));
+  check('COV the no-fires map never claims a zero count',
+    !declaredText.includes('0 fired') && !declaredText.includes('fired \u00b7'),
+    declaredText.slice(0, 200));
+  check('COV the no-fires map still carries the unused half',
+    declaredText.includes('not used yet') &&
+      ['alpha', 'beta', 'gamma'].every((name) => declaredText.includes(name)),
+    declaredText.slice(0, 220));
+  check('COV the empty feed names its reason instead of sitting silent',
+    declaredText.includes('no session logs scanned yet'),
+    declaredText.slice(0, 220));
+}
+
+
 
 // The memory surface's document, in the bridge's own shape: sections
 // across the substrate's own type words, the cycle's queue, the
@@ -18526,6 +18655,7 @@ const cases = [
   ['READ the morning read renders refusals, not zeros',
     theMorningReadRendersRefusalsNotZeros],
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
+  ['COV the skills coverage map paints the document and names its basis', theSkillsCoveragePaintsTheDocumentAndNamesItsBasis],
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
   ['LEARN the learning rail carries the four sections', theLearningRailCarriesTheFourSections],
   ['PRACT the practice card names the graph\u2019s weakest link', thePracticeCardNamesTheGraphsWeakestLink],
