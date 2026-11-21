@@ -6750,6 +6750,26 @@ async function theDoorIsTheWelcomeInItsFirstRunState() {
   check('OB one field on screen while the door is up',
     page.IDS.composer.hidden === true && page.IDS['onboard-door'].hidden === false,
     'composer hidden: ' + page.IDS.composer.hidden);
+
+  // The ladder is the document's own: one line per step it declares, each with
+  // its mark, and exactly one saying "now". A door that always showed three
+  // would be telling the owner a story the document does not — and the count
+  // is the fixture's, so the case cannot drift from it silently.
+  const ladder = page.rows('.onboard-ladder-step');
+  const marks = page.rows('.onboard-ladder-mark').map((one) => String(one.textContent));
+  check('OB the ladder carries one line per step the document declares',
+    ladder.length === 7, 'ladder=' + ladder.length);
+  check('OB every ladder step is marked and exactly one says now',
+    marks.length === ladder.length && marks.filter((m) => m === 'now').length === 1,
+    marks.join(','));
+
+  // No metric bar on a first-run home: the landing's own furniture is the
+  // title, the ladder and the decision. The counts belong to the work home.
+  const landing = page.IDS.empty;
+  check('OB a first-run landing carries no metric bar',
+    landing.dataset.onboard === 'door' &&
+      page.rows('.counts').filter((one) => one.parentNode === landing).length === 0,
+    'token=' + landing.dataset.onboard);
   check('OB the door\u2019s field is the composer\u2019s own shape',
     HTML.includes('class="composer onboard-key"') &&
       HTML.includes('class="foot-btn send"') &&

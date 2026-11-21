@@ -187,6 +187,26 @@ The fourth (the route picker) cannot be covered: the fixture answers a generic
 **KI-584** rather than asserted on a stub, which would have been a green check
 proving nothing.
 
+**P1, the door: measured, then covered.** The door already existed
+(`paintOnboard` → `#onboard-door`, the landing token `data-onboard="door"`), so
+the work was the case the plan asked for, not a screen. It now asserts:
+
+- the ladder carries **one line per step the document declares** (7 in the
+  fixture), each with its mark, and **exactly one** saying `now` — a door that
+  always showed three would tell the owner a story the document does not;
+- a first-run landing carries **no metric bar**: the token is `door` and no
+  `.counts` rides inside `#empty` at all.
+
+Red-proved by truncating the face's own step list to three: the case failed
+`ladder=3`, then green.
+
+One thing the measurement corrected: the stylesheet's comment promises that the
+counts, method strip, lanes and footnote all retire on a first-run home, but the
+only rule keyed on the token hides `.method` and `.onboard-cards`. The counts
+are not in the landing at all, so the AC holds — the comment is describing an
+older landing, and the case now pins the state that matters (the token plus the
+absence of a bar) rather than trusting the prose.
+
 Next: P1 — the conversation: one field, the receipts gutter, fork-at-turn.
 
 ## Phases
