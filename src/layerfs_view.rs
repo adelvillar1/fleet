@@ -519,20 +519,237 @@ fn truncation_word(view: &HistoryView) -> Option<String> {
     }
 }
 
+/// The `at` instant's parse: an ISO 8601 UTC time the face sends
+/// (`YYYY-MM-DDTHH:MM:SS`, with an optional fraction and `Z`) or plain
+/// unix millis. `None` for anything else — the caller names the refusal
+/// rather than scrubbing silently to nothing.
+fn parse_instant(text: &str) -> Option<i64> {
+    let text = text.trim();
+    if let Ok(millis) = text.parse::<i64>() {
+        return Some(millis);
+    }
+    let digits = |slice: Option<&str>| -> Option<i64> {
+        slice
+            .filter(|slice| !slice.is_empty() && slice.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|slice| slice.parse::<i64>().ok())
+    };
+    let bytes = text.as_bytes();
+    if bytes.len() < 19 || bytes[4] != b'-' || bytes[7] != b'-' || bytes[10] != b'T' {
+        return None;
+    }
+    let year = digits(text.get(0..4))?;
+    let month = digits(text.get(5..7))? as u32;
+    let day = digits(text.get(8..10))? as u32;
+    let hour = digits(text.get(11..13))?;
+    let minute = digits(text.get(14..16))?;
+    let second = digits(text.get(17..19))?;
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+    let rest = text.get(19..).unwrap_or("");
+    // The zone: a trailing `Z` or an empty tail (UTC is the only zone
+    // this document speaks); an offset is named but refused — an instant
+    // misread by an hour is worse than one refused.
+    let rest = rest.strip_suffix('Z').unwrap_or(rest);
+    let (rest, fraction) = match rest.split_once('.') {
+        Some((head, tail)) => {
+            let millis_text: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if millis_text.is_empty() {
+                return None;
+            }
+            let padded = format!("{:0<3}", &millis_text[..millis_text.len().min(3)]);
+            (head, padded.parse::<i64>().ok()?)
+        }
+        None => (rest, 0),
+    };
+    if !rest.is_empty() {
+        return None;
+    }
+    let days = days_from_civil(year, month, day);
+    Some(days * 86_400_000 + (hour * 3_600 + minute * 60 + second) * 1_000 + fraction)
+}
+
+/// Days since the unix epoch for a civil date (Howard Hinnant's
+/// `days_from_civil` — the calendar math the format needs, no crate).
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64;
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// The reverse: the ISO 8601 UTC words for unix millis — the form the
+/// document prints for every instant it names.
+fn iso_instant(millis: i64) -> String {
+    let days = millis.div_euclid(86_400_000);
+    let rem = millis.rem_euclid(86_400_000);
+    let (year, month, day) = civil_from_days(days);
+    let hour = rem / 3_600_000;
+    let minute = (rem % 3_600_000) / 60_000;
+    let second = (rem % 60_000) / 1_000;
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Days since the unix epoch to a civil date (Hinnant's
+/// `civil_from_days`, the reverse of [`days_from_civil`]).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// The history's own timeline, derived per read from the commits the
+/// document already carries — nothing stored, nothing migrated. The
+/// span names the whole history's ends; the buckets tile it (a day
+/// each, or an hour when the whole range is short), each bucket naming
+/// the moment it opens, the changes in it, the files its commits
+/// touched (the commits' own lww paths), and the branches they worked.
+/// Empty buckets are skipped — the face's range walks the buckets that
+/// exist, not the calendar's gaps.
+fn timeline_block(view: &HistoryView) -> serde_json::Value {
+    let mut commits: Vec<&CommitView> = view.commits.iter().collect();
+    commits.sort_by_key(|commit| commit.time);
+    if commits.is_empty() {
+        return json!({ "total": 0, "span": null, "buckets": [] });
+    }
+    let first = commits[0].time;
+    let last = commits[commits.len() - 1].time;
+    let bucket_ms: i64 = if last - first < 3 * 86_400_000 {
+        3_600_000
+    } else {
+        86_400_000
+    };
+    let count = ((last - first) / bucket_ms) as usize + 1;
+    let mut changes = vec![0usize; count];
+    let mut files: Vec<std::collections::BTreeSet<&str>> = (0..count)
+        .map(|_| std::collections::BTreeSet::new())
+        .collect();
+    let mut branches: Vec<std::collections::BTreeSet<&str>> = (0..count)
+        .map(|_| std::collections::BTreeSet::new())
+        .collect();
+    for commit in &commits {
+        let index = ((commit.time - first) / bucket_ms) as usize;
+        changes[index] += 1;
+        for path in &commit.lww {
+            files[index].insert(path.as_str());
+        }
+        branches[index].insert(commit.branch.as_str());
+    }
+    let buckets: Vec<serde_json::Value> = (0..count)
+        .filter(|index| changes[*index] > 0)
+        .map(|index| {
+            json!({
+                "at": iso_instant(first + index as i64 * bucket_ms),
+                "changes": changes[index],
+                "files": files[index].len(),
+                "branches": branches[index].len(),
+            })
+        })
+        .collect();
+    json!({
+        "total": commits.len(),
+        "span": { "first": iso_instant(first), "last": iso_instant(last) },
+        "buckets": buckets,
+    })
+}
+
+/// The state as of one instant: the commits at or before `at`, the
+/// branches' heads recomputed from those commits alone, and the layers
+/// whose publishing commit the moment already holds — the trunk layers,
+/// whose source commit predates commits, stand at every moment. A merge
+/// published after the moment reads open again, exactly as it was.
+fn as_of_view(view: &HistoryView, at_ms: i64) -> (HistoryView, usize, usize) {
+    let commits: Vec<CommitView> = view
+        .commits
+        .iter()
+        .filter(|commit| commit.time <= at_ms)
+        .cloned()
+        .collect();
+    let total = view.commits.len();
+    let covered = commits.len();
+    let kept: std::collections::HashSet<&str> =
+        commits.iter().map(|commit| commit.id.as_str()).collect();
+    let layers: Vec<LayerView> = view
+        .layers
+        .iter()
+        .filter(|layer| {
+            layer
+                .source_commit
+                .as_deref()
+                .is_none_or(|id| kept.contains(id))
+        })
+        .cloned()
+        .collect();
+    let branches: Vec<BranchView> = view
+        .branches
+        .iter()
+        .map(|branch| {
+            let head = commits
+                .iter()
+                .filter(|commit| commit.branch == branch.name)
+                .max_by_key(|commit| commit.time)
+                .map(|commit| commit.id.clone());
+            BranchView {
+                name: branch.name.clone(),
+                base: branch.base.clone(),
+                forked_from: branch.forked_from.clone(),
+                head,
+                child: branch.child.clone(),
+            }
+        })
+        .collect();
+    (
+        HistoryView {
+            version: view.version.clone(),
+            branches,
+            commits,
+            layers,
+            storage: view.storage.clone(),
+            cut_branches: view.cut_branches.clone(),
+            more_branches: view.more_branches,
+            more_layers: view.more_layers,
+            note: view.note.clone(),
+        },
+        covered,
+        total,
+    )
+}
+
 /// The section's document: the folder's own view, with each branch's
 /// state derived and the substrate's absences named rather than drawn
 /// as an empty tree. The GUI's launch folder is the project — the face
 /// reads the machine, it never registers anything (that is the arm's
 /// one-time job at a delegation's first spawn). A `since` version the
 /// substrate still holds current answers `unchanged` and the caller's
-/// view stands.
-pub fn workspace_history(cwd: &Path, since: Option<&str>) -> serde_json::Value {
-    workspace_history_for(cwd, since)
+/// view stands. An `at` instant answers the state AS OF that moment:
+/// the rows at or before it, the moment named (`as_of`), and how much
+/// of the history that covers (`covered` of the timeline's `total`).
+pub fn workspace_history(cwd: &Path, since: Option<&str>, at: Option<&str>) -> serde_json::Value {
+    workspace_history_for(cwd, since, at)
 }
 
 /// The section's document for one folder, made explicit — the rail's
 /// per-project read. The launch-folder path delegates here.
-pub fn workspace_history_for(folder: &Path, since: Option<&str>) -> serde_json::Value {
+pub fn workspace_history_for(
+    folder: &Path,
+    since: Option<&str>,
+    at: Option<&str>,
+) -> serde_json::Value {
     let Ok(home) = crate::home::fleet_home(
         std::env::var("FLEET_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
@@ -550,7 +767,7 @@ pub fn workspace_history_for(folder: &Path, since: Option<&str>) -> serde_json::
             "note": "this folder has no LayerFS project — the first delegation here registers one",
         });
     };
-    project_document(&folder, &registration, &home, since)
+    project_document(&folder, &registration, &home, since, at)
 }
 
 /// One project's section document, by its registered folder's path —
@@ -559,7 +776,11 @@ pub fn workspace_history_for(folder: &Path, since: Option<&str>) -> serde_json::
 /// tower and the second brain resolve projects: the registration map's
 /// own key, canonicalized the same way the arm's lookup is. A path no
 /// registration carries is refused by name.
-pub fn workspace_history_for_registered(folder: &str, since: Option<&str>) -> serde_json::Value {
+pub fn workspace_history_for_registered(
+    folder: &str,
+    since: Option<&str>,
+    at: Option<&str>,
+) -> serde_json::Value {
     let Ok(home) = crate::home::fleet_home(
         std::env::var("FLEET_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
@@ -583,7 +804,7 @@ pub fn workspace_history_for_registered(folder: &str, since: Option<&str>) -> se
             "note": format!("no registered project at `{folder}`"),
         });
     };
-    project_document(&registered, &registration, &home, since)
+    project_document(&registered, &registration, &home, since, at)
 }
 
 /// The read for one resolved registration, rendered either way it can
@@ -594,6 +815,7 @@ fn project_document(
     registration: &Registration,
     home: &Path,
     since: Option<&str>,
+    at: Option<&str>,
 ) -> serde_json::Value {
     match history(registration, home, since) {
         Ok(HistoryRead::Unchanged(version)) => json!({
@@ -602,6 +824,45 @@ fn project_document(
             "version": version,
         }),
         Ok(HistoryRead::Full(view)) => {
+            // The timeline is derived from the WHOLE view — it is the
+            // scrubber's scale, and a moment that filters the rows must
+            // not shrink the ruler. An unparsable `at` is named in the
+            // refusals and the read answers whole: a silent no-op filter
+            // would show a moment that was never asked for.
+            let timeline = timeline_block(&view);
+            let total = timeline["total"].as_u64().unwrap_or(0);
+            let mut refused: Vec<serde_json::Value> = Vec::new();
+            let asked = at.and_then(parse_instant);
+            if let (Some(text), None) = (at, asked) {
+                refused.push(json!(format!(
+                    "the `at` instant `{text}` is not an ISO 8601 UTC time or unix millis — \
+                     the read answers the whole history"
+                )));
+            }
+            let (view, covered) = match asked {
+                Some(at_ms) => {
+                    let (filtered, covered, _) = as_of_view(&view, at_ms);
+                    (filtered, covered as u64)
+                }
+                None => (*view, total),
+            };
+            let timeline = {
+                let mut timeline = timeline;
+                timeline["as_of"] = json!(asked.map(iso_instant));
+                timeline["covered"] = json!(covered);
+                timeline
+            };
+            // The named edge (b/c): a moment before the first event (or
+            // a history the moment covers none of) is a named state,
+            // never an empty list pretending to be data.
+            let mut note = view.note.clone();
+            if asked.is_some() && covered == 0 && total > 0 {
+                note = Some(format!(
+                    "before the first change — the moment asked for precedes \
+                     the history's first commit ({})",
+                    timeline["span"]["first"].as_str().unwrap_or_default()
+                ));
+            }
             let branches: Vec<serde_json::Value> = view
                 .branches
                 .iter()
@@ -682,8 +943,9 @@ fn project_document(
                 })),
                 "cut_branches": view.cut_branches,
                 "truncated": truncation_word(&view),
-                "note": view.note,
-                "refused": [],
+                "note": note,
+                "timeline": timeline,
+                "refused": refused,
             })
         }
         Err(reason) => json!({
@@ -749,7 +1011,7 @@ pub fn workspace_projects() -> serde_json::Value {
                 if !active {
                     continue;
                 }
-                let document = project_document(&folder, &registration, &home, None);
+                let document = project_document(&folder, &registration, &home, None, None);
                 let summary = json!({
                     "name": registration.name,
                     "folder": folder,
@@ -2753,10 +3015,10 @@ if (store.endsWith("stale.sqlite")) {
         // By path: the rail section's own read answers the project's
         // full view, and an unknown path is refused by name — the
         // control tower's and the second brain's resolution.
-        let one = workspace_history_for_registered("/proj/active-a", None);
+        let one = workspace_history_for_registered("/proj/active-a", None, None);
         assert_eq!(one["project"], "active-a");
         assert_eq!(one["branches"].as_array().unwrap().len(), 2);
-        let unknown = workspace_history_for_registered("/proj/nowhere", None);
+        let unknown = workspace_history_for_registered("/proj/nowhere", None, None);
         assert!(
             unknown["note"]
                 .as_str()
@@ -2765,5 +3027,225 @@ if (store.endsWith("stale.sqlite")) {
             "{unknown}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // -------------------------------------------------- the time scrubber
+    // The document derives the timeline and answers `at`; the face only
+    // paints. The fixture: three commits over two hours on two child
+    // branches, two merge-source layers and one trunk layer.
+
+    fn scrub_body() -> String {
+        let base = 1_793_000_000_000i64;
+        serde_json::json!({
+            "kind": "ok", "version": "vt", "store": { "stats": {} }, "project": "fleet",
+            "branches": [
+                { "name": "main", "head": null },
+                { "name": "child-1", "base": "l1", "head": "c1" },
+                { "name": "child-2", "base": "l1", "head": "c3" },
+            ],
+            "moreBranches": false,
+            "commits": [
+                { "id": "c1", "branch": "child-1", "via": "fs", "time": base, "lww": ["/notes.md"] },
+                { "id": "c2", "branch": "child-2", "via": "fs", "time": base + 3_660_000,
+                  "lww": ["/notes.md", "/src/main.rs"] },
+                { "id": "c3", "branch": "child-2", "via": "fs", "time": base + 7_320_000,
+                  "lww": ["/src/main.rs"] },
+            ],
+            "more": {},
+            "layers": [
+                { "id": "l1", "logical": 5, "parent": null,
+                  "sourceBranch": null, "sourceCommit": null, "overwroteCount": 0 },
+                { "id": "l2", "logical": 6, "parent": "l1",
+                  "sourceBranch": "merge-child-1", "sourceCommit": "c1", "overwroteCount": 0 },
+                { "id": "l3", "logical": 7, "parent": "l2",
+                  "sourceBranch": "child-2", "sourceCommit": "c3", "overwroteCount": 0 },
+            ],
+            "moreLayers": false,
+            "workspaces": [],
+        })
+        .to_string()
+    }
+
+    fn scrub_document(name: &str, at: Option<&str>, body: &str) -> serde_json::Value {
+        let _lock = crate::testsupport::env_lock();
+        let root = std::env::temp_dir().join(format!(
+            "fleet-scrub-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = view_home(&root);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
+        let (script, _count) = stub_history(&root.join("history"), body);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
+        let document = project_document("/nowhere", &registration(), &home, None, at);
+        let _ = std::fs::remove_dir_all(&root);
+        document
+    }
+
+    /// The timeline is DERIVED from the commits the document already
+    /// carries: an hour's buckets over this short span, each naming its
+    /// moment, its change count, the files its commits touched, and the
+    /// branches they worked — and the whole span's ends. Nothing new is
+    /// stored or migrated.
+    #[test]
+    fn the_timeline_is_derived_from_the_commits_nothing_is_stored() {
+        let document = scrub_document("timeline", None, &scrub_body());
+        let timeline = &document["timeline"];
+        assert_eq!(timeline["total"], 3);
+        assert_eq!(timeline["span"]["first"], iso_instant(1_793_000_000_000));
+        assert_eq!(
+            timeline["span"]["last"],
+            iso_instant(1_793_000_000_000 + 7_320_000)
+        );
+        let buckets = timeline["buckets"].as_array().expect("the buckets");
+        assert_eq!(
+            buckets.len(),
+            3,
+            "{}",
+            serde_json::to_string(timeline).unwrap()
+        );
+        // A short range tiles by the hour, each bucket at its hour's
+        // start: one change on child-1, two on child-2.
+        assert_eq!(buckets[0]["at"], iso_instant(1_793_000_000_000));
+        assert_eq!(buckets[0]["changes"], 1);
+        assert_eq!(buckets[0]["files"], 1);
+        assert_eq!(buckets[0]["branches"], 1);
+        assert_eq!(buckets[1]["at"], iso_instant(1_793_000_000_000 + 3_600_000));
+        assert_eq!(buckets[1]["changes"], 1);
+        assert_eq!(buckets[1]["files"], 2);
+        assert_eq!(buckets[1]["branches"], 1);
+        // The unscrubbed document answers for the newest moment: the
+        // moment it names is null (the face prints the read as live),
+        // and the coverage is everything.
+        assert!(timeline["as_of"].is_null(), "{timeline}");
+        assert_eq!(timeline["covered"], 3);
+    }
+
+    /// The `at` instant answers the state AS OF it: the rows at or
+    /// before it, the moment named, the coverage said, the branch heads
+    /// recomputed, and a merge published after the moment gone.
+    #[test]
+    fn the_at_instant_answers_the_state_as_of_it() {
+        let at = iso_instant(1_793_000_000_000 + 3_700_000);
+        let document = scrub_document("as-of", Some(&at), &scrub_body());
+        assert_eq!(document["timeline"]["as_of"], at, "{document}");
+        assert_eq!(document["timeline"]["covered"], 2);
+        assert_eq!(document["timeline"]["total"], 3);
+        let commits = document["commits"].as_array().expect("the rows");
+        assert_eq!(
+            commits.len(),
+            2,
+            "{}",
+            serde_json::to_string(commits).unwrap()
+        );
+        assert!(
+            commits.iter().all(|c| c["id"] != "c3"),
+            "a commit after the moment is gone"
+        );
+        // The branch head is the branch's newest commit AS OF the
+        // moment: child-2's head stands at c2.
+        let child2 = document["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["name"] == "child-2")
+            .expect("the branch");
+        assert_eq!(child2["head"], "c2");
+        // The layer published from c3 is not yet in the moment's world.
+        let layers = document["layers"].as_array().unwrap();
+        assert!(
+            layers.iter().all(|l| l["id"] != "l3"),
+            "the merge layer after the moment is gone"
+        );
+        // The timeline's span still measures the WHOLE history — the
+        // moment filters the rows, never the ruler.
+        assert_eq!(
+            document["timeline"]["span"]["last"],
+            iso_instant(1_793_000_000_000 + 7_320_000)
+        );
+    }
+
+    /// Edge (b/c): a moment before the first change is a NAMED state —
+    /// the rows are empty because nothing existed yet, and the note says
+    /// so by name, never "0 changes" pretending to be data.
+    #[test]
+    fn a_moment_before_the_first_change_is_named_not_empty() {
+        let at = iso_instant(1_793_000_000_000 - 1_000);
+        let document = scrub_document("before-first", Some(&at), &scrub_body());
+        assert_eq!(document["timeline"]["covered"], 0);
+        assert_eq!(document["timeline"]["total"], 3);
+        assert_eq!(document["timeline"]["as_of"], at, "{document}");
+        assert!(document["commits"].as_array().unwrap().is_empty());
+        let note = document["note"].as_str().expect("the named state");
+        assert!(note.contains("before the first change"), "{note}");
+        assert!(
+            note.contains("precedes"),
+            "the note names the relationship to the first commit: {note}"
+        );
+    }
+
+    /// Edge (d): the newest bucket's moment answers exactly what the
+    /// unscrubbed document answers — same rows, same coverage.
+    #[test]
+    fn the_newest_moment_matches_the_unscrubbed_document() {
+        let unscrubbed = scrub_document("newest-live", None, &scrub_body());
+        let at = iso_instant(1_793_000_000_000 + 7_320_000);
+        let newest = scrub_document("newest-scrub", Some(&at), &scrub_body());
+        assert_eq!(
+            unscrubbed["commits"], newest["commits"],
+            "the newest moment's rows are the live rows"
+        );
+        assert_eq!(
+            unscrubbed["layers"], newest["layers"],
+            "the newest moment's layers are the live layers"
+        );
+        assert_eq!(
+            newest["timeline"]["covered"],
+            unscrubbed["timeline"]["covered"]
+        );
+        assert_eq!(newest["timeline"]["covered"], 3);
+    }
+
+    /// A history with nothing in it names itself: the timeline's total
+    /// is zero and the span is null — the face's "no changes recorded
+    /// yet" reads this, never a zero drawn as data.
+    #[test]
+    fn a_history_with_no_changes_names_the_timeline_empty() {
+        let body = r#"console.log(JSON.stringify({
+  kind: "ok", version: "v-empty", store: { stats: {} }, project: "fleet",
+  branches: [], moreBranches: false, commits: [], more: {},
+  layers: [], moreLayers: false, workspaces: [],
+}));"#;
+        let document = scrub_document("no-history", None, body);
+        let timeline = &document["timeline"];
+        assert_eq!(timeline["total"], 0, "{timeline}");
+        assert!(timeline["span"].is_null(), "{timeline}");
+        assert!(timeline["buckets"].as_array().unwrap().is_empty());
+    }
+
+    /// An `at` the parser does not know is NAMED in the refusals and the
+    /// read answers whole — a silent no-op filter would show a moment
+    /// that was never asked for.
+    #[test]
+    fn an_unparsable_at_is_named_not_scrubbed() {
+        let document = scrub_document("bad-at", Some("not-a-time"), &scrub_body());
+        let refused = document["refused"].as_array().expect("the refusals");
+        assert_eq!(
+            refused.len(),
+            1,
+            "{}",
+            serde_json::to_string(refused).unwrap()
+        );
+        let said = refused[0].as_str().unwrap_or_default();
+        assert!(said.contains("not an ISO 8601 UTC time"), "{said}");
+        assert!(said.contains("not-a-time"), "{said}");
+        assert_eq!(
+            document["commits"].as_array().unwrap().len(),
+            3,
+            "the read answers the whole history, named"
+        );
     }
 }

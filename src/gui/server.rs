@@ -479,10 +479,15 @@ async fn serve_connection(
             let project = decode_query(&request.query, "project");
             let since = decode_query(&request.query, "since");
             let since = (!since.is_empty()).then_some(since);
+            // `at` scrubs the project's history to one instant: the
+            // document answers the state as of that moment, and the
+            // face paints the rows that came back.
+            let at = decode_query(&request.query, "at");
+            let at = (!at.is_empty()).then_some(at);
             let document = if project.is_empty() {
                 bridge.workspace_projects().await
             } else {
-                bridge.workspace_project(&project, since).await
+                bridge.workspace_project(&project, since, at).await
             };
             write_reply(&mut stream, api(200, document)).await
         }

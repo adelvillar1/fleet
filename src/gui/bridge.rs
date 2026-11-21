@@ -2514,10 +2514,19 @@ impl Bridge {
     /// rail section's own read. Uncached: the section is the thing
     /// being looked at, and the substrate's `since` version answers in
     /// 1 ms when nothing moved.
-    pub async fn workspace_project(&self, folder: &str, since: Option<String>) -> Value {
+    pub async fn workspace_project(
+        &self,
+        folder: &str,
+        since: Option<String>,
+        at: Option<String>,
+    ) -> Value {
         let asked = folder.to_string();
         match tokio::task::spawn_blocking(move || {
-            crate::layerfs_view::workspace_history_for_registered(&asked, since.as_deref())
+            crate::layerfs_view::workspace_history_for_registered(
+                &asked,
+                since.as_deref(),
+                at.as_deref(),
+            )
         })
         .await
         {
@@ -2529,10 +2538,10 @@ impl Bridge {
         }
     }
 
-    pub async fn workspace_history(&self, since: Option<String>) -> Value {
+    pub async fn workspace_history(&self, since: Option<String>, at: Option<String>) -> Value {
         let cwd = self.cwd.clone();
         match tokio::task::spawn_blocking(move || {
-            crate::layerfs_view::workspace_history(&cwd, since.as_deref())
+            crate::layerfs_view::workspace_history(&cwd, since.as_deref(), at.as_deref())
         })
         .await
         {
