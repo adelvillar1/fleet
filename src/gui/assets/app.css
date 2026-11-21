@@ -144,6 +144,10 @@
      light label where a bright green one needs a dark one. */
   --scrim: rgb(4 10 14 / 48%);
   --on-tone: rgb(4, 18, 26);
+  /* A flat accent fill is not the accent gradient: the gradient's label
+     is white on console, while the flat fill's label must be dark there.
+     One token per job, measured in `themes.rs`. */
+  --on-flat: rgb(4, 18, 26);
   --lane-0: rgb(45, 214, 191);
   --lane-1: rgb(167, 139, 250);
   --lane-2: rgb(255, 178, 36);
@@ -352,6 +356,7 @@
   --dsw-alias-on-accent: rgb(4, 18, 26);
   --scrim: rgb(24 26 29 / 34%);
   --on-tone: rgb(255, 255, 255);
+  --on-flat: rgb(4, 18, 26);
   --dsw-alias-ok: rgb(22, 110, 46);
   --dsw-alias-down: rgb(176, 36, 32);
   --dsw-alias-warn: rgb(122, 82, 8);
@@ -397,6 +402,7 @@
   --dsw-alias-on-accent: rgb(255, 255, 255);
   --scrim: rgb(0 0 0 / 55%);
   --on-tone: rgb(12, 14, 18);
+  --on-flat: rgb(12, 14, 18);
   --lane-0: rgb(45, 212, 191);
   --lane-1: rgb(167, 139, 250);
   --lane-2: rgb(251, 191, 36);
@@ -439,6 +445,7 @@
   --dsw-alias-on-accent: rgb(255, 255, 255);
   --scrim: rgb(0 0 0 / 60%);
   --on-tone: rgb(255, 255, 255);
+  --on-flat: rgb(255, 255, 255);
   /* The signal tier on a pure-white ground: the mockup's day set, the
      same eight hues the light themes carry (U4 — no theme invents a hue). */
   --ink: rgb(255, 255, 255);
@@ -1087,9 +1094,9 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 
 :root[data-theme="contrast"] .conn-down {
-  background: #ffffff;
-  color: #000000;
-  border-color: #000000;
+  background: var(--dsw-static-contrast-page);
+  color: var(--dsw-static-contrast-ink);
+  border-color: var(--dsw-static-contrast-ink);
 }
 
 /* --------------------------------------------------------------- topbar */
@@ -2908,7 +2915,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   padding: 2px 8px;
   border-radius: var(--radius-pill);
   background: var(--dsw-alias-accent);
-  color: #fff;
+  color: var(--on-flat);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.09em;
@@ -2971,7 +2978,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .decision[data-decision="remember"] {
   border-color: var(--dsw-alias-accent);
   background: var(--dsw-alias-accent);
-  color: #fff;
+  color: var(--on-flat);
 }
 
 .decision[data-decision="remember"]:hover { background: var(--dsw-alias-accent-deep); }
@@ -4184,7 +4191,7 @@ body[data-motion="off"] .composer .foot-btn.dictate.listening .foot-label::befor
   border: 0;
   border-radius: 8px;
   background: var(--dsw-alias-accent);
-  color: #fff;
+  color: var(--on-flat);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -5102,7 +5109,7 @@ pre.drawer-code {
   border: 0;
   border-radius: 8px;
   background: var(--dsw-alias-accent);
-  color: #fff;
+  color: var(--on-flat);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -6591,7 +6598,7 @@ body[data-pane-dragging="true"] .pane iframe { pointer-events: none; }
   height: 100%;
   min-height: 320px;
   border: 0;
-  background: #fff;
+  background: var(--dsw-static-contrast-page);
 }
 .pane-web-refuse { padding: 10px 2px; }
 .pane-web-refuse-why { margin: 0 0 10px; color: var(--dsw-alias-ink-secondary); font-size: 12px; }
@@ -6607,7 +6614,7 @@ body[data-pane-dragging="true"] .pane iframe { pointer-events: none; }
   margin: 8px 0;
   border: 1px solid var(--dsw-alias-hairline);
   border-radius: 6px;
-  background: #fff;
+  background: var(--dsw-static-contrast-page);
 }
 .pane-doc-frame {
   display: block;
@@ -6616,7 +6623,7 @@ body[data-pane-dragging="true"] .pane iframe { pointer-events: none; }
   min-height: 320px;
   border: 1px solid var(--dsw-alias-hairline);
   border-radius: 6px;
-  background: #fff;
+  background: var(--dsw-static-contrast-page);
 }
 .pane-pdf { display: flex; flex-direction: column; gap: 8px; }
 .pane-pdf-page {
@@ -6624,7 +6631,7 @@ body[data-pane-dragging="true"] .pane iframe { pointer-events: none; }
   height: auto;
   border: 1px solid var(--dsw-alias-hairline);
   border-radius: 4px;
-  background: #fff;
+  background: var(--dsw-static-contrast-page);
 }
 .pane-pdf-meta, .pane-pptx, .pane-xlsx, .pane-drawio, .pane-json { color: var(--dsw-alias-ink); }
 .pane-data { max-width: 100%; overflow-x: auto; display: block; }
@@ -6911,7 +6918,7 @@ body[data-pane-dragging="true"] .pane iframe { pointer-events: none; }
   border: 0;
   border-radius: 8px;
   background: var(--dsw-alias-accent);
-  color: #fff;
+  color: var(--on-flat);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -7104,7 +7111,7 @@ body[data-pane-dragging="true"] .pane iframe { pointer-events: none; }
   padding: 1px 5px;
   border-radius: 999px;
   background: var(--dsw-alias-accent);
-  color: #fff;
+  color: var(--on-flat);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
@@ -8703,7 +8710,7 @@ body[data-work="collapsed"] .work-list { display: none; }
   cursor: pointer;
 }
 .canvas-act:hover { color: var(--dsw-alias-ink); border-color: var(--dsw-alias-hairline-strong); }
-.canvas-frame-body { position: relative; overflow: hidden; background: #fff; }
+.canvas-frame-body { position: relative; overflow: hidden; background: var(--dsw-static-contrast-page); }
 .canvas-frame-page { display: block; border: 0; width: 100%; height: 100%; pointer-events: none; }
 .canvas-pins { position: absolute; inset: 0; pointer-events: none; }
 .canvas-pin {
@@ -9758,7 +9765,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .press.primary {
   border-color: var(--dsw-alias-accent);
   background: var(--dsw-alias-accent);
-  color: #fff;
+  color: var(--on-flat);
 }
 .press.primary:hover { background: var(--dsw-alias-accent-deep); }
 .press.quiet { color: var(--dsw-alias-ink-secondary); }
@@ -10137,13 +10144,13 @@ body[data-work="collapsed"] .room-back { display: grid; }
   font-weight: 700;
   color: var(--dsw-alias-ink-tertiary);
 }
-.dk-st.done .bead { background: var(--dsw-alias-ok); border-color: var(--dsw-alias-ok); color: #fff; }
+.dk-st.done .bead { background: var(--dsw-alias-ok); border-color: var(--dsw-alias-ok); color: var(--on-tone); }
 .dk-st.run .bead {
   background: var(--dsw-alias-accent-wash);
   border-color: var(--dsw-alias-accent);
   color: var(--dsw-alias-accent);
 }
-.dk-st.refused .bead { background: var(--dsw-alias-down); border-color: var(--dsw-alias-down); color: #fff; }
+.dk-st.refused .bead { background: var(--dsw-alias-down); border-color: var(--dsw-alias-down); color: var(--on-tone); }
 /* On a bright fill the glyph inverts: white on --ok measures 2.36:1 in the
    dark themes, so a done bead's mark is dark ink there and white only on
    paper. Measured, not guessed — the mockup's instrument caught this. */
@@ -10695,7 +10702,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .ib-actions button.primary { background: var(--dsw-alias-accent-wash); border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent-lift); font-weight: 600; }
 .ib-actions button.danger { color: var(--dsw-alias-down); border-color: var(--dsw-alias-down); }
 .ib-row .ib-pill { padding: 1px 8px; border-radius: var(--radius-pill); font-size: var(--text-xs); font-weight: 600; background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink-secondary); margin-right: 6px; }
-.surfaces-badge { margin-left: auto; min-width: 18px; padding: 1px 6px; border-radius: var(--radius-pill); background: var(--dsw-alias-down); color: #fff; font-size: var(--text-xs); font-weight: 700; font-variant-numeric: tabular-nums; text-align: center; }
+.surfaces-badge { margin-left: auto; min-width: 18px; padding: 1px 6px; border-radius: var(--radius-pill); background: var(--dsw-alias-down); color: var(--on-tone); font-size: var(--text-xs); font-weight: 700; font-variant-numeric: tabular-nums; text-align: center; }
 
 /* ---- the learning surface (the learning plan's C7) -------------------------- */
 
@@ -10711,14 +10718,14 @@ body[data-work="collapsed"] .room-back { display: grid; }
   font-size: var(--text-base);
 }
 .lr-node[data-state="held"] { opacity: 0.72; }
-.lr-node[data-state="current"] { border-color: var(--dsw-alias-accent, #2b6cb0); }
+.lr-node[data-state="current"] { border-color: var(--dsw-alias-accent); }
 .lr-prop { color: var(--dsw-alias-ink); }
 .lr-node .lr-dep { color: var(--dsw-alias-ink-tertiary); font-size: var(--text-sm); white-space: nowrap; }
-.lr-node[data-state="current"] .lr-dep { color: var(--dsw-alias-accent, #2b6cb0); font-weight: 600; }
+.lr-node[data-state="current"] .lr-dep { color: var(--dsw-alias-accent); font-weight: 600; }
 .lr-sub { color: var(--dsw-alias-ink-secondary); font-size: var(--text-sm); letter-spacing: 0.04em; text-transform: uppercase; margin: 16px 0 6px; }
 .lr-holds { display: flex; flex-direction: column; gap: 6px; }
 .lr-hold {
-  border-left: 3px solid var(--dsw-alias-accent, #2b6cb0);
+  border-left: 3px solid var(--dsw-alias-accent);
   padding: 6px 10px;
   font-size: var(--text-base);
   background: var(--dsw-alias-surface-raised);
@@ -10736,7 +10743,7 @@ body[data-work="collapsed"] .room-back { display: grid; }
   border: 1px solid var(--dsw-alias-surface-raised);
   margin: 6px 0; font-size: var(--text-base);
 }
-.lr-outcome[data-held="true"] { border-left: 3px solid var(--dsw-alias-accent, #2b6cb0); }
+.lr-outcome[data-held="true"] { border-left: 3px solid var(--dsw-alias-accent); }
 .lr-outcome[data-held="false"] { border-left: 3px solid transparent; opacity: 0.8; }
 .lr-outcome .lr-dep { color: var(--dsw-alias-ink-tertiary); font-size: var(--text-sm); white-space: nowrap; }
 
@@ -10753,8 +10760,8 @@ body[data-work="collapsed"] .room-back { display: grid; }
   display: inline-flex; align-items: center; gap: 8px;
   margin: 10px 0 0; padding: 7px 14px;
   border-radius: var(--radius-pill, 999px);
-  border: 1px solid var(--dsw-alias-accent, #2b6cb0);
-  background: transparent; color: var(--dsw-alias-accent, #2b6cb0);
+  border: 1px solid var(--dsw-alias-accent);
+  background: transparent; color: var(--dsw-alias-accent);
   font-size: var(--text-base); font-weight: 600; cursor: pointer;
 }
 .lr-start:hover { background: var(--dsw-alias-accent-wash, rgba(43, 108, 176, 0.12)); }
@@ -12131,3 +12138,4 @@ section.board-card > .board-head {
     padding: 15px 16px 16px;
   }
 }
+

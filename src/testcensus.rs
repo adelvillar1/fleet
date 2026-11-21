@@ -178,6 +178,14 @@ pub(crate) const MODULES: &[(&str, &str)] = &[
     ("workspace.rs", include_str!("workspace.rs")),
 ];
 
+/// The face's served assets, included so a guard reads the artifact that
+/// actually ships rather than a copy that can drift. `MODULES` is the
+/// Rust module tree — `the_census_matches_the_crates_module_tree` walks
+/// `src/` for `mod` declarations, so a stylesheet in that table would be
+/// a stale entry by definition. Assets live here instead.
+pub(crate) const ASSETS: &[(&str, &str)] =
+    &[("gui/assets/app.css", include_str!("gui/assets/app.css"))];
+
 /// The module tree, walked at run time: `lib.rs`'s `mod` declarations,
 /// then each file's own, resolving `x` to `x.rs` or `x/mod.rs`.
 fn module_tree() -> Vec<String> {
@@ -346,4 +354,143 @@ fn the_accounting_names_an_uncovered_module() {
         !uncovered.iter().any(|m| m.starts_with("armada/")),
         "the exemption covers its class"
     );
+}
+
+/// Strip `/* … */` comments, preserving newlines so line numbers survive.
+fn without_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut comment = false;
+    while let Some(c) = chars.next() {
+        if comment {
+            if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                comment = false;
+            } else if c == '\n' {
+                out.push('\n');
+            } else {
+                out.push(' ');
+            }
+            continue;
+        }
+        if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            comment = true;
+            out.push_str("  ");
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The lines that belong to a theme block: `:root {` and every
+/// `:root[data-theme="…"] { … }`. The token block is the one place a
+/// literal colour may be declared; everything else names a token.
+fn token_block_lines(source: &str) -> std::collections::HashSet<usize> {
+    let mut inside = false;
+    let mut lines = std::collections::HashSet::new();
+    for (index, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        let opener = trimmed == ":root {"
+            || (trimmed.starts_with(":root[data-theme=\"") && trimmed.ends_with("\"] {"));
+        if opener {
+            inside = true;
+            lines.insert(index);
+            continue;
+        }
+        if inside {
+            lines.insert(index);
+            if trimmed == "}" {
+                inside = false;
+            }
+        }
+    }
+    lines
+}
+
+/// One `#rgb`/`#rrggbb`/`#rrggbbaa` at the start of `text`, if it is a
+/// complete literal and not the prefix of a longer identifier (`#face`
+/// as a selector must never read as a colour).
+fn hex_literal(text: &str) -> Option<String> {
+    let run: String = text[1..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+    if !matches!(run.len(), 3 | 4 | 6 | 8) {
+        return None;
+    }
+    let after = text[1 + run.len()..].chars().next();
+    if after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return None;
+    }
+    Some(format!("#{run}"))
+}
+
+/// Every hex literal in a declaration value, outside the token block.
+/// Selectors are never scanned: a value is the text after the last `{`
+/// of its `;`-delimited chunk and before any `}`.
+fn hexes_outside_the_token_block(source: &str) -> Vec<(usize, String)> {
+    let stripped = without_comments(source);
+    let allowed = token_block_lines(&stripped);
+    let mut found = Vec::new();
+    let mut offset = 0usize;
+    for chunk in stripped.split(';') {
+        let chunk_start = offset;
+        offset += chunk.len() + 1;
+        let body = match chunk.rfind('{') {
+            Some(at) => &chunk[at + 1..],
+            None => chunk,
+        };
+        let body = match body.find('}') {
+            Some(at) => &body[..at],
+            None => body,
+        };
+        let Some(colon) = body.find(':') else {
+            continue;
+        };
+        let value = &body[colon + 1..];
+        let value_at = chunk_start + (body.as_ptr() as usize - chunk.as_ptr() as usize) + colon + 1;
+        let mut cursor = 0;
+        while let Some(at) = value[cursor..].find('#') {
+            let start = cursor + at;
+            let Some(literal) = hex_literal(&value[start..]) else {
+                cursor = start + 1;
+                continue;
+            };
+            let line = stripped[..value_at + start].matches('\n').count();
+            if !allowed.contains(&line) {
+                found.push((line + 1, literal));
+            }
+            cursor = start + 1;
+        }
+    }
+    found
+}
+
+/// P7's AC: a grep guard finds no hex outside the token block. The
+/// scanner reads the shipped stylesheet (the `include_str!` artifact,
+/// not a copy), so a component that spells `#4B2E2A` fails by name.
+#[test]
+fn no_hex_lives_outside_the_token_block() {
+    let mut offenders = Vec::new();
+    for (name, source) in ASSETS {
+        for (line, literal) in hexes_outside_the_token_block(source) {
+            offenders.push(format!("{name}:{line} {literal}"));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "hex literals outside the token block — name a token instead:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// The scanner's own proof: the token block may declare a literal, a
+/// component rule may not, and a selector that looks like hex is not one.
+#[test]
+fn the_hex_scanner_reads_declarations_not_selectors() {
+    let fixture = ":root {\n  --x: #fff;\n}\nbody { color: #4B2E2A; }\n#face { color: var(--x); }";
+    let found = hexes_outside_the_token_block(fixture);
+    assert_eq!(found, vec![(4, "#4B2E2A".to_string())]);
 }

@@ -473,6 +473,27 @@ mod tests {
         }
     }
 
+    /// P7: the label on a flat accent fill clears AA in every theme. The
+    /// gradient's label is `--dsw-alias-on-accent` and is measured above;
+    /// a flat fill is a different background (console's accent is a light
+    /// blue, its gradient a deep one), which is why `--on-flat` exists.
+    /// The conversion off `#fff` found day at 3.6:1 — an existing failure
+    /// no guard was reading.
+    #[test]
+    fn the_flat_accent_label_clears_aa_on_every_theme() {
+        for (name, values) in theme_values() {
+            let ink = resolve("--on-flat", &values, 0)
+                .unwrap_or_else(|| panic!("`{name}` declares no --on-flat"));
+            let accent = resolve("--dsw-alias-accent", &values, 0)
+                .unwrap_or_else(|| panic!("`{name}` declares no accent"));
+            let ratio = contrast(ink, accent);
+            assert!(
+                ratio >= MIN_TEXT,
+                "`{name}`: the flat accent label is {ratio:.2}:1, under {MIN_TEXT}:1"
+            );
+        }
+    }
+
     #[test]
     fn every_themes_text_clears_the_contrast_floor_on_every_surface() {
         let found = themes();
