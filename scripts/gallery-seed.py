@@ -36,9 +36,14 @@ Fixture contents, mapped to the surfaces the gallery needs:
   renders as broken paragraphs in the transcript.
 - memories with frontmatter, six canonical skills copied, `roles/*.md`,
   `canvas/<slug>/project.json` boards, `desk/<slug>/project.json` briefs,
-  calibration rows under `logs/<Y>/<M>/<D>/events.jsonl`, and
-  `graph.json` in the GraphFile shape (status pending|running|verified|
-  failed; nodes carry tools/skills/workflows/loops and peak).
+  - calibration rows under `logs/<Y>/<M>/<D>/events.jsonl` — route, turn,
+    tool-screen and recall rows, the route-judged verdicts, and the
+    delegation rows (op `delegation`, each carrying its `node`) the P4
+    overlay joins the declared graph against — and
+    `graph.json` in the GraphFile shape (status pending|running|verified|
+    failed; nodes carry tools/skills/workflows/loops and peak).
+  - canvas versions on the landing frame, each naming its own captured
+    raster under `canvas/<slug>/versions/` (the P5 version-diff fixture).
 """
 
 import argparse
@@ -91,6 +96,31 @@ def write(path: str, text: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
+
+
+def write_bytes(path: str, payload: bytes) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(payload)
+
+
+def png_bytes(width: int, height: int, rgb: tuple) -> bytes:
+    """A minimal solid-color PNG, stdlib only — the fixture versions'
+    rasters. Real pixels, small ones: the versions card's compare paints
+    them side by side, so they only have to read as two distinct frames."""
+    import struct
+    import zlib
+
+    row = b"\x00" + bytes(rgb) * width
+    raw = row * height
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
 def write_json(path: str, payload) -> None:
@@ -371,7 +401,19 @@ CANVAS_FRAMES = [
         "x": 0, "y": 0, "w": 1280, "h": 900, "tweak_spec": [],
         "tweak_values": {}, "model": "import",
         "set": "site",
-        "versions": [], "pins": [
+        # Two versions on the landing, each with its own captured raster
+        # (the P5 version-diff fixture): the versions card's compare
+        # paints the two newest side by side, and a version carries
+        # pixels only when the record names them (`image`).
+        "versions": [
+            {"id": "ver-landing-1", "name": "the first pass",
+             "html": "", "tweak_values": {}, "source": "generate",
+             "created": utc_at(8 * 3600), "image": "ver-landing-1.png"},
+            {"id": "ver-landing-2", "name": "the copy-pass mark",
+             "html": "", "tweak_values": {}, "source": "refine",
+             "created": utc_at(3 * 3600), "image": "ver-landing-2.png"},
+        ],
+        "pins": [
             {"id": "pin-1", "x": 0.5, "y": 0.62,
              "text": "the composer's placeholder carries the one question",
              "author": "owner", "source": "owner", "created": utc_at(8 * 3600),
@@ -468,6 +510,16 @@ def seed_knowledge(home: str, manifest: dict) -> None:
         "brand": None,
     })
 
+    # The versions' own rasters (the P5 version-diff fixture): the PNGs
+    # the browser lane would have captured, one per version the record
+    # names, at `canvas/<slug>/versions/<version-id>.png` — the path
+    # `canvas::version_image` serves the compare panes from.
+    versions_root = os.path.join(home, "canvas", "harbor-site-launch", "versions")
+    write_bytes(os.path.join(versions_root, "ver-landing-1.png"),
+                png_bytes(64, 40, (16, 20, 24)))
+    write_bytes(os.path.join(versions_root, "ver-landing-2.png"),
+                png_bytes(64, 40, (233, 224, 210)))
+
     # The desk: two briefs, one walked to review, one just claims.
     write_json(os.path.join(home, "desk", "launch-brief", "project.json"), {
         "slug": "launch-brief",
@@ -549,6 +601,18 @@ def route_row(ts: str, provider: str, workload: str, model: str,
     }
 
 
+def delegation_row(ts: str, node: str, session: str, brief_shape: str,
+                   provider: str, outcome: str) -> dict:
+    """The row the P4 delegation overlay joins on: the run's own record
+    that this graph node's work was delegated to this child session. The
+    overlay's join key is the row's `node` (`DelegatedRunRow.node`); a
+    row without it joins nothing, which is why every row here carries it."""
+    return {
+        "op": "delegation", "ts": ts, "node": node, "session": session,
+        "brief_shape": brief_shape, "provider": provider, "outcome": outcome,
+    }
+
+
 def turn_row(ts: str, outcome: str, stop: str, turns: int) -> dict:
     return {
         "op": "turn", "ts": ts, "outcome": outcome, "stop_reason": stop,
@@ -613,6 +677,20 @@ def seed_calibration(home: str) -> None:
          "route_key": "e6f7a8b9c0d1", "provider": "zai-coding-plan",
          "workload": "standard_code", "verdict": "insufficient",
          "confidence": 0.66, "reason": "the fallback walk served but the run capped"},
+        # The delegation overlay's rows (the P4 join, `node` carried): one
+        # child on `shipped-inventory` (the declared shape — no caption),
+        # two on `staging-checklist` (`ran twice`; the LATEST row's judged
+        # shape is the one the caption names), none on the rest (`never
+        # spawned`). Session ids in the log's own compact shape.
+        delegation_row(utc_at(6.8 * 3600), "shipped-inventory",
+                       compact_at(6.8 * 3600, 0x21), "standard_code",
+                       "stepfun", "completed"),
+        delegation_row(utc_at(5.2 * 3600), "staging-checklist",
+                       compact_at(5.2 * 3600, 0x22), "standard_code",
+                       "stepfun", "completed"),
+        delegation_row(utc_at(3.2 * 3600), "staging-checklist",
+                       compact_at(3.2 * 3600, 0x23), "prose",
+                       "zai-coding-plan", "max-turns"),
     ]
     yesterday_rows = [
         route_row(utc_at(30 * 3600), "stepfun", "standard_code", "step-3.7-flash"),

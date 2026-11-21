@@ -133,6 +133,24 @@ const SHOTS = {
     ready: 'const p = document.getElementById("panel-delegation");'
       + 'const board = document.getElementById("delegation-board");'
       + 'return !!p && !p.hidden && !!board && board.textContent.trim().length > 40;',
+    // The panel scrolls (the stage is the scroller) and the overlay's
+    // two cards — "the dependency graph" (per-node divergence captions)
+    // and "the graph's own aggregates" (the never-spawned / ran-twice
+    // tiles) — sit well below the fold. Put the graph card's top edge
+    // just under the head before the shutter: both cards land in frame.
+    after: async (page) => {
+      await page.evaluate(() => {
+        const panel = document.getElementById('panel-delegation');
+        const board = document.getElementById('delegation-board');
+        const card = board && [...board.children].find((one) => one.classList
+          && one.classList.contains('board-card')
+          && one.textContent.includes('the dependency graph'));
+        if (panel && card) {
+          const panelTop = panel.getBoundingClientRect().top;
+          panel.scrollTop += card.getBoundingClientRect().top - panelTop - 16;
+        }
+      });
+    },
   },
   'surface-memory': {
     route: 'memory',
