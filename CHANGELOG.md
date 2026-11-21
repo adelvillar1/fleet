@@ -12,6 +12,71 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.24 — 2026-11-21
+
+The face-rethought plan is complete: audited surface by surface, forty-some
+commits later every clause of P2 through P5 is landed with its own red-proof,
+and the gate on the cut commit reads **2695+ lib units, 0 failed, face 1655
+checks across 233 cases**.
+
+**The work surface holds its contract, adversarially.** An inbox triage the
+owner ruled into a deferral class shipped, was re-read by an adversarial review,
+and that review found two hazards no passing test would ever name: the hold
+store's read-modify-write was unlocked, so two concurrent accepts ran one
+inbound twice, an accept and a decline both "succeeded" over one hold, and a
+stale write-back could resurrect a hold that had already been accepted while
+the webhook kept serving; and a corrupt hold store answered "held" for a
+delivery that had actually vanished. The store now runs every mutation through
+one lock, a second `take` of the same id fails, the unwritable store says **the
+delivery was not held** instead of promising a hold exists, and the inbox
+carries its read error rather than an empty queue. Five fix commits, each with
+its red-proof in the message.
+
+**Proof of life.** `/api/channels/rehearse` pushes a real `Inbound` through
+`Driver::deliver` with no second device; the session's first record names
+channel and peer; the feed derives `rehearsal {at, session, delivered,
+answered}`; and the card says "the door heard you; no answer came back" when no
+reply line exists — never green on faith.
+
+**The delegation board finally joins the graph to the tree.** Delegation rows
+carry their plan node; the graph document carries a per-node overlay (spawned
+sessions, spawn count) with the divergence words **never spawned** and **ran
+twice**, a graph-level count, and the why-this-child line drawn from the plan's
+declared execution verdict and the child's judged shape. Rows written before
+the field existed load unchanged.
+
+**The skills surface earns its coverage map.** Fired versus unused, a
+newest-first feed naming at/skill/session/surface, and the honesty rule: when
+nothing records fires the block prints **"declared only — nothing records
+fires"** instead of a zero dressed up as data.
+
+**P5 closes.** The workspace-history scrubber asks the document for a moment
+(`at=<iso|ms>` answers `as_of/covered`) and the four honest edges are pinned —
+"before the first change" is never allowed to read as "no history". The graph's
+weakest link is derived in the document and offered as the practice default
+with the manual path intact. Version diffs compare **pixels** now — two panes,
+a divider, honest "this version carries no image" instead of an empty frame.
+And the design loop is a scored eval scenario (`scripts/design-eval.sh`): render
+through the product's own capture, the defect read from the render's pixels,
+the revision proved by a measured delta — the no-op red-proof caught the
+report saying "the defect is fixed" over a 0.2% band, and the sentence now
+reads its own measurement.
+
+**Hygiene grew a reaper.** 1,232 orphaned `tail -f /dev/null` processes had
+accumulated over ~55 days — 580 MB RSS, 46% of the per-uid process cap. `fleet
+hygiene` now stops orphaned keep-alives **whoever spawned them** (an orphan has
+no waiter, so stopping it cannot disrupt anything), guarded by an exact command
+match and a dead-parent check, with `FLEET_KEEPALIVE_DRY_RUN=1` as a census.
+Proven against real spawned processes.
+
+**The screenshot rig is committed code, not a lost /tmp recipe.**
+`scripts/gallery-seed.py` + `scripts/gallery-shoot.mjs` re-shot the gallery
+through the product's own face; the run caught **KI-586** — the huddles stage
+collapsing to 0px on phones (a one-rule grid fix; the desktop layout proved
+byte-identical at Δ0.002/255) — and the rig refuses to commit an empty frame
+instead of shipping a black rectangle. The delegation shot shows the new
+overlay because the fixture had to learn delegation rows first.
+
 ## v0.8.23 — 2026-11-20
 
 A gate that cannot be red at cut time, one environment lock for the whole
