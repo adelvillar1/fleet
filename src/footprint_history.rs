@@ -308,19 +308,21 @@ mod tests {
         // The probe is the environment's; the override is the one declared
         // input, and a word it does not know must fall through to the probe
         // rather than guess.
-        std::env::set_var("FLEET_MACHINE", "laptop");
+        let _lock = crate::testsupport::env_lock();
+        let mut machine = crate::testsupport::EnvVar::swapping("FLEET_MACHINE");
+        machine.to("laptop");
         assert!(is_laptop());
-        std::env::set_var("FLEET_MACHINE", "server");
+        machine.to("server");
         assert!(!is_laptop());
-        std::env::remove_var("FLEET_MACHINE");
+        machine.clear();
         let probed = is_laptop();
-        std::env::set_var("FLEET_MACHINE", "workstation");
+        machine.to("workstation");
         assert_eq!(
             is_laptop(),
             probed,
             "an unknown word must answer exactly what the probe answers"
         );
-        std::env::remove_var("FLEET_MACHINE");
+        machine.clear();
     }
 }
 

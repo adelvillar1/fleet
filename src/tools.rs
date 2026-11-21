@@ -4591,16 +4591,11 @@ mod tests {
         let home = std::env::temp_dir().join(format!("fleet-deck-off-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        let previous = std::env::var_os("FLEET_HOME");
-        std::env::set_var("FLEET_HOME", &home);
+        let _home_env = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         let run = run_deck(&serde_json::json!({"source": {"text": source_blocks()}}))
             .expect("the tool answers");
         assert!(run.output.starts_with("error:"), "{}", run.output);
         assert!(run.output.contains("deck.clustering"), "{}", run.output);
-        match previous {
-            Some(value) => std::env::set_var("FLEET_HOME", value),
-            None => std::env::remove_var("FLEET_HOME"),
-        }
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -4693,13 +4688,17 @@ mod tests {
             bytes.extend_from_slice(&value.to_ne_bytes());
         }
         std::fs::write(store.join("vectors.bin"), bytes).unwrap();
-        std::env::set_var("BLEND1_VECTORS_DIR", base.join("vectors"));
+        // The shared guard: the store path is process-wide, and the old
+        // `remove_var` at the end of this test deleted whatever the machine
+        // had rather than restoring it.
+        let mut vectors_dir = crate::testsupport::EnvVar::swapping("BLEND1_VECTORS_DIR");
+        vectors_dir.to(&base.join("vectors").to_string_lossy());
         let outcome = run_hybrid_search(&serde_json::json!({
             "root": workspace.to_string_lossy(),
             "query": "resolve_query_signature",
         }))
         .expect("the search answers");
-        std::env::remove_var("BLEND1_VECTORS_DIR");
+        vectors_dir.clear();
         assert!(
             outcome.output.contains("engine.rs"),
             "the source outline is found: {}",

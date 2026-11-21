@@ -735,9 +735,11 @@ mod tests {
 
         let instance = scratch("skills-instance");
         let dest = instance.join("skills-canonical");
-        // SAFETY: this test owns the variable for its duration and names a
-        // path unique to its own scratch home.
-        unsafe { std::env::set_var("FLEET_SKILLS_DIR", &dest) };
+        // The shared guard (env-isolation pass 3): the lock covers both
+        // windows, and the swap restores whatever the machine had.
+        let _lock = crate::testsupport::env_lock();
+        let mut skills_dir = crate::testsupport::EnvVar::swapping("FLEET_SKILLS_DIR");
+        skills_dir.to(&dest.to_string_lossy());
         let spec = JoinSpec {
             corpus_remote: corpus.to_str().unwrap().to_string(),
             skills_remote: Some(skills_bare.to_str().unwrap().to_string()),
@@ -746,7 +748,7 @@ mod tests {
             heartbeat_secs: 60,
         };
         let joined = join(&instance, &spec, 500).expect("joined");
-        unsafe { std::env::remove_var("FLEET_SKILLS_DIR") };
+        skills_dir.clear();
 
         assert!(joined.skills_cloned, "the boot cloned the shared library");
         assert_eq!(
@@ -763,9 +765,9 @@ mod tests {
         assert!(dest.join("a-skill").join("SKILL.md").exists());
 
         // A restart must NOT re-clone: the library is local authoring now.
-        unsafe { std::env::set_var("FLEET_SKILLS_DIR", &dest) };
+        skills_dir.to(&dest.to_string_lossy());
         let again = join(&instance, &spec, 600).expect("rejoined");
-        unsafe { std::env::remove_var("FLEET_SKILLS_DIR") };
+        skills_dir.clear();
         assert!(!again.skills_cloned, "a restart keeps its library");
         assert_eq!(again.skills_loaded, 1, "and still loads it");
 

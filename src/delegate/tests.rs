@@ -519,46 +519,26 @@ static KEY_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 
 #[test]
 fn the_budget_is_a_named_constant_the_config_can_only_lower() {
-    // The env-mutating test serializes on this: `cargo test` runs a
-    // module's tests on threads, and a `set_var` in one must not be
-    // visible to another mid-flight.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    struct EnvVar {
-        previous: Option<std::ffi::OsString>,
-    }
-    impl EnvVar {
-        fn set(value: &str) -> EnvVar {
-            let previous = std::env::var_os(DELEGATE_BUDGET_ENV);
-            std::env::set_var(DELEGATE_BUDGET_ENV, value);
-            EnvVar { previous }
-        }
-    }
-    impl Drop for EnvVar {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(DELEGATE_BUDGET_ENV, value),
-                None => std::env::remove_var(DELEGATE_BUDGET_ENV),
-            }
-        }
-    }
-
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-    std::env::remove_var(DELEGATE_BUDGET_ENV);
+    // The shared guard (env-isolation pass 3): one lock for the crate, and the
+    // values come back on drop rather than from a per-module copy of this.
+    let _lock = crate::testsupport::env_lock();
+    let mut budget = crate::testsupport::EnvVar::swapping(DELEGATE_BUDGET_ENV);
+    budget.clear();
     assert_eq!(budget_usd_day(), DELEGATE_BUDGET_USD_DAY);
     // The cap's value is the stated one: 250 reserved asks at the
     // conservative per-ask reservation.
     assert_eq!(DELEGATE_BUDGET_USD_DAY, 0.05);
     assert!((DELEGATE_BUDGET_USD_DAY / DELEGATE_ESTIMATED_ASK_USD - 250.0).abs() < 1.0);
     // The owner's config lowers it.
-    let _lower = EnvVar::set("0.005");
+    let _lower = crate::testsupport::EnvVar::set(DELEGATE_BUDGET_ENV, "0.005");
     assert_eq!(budget_usd_day(), 0.005);
     // And can never raise it: a value above the constant, a junk value,
     // and a negative one all read as the constant.
-    let _higher = EnvVar::set("99.0");
+    let _higher = crate::testsupport::EnvVar::set(DELEGATE_BUDGET_ENV, "99.0");
     assert_eq!(budget_usd_day(), DELEGATE_BUDGET_USD_DAY);
-    let _junk = EnvVar::set("not-a-number");
+    let _junk = crate::testsupport::EnvVar::set(DELEGATE_BUDGET_ENV, "not-a-number");
     assert_eq!(budget_usd_day(), DELEGATE_BUDGET_USD_DAY);
-    let _negative = EnvVar::set("-1");
+    let _negative = crate::testsupport::EnvVar::set(DELEGATE_BUDGET_ENV, "-1");
     assert_eq!(budget_usd_day(), DELEGATE_BUDGET_USD_DAY);
 }
 

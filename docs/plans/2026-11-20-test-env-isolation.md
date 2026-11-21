@@ -120,8 +120,18 @@ took `TEST_ENV_LOCK` and then rewriting the latter would have made one test take
 the same non-reentrant mutex twice — a deadlock, not a flake. Twelve duplicate
 guards were collapsed; the full lib suite runs clean in 58s.
 
-Remaining: `footprint_history` 5, `armada/join` 4, `judge` 3, `gui/mod` 3,
-`identity` 2, and the rest of the tail. Surveyed properly before starting it, and the split is
+Third batch, 25 sites over six files: `footprint_history` (5, one test moving
+one knob four ways — the `swapping` guard's motivating case), `gui/mod` (3),
+`armada/join` (4, two windows around two joins), `tools` (5), and the identical
+copies of the guard in `judge/tests` and `delegate/tests` (4 each).
+
+`tools` held a real leak rather than a race: `BLEND1_VECTORS_DIR` was set for a
+fixture store and then `remove_var`'d — so a machine that had the variable set
+lost it for the rest of the run. `swapping` restores it.
+
+Remaining: `subagents` 4, `gui/bridge` 4, `layerfs_view` 3, `judge` 3,
+`identity` 2, `shellpath` 1, and the two production sites (`apply_env` and
+`layerfs_tools`'"'"' own removal) that the guard deliberately does not cover. Surveyed properly before starting it, and the split is
 not what the first count suggested — whole-file test modules (`delegate/tests`,
 `judge/tests`, `testsupport`) carry no `#[cfg(test)]` marker inside them, so a
 naive scan reads them as production:

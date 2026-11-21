@@ -550,7 +550,9 @@ mod tests {
     #[test]
     fn the_join_proof_reads_the_env_then_the_home_dotenv() {
         let name = "FLEET_TEST_RELAY_PROOF_393";
-        std::env::remove_var(name);
+        let _lock = crate::testsupport::env_lock();
+        let mut proof = crate::testsupport::EnvVar::swapping(name);
+        proof.clear();
         let home = std::env::temp_dir().join(format!(
             "fleet-join-proof-{}-{}",
             std::process::id(),
@@ -568,13 +570,13 @@ mod tests {
             "the home's .env answers when the process env is silent"
         );
         // The process environment wins over the file.
-        std::env::set_var(name, "from-env");
+        proof.to("from-env");
         assert_eq!(
             relay_join_proof(&home, name).as_deref(),
             Some("from-env"),
             "a scripted export outranks the file"
         );
-        std::env::remove_var(name);
+        proof.clear();
         // An empty value counts as unset — the file's blank line is not
         // a proof.
         std::fs::write(home.join(".env"), format!("{name}=\n")).unwrap();
