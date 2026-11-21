@@ -10732,6 +10732,157 @@ async function theBotsRailGroupsByPersona() {
     String(page.rows('.bot-history-row').length));
 }
 
+// The bots door's populated channels document: two webhook peers (one
+// acting, carrying every stamp the bridge derives; one listening, with
+// an honest blank where the store has no device class) and a telegram
+// peer, plus twelve activity lines — enough to prove the door feed
+// keeps the last ten, including a refusal that names who was refused.
+const botsDoorChannels = () => {
+  const stamp = (h, m) =>
+    '2026-11-20T' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':00Z';
+  const lines = [];
+  for (let i = 0; i < 9; i += 1) {
+    lines.push({
+      at: stamp(1 + Math.floor(i / 2), (i * 7) % 60), kind: 'delivery',
+      channel: 'webhook', peer: 'the CI box', peer_id: 'a1b2',
+      session: 's-' + i, task: 'run the checks',
+    });
+  }
+  lines.push({
+    at: '2026-11-20T11:00:00Z', kind: 'refusal', channel: 'webhook',
+    peer: 'the watcher', peer_id: 'c3d4', task: 'hand fleet a task',
+    detail: 'that peer may only listen; it cannot hand fleet a task',
+  });
+  lines.push({
+    at: '2026-11-20T12:00:00Z', kind: 'reply', channel: 'webhook',
+    peer: 'the CI box', peer_id: 'a1b2', session: 's-8', task: 'run the checks',
+  });
+  lines.push({
+    at: '2026-11-20T13:00:00Z', kind: 'seat', channel: 'telegram',
+    peer: 'Alejandro', peer_id: '4242', session: 's-seat',
+  });
+  return {
+    type: 'channels', read_at: '2026-11-20T13:00:00Z',
+    service: {
+      channels: [{ name: 'webhook', phase: 'live', port: 8080, since: '2026-11-20T08:00:00Z' }],
+    },
+    telegram: { present: false },
+    channels: [
+      {
+        name: 'webhook',
+        peers: [
+          {
+            channel: 'webhook', id: 'a1b2', name: 'the CI box',
+            device_class: 'webhook client', capability: 'acts',
+            paired: '2026-11-01T10:00:00Z',
+            last_heard: '2026-11-20T09:56:00Z', last_asked: '2026-11-20T12:00:00Z',
+            callback: 'http://127.0.0.1:9/outcome',
+          },
+          {
+            channel: 'webhook', id: 'c3d4', name: 'the watcher',
+            device_class: null, capability: 'listens',
+            paired: '2026-11-02T10:00:00Z',
+            last_heard: '2026-11-20T11:00:00Z', last_asked: null,
+            callback: null,
+          },
+        ],
+        pending: [],
+      },
+      {
+        name: 'telegram',
+        peers: [
+          {
+            channel: 'telegram', id: '4242', name: 'Alejandro',
+            device_class: 'chat', capability: 'listens',
+            paired: '2026-11-03T10:00:00Z',
+            last_heard: null, last_asked: '2026-11-20T13:00:00Z',
+            callback: null,
+          },
+        ],
+        pending: [],
+      },
+    ],
+    activity: lines,
+    activity_bound: 50,
+    waiting_seats: 0,
+    conversations: { type: 'conversations', bound: 50, count: 0, needs: 0, personas: [] },
+  };
+};
+
+// The door's passports: one row per paired peer, each carrying the
+// seven facts — name, device class (or the honest blank), the grant in
+// the document's own word, paired when, last heard, last asked, and
+// the revoke press that was already there — over a feed that keeps the
+// last ten events. The populated fixture is new ground: every earlier
+// channels case seeded an EMPTY document.
+async function theBotsDoorRendersPassportsAndTheFeedKeepsTheLastTen() {
+  const page = boot({
+    width: 1440, hash: '#/bots/channels',
+    documents: {
+      channels: botsDoorChannels(),
+      state: (asked) => emptyState(asked),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+
+  const passports = page.rows('.bots-peer');
+  check('BOTS one passport per paired peer',
+    passports.length === 3, String(passports.length));
+
+  // The acting peer's passport: all seven facts, named.
+  const ciBox = [...passports].find((row) => row.dataset.id === 'a1b2');
+  check('BOTS the acting passport names the peer',
+    !!ciBox && ciBox.textContent.includes('the CI box'),
+    ciBox ? ciBox.textContent.slice(0, 200) : 'missing');
+  check('BOTS the passport says the grant in the document\u2019s own word',
+    !!ciBox && ciBox.textContent.includes('acts') &&
+      !ciBox.textContent.includes('may act'),
+    ciBox ? ciBox.textContent.slice(0, 200) : 'missing');
+  check('BOTS the passport names the device class',
+    !!ciBox && ciBox.textContent.includes('webhook client'),
+    ciBox ? ciBox.textContent.slice(0, 200) : 'missing');
+  check('BOTS the passport carries the paired stamp',
+    !!ciBox && ciBox.textContent.includes('paired 2026-11-01T10:00:00Z'),
+    ciBox ? ciBox.textContent.slice(0, 200) : 'missing');
+  check('BOTS the passport carries the last heard stamp',
+    !!ciBox && ciBox.textContent.includes('last heard 2026-11-20T09:56:00Z'),
+    ciBox ? ciBox.textContent.slice(0, 200) : 'missing');
+  check('BOTS the passport carries the last asked stamp',
+    !!ciBox && ciBox.textContent.includes('last asked 2026-11-20T12:00:00Z'),
+    ciBox ? ciBox.textContent.slice(0, 200) : 'missing');
+  check('BOTS the passport keeps the revoke press',
+    !!ciBox && !!ciBox.querySelector('button[data-act="revoke"]'),
+    ciBox ? 'no revoke button' : 'missing row');
+
+  // The honest blank: a peer nobody classified and the log never asked
+  // back shows the dash, never a guessed kind.
+  const watcher = [...passports].find((row) => row.dataset.id === 'c3d4');
+  check('BOTS a listens passport says listens',
+    !!watcher && watcher.textContent.includes('listens'),
+    watcher ? watcher.textContent.slice(0, 200) : 'missing');
+  check('BOTS an unclassified peer shows an honest blank',
+    !!watcher && watcher.textContent.includes('\u2014'),
+    watcher ? watcher.textContent.slice(0, 200) : 'missing');
+  check('BOTS the blank is not a guessed class',
+    !!watcher && !watcher.textContent.includes('webhook client'),
+    watcher ? watcher.textContent.slice(0, 200) : 'missing');
+  check('BOTS a peer the fleet never asked back shows a blank last asked',
+    !!watcher && watcher.textContent.includes('last asked \u2014'),
+    watcher ? watcher.textContent.slice(0, 200) : 'missing');
+
+  // The door feed: the last ten events at least, and the refusal names
+  // who was refused.
+  const feed = page.rows('.bots-activity');
+  check('BOTS the door feed keeps the last ten',
+    feed.length >= 10, String(feed.length));
+  const refusal = [...feed].find((row) => row.dataset.kind === 'refusal');
+  check('BOTS the feed names the refused peer',
+    !!refusal && refusal.textContent.includes('the watcher'),
+    refusal ? refusal.textContent.slice(0, 200) : 'no refusal row');
+}
+
 // The skills surface's document, in the bridge's own shape: three
 // categories, one skip, one proposal, one retired name, and a building
 // section heavy enough to prove the row budget.
@@ -17070,6 +17221,8 @@ const cases = [
   ['PM-D the design canvas carries its frames and writes geometry', theDesignCanvasCarriesItsFramesAndWritesGeometry],
   ['PM-E design work started elsewhere routes the owner to the page', theDesignWorkStartedElsewhereRoutesTheOwnerToThePage],
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
+  ['BOTS the door renders passports and the feed keeps the last ten',
+    theBotsDoorRendersPassportsAndTheFeedKeepsTheLastTen],
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
   ['LEARN the learning rail carries the four sections', theLearningRailCarriesTheFourSections],

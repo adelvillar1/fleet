@@ -20734,8 +20734,16 @@ import { node, svg, clip } from './core/dom.js';
     return null;
   }
 
+  // The word a passport shows for a peer's grant — the document's own
+  // verb, a peer acts or listens — with the body's older spellings
+  // (task/observe) still understood, so a read cached before the
+  // rewording cannot mislabel a row.
+  function capabilityActs(value) {
+    return value === 'task' || value === 'acts';
+  }
+
   function capabilityWord(value) {
-    return value === 'observe' ? 'may only listen' : 'may act';
+    return capabilityActs(value) ? 'acts' : 'listens';
   }
 
   // ------------------------------------------------------------- bots
@@ -20905,8 +20913,16 @@ import { node, svg, clip } from './core/dom.js';
     return null;
   }
 
+  // The word a passport shows for a peer's grant — the document's own
+  // verb, a peer acts or listens — with the body's older spellings
+  // (task/observe) still understood, so a read cached before the
+  // rewording cannot mislabel a row.
+  function capabilityActs(value) {
+    return value === 'task' || value === 'acts';
+  }
+
   function capabilityWord(value) {
-    return value === 'observe' ? 'may only listen' : 'may act';
+    return capabilityActs(value) ? 'acts' : 'listens';
   }
 
   // ------------------------------------------------- the plugins surface
@@ -21587,10 +21603,10 @@ import { node, svg, clip } from './core/dom.js';
 
     board.appendChild(filterBar([
       { value: 'all', label: 'all', count: peers.length },
-      { value: 'acting', label: 'may act',
-        count: peers.filter(function (peer) { return peer.capability === 'task'; }).length },
-      { value: 'listening', label: 'may only listen',
-        count: peers.filter(function (peer) { return peer.capability === 'observe'; }).length }
+      { value: 'acting', label: 'acts',
+        count: peers.filter(function (peer) { return capabilityActs(peer.capability); }).length },
+      { value: 'listening', label: 'listens',
+        count: peers.filter(function (peer) { return !capabilityActs(peer.capability); }).length }
     ], filter, function (value) {
       face.botsFilter = value;
       paintBots();
@@ -21788,18 +21804,22 @@ import { node, svg, clip } from './core/dom.js';
     pairCard.appendChild(form);
     board.appendChild(pairCard);
 
-    // Who can reach the fleet: the peers, their capability, and the two
-    // actions that change it.
+    // Who can reach the fleet: one passport per paired peer. A passport
+    // names who the peer is (name, device class), what it may do (the
+    // document's own verb), when it was paired, when it was last heard,
+    // when the fleet last asked back — and keeps the two presses that
+    // change it, including the revoke that was already here.
     var shown = peers.filter(function (peer) {
-      if (filter === 'acting') return peer.capability === 'task';
-      if (filter === 'listening') return peer.capability === 'observe';
+      if (filter === 'acting') return capabilityActs(peer.capability);
+      if (filter === 'listening') return !capabilityActs(peer.capability);
       return true;
     });
     var peersCard = boardCard(7, 'who can reach the fleet', shown.length
       ? shown.length + (shown.length === 1 ? ' peer' : ' peers')
       : null,
-      'a row opens the peer: its capability, its conversation, and its last delivery. ' +
-      'The capability changes here; nothing about a peer is hidden behind a second surface.');
+      'a row is the peer\u2019s passport: who it is, what it may do, when it was paired, ' +
+      'when it was last heard, and when the fleet last asked back. The capability changes ' +
+      'here; nothing about a peer is hidden behind a second surface.');
     if (!shown.length) {
       peersCard.appendChild(node('p', 'board-empty',
         filter === 'all'
@@ -21807,7 +21827,7 @@ import { node, svg, clip } from './core/dom.js';
           : 'No peer matches this filter. Clear it to see every peer.'));
     }
     shown.forEach(function (peer) {
-      var row = node('div', 'bots-row bots-peer');
+      var row = node('div', 'bots-row bots-peer bots-passport');
       row.dataset.id = peer.id;
       var head = node('div', 'bots-row-main');
       var open = node('button', 'bots-row-name bots-open', peer.name || peer.id);
@@ -21819,12 +21839,22 @@ import { node, svg, clip } from './core/dom.js';
       });
       head.appendChild(open);
       head.appendChild(badge(capabilityWord(peer.capability),
-        peer.capability === 'task' ? 'ok' : null));
+        capabilityActs(peer.capability) ? 'ok' : null));
       head.appendChild(node('span', 'bots-row-meta', peer.channel + ' \u00b7 ' + peer.id));
+      // The class the store keeps, or an honest blank — a peer nobody
+      // classified shows the dash, never a guessed kind.
+      head.appendChild(node('span', 'bots-row-meta',
+        (peer.device_class || '\u2014')));
       head.appendChild(node('span', 'bots-row-meta', 'paired ' + (peer.paired || '\u2014')));
+      // The two derived stamps, exactly as the document carried them:
+      // absent means the log says nothing, so the dash is the truth.
+      head.appendChild(node('span', 'bots-row-meta',
+        'last heard ' + (peer.last_heard || '\u2014')));
+      head.appendChild(node('span', 'bots-row-meta',
+        'last asked ' + (peer.last_asked || '\u2014')));
       row.appendChild(head);
       var acts = node('div', 'bots-acts');
-      var flip = peer.capability === 'task' ? 'observe' : 'task';
+      var flip = capabilityActs(peer.capability) ? 'observe' : 'task';
       acts.appendChild(botsButton(
         'capability', 'make it ' + capabilityWord(flip), function () {
           writeBots('/api/channels/capability', {
@@ -21957,7 +21987,7 @@ import { node, svg, clip } from './core/dom.js';
     var sections = [
       ['what it may do', node('p', 'derivation',
         capabilityWord(peer.capability) +
-        (peer.capability === 'task'
+        (capabilityActs(peer.capability)
           ? ' \u2014 it can hand fleet a task and receives the outcome'
           : ' \u2014 it is notified and cannot hand fleet a task'))],
       ['its id', node('p', 'derivation', peer.channel + ' \u00b7 ' + peer.id)],
