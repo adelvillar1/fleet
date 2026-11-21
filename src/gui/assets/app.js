@@ -6945,7 +6945,7 @@ import { node, svg, clip } from './core/dom.js';
   // they were drawn at rather than being stretched to it.
   var PLOT_MARGIN = 8;
   var TREE_H = 58, TREE_X = 26, TREE_Y = 40, TREE_MIN_W = 150;
-  var GRAPH_H = 66, GRAPH_X = 30, GRAPH_Y = 54, GRAPH_MIN_W = 150, GRAPH_MAX_W = 300;
+  var GRAPH_H = 78, GRAPH_X = 30, GRAPH_Y = 54, GRAPH_MIN_W = 150, GRAPH_MAX_W = 300;
 
   // The state words the graph's own `state_word` returns, and the tone
   // each reads in. The panel inherits the vocabulary rather than
@@ -7092,6 +7092,10 @@ import { node, svg, clip } from './core/dom.js';
       + (one.kind ? ' \u00b7 ' + one.kind : '')
       + (one.stop_reason ? ' \u00b7 stopped: ' + one.stop_reason : '')
       + foldsWording(one.compactions);
+    // The node's own id as a data attribute: the delegation overlay
+    // names spawned children by session id, and the tree draws by the
+    // same id — the one seam a "find it in the tree" press needs.
+    made.setAttribute('data-session', one.id);
     if (cap && one.depth >= cap) {
       said += '\nthe depth cap: the code refuses to delegate from here';
     }
@@ -7206,9 +7210,36 @@ import { node, svg, clip } from './core/dom.js';
     }
     made.appendChild(label(x + 14, y + 56, 'graph-score',
       one.score + ' of ' + one.peak + ' left \u00b7 cost ' + one.cost));
+    // The caption, inside the card that drew the node: the divergence
+    // word the document carried — `never spawned`, `ran twice`, in the
+    // panel's own tone — and the why-this-child line the document
+    // carried with it (`declared_workload · brief_shape · provider ·
+    // outcome`). Nothing here is derived: a document with no overlay
+    // renders no caption at all.
+    var overlay = one.overlay || null;
+    var why = [];
+    if (overlay && overlay.divergence) why.push(overlay.divergence);
+    if (one.declared_workload) why.push(one.declared_workload);
+    if (overlay && overlay.brief_shape) why.push(overlay.brief_shape);
+    if (overlay && overlay.provider) why.push(overlay.provider);
+    if (overlay && overlay.outcome) why.push(overlay.outcome);
+    var diverged = !!(overlay && overlay.divergence);
+    if (why.length) {
+      var cap = label(x + 14, y + 72, 'graph-cap', why.join(' \u00b7 '));
+      if (diverged) cap.setAttribute('data-tone', 'warn');
+      made.appendChild(cap);
+    }
     var said = one.id + ' \u00b7 ' + one.state
       + '\nscore ' + one.score + ' of a peak of ' + one.peak + ', cost ' + one.cost
       + (one.reason ? '\nheld: ' + one.reason : '');
+    // The why-this-child line and the spawned sessions ride the
+    // tooltip: the session ids are the ids the tree draws by, so an
+    // owner can find a spawned child in the tree by the same name the
+    // overlay names it.
+    if (why.length) said += '\nwhy this child: ' + why.join(' \u00b7 ');
+    if (overlay && overlay.spawned_sessions && overlay.spawned_sessions.length) {
+      said += '\nruns: ' + overlay.spawned_sessions.join(' \u00b7 ');
+    }
     made.appendChild(svg('title', null, said));
     made.setAttribute('tabindex', '0');
     made.setAttribute('role', 'button');
@@ -7245,7 +7276,34 @@ import { node, svg, clip } from './core/dom.js';
       window.setTimeout(function () { copy.textContent = 'copy the node id'; }, 1200);
     });
     actions.appendChild(copy);
-    openDrawer('graph \u00b7 ' + one.id, [
+    // Why this child: the declared workload and the child's judged
+    // shape, verbatim off the document, and each spawned session id as
+    // a row that finds it in the tree — the tree draws by session id,
+    // so the id the overlay names is the id the tree node carries.
+    var overlay = one.overlay || null;
+    var why = [];
+    if (overlay && overlay.divergence) why.push(overlay.divergence);
+    if (one.declared_workload) why.push(one.declared_workload);
+    if (overlay && overlay.brief_shape) why.push(overlay.brief_shape);
+    if (overlay && overlay.provider) why.push(overlay.provider);
+    if (overlay && overlay.outcome) why.push(overlay.outcome);
+    var spawned = (overlay && overlay.spawned_sessions) || [];
+    var runs = null;
+    if (spawned.length) {
+      runs = node('div', 'replay-actions');
+      spawned.forEach(function (session) {
+        var find = node('button', 'replay-button');
+        find.type = 'button';
+        find.textContent = 'find ' + clip(session, 24) + ' in the tree';
+        find.title = session;
+        find.addEventListener('click', function () {
+          var drawn = document.querySelector('[data-session="' + session + '"]');
+          if (drawn) drawn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+        runs.appendChild(find);
+      });
+    }
+    var sections = [
       ['the node', node('p', 'derivation',
         one.state + ' \u00b7 score ' + one.score + ' of ' + one.peak +
         ' \u00b7 cost ' + one.cost +
@@ -7254,8 +7312,13 @@ import { node, svg, clip } from './core/dom.js';
         'score zero: ' + (unlock.score_zero ? 'met' : 'not met') +
         ' \u00b7 resource free: ' + (unlock.resource_free ? 'met' : 'not met') +
         ' \u00b7 deps verified: ' + (unlock.deps_verified ? 'met' : 'not met'))],
-      ['what you can do', actions]
-    ]);
+    ];
+    if (why.length) {
+      sections.push(['why this child', node('p', 'derivation', why.join(' \u00b7 '))]);
+    }
+    if (runs) sections.push(['the runs of this node', runs]);
+    sections.push(['what you can do', actions]);
+    openDrawer('graph \u00b7 ' + one.id, sections);
   }
 
   function graphCard(graph, wide) {
@@ -7370,6 +7433,16 @@ import { node, svg, clip } from './core/dom.js';
     tiles.appendChild(tile(graph.revisions, 'revisions'));
     tiles.appendChild(tile(graph.diff_score, 'diff score'));
     tiles.appendChild(tile(graph.replan ? 'yes' : 'no', 'replan', graph.replan ? 'warn' : null));
+    // The divergences the document counted — declared graph minus the
+    // run's log. The counts are carried, not derived: the words are the
+    // same ones the node captions wear, so one vocabulary answers both.
+    var divergences = graph.divergences || null;
+    if (divergences) {
+      tiles.appendChild(tile(divergences.never_spawned, 'never spawned',
+        divergences.never_spawned ? 'warn' : null));
+      tiles.appendChild(tile(divergences.ran_twice, 'ran twice',
+        divergences.ran_twice ? 'warn' : null));
+    }
     card.appendChild(tiles);
     if (graph.blocks_most_work) {
       var note = node('p', 'board-note',
