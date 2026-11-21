@@ -433,7 +433,7 @@ The rest, in order of how much is missing:
 | P4 | memory: recall is the first block | **landed** `0166960` — flipped the case that asserted the opposite, red-proved |
 | P4 | why-this-recall breakdown | **landed** `354d886` + `87aa84c` — six channels recorded on the calib row (old lines decode to zeros and say so), served with their weights, summed against the score. Ranking untouched: no weight or `Score::compute` line changed. |
 | P4 | skills coverage map + fired feed | **not built** — the surface lists segment rows only |
-| P5 | morning read: five lines, on the bots door | **not built** — no such read anywhere |
+| P5 | morning read: five lines, on the bots door | **landed** `11322a5` — five sentences derived purely from the second-brain document; a line whose section did not land prints that section's own refusal, never a zero. The repo's first `second-brain` fixture. |
 | P5 | workspace-history time scrubber | **not built** — no scrubber; the only range input is an unrelated design slider |
 | P5 | practice from the graph's weakest link | **partial** — a practice card exists, but practice is manual: nothing computes graph weakness |
 | P5 | design run's review loop (eval scenario) | **needs a new eval rig**, not a harness case |
