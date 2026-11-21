@@ -550,8 +550,36 @@ import { node, svg, clip } from './core/dom.js';
         }).catch(function () {
           notice('the goal did not cross', 'the server did not answer');
         });
+      }],
+    ['breakout', ['split', 'spin-off'], 'break a phase out of this room \u2014 a child room with this room\u2019s members and goal',
+      function () {
+        if (!roomCommand('breakout')) return;
+        breakOutPhase();
+      }],
+    ['distil', ['distill', 'lessons'], 'run a distillation pass over this room \u2014 its lessons become facts and skill proposals',
+      function () {
+        if (!roomCommand('distil')) return;
+        distilRoom();
+      }],
+    ['archive', ['put-away'], 'put this room away \u2014 the archive keeps its deliverables',
+      function () {
+        if (!face.session) {
+          notice('nothing to archive', 'open the session it ends \u2014 /archive acts on the room you are reading');
+          return;
+        }
+        archiveRoom(face.session);
       }]
   ];
+
+  // The composer's room verbs guard: /breakout and /distil act on the room
+  // the owner is reading — the same presses the head carries — so with no
+  // room open the verb says so instead of acting on nothing.
+  function roomCommand(word) {
+    if (face.panel === 'huddles' && face.session && (face.members || []).length) return true;
+    notice(word + ' belongs to a room',
+      'open the room first \u2014 the verb acts on the room you are reading, the same press the head carries');
+    return false;
+  }
 
   // The marks. One 24-unit stroke table, drawn here rather than shipped
   // as a font or a sprite: an icon is geometry, and geometry belongs with

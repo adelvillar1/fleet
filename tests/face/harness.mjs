@@ -8262,6 +8262,112 @@ async function theStrategyStepShowsItsPreview() {
       marks.join(',') === '1,1,1,1', marks.join(','));
   }
 
+  // The composer's room verbs (the face rethink's P3): /breakout, /distil
+  // and /archive answer in the composer and reach the same actions the
+  // head's buttons carry — the same routes, the same bodies, byte for byte.
+  const roomFixture = () => ({
+    hash: '#/huddles/room-p',
+    reply: { type: 'huddle', id: 'child-new', created: true },
+    documents: {
+      huddles: {
+        type: 'huddles',
+        active: [{
+          id: 'room-p', title: 'the-q3-board', goal: 'thrift\u2019s landing page',
+          personas: ['designer'], avatars: {}, state: 'working',
+          preview: 'x', from: 'designer', last_write: 1793807361, current: true,
+          awaiting_you: false, deliverables: 0,
+          knowledge: { recalled: 0, wrote: 0 }, parent: null, children: []
+        }],
+        inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
+      },
+      state: (asked) => ({
+        ...emptyState(asked), session: asked,
+        members: [{ name: 'designer', voice: 'makes pages' }]
+      })
+    }
+  });
+  const enterLine = (page, line) => {
+    page.IDS.task.value = line;
+    page.IDS.task.fire('keydown', { key: 'Enter', shiftKey: false });
+  };
+  const distilPosts = (page) => page.calls.filter((c) => c.method === 'POST' &&
+    c.url.indexOf('/api/run?session=room-p') === 0 &&
+    String(c.body || '').indexOf('Distil what this room learned') !== -1)
+    .map((c) => String(c.body));
+  async function theComposerRoomCommandsReachTheHeadActions() {
+    // /distil: the composer's line and the head press post the same run.
+    const a = boot(roomFixture());
+    await flush();
+    a.open();
+    await flush(40);
+    enterLine(a, '/distil');
+    await flush(60);
+    const composerRun = distilPosts(a);
+    check('P3 /distil in the composer starts the room\u2019s distillation run',
+      composerRun.length === 1,
+      JSON.stringify(a.calls.map((c) => c.method + ' ' + c.url)));
+    a.fireOn('room-distil', 'click');
+    await flush(60);
+    const bothRuns = distilPosts(a);
+    check('P3 the head\u2019s distil press posts the same brief as the composer\u2019s line',
+      bothRuns.length === 2 && bothRuns[0] === bothRuns[1],
+      JSON.stringify(bothRuns.map((one) => one.slice(0, 60))));
+
+    // /breakout: the composer's line splits the open room, the same post
+    // the head's break-out press sends.
+    const b = boot(roomFixture());
+    await flush();
+    b.open();
+    await flush(40);
+    enterLine(b, '/breakout');
+    await flush(60);
+    const composerSplit = b.calls.filter((c) => c.method === 'POST' &&
+      c.url.indexOf('/api/huddles/room-p') === 0)
+      .map((c) => String(c.body || ''));
+    check('P3 /breakout in the composer splits the open room',
+      composerSplit.length === 1 &&
+        composerSplit[0] === '{"goal":"","personas":[]}' &&
+        b.window.location.hash.indexOf('#/huddles/child-new') === 0,
+      JSON.stringify(b.calls.map((c) => c.method + ' ' + c.url)) + ' ' +
+        b.window.location.hash);
+    b.hash('#/huddles/room-p');
+    for (let i = 0; i < 10; i++) await flush();
+    b.fireOn('room-breakout', 'click');
+    await flush(60);
+    const bothSplits = b.calls.filter((c) => c.method === 'POST' &&
+      c.url.indexOf('/api/huddles/room-p') === 0)
+      .map((c) => String(c.body || ''));
+    check('P3 the head\u2019s break-out press sends the same split as the composer\u2019s line',
+      bothSplits.length === 2 && bothSplits[0] === bothSplits[1],
+      JSON.stringify(bothSplits));
+
+    // /archive: the composer's line ends the open room with the same
+    // archive post the head's press carries.
+    const c = boot(roomFixture());
+    await flush();
+    c.open();
+    await flush(40);
+    enterLine(c, '/archive');
+    await flush(60);
+    const composerArchive = c.calls.filter((call) => call.method === 'POST' &&
+      call.url === '/api/session/archive').map((call) => String(call.body || ''));
+    check('P3 /archive in the composer puts the open room away',
+      composerArchive.length === 1 &&
+        composerArchive[0] === '{"session":"room-p","archived":true}',
+      JSON.stringify(composerArchive));
+    const d = boot(roomFixture());
+    await flush();
+    d.open();
+    await flush(40);
+    d.fireOn('room-archive', 'click');
+    await flush(60);
+    const headArchive = d.calls.filter((call) => call.method === 'POST' &&
+      call.url === '/api/session/archive').map((call) => String(call.body || ''));
+    check('P3 the head\u2019s archive press posts the same end as the composer\u2019s line',
+      headArchive.length === 1 && headArchive[0] === composerArchive[0],
+      JSON.stringify(headArchive));
+  }
+
   // The settings persona card carries the owner's image too (C11) — the
   // same mark every other surface renders, now where the role is edited.
   async function thePersonaCardShowsTheOwnersImage() {
@@ -16985,6 +17091,7 @@ const cases = [
   ['P2 the desk lists every artifact the log names and nothing else', theDeskListsEveryArtifactTheLogNames],
   ['P3 the cast strip carries one disc and a state word per member', theCastStripCarriesEachMembersStateWord],
   ['P3 every transcript turn carries its speaker\u2019s tinted spine', everyTurnCarriesItsSpeakerSpine],
+  ['P3 the room commands answer in the composer as the head does', theComposerRoomCommandsReachTheHeadActions],
   ['SWEEP every settings press acts or answers', everySettingsPressSaysSomething],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
