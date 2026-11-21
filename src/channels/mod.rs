@@ -1522,6 +1522,174 @@ mod tests {
         );
     }
 
+    /// The proof of life: a rehearsal the machine sends itself pushes a
+    /// real `Inbound` through the same sink every delivery takes — the
+    /// delivery line is the sink's own record, and when the run closes the
+    /// answer is a later `reply` line for the same peer. The round trip is
+    /// named by the feed's lines, never by a transport POST succeeding.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_rehearsal_round_trip_is_named_by_the_feed_lines() {
+        let home = temp_home("rehearse");
+        let mut store = PeerStore::default();
+        let token = mint_peer_token().unwrap();
+        store.pair("abc", "myself", &token, Capability::Task, "stamp", None);
+        store.save(&home, "webhook").unwrap();
+
+        let (mut bridge, sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let door = bridge.connect();
+        let bridge = Arc::new(bridge);
+        let driver = Arc::new(Driver::new(Arc::clone(&bridge), Policy::new(home.clone())));
+        let service = Arc::new(crate::channels::ChannelService::new(
+            Arc::clone(&bridge),
+            Arc::clone(&driver),
+            &crate::channels::ServiceConfig {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        ));
+        let spy = Spy::new();
+
+        // The rehearsal the machine sends itself: the same `Inbound`
+        // shape every delivery takes, no second device, nowhere to reply.
+        let inbound = Inbound {
+            peer: Peer::new("webhook", "abc", "myself"),
+            session: None,
+            task: "send myself a message — the proof of life rehearsal".to_string(),
+            reply: Reply::None,
+        };
+        let session = (service.sink())(inbound).expect("the rehearsal is accepted");
+
+        // The sink named the delivery in the feed before anything ran.
+        let delivered = feed_lines(&home);
+        let line = delivered
+            .iter()
+            .rev()
+            .find(|line| line.kind == "delivery" && line.peer_id.as_deref() == Some("abc"))
+            .expect("the delivery line is the sink's own record");
+        assert_eq!(
+            line.task.as_deref(),
+            Some("send myself a message — the proof of life rehearsal"),
+            "the feed names the rehearsal by its task"
+        );
+        assert_eq!(line.session.as_deref(), Some(session.as_str()));
+
+        // The watcher, subscribed to the same stream the browser watches,
+        // answers the finished run the way it answers any peer's.
+        let watching = Arc::clone(&driver);
+        let channel: Arc<dyn Channel> = Arc::clone(&spy) as Arc<dyn Channel>;
+        tokio::spawn(async move { watching.watch(&[channel]).await });
+        // The watcher subscribes on its own schedule; a broadcast does
+        // not replay, so the answer waits until it is listening.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        driver.bridge().drive(&session);
+        let path = crate::session::session_path(&home, &session);
+        let mut log = crate::session::Session::open(&path).expect("the log opens");
+        log.record(&crate::session::Record::Assistant {
+            content: Some("message received — the round trip is complete".to_string()),
+            tool_calls: Vec::new(),
+            persona: None,
+        })
+        .expect("the record lands");
+        drop(log);
+        let _ = sources.ui.send(crate::agent::UiEvent::Finished {
+            stop_reason: "completed".to_string(),
+        });
+        for _ in 0..100 {
+            if feed_lines(&home)
+                .iter()
+                .any(|line| line.kind == "reply" && line.peer_id.as_deref() == Some("abc"))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let lines = feed_lines(&home);
+        let delivered_at = lines
+            .iter()
+            .rposition(|line| line.kind == "delivery" && line.peer_id.as_deref() == Some("abc"))
+            .expect("the delivery line stays");
+        let answer = lines
+            .iter()
+            .enumerate()
+            .find(|(index, line)| {
+                *index > delivered_at
+                    && line.kind == "reply"
+                    && line.peer_id.as_deref() == Some("abc")
+            })
+            .map(|(_, line)| line)
+            .expect("the reply line follows the delivery for the same peer");
+        assert!(
+            answer.detail.is_some(),
+            "the answer is recorded even though the rehearsal asked for nowhere"
+        );
+        drop(door);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A rehearsal peer the owner paired as a listener is refused by the
+    /// door, and the refusal is named in the feed: the press can never
+    /// dress a refusal up as a round trip.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_observe_only_rehearsal_is_refused_at_the_door_and_named_in_the_feed() {
+        let home = temp_home("rehearse-refusal");
+        let mut store = PeerStore::default();
+        let token = mint_peer_token().unwrap();
+        store.pair("abc", "myself", &token, Capability::Observe, "stamp", None);
+        store.save(&home, "webhook").unwrap();
+
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let bridge = Arc::new(bridge);
+        let driver = Arc::new(Driver::new(Arc::clone(&bridge), Policy::new(home.clone())));
+        let service = Arc::new(crate::channels::ChannelService::new(
+            Arc::clone(&bridge),
+            Arc::clone(&driver),
+            &crate::channels::ServiceConfig {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        ));
+        let inbound = Inbound {
+            peer: Peer::new("webhook", "abc", "myself"),
+            session: None,
+            task: "send myself a message — the proof of life rehearsal".to_string(),
+            reply: Reply::None,
+        };
+        assert_eq!(
+            (service.sink())(inbound).unwrap_err(),
+            Refusal::ObserveOnly,
+            "an Observe rehearsal peer cannot hand the fleet a task"
+        );
+        let lines = feed_lines(&home);
+        let refusal = lines
+            .iter()
+            .find(|line| line.kind == "refusal" && line.peer_id.as_deref() == Some("abc"))
+            .expect("the refusal is named in the feed");
+        assert_eq!(
+            refusal.task.as_deref(),
+            Some("send myself a message — the proof of life rehearsal")
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The feed's own lines, read the way the surfaces read them.
+    fn feed_lines(home: &Path) -> Vec<crate::channels::service::Activity> {
+        let text = std::fs::read_to_string(crate::channels::service::Activity::path(home))
+            .unwrap_or_default();
+        text.lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
     #[tokio::test(flavor = "multi_thread")]
     async fn the_session_mapping_follows_a_named_session_and_mints_a_fresh_one() {
         let home = temp_home("sessions");

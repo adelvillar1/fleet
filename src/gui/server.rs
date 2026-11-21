@@ -2064,6 +2064,19 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        ("POST", "/api/channels/rehearse") => {
+            // The proof of life: a real delivery the machine sends itself.
+            // The channel is optional and defaults to the webhook, the
+            // one channel every build hosts.
+            let body = match channel_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(reply) => return write_reply(&mut stream, reply).await,
+            };
+            match bridge.channel_rehearse(&body.channel).await {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("POST", "/api/channels/capability") => {
             let body = match channel_body(&mut stream, &request, rest).await {
                 Ok(body) => body,

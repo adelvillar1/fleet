@@ -2796,6 +2796,123 @@ impl Bridge {
         }))
     }
 
+    /// The proof of life: the machine sends itself a message. The body is
+    /// a real `Inbound` — the same shape every channel hands over — pushed
+    /// through the hosted service's own sink, so the delivery takes the
+    /// door every peer takes: authorization, the peer's session, a real
+    /// run. The cost is named up front: the answer comes from a model
+    /// call, not a canned line.
+    ///
+    /// The rehearsal peer is matched by name `myself`, because a webhook
+    /// peer's id is the minted token digest's prefix — the name is the
+    /// only stable key. It is paired with `Capability::Task`, since a
+    /// listener would be refused `ObserveOnly` by the door the delivery
+    /// must pass through. A peer the owner paired as a listener is pushed
+    /// anyway: the door refuses it, and the refusal is named in the feed.
+    pub async fn channel_rehearse(&self, channel: &str) -> Result<Value, String> {
+        let Some(service) = self.hosted_channels() else {
+            return Err(
+                "no channel service is hosted here; start the face with the channel service on"
+                    .to_string(),
+            );
+        };
+        let channel = if channel.trim().is_empty() {
+            String::from("webhook")
+        } else {
+            channel.trim().to_string()
+        };
+        // Refuse by channel, with its real state: a channel this build
+        // does not ship, an unconfigured Telegram, a phase that is not
+        // live — each is named, never guessed around.
+        if !service.names().iter().any(|name| name == &channel) {
+            if channel == "telegram" {
+                return Err(
+                    "telegram is unconfigured — not a stopped channel, an unconfigured \
+                            one; give the home a FLEET_TELEGRAM_BOT_TOKEN first"
+                        .to_string(),
+                );
+            }
+            return Err(format!("`{channel}` is not a channel this build ships"));
+        }
+        let report = service
+            .status()
+            .channels
+            .into_iter()
+            .find(|report| report.name == channel);
+        if let Some(report) = report {
+            if report.phase != crate::channels::service::Phase::Live {
+                let phase = match report.phase {
+                    crate::channels::service::Phase::Stopped => "stopped",
+                    crate::channels::service::Phase::Starting => "starting",
+                    crate::channels::service::Phase::Failed => "failed",
+                    crate::channels::service::Phase::Live => "live",
+                };
+                return Err(match report.error {
+                    Some(error) => format!(
+                        "{channel} is {phase} — a rehearsal runs through a channel that is live: {error}"
+                    ),
+                    None => format!(
+                        "{channel} is {phase} — a rehearsal runs through a channel that is live"
+                    ),
+                });
+            }
+        }
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            // Find or pair the rehearsal peer, matched by name: a webhook
+            // peer's id is the minted token digest's prefix, so the name
+            // is the only stable key. The minted token is thrown away —
+            // nothing presents it, the store keeps its digest, and the
+            // delivery authorizes by peer id alone.
+            let known = crate::channels::PeerStore::load(&home, &channel)
+                .map_err(|error| error.to_string())?
+                .peers
+                .iter()
+                .find(|peer| peer.name == "myself")
+                .map(|peer| peer.id.clone());
+            let id = match known {
+                Some(id) => id,
+                None => {
+                    crate::channels::pair(
+                        &home,
+                        &channel,
+                        "myself",
+                        "myself",
+                        crate::channels::Capability::Task,
+                        None,
+                    )?;
+                    // The webhook minted the id at pairing; read it back
+                    // rather than assuming which channel mints and which
+                    // keeps the asked id.
+                    crate::channels::PeerStore::load(&home, &channel)
+                        .map_err(|error| error.to_string())?
+                        .peers
+                        .iter()
+                        .find(|peer| peer.name == "myself")
+                        .map(|peer| peer.id.clone())
+                        .ok_or_else(|| "the rehearsal peer did not land".to_string())?
+                }
+            };
+            let peer = crate::channels::Peer::new(&channel, &id, "myself");
+            let inbound = crate::channels::Inbound {
+                peer: peer.clone(),
+                session: None,
+                task: String::from("send myself a message — the proof of life rehearsal"),
+                reply: crate::channels::Reply::None,
+            };
+            let session = (service.sink())(inbound).map_err(|refusal| refusal.to_string())?;
+            Ok(json!({
+                "type": "rehearsal",
+                "channel": channel,
+                "peer": peer.id,
+                "session": session,
+                "at": crate::boards::now_stamp(),
+            }))
+        })
+        .await
+        .map_err(|_| "the rehearsal did not land".to_string())?
+    }
+
     /// Pair a peer from the app. The token the pairing mints is in this
     /// reply and nowhere else: the store keeps its digest, no later read
     /// carries it, and the surface shows it in a card that is dismissed
@@ -18223,6 +18340,278 @@ mod tests {
         assert_eq!(quiet["last_asked"], serde_json::Value::Null);
         // A line that names no peer is nobody's fact.
         assert_eq!(webhook_peer["last_asked"], "2026-11-20T09:00:00Z");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The rehearsal refuses to pretend: a face with no channel service
+    /// says so in the start button's own words, a hosted channel that
+    /// never came up refuses by its real phase, and Telegram without a
+    /// token is not a stopped channel but an unconfigured one.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_rehearsal_refuses_to_pretend_when_nothing_is_hosted_or_live() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-rehearse-refuse-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        assert_eq!(
+            bridge.channel_rehearse("").await.err(),
+            Some(String::from(
+                "no channel service is hosted here; start the face with the channel service on"
+            )),
+            "a face with no service says so in the words the start button already uses"
+        );
+
+        let bridge = Arc::new(bridge);
+        let driver = Arc::new(crate::channels::Driver::new(
+            Arc::clone(&bridge),
+            crate::channels::Policy::new(home.clone()),
+        ));
+        let service = Arc::new(crate::channels::ChannelService::new(
+            Arc::clone(&bridge),
+            Arc::clone(&driver),
+            &crate::channels::ServiceConfig {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        ));
+        bridge.attach_channels(service);
+        // The webhook is hosted but stopped: the rehearsal names the
+        // phase, not a guessed live.
+        let refused = bridge
+            .channel_rehearse("")
+            .await
+            .expect_err("a stopped webhook refuses");
+        assert!(refused.contains("webhook is stopped"), "{refused}");
+        // Telegram with no token is an unconfigured channel, and the
+        // refusal says which.
+        let refused = bridge
+            .channel_rehearse("telegram")
+            .await
+            .expect_err("an unconfigured telegram refuses");
+        assert!(refused.contains("unconfigured"), "{refused}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The rehearsal the machine sends itself: the endpoint pairs (or
+    /// finds) the `myself` peer with the grant the door honours, pushes a
+    /// real `Inbound` through the hosted service's sink, and the feed
+    /// names the delivery — the run in the peer's own session.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_rehearsal_sends_itself_a_message_through_the_sink() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-rehearse-send-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+
+        let (mut bridge, sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let bridge = Arc::new(bridge);
+        let driver = Arc::new(crate::channels::Driver::new(
+            Arc::clone(&bridge),
+            crate::channels::Policy::new(home.clone()),
+        ));
+        let service = Arc::new(crate::channels::ChannelService::new(
+            Arc::clone(&bridge),
+            Arc::clone(&driver),
+            &crate::channels::ServiceConfig {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        ));
+        bridge.attach_channels(service.clone());
+        service.start("webhook").await;
+
+        let document = bridge.channel_rehearse("").await.expect("accepted");
+        assert_eq!(document["type"], "rehearsal");
+        assert_eq!(document["channel"], "webhook");
+        let peer = document["peer"].as_str().expect("a peer id").to_string();
+        let session = document["session"]
+            .as_str()
+            .expect("a session id")
+            .to_string();
+        assert!(!session.is_empty());
+        // The first run settles the way any run ends — the thread's own
+        // words in the log, then the close — so the second press finds
+        // the door open.
+        let path = crate::session::session_path(&home, &session);
+        let mut log = crate::session::Session::open(&path).expect("the log opens");
+        log.record(&crate::session::Record::Assistant {
+            content: Some("message received".to_string()),
+            tool_calls: Vec::new(),
+            persona: None,
+        })
+        .expect("the record lands");
+        drop(log);
+        // The fan-out tags the close with the session the thread names as
+        // its own; a test stands in for the thread the way the watcher's
+        // test does.
+        bridge.drive(&session);
+        let _ = sources.ui.send(crate::agent::UiEvent::Finished {
+            stop_reason: "completed".to_string(),
+        });
+
+        // The rehearsal peer is paired by name — the webhook's ids are
+        // digest-minted, so the name is the key — with the grant the door
+        // honours, and the second press finds it instead of minting a
+        // second one. The first run may still be in flight, and a door
+        // that is honest refuses a second dispatch on the same session;
+        // the press waits for it to settle rather than guessing.
+        let mut again = None;
+        for _ in 0..200 {
+            match bridge.channel_rehearse("").await {
+                Ok(document) => {
+                    again = Some(document);
+                    break;
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(25)),
+            }
+        }
+        let again = again.expect("the second rehearsal lands once the first run settles");
+        assert_eq!(
+            again["peer"], document["peer"],
+            "matched by name, not minted twice"
+        );
+        assert_eq!(
+            again["session"], document["session"],
+            "the rehearsal peer's conversation is stable"
+        );
+        let store = crate::channels::PeerStore::load(&home, "webhook").unwrap();
+        let myself = store
+            .peers
+            .iter()
+            .find(|peer| peer.name == "myself")
+            .expect("the rehearsal peer is paired");
+        assert_eq!(myself.id, peer);
+        assert_eq!(myself.capability, crate::channels::Capability::Task);
+
+        // The feed names the delivery already: the run is in flight, and
+        // the reply is a later line, whatever the transport did.
+        let text = std::fs::read_to_string(crate::channels::service::Activity::path(&home))
+            .expect("the feed");
+        let lines: Vec<crate::channels::service::Activity> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        let delivery = lines
+            .iter()
+            .find(|line| line.kind == "delivery" && line.peer_id.as_deref() == Some(peer.as_str()))
+            .expect("the delivery line");
+        assert_eq!(
+            delivery.task.as_deref(),
+            Some("send myself a message — the proof of life rehearsal")
+        );
+        assert_eq!(delivery.session.as_deref(), Some(session.as_str()));
+        // The peer's own log says which channel it arrived on and who it is.
+        let path = crate::session::session_path(&home, &session);
+        let records = crate::session::replay(&path).expect("the log opens");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            crate::session::Record::Channel { channel, peer_id, .. }
+                if channel == "webhook" && peer_id == &peer
+        )));
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A `myself` peer the owner paired as a listener cannot hand the
+    /// fleet a task: the door refuses the rehearsal, the refusal is named
+    /// in the feed, and the endpoint carries it as a refusal.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_observe_only_rehearsal_peer_is_refused_by_the_door() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-rehearse-observe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        crate::channels::pair(
+            &home,
+            "webhook",
+            "watcher",
+            "myself",
+            crate::channels::Capability::Observe,
+            None,
+        )
+        .expect("paired as a listener");
+
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let bridge = Arc::new(bridge);
+        let driver = Arc::new(crate::channels::Driver::new(
+            Arc::clone(&bridge),
+            crate::channels::Policy::new(home.clone()),
+        ));
+        let service = Arc::new(crate::channels::ChannelService::new(
+            Arc::clone(&bridge),
+            Arc::clone(&driver),
+            &crate::channels::ServiceConfig {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        ));
+        bridge.attach_channels(service.clone());
+        service.start("webhook").await;
+
+        let refused = bridge
+            .channel_rehearse("")
+            .await
+            .expect_err("an observe-only rehearsal peer is refused");
+        assert!(refused.contains("listen"), "{refused}");
+        let peer = crate::channels::PeerStore::load(&home, "webhook")
+            .unwrap()
+            .peers
+            .iter()
+            .find(|peer| peer.name == "myself")
+            .expect("the rehearsal peer")
+            .id
+            .clone();
+        let text = std::fs::read_to_string(crate::channels::service::Activity::path(&home))
+            .expect("the feed");
+        let lines: Vec<crate::channels::service::Activity> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        let refusal = lines
+            .iter()
+            .find(|line| line.kind == "refusal" && line.peer_id.as_deref() == Some(peer.as_str()))
+            .expect("the refusal is named in the feed");
+        assert_eq!(
+            refusal.task.as_deref(),
+            Some("send myself a message — the proof of life rehearsal")
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 
