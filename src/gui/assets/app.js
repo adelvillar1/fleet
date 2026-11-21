@@ -513,6 +513,20 @@ import { node, svg, clip } from './core/dom.js';
           notice('the steer did not cross', 'the server did not answer');
         });
       }],
+    // P1's five: the composer's buttons that were folded into the `/`
+    // list rather than kept beside send. Each one is the button's own
+    // body, so the capability did not change — only the door did, and
+    // the type-ahead names every one of them with its sentence.
+    ['plan', ['draft', 'plan-mode'], 'arm the next send as a plan — it plans and writes nothing',
+      function () { togglePlanMode(); }],
+    ['dispatch', ['thread', 'spin-off'], 'send the task to its own thread — the run streams there',
+      function (rest) { dispatchTyped(rest); }],
+    ['paste', ['clipboard'], 'paste the clipboard into the composer — text, or the image a webview will not hand over',
+      function () { pasteFromClipboard(); }],
+    ['dictate', ['mic', 'microphone'], 'start or stop dictation — the microphone, transcribed locally by hex',
+      function () { toggleDictation(); }],
+    ['bot', ['invite', 'add-bot'], 'invite a bot into this conversation, or start one from the landing',
+      function () { openInviteDoor(); }],
     ['goal', ['objective', 'target'], 'set, show or clear this session’s standing objective',
       function (rest) {
         var text = rest.trim();
@@ -1157,9 +1171,6 @@ import { node, svg, clip } from './core/dom.js';
     personaCancel: document.getElementById('persona-cancel'),
     personaMatches: document.getElementById('persona-matches'),
     personaTemporal: document.getElementById('persona-temporal'),
-    composerAddBot: document.getElementById('composer-add-bot'),
-    composerDictate: document.getElementById('composer-dictate'),
-    composerDictateLabel: document.getElementById('composer-dictate-label'),
     inviteDoor: document.getElementById('invite-door'),
     inviteTitle: document.getElementById('invite-title'),
     inviteSub: document.getElementById('invite-sub'),
@@ -1256,7 +1267,6 @@ import { node, svg, clip } from './core/dom.js';
     chatSmaller: document.getElementById('chat-smaller'),
     chatBigger: document.getElementById('chat-bigger'),
     send: document.getElementById('send'),
-    dispatch: document.getElementById('dispatch'),
     chromeSearch: document.getElementById('chrome-search-input'),
     ctlConnections: document.getElementById('ctl-connections'),
     tissueCollapse: document.getElementById('tissue-collapse'),
@@ -1278,7 +1288,6 @@ import { node, svg, clip } from './core/dom.js';
     goalPopSet: document.getElementById('goal-pop-set'),
     goalPopClear: document.getElementById('goal-pop-clear'),
     goalPopClose: document.getElementById('goal-pop-close'),
-    plan: document.getElementById('plan'),
     hint: document.getElementById('hint'),
     workingLive: document.getElementById('working-live'),
     workingLiveText: document.getElementById('working-live-text'),
@@ -1303,9 +1312,6 @@ import { node, svg, clip } from './core/dom.js';
     connDown: document.getElementById('conn-down'),
     svcDown: document.getElementById('svc-down'),
     attach: document.getElementById('attach'),
-    paste: document.getElementById('paste'),
-    composerSteer: document.getElementById('composer-steer'),
-    composerBtw: document.getElementById('composer-btw'),
     attachInput: document.getElementById('attach-input'),
     attachChips: document.getElementById('attach-chips'),
     facts: document.getElementById('facts'),
@@ -4790,7 +4796,7 @@ import { node, svg, clip } from './core/dom.js';
       var start = node('button', 'replay-button replay-resume', 'start with Plan');
       start.type = 'button';
       start.addEventListener('click', function () {
-        el.plan.click();
+        if (!face.planMode) togglePlanMode();
         el.task.focus();
       });
       el.processBody.appendChild(start);
@@ -11475,38 +11481,34 @@ import { node, svg, clip } from './core/dom.js';
   // The dispatch hero flow (U20, S2): a thread opens for the task and the
   // run streams there — the lens pivots to it through the one focus (S1).
   // The task is minted and linked to its thread; the graph grows the
-  // task→deliverable edge when the work lands on the desk.
-  if (el.dispatch) {
-    el.dispatch.addEventListener('click', function (event) {
-      event.preventDefault();
-      var typed = el.task.value.trim();
-      if (!typed) {
-        notice('nothing to dispatch',
-          'type the task, then dispatch it — a thread opens for it and the run streams there');
-        return;
-      }
-      if (face.running || face.seat) {
-        notice('a run is in flight', 'let it settle, then dispatch the next task');
-        return;
-      }
-      el.dispatch.disabled = true;
-      post('/api/dispatch', { title: typed, role: '', binding: null })
-        .then(function (reply) {
-          el.dispatch.disabled = false;
-          if (reply.status === 200 && reply.body && reply.body.session) {
-            el.task.value = '';
-            pivotTo('thread', reply.body.session, reply.body.title);
-            notice('dispatched', 'the task is working in its own thread');
-            return;
-          }
-          notice('the dispatch was refused',
-            (reply.body && reply.body.error) || 'the dispatch refused it');
-        })
-        .catch(function () {
-          el.dispatch.disabled = false;
-          notice('the dispatch did not cross', 'the server did not answer');
-        });
-    });
+  // task→deliverable edge when the work lands on the desk. It is the
+  // `/dispatch` command's body now (P1: the button retired), and the task
+  // is the command's own argument — the composer is already cleared when
+  // a command runs, so there is nothing left in the field to read.
+  function dispatchTyped(typed) {
+    var title = String(typed || '').trim();
+    if (!title) {
+      notice('dispatch needs a task',
+        '/dispatch <the task> \u2014 a thread opens for it and the run streams there');
+      return;
+    }
+    if (face.running || face.seat) {
+      notice('a run is in flight', 'let it settle, then dispatch the next task');
+      return;
+    }
+    post('/api/dispatch', { title: title, role: '', binding: null })
+      .then(function (reply) {
+        if (reply.status === 200 && reply.body && reply.body.session) {
+          pivotTo('thread', reply.body.session, reply.body.title);
+          notice('dispatched', 'the task is working in its own thread');
+          return;
+        }
+        notice('the dispatch was refused',
+          (reply.body && reply.body.error) || 'the dispatch refused it');
+      })
+      .catch(function () {
+        notice('the dispatch did not cross', 'the server did not answer');
+      });
   }
 
   // The chrome search (U24): one of the two doors. It filters the active
@@ -12444,13 +12446,18 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
+  // The clipboard read, now the `/paste` command's body (P1: the button
+  // retired). A webview will not hand an image to the page, so the read
+  // goes through the server; one read at a time, and the flag is the
+  // command's own — there is no button left to disable.
+  var pasting = false;
   function pasteFromClipboard() {
-    if (!el.paste || el.paste.disabled) return;
-    el.paste.disabled = true;
+    if (pasting) return;
+    pasting = true;
     fetch('/api/clipboard', { headers: { accept: 'application/json' } })
       .then(function (reply) { return reply.json(); })
       .then(function (answer) {
-      el.paste.disabled = false;
+      pasting = false;
       var refused = answer && answer.refused;
       if (refused && refused.length) {
         notice('the clipboard could not be read', refused.join(' \u00b7 '));
@@ -12487,35 +12494,12 @@ import { node, svg, clip } from './core/dom.js';
         }
       }
     }).catch(function () {
-      el.paste.disabled = false;
+      pasting = false;
       notice('the clipboard is unreachable', 'the read did not leave the page');
     });
   }
-
-  if (el.paste) {
-    el.paste.addEventListener('click', pasteFromClipboard);
-  }
-  // The composer's two verbs as icons: the press fills the composer
-  // with the command's own word and puts the caret after it, so the
-  // owner types the instruction and the slash parser — the only
-  // parser — takes it from there. No second body shape, no second
-  // surface to keep honest.
-  function prefillCommand(prefix) {
-    el.task.value = prefix;
-    el.task.focus();
-    try {
-      var end = el.task.value.length;
-      el.task.setSelectionRange(end, end);
-    } catch (error) { }
-  }
   if (el.onboardKey) {
     el.onboardKey.addEventListener('submit', onboardSubmitKey);
-  }
-  if (el.composerSteer) {
-    el.composerSteer.addEventListener('click', function () { prefillCommand('/steer '); });
-  }
-  if (el.composerBtw) {
-    el.composerBtw.addEventListener('click', function () { prefillCommand('/btw '); });
   }
   if (el.attachInput) {
     el.attachInput.addEventListener('change', function () {
@@ -12656,8 +12640,6 @@ import { node, svg, clip } from './core/dom.js';
   el.scrim.addEventListener('click', closeDrawer);
   if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
   if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
-  if (el.composerAddBot) el.composerAddBot.addEventListener('click', openInviteDoor);
-  if (el.composerDictate) el.composerDictate.addEventListener('click', toggleDictation);
   if (el.inviteAdd) el.inviteAdd.addEventListener('click', addInvitedBots);
   if (el.inviteCancel) el.inviteCancel.addEventListener('click', closeInviteDoor);
   if (el.inviteNew) {
@@ -15487,12 +15469,24 @@ import { node, svg, clip } from './core/dom.js';
   // phone's browser can never open this machine's mic. One press starts;
   // the second stops and transcribes through hex, and the words land at
   // the caret.
-  function dictateButton(state, label) {
-    if (!el.composerDictate) return;
-    el.composerDictate.classList.toggle('listening', state === 'listening');
-    el.composerDictate.classList.toggle('working', state === 'working');
-    el.composerDictate.setAttribute('aria-pressed', state === 'listening' ? 'true' : 'false');
-    if (el.composerDictateLabel) el.composerDictateLabel.textContent = label;
+  // The microphone's state, now that its button is the `/dictate` command
+  // (P1): the composer's own hint line says what the mic is doing — the
+  // one place a state word can live without a permanent control — and the
+  // form carries the state for the stylesheet.
+  function dictateButton(state) {
+    if (el.composer) el.composer.dataset.dictation = state;
+    if (!el.hint) return;
+    if (state === 'listening') {
+      el.hint.textContent = 'listening \u00b7 /dictate stops and transcribes';
+      return;
+    }
+    if (state === 'working') {
+      el.hint.textContent = 'transcribing the clip \u2026';
+      return;
+    }
+    el.hint.textContent = face.planMode
+      ? 'Plan mode: the run plans and writes nothing \u00b7 Enter plans'
+      : 'Shift+Enter makes a newline';
   }
 
   function toggleDictation() {
@@ -29237,13 +29231,20 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
-  el.plan.addEventListener('click', function () {
+  // Plan mode, now the `/plan` command's body (P1: the button retired).
+  // The mode is an arm-the-next-run choice, so the one visible trace is
+  // the composer's own hint line — which is where the button's press
+  // already wrote it.
+  function togglePlanMode() {
     face.planMode = !face.planMode;
-    el.plan.setAttribute('aria-pressed', face.planMode ? 'true' : 'false');
     el.hint.textContent = face.planMode
       ? 'Plan mode: the run plans and writes nothing \u00b7 Enter plans'
       : 'Shift+Enter makes a newline';
-  });
+    notice(face.planMode ? 'plan mode is armed' : 'plan mode is off',
+      face.planMode
+        ? 'the next send plans and writes nothing \u00b7 /plan disarms it'
+        : 'the next send runs the work');
+  }
 
   // The plan door: the same task, the plan arm. A plan-mode run's final
   // message records as a plan, and the card it lands in is editable —

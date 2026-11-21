@@ -647,96 +647,17 @@
                 <path d="M8.5 12.6l5.7-5.7a3 3 0 1 1 4.2 4.2l-7.2 7.2a5 5 0 0 1-7.1-7.1l6.6-6.6"></path>
               </svg>
             </button>
-            <!-- Paste, asked rather than intercepted: a webview will not
-                 hand an image to the page, so this reads the clipboard
-                 through the server on the click and inserts text or
+            <!-- Paste, asked rather than intercepted, is `/paste` now: a
+                 webview will not hand an image to the page, so the command
+                 reads the clipboard through the server and inserts text or
                  attaches the image. Same pipeline as the picker above. -->
-            <button type="button" class="foot-btn icon" id="paste"
-                    aria-label="paste from the clipboard"
-                    data-tip="paste from the clipboard">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M9 4.5h6a1.5 1.5 0 0 1 1.5 1.5v.5h1.5a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 6.5 19V8a1.5 1.5 0 0 1 1.5-1.5h1.5V6A1.5 1.5 0 0 1 9 4.5z"></path>
-                <path d="M9.5 4.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.2h-5z"></path>
-                <path d="M9.5 12h5"></path>
-                <path d="M9.5 15.5h3.5"></path>
-              </svg>
-            </button>
             <input type="file" id="attach-input" multiple hidden>
-            <!-- The run's two verbs beside the run itself, as icons that
-                 prefill their commands: the steering wheel fills the
-                 composer with /steer, the bifurcation with /btw — the
-                 owner types the instruction, the slash parser stays the
-                 only parser. -->
-            <button type="button" class="foot-btn icon" id="composer-steer"
-                    aria-label="steer the run in flight"
-                    data-tip="steer the run in flight (/steer)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="8.5"></circle>
-                <circle cx="12" cy="12" r="2.5"></circle>
-                <path d="M12 14.5v6"></path>
-                <path d="M9.8 10.8L4.6 7.8"></path>
-                <path d="M14.2 10.8l5.2-3"></path>
-              </svg>
-            </button>
-            <button type="button" class="foot-btn icon" id="composer-btw"
-                    aria-label="ask beside the run"
-                    data-tip="ask beside the run (/btw)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 21v-7.5"></path>
-                <path d="M12 13.5L5.5 4.5"></path>
-                <path d="M12 13.5l6.5-9"></path>
-                <circle cx="12" cy="13.5" r="1.2"></circle>
-              </svg>
-            </button>
-            <!-- The microphone (the dictation plan): the server records —
-                 the same cpal path on every platform — and hex transcribes
-                 on this machine. Loopback only: a paired phone cannot open
-                 this mic. -->
-            <button type="button" class="foot-btn dictate" id="composer-dictate"
-                    aria-pressed="false"
-                    title="dictate — the microphone, transcribed locally by hex">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect x="9" y="3" width="6" height="11" rx="3"></rect>
-                <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"></path>
-                <path d="M12 18v3"></path>
-              </svg>
-              <span class="foot-label" id="composer-dictate-label">Dictate</span>
-            </button>
-            <button type="button" class="foot-btn bots" id="composer-add-bot"
-                    aria-haspopup="dialog" aria-controls="invite-door"
-                    title="add a bot — it joins this conversation, or starts one from the landing">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="8.5" r="3.5"></circle>
-                <path d="M5 20c0-3.6 3.1-5.5 7-5.5s7 1.9 7 5.5"></path>
-                <path d="M18.5 6.5h3"></path>
-              </svg>
-              <span class="foot-label">Add bot</span>
-            </button>
-            <button type="button" class="foot-btn plan" id="plan" aria-pressed="false"
-                    title="plan the work before running it — applies to the next run">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M6 3.5h12v17H6z"></path>
-                <path d="M9 8h6"></path>
-                <path d="M9 12h6"></path>
-                <path d="M9 16h3"></path>
-              </svg>
-              <span class="foot-label">Plan</span>
-            </button>
-            <button type="button" class="foot-btn dispatch" id="dispatch"
-                    aria-label="dispatch the task to its own thread"
-                    title="dispatch — a thread opens for the task and the run streams there">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M3.5 12l17-7-7 17-2.5-7z"></path>
-              </svg>
-              <span class="foot-label">Dispatch</span>
-            </button>
+            <!-- The run's two verbs and the rest of the old row — paste,
+                 steer, btw, dictate, add-bot, plan, dispatch — are `/`
+                 commands now (the face rethink's P1): one field, two icon
+                 doors, and send is the only filled button. Every one of
+                 them is named in the type-ahead with its sentence, so the
+                 capability did not move, only the door did. -->
             <button type="submit" class="foot-btn send" id="send"
                     aria-label="send the task">
               <span class="foot-label" id="send-label">Send</span>

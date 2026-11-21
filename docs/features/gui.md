@@ -727,14 +727,37 @@ all** — access is granted by choosing a folder and by nothing else.
   runs are launched from a directory; that launch is the owner's
   explicit choice, so they keep the unrestricted root they always had.
 
+## The composer
+
+One field, and at most three controls beside `send` — measured by the
+harness, not asserted in prose. The composer's own field is `#task`; the
+only other textarea in the form belongs to the goal popover, a dialog's
+field that stays hidden until its chip is pressed (`R10`). The foot
+carries two icon doors — the **document** door (a workspace document,
+with the parser-consent statement) and **attach** (this machine's files,
+where the chips land) — and `send` is the only filled button.
+
+Everything else is a `/` command, and the type-ahead names each with its
+own sentence, so the capability did not move when the button did:
+`/plan` arms plan mode (the hint line is its visible trace), `/dispatch
+<task>` opens a thread for the task, `/paste` reads the clipboard,
+`/dictate` starts and stops the server-side recording, `/bot` invites a
+bot, and `/steer` and `/btw` were already commands before their icons
+retired. The nine per-control decisions are recorded as `R1`–`R11` in
+[`../plans/UI-DECISIONS.md`](../plans/UI-DECISIONS.md). The run's own
+choices sit on one line above: the cycling mode chip (ask → autonomous →
+full access, skipping full access with no working folder), the provider
+pin, the folder chip and the goal chip.
+
 ## Pasting
 
 The composer's textarea keeps its native Cmd+V for text. An **image** is
 the case the keyboard cannot serve: a webview never hands a picture to
 the page, so the `paste` event either never fires or arrives with an
-empty `clipboardData`. The foot therefore carries a **paste** button
-beside attach and the Document control, and the press is the gesture:
-the page asks the face, and the face's own process reads the pasteboard.
+empty `clipboardData`. The clipboard read is therefore the **`/paste`**
+command (it was a foot button until P1's control pass retired it —
+`R3`): the page asks the face, and the face's own process reads the
+pasteboard.
 
 **The read is the server's.** `GET /api/clipboard` reaches
 `src/clipboard.rs` through `spawn_blocking`, behind a two-method backend

@@ -1638,6 +1638,15 @@ function check(name, ok, detail) {
 }
 const flush = async (turns = 40) => { for (let i = 0; i < turns; i += 1) await Promise.resolve(); };
 
+// P1: a composer command, the way the owner runs one — typed into the one
+// field and taken by the slash parser. The `input` event is deliberately
+// not fired first: that would open the type-ahead and the Enter would run
+// whatever ranked first instead of the command the line names.
+const runSlash = (page, line) => {
+  page.IDS.task.value = line;
+  page.fireOn('task', 'keydown', { key: 'Enter', shiftKey: false });
+};
+
 // C1/C8: the list is grouped by what needs the owner, in fixed order,
 // and the counts are the document's own owner-scoped derivation — not a
 // second derivation in the browser. The fixture's system rows (a
@@ -3197,9 +3206,12 @@ async function pasteAttachesAndTheAtTypeaheadReferences() {
   check('C4 a plain text paste is not an attach',
     !page2.IDS['attach-chips'].children.length, String(page2.IDS['attach-chips'].children.length));
 
-  // The paste button (C2/C3): text lands in the composer at the caret,
-  // an image joins the attachments through the same chip pipeline, and
-  // an empty clipboard says so rather than doing nothing.
+  // `/paste` (P1: the button retired into the command): text lands in the
+  // composer, an image joins the attachments through the same chip
+  // pipeline, and an empty clipboard says so rather than doing nothing.
+  // A command clears the field before it runs, so the clipboard lands in
+  // an empty composer — pasting into text at a caret is the keyboard's
+  // own path (⌘V), which the case above drives.
   const page3 = boot({
     width: 1440,
     hash: '#/sessions/ref-1',
@@ -3211,16 +3223,13 @@ async function pasteAttachesAndTheAtTypeaheadReferences() {
   await flush();
   page3.open();
   await flush();
-  page3.IDS['task'].value = 'a prefix and a suffix';
-  page3.IDS['task'].selectionStart = 9;
-  page3.IDS['task'].selectionEnd = 9;
-  page3.IDS['paste'].click();
+  runSlash(page3, '/paste');
   await flush(40);
-  check('C2 the paste button puts the clipboard text in the composer',
-    page3.IDS['task'].value === 'a prefix the pasted sentenceand a suffix',
+  check('C2 the paste command puts the clipboard text in the composer',
+    page3.IDS['task'].value === 'the pasted sentence',
     JSON.stringify(page3.IDS['task'].value));
   check('C2 the caret lands after the paste',
-    page3.IDS['task'].selectionStart === 9 + 'the pasted sentence'.length,
+    page3.IDS['task'].selectionStart === 'the pasted sentence'.length,
     String(page3.IDS['task'].selectionStart));
 
   const image = {
@@ -3238,16 +3247,19 @@ async function pasteAttachesAndTheAtTypeaheadReferences() {
   page4.open();
   await flush();
   page4.IDS['task'].value = 'what is wrong here?';
-  page4.IDS['paste'].click();
+  runSlash(page4, '/paste');
   await flush(40);
   const imageChips = page4.IDS['attach-chips'].children;
-  check('C3 the paste button attaches the clipboard image',
+  check('C3 the paste command attaches the clipboard image',
     imageChips.length === 1 && imageChips[0].textContent.includes('screenshot.png'),
     imageChips.length ? imageChips[0].textContent : 'no chip');
   check('C3 the chip names the image\u2019s size, not a text length',
     imageChips.length === 1 && imageChips[0].textContent.includes('2.0 kB'),
     imageChips.length ? imageChips[0].textContent : 'no chip');
   // The send carries the image's own fields, so the run can decode them.
+  // The command cleared the field when it ran, so the ask is typed again
+  // beside the attachment — the chip is what the turn carries.
+  page4.IDS['task'].value = 'what is wrong here?';
   page4.IDS['send'].click();
   await flush(60);
   const runCall = page4.calls.filter((c) => String(c.url).startsWith('/api/run')).pop();
@@ -3261,7 +3273,7 @@ async function pasteAttachesAndTheAtTypeaheadReferences() {
   await flush();
   page5.open();
   await flush();
-  page5.IDS['paste'].click();
+  runSlash(page5, '/paste');
   await flush(40);
   check('C2 an empty clipboard says so and attaches nothing',
     !page5.IDS['attach-chips'].children.length, String(page5.IDS['attach-chips'].children.length));
@@ -4861,48 +4873,52 @@ async function theTurnControlsGradeForkAndHook() {
     JSON.stringify(page.calls.filter((c) => c.url.startsWith('/api/resume')).map((c) => c.body)));
 }
 
-// The composer's two verbs as icons: the steering wheel prefills
-// /steer, the bifurcation prefills /btw — the slash parser stays the
-// only parser, the press only writes the command's own word.
-async function theComposerVerbsAreIcons() {
+// P1: the composer's verbs are `/` commands, not icons. The steering wheel
+// and the bifurcation prefilled `/steer` and `/btw`; the type-ahead now
+// offers the same two words directly, so the press count went down and the
+// capability stayed. This case flips the old icon case: the two ids are
+// gone from the markup, and the commands answer in the composer.
+async function theComposerVerbsAreCommands() {
   const page = boot({ width: 1440, hash: '#/chat' });
   await flush();
   page.open();
   await flush();
 
-  const steer = page.rows('#composer-steer')[0];
-  const btw = page.rows('#composer-btw')[0];
-  // The buttons are static markup, and the harness's page is built from
-  // ids alone — so the glyphs and the names read from the page's own
-  // text, the way the CSS checks read their rules.
-  check('verbs the composer carries both verb icons with their names',
-    steer && btw &&
-      HTML.includes('id="composer-steer"') && HTML.includes('id="composer-btw"') &&
-      HTML.includes('aria-label="steer the run in flight"') &&
-      HTML.includes('aria-label="ask beside the run"') &&
-      /id="composer-steer"[\s\S]*?<circle cx="12" cy="12" r="8.5">/.test(HTML) &&
-      /id="composer-btw"[\s\S]*?<path d="M12 21v-7.5">/.test(HTML),
-    (steer && 'elements present') + ' / markup ' +
-      HTML.includes('aria-label="steer the run in flight"'));
-
-  // The hover tooltip is the face's own: instant and themed, the words
-  // in data-tip, the accessible name in aria-label.
-  check('verbs the composer icons carry the house tooltip',
-    HTML.includes('data-tip="steer the run in flight (/steer)"') &&
-      HTML.includes('data-tip="ask beside the run (/btw)"') &&
-      HTML.includes('data-tip="attach a document from the workspace"') &&
+  check('verbs the composer carries no steer or btw icon',
+    page.rows('#composer-steer').length === 0 && page.rows('#composer-btw').length === 0 &&
+      !HTML.includes('id="composer-steer"') && !HTML.includes('id="composer-btw"'),
+    'rows=' + page.rows('#composer-steer').length + '/' + page.rows('#composer-btw').length);
+  // The hover tooltip is the face's own, and the two doors that remain
+  // still carry it — the pattern did not retire with the icons.
+  check('verbs the remaining doors carry the house tooltip',
+    HTML.includes('data-tip="attach a document from the workspace"') &&
+      HTML.includes('data-tip="attach files from this machine"') &&
       CSS.includes('.foot-btn[data-tip]:hover::after') &&
       CSS.includes('content: attr(data-tip)'),
     'data-tip / css');
-  const task = page.rows('#task')[0];
-  steer.click();
-  check('verbs the steering wheel prefills the steer command',
-    task.value === '/steer ',
-    JSON.stringify(task.value));
-  btw.click();
-  check('verbs the bifurcation prefills the btw command',
-    task.value === '/btw ',
-    JSON.stringify(task.value));
+  // The type-ahead names both verbs, each with its own sentence.
+  page.IDS.task.value = '/st';
+  page.fireOn('task', 'input');
+  await flush(40);
+  const offered = [...page.IDS.commands.children].map((one) => String(one.textContent || ''));
+  check('verbs the type-ahead offers /steer', offered.some((one) => one.includes('/steer')),
+    offered.join(' | '));
+  page.fireOn('task', 'keydown', { key: 'Escape' });
+  page.IDS.task.value = '/bt';
+  page.fireOn('task', 'input');
+  await flush(40);
+  const asides = [...page.IDS.commands.children].map((one) => String(one.textContent || ''));
+  check('verbs the type-ahead offers /btw', asides.some((one) => one.includes('/btw')),
+    asides.join(' | '));
+  page.fireOn('task', 'keydown', { key: 'Escape' });
+  // And a line naming one runs it: /btw with no question refuses by name
+  // rather than sending a half-command to the model.
+  const before = page.calls.length;
+  runSlash(page, '/btw');
+  await flush(40);
+  check('verbs a bare /btw refuses by name and sends nothing',
+    page.calls.slice(before).every((c) => c.url !== '/api/run' && c.url !== '/api/btw'),
+    JSON.stringify(page.calls.slice(before).map((c) => c.url)));
 }
 
 
@@ -6174,7 +6190,8 @@ async function anArrivalClosesTheTransientOverlays() {
   await flush();
   page.open();
   await flush(40);
-  page.IDS['composer-add-bot'].click();
+  // The invite door is opened the way the owner opens it now: `/bot`.
+  runSlash(page, '/bot');
   await flush();
   check('NAV the invite door opens', page.IDS['invite-door'].hidden === false,
     'hidden=' + page.IDS['invite-door'].hidden);
@@ -6243,19 +6260,27 @@ async function theComposerDictatesIntoTheBox() {
   await flush();
   page.open();
   await flush(40);
-  const trigger = page.IDS['composer-dictate'];
-  check('MIC the composer carries the dictation door',
-    !!trigger && trigger.hidden === false, 'hidden=' + (trigger || {}).hidden);
-  trigger.click();
+  // The mic is `/dictate` now (P1: the button retired into the command).
+  // The command's discoverability is the type-ahead, so the case opens it
+  // the way the owner does — `/dict` and the list names the verb.
+  page.IDS.task.value = '/dict';
+  page.fireOn('task', 'input');
+  await flush(40);
+  const offered = [...page.IDS.commands.children]
+    .map((one) => String(one.textContent || ''));
+  check('MIC the dictation door is the /dictate command',
+    offered.some((one) => one.includes('/dictate')), offered.join(' | '));
+  page.fireOn('task', 'keydown', { key: 'Escape' });
+  runSlash(page, '/dictate');
   await flush();
   check('MIC the press starts a recording',
     page.calls.some((c) => c.method === 'POST' && c.url === '/api/dictate/start'),
     JSON.stringify(page.calls.map((c) => c.url)));
-  check('MIC the button reads listening while it records',
-    trigger.classList.contains('listening') &&
-      page.text('composer-dictate-label') === 'Stop',
-    page.text('composer-dictate-label'));
-  trigger.click();
+  check('MIC the composer says it is listening while it records',
+    /listening/.test(page.text('hint')) &&
+      page.IDS.composer.dataset.dictation === 'listening',
+    page.text('hint') + ' / ' + page.IDS.composer.dataset.dictation);
+  runSlash(page, '/dictate');
   await flush(40);
   check('MIC the second press stops and transcribes',
     page.calls.some((c) => c.method === 'POST' && c.url === '/api/dictate/stop'),
@@ -6263,9 +6288,9 @@ async function theComposerDictatesIntoTheBox() {
   check('MIC the words land in the composer',
     page.IDS.task.value.indexOf('hello from the mic') !== -1,
     page.IDS.task.value);
-  check('MIC the button returns to its idle word',
-    page.text('composer-dictate-label') === 'Dictate',
-    page.text('composer-dictate-label'));
+  check('MIC the composer returns to its idle line',
+    page.text('hint').includes('Shift+Enter makes a newline'),
+    page.text('hint'));
 }
 
 // The owner's 2026-11-16 point: the door belongs in the composer, and the
@@ -6290,12 +6315,19 @@ async function theComposerStartsWithBots() {
   await flush();
   page.open();
   await flush(40);
-  const trigger = page.IDS['composer-add-bot'];
-  check('C1 the landing carries the bot door in the composer',
-    !!trigger && trigger.hidden === false, 'hidden=' + (trigger || {}).hidden);
+  // The door is `/bot` now (P1): the landing's composer carries no button
+  // for it, so the case proves the command exists and opens the same door.
+  page.IDS.task.value = '/bo';
+  page.fireOn('task', 'input');
+  await flush(40);
+  const offered = [...page.IDS.commands.children]
+    .map((one) => String(one.textContent || ''));
+  check('C1 the landing carries the bot door as a command',
+    offered.some((one) => one.includes('/bot')), offered.join(' | '));
+  page.fireOn('task', 'keydown', { key: 'Escape' });
   check('C1 the landing opens as no session', !page.window.location.hash.includes('/sessions/'),
     page.window.location.hash);
-  trigger.click();
+  runSlash(page, '/bot');
   await flush();
   check('C1 the landing door says what it will do',
     page.IDS['invite-door'].hidden === false &&
@@ -8690,11 +8722,9 @@ async function theStrategyStepShowsItsPreview() {
     await flush();
     page.open();
     await flush(40);
-    const trigger = page.IDS['composer-add-bot'];
-    check('C1 the composer carries the bot door on an open conversation',
-      !!trigger && trigger.hidden === false, 'hidden=' + (trigger || {}).hidden);
-    if (!trigger) return;
-    trigger.click();
+    // The door is `/bot` now (P1): the open conversation's composer has no
+    // button for it, and the command opens the same door with the roles.
+    runSlash(page, '/bot');
     await flush();
     check('C1 the door opens with this home’s roles',
       page.IDS['invite-door'].hidden === false &&
@@ -16499,7 +16529,7 @@ async function theDispatchHeroFlowPivotsToTheThread() {
   page.open();
   await flush(80);
   page.IDS.task.value = 'write the release notes';
-  page.IDS.dispatch.click();
+  runSlash(page, '/dispatch write the release notes');
   await flush(80);
   const posts = page.calls.filter((c) => c.url === '/api/dispatch' && c.method === 'POST');
   check('S2 dispatch posts the task',
@@ -17329,10 +17359,11 @@ async function pastePutsEveryImageOnTheComposer() {
   await flush();
   page3.open();
   await flush(120);
-  page3.IDS['paste'].click();
+  page3.IDS['task'].value = '';
+  runSlash(page3, '/paste');
   await flush(80);
   const buttonChips = page3.IDS['attach-chips'].children;
-  check('PASTE the button attaches a list too', buttonChips.length === 2,
+  check('PASTE /paste attaches a list too', buttonChips.length === 2,
     'chips=' + buttonChips.length);
 }
 
@@ -18556,6 +18587,78 @@ async function theGutterCountsEachTurnsReceipts() {
     card.slice(0, 160));
 }
 
+// P1, the composer: one field, and no more than three controls beside
+// send — measured, not described. The nine controls the plan left open are
+// each decided here: the two doors stay, seven retire into `/` commands,
+// and the case proves both halves (the ids are gone from the markup, and
+// every retired capability still answers by name in the type-ahead).
+async function theComposerIsOneFieldAndThreeControls() {
+  const page = boot({ hash: '#/chat', documents: { state: (asked) => emptyState(asked) } });
+  await flush();
+  page.open();
+  await flush(40);
+
+  // One field. The composer's own field is `task`; the only other textarea
+  // in the form is the goal popover's — a dialog's field, hidden until its
+  // chip is pressed, not a second composer input. `R10` records that
+  // judgment. The markup is read from the source because the stub builds
+  // its page from ids alone (no tags, no classes on static nodes).
+  const formHtml = HTML.slice(HTML.indexOf('<form class="composer" id="composer"'),
+    HTML.indexOf('</form>', HTML.indexOf('<form class="composer" id="composer"')));
+  const fields = [...formHtml.matchAll(/<textarea[^>]*id="([^"]+)"/g)].map((m) => m[1]);
+  check('P1 composer renders one text field',
+    fields.length === 2 && fields[0] === 'task' && fields[1] === 'goal-pop-input' &&
+      formHtml.indexOf('id="goal-pop"') !== -1 &&
+      formHtml.indexOf('id="goal-pop"') < formHtml.indexOf('id="goal-pop-input"'),
+    fields.join(','));
+
+  // No more than three controls beside send, and send is the only filled
+  // button in the row — counted from the row's own markup.
+  const footHtml = HTML.slice(HTML.indexOf('<span class="foot-actions">'),
+    HTML.indexOf('</footer>', HTML.indexOf('<span class="foot-actions">')));
+  const ids = [...footHtml.matchAll(/<button[^>]*id="([^"]+)"/g)].map((m) => m[1]);
+  const beside = ids.filter((id) => id !== 'send');
+  check('P1 composer no more than three controls beside send',
+    beside.length <= 3 && beside.length === 2 && beside.join(',') === 'doc-open,attach',
+    beside.join(','));
+  check('P1 composer send is the only filled button',
+    ids.length === 3 && ids[ids.length - 1] === 'send' &&
+      (footHtml.match(/class="foot-btn send"/g) || []).length === 1 &&
+      (footHtml.match(/class="foot-btn /g) || []).length === 3,
+    ids.join(','));
+
+  // R1/R2: the two doors the plan keeps.
+  check('P1 composer keeps the document and file doors',
+    !!page.IDS['doc-open'] && !!page.IDS.attach,
+    'doc-open=' + !!page.IDS['doc-open'] + ' attach=' + !!page.IDS.attach);
+
+  // R3-R9: the seven retired ids are gone from the markup, and each one's
+  // capability answers as a command.
+  const retired = ['paste', 'composer-steer', 'composer-btw', 'composer-dictate',
+    'composer-add-bot', 'plan', 'dispatch'];
+  check('P1 composer retires the seven folded buttons',
+    retired.every((id) => !page.IDS[id] && !HTML.includes('id="' + id + '"')),
+    retired.filter((id) => page.IDS[id] || HTML.includes('id="' + id + '"')).join(','));
+  page.IDS.task.value = '/';
+  page.fireOn('task', 'input');
+  await flush(40);
+  const offered = [...page.IDS.commands.children].map((one) => String(one.textContent || ''));
+  const wanted = ['/paste', '/steer', '/btw', '/dictate', '/bot', '/plan', '/dispatch'];
+  check('P1 composer every retired control answers by name',
+    wanted.every((verb) => offered.some((one) => one.includes(verb))),
+    wanted.filter((verb) => !offered.some((one) => one.includes(verb))).join(',') ||
+      'all present');
+  page.fireOn('task', 'keydown', { key: 'Escape' });
+  // The press rule: a retired control's command says what it will do
+  // before it does it — /dispatch with no task refuses by name.
+  const before = page.calls.length;
+  runSlash(page, '/dispatch');
+  await flush(40);
+  check('P1 composer a bare /dispatch refuses instead of posting',
+    page.calls.slice(before).every((one) => one.url !== '/api/dispatch'),
+    JSON.stringify(page.calls.slice(before).map((one) => one.url)));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -18652,7 +18755,7 @@ const cases = [
   ['D6 a press during a gap names itself', aPressDuringAGapNamesItself],
   ['REVIEW the chat counts exchanges and shows its controls', theChatCountsExchangesAndShowsItsControls],
   ['TURN the turn controls grade, fork, and hook', theTurnControlsGradeForkAndHook],
-  ['VERBS the composer carries the two verb icons', theComposerVerbsAreIcons],
+  ['VERBS the composer carries the verbs as commands', theComposerVerbsAreCommands],
   ['N0 the work rail renders the owner\u2019s work only', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['N1 the home is always reachable', theHomeIsAlwaysReachable],
   ['F1 the landing prefers the owner\u2019s conversations', theLandingPrefersTheOwnersConversations],
@@ -18816,6 +18919,7 @@ const cases = [
   ['S6 the connections column collapses from its own door', theConnectionsColumnCollapsesFromItsOwnDoor],
   ['U13 the drawer waits for the owner on desk and learning', theDrawerWaitsForTheOwnerOnDeskAndLearning],
   ['P1 gutter the rail counts each turn\u2019s receipts from the log', theGutterCountsEachTurnsReceipts],
+  ['P1 composer one field and three controls at most', theComposerIsOneFieldAndThreeControls],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

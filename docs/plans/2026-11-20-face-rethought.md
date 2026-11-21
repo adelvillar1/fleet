@@ -187,6 +187,29 @@ The fourth (the route picker) cannot be covered: the fixture answers a generic
 **KI-584** rather than asserted on a stub, which would have been a green check
 proving nothing.
 
+**P1, the composer's nine controls: decided, and the row is two doors.**
+The plan deferred these to a per-control call; the owner's standing ruling
+is that the agent decides with recorded judgment, so each is an `R` entry in
+`docs/plans/UI-DECISIONS.md` (`R1`–`R9`, with `R10`/`R11` recording the two
+scope judgments beside them). Two doors stay — the document door and
+attach — and seven retire: `/paste`, `/steer`, `/btw`, `/dictate`, `/bot`,
+`/plan`, `/dispatch <task>`. Steer and btw were deleted rather than folded
+because their buttons only prefilled commands that already existed; the
+other five gained commands that carry their bodies unchanged.
+
+Measured: the composer's own field is one (the goal popover's textarea is a
+dialog's field, `R10`), two controls sit beside `send`, and `send` is the
+only filled button. `P1 composer one field and three controls at most`
+counts all three from the markup and then proves every retired capability
+answers by name in the type-ahead. Red-proved twice: deleting the
+`/dispatch` command failed `every retired control answers by name —
+/dispatch`, and putting the paste button back failed three checks —
+`no more than three controls beside send — doc-open,attach,paste`,
+`send is the only filled button`, and `retires the seven folded buttons —
+paste`. Eight existing cases were rewritten to drive the commands instead
+of the ids they used to press (the VERBS case flipped whole, from icons to
+commands). Harness 1672 checks across 235 cases.
+
 **P1, the door: measured, then covered.** The door already existed
 (`paintOnboard` → `#onboard-door`, the landing token `data-onboard="door"`), so
 the work was the case the plan asked for, not a screen. It now asserts:

@@ -475,6 +475,104 @@ real work lands in sessions that are not objects.
 
 ---
 
+## The composer's controls — the nine, decided (R1–R11, 2026-11-21)
+
+The face-rethought plan's P1 left nine composer controls to a per-control
+call: keep, fold into the `/` list, or delete. The owner's standing ruling
+is that the agent decides each **with recorded judgment** rather than
+handing the question back, so each is one paragraph: what was asked, what
+was decided, why, and what it superseded. The AC that binds them all is
+"one text field and no more than three controls beside send", and the law
+they are judged by is the press rule (a control that cannot act says so by
+name) and truths-only (nothing on the surface may invent data).
+
+`R` ids are append-only and stable, like `U`: a later ruling supersedes one
+by naming it.
+
+- **R1 — `doc-open` stays.** Asked: keep, fold, or delete the door that
+  attaches a document from the workspace. Decided: keep, as one of the two
+  icon doors. Why: it is not a send variant but a *grant* — a document
+  enters the conversation the model reads, and the door is where the
+  consent statement for a hosted parser has a home. Supersedes nothing; the
+  P1 bullet's "two icon doors" names it.
+
+- **R2 — `attach` stays.** Asked: the same question for this machine's
+  files. Decided: keep, as the second icon door, and keep `/`-reachable.
+  Why: attaching a file is the primary way work enters a conversation, and
+  the button is also where the attachment chips land (the count and the
+  drop-press live beside it). Supersedes nothing.
+
+- **R3 — `paste` folds into `/paste`.** Asked: keep the clipboard button or
+  not. Decided: fold. Why: for text, ⌘V already pastes at the caret and the
+  button could not compete with it; the button's only unique case is the
+  image a webview will not hand the page, and `/paste` reaches that case
+  through the same server read. The command clears the field before it
+  runs, so the clipboard lands in an empty composer — pasting into existing
+  text stays the keyboard's own path. Supersedes the "paste button" of the
+  clipboard plan; the read, the bounds and the chip pipeline are unchanged.
+
+- **R4 — `composer-steer` is deleted.** Asked: keep the steering wheel.
+  Decided: delete, not fold. Why: the button only prefilled `/steer` into
+  the composer — the command was already the whole capability, and the
+  type-ahead names it with its sentence. A button whose only act is to type
+  another control's name is a second door to the same room. Supersedes the
+  2026-10-2x "two verbs as icons" ruling, which the VERBS case now pins in
+  its flipped form.
+
+- **R5 — `composer-btw` is deleted.** Asked: keep the bifurcation icon.
+  Decided: delete, for R4's reason: it prefilled `/btw` and nothing else.
+
+- **R6 — `dictate` folds into `/dictate`.** Asked: keep the microphone.
+  Decided: fold. Why: dictation is a mode, and a microphone that sits
+  permanently in the composer implies an always-available input — the
+  opposite of what the server-recording path is. The command starts and
+  stops the same recording, and the composer's own hint line carries the
+  state ("listening · /dictate stops and transcribes") so the mode is still
+  visible while it is on. Supersedes the dictation plan's button; the
+  server recording, hex transcription and caret insert are unchanged.
+
+- **R7 — `add-bot` folds into `/bot`.** Asked: keep the add-bot door.
+  Decided: fold. Why: inviting a bot is a room action, not a per-send
+  control; it acts on the conversation, not on the message. The landing's
+  "start with a bot" path and the room head's own door are unchanged, and
+  `/bot` opens the same dialog with the same title and roles.
+
+- **R8 — `plan` folds into `/plan`.** Asked: keep the Plan button.
+  Decided: fold. Why: plan mode is an arm-the-next-run choice, and its
+  visible trace was always the composer's hint line — which `/plan` writes
+  exactly as the button did. The plan's own text says Plan becomes a `/`
+  command. Supersedes the Plan button; the plan-mode run path, the plan
+  card and Enter-in-plan-mode are unchanged.
+
+- **R9 — `dispatch` folds into `/dispatch <task>`.** Asked: keep the
+  Dispatch button. Decided: fold, and the task becomes the command's
+  argument. Why: dispatch is a send variant (the same words, a different
+  destination), and a command runs after the composer is cleared — so the
+  honest form is `/dispatch the task` rather than reading a field the
+  command just emptied. A bare `/dispatch` refuses by name. Supersedes the
+  Dispatch button; the thread mint, the pivot and the refusal states are
+  unchanged.
+
+- **R10 — the goal chip stays (scope note on "one text field").** The
+  plan's item 2 also named `+ goal` for the `/` list. Decided: keep the
+  chip and its popover, because the AC counts the *composer's* field and
+  the popover's textarea is a dialog's field (hidden until its chip is
+  pressed) — and because retiring the chip would delete a landed AC of the
+  unattended-goals plan (the pending goal set on the landing, C6) that no
+  other surface carries. `/goal` remains the command twin for set, show and
+  clear, so the capability is doubly reachable. The harness counts the
+  form's textareas and demands exactly one composer field plus the dialog's.
+
+- **R11 — the provider select stays (scope note).** The plan's P1 bullet
+  names a mode chip, a folder chip and two doors; the provider select is
+  not in that list, and KI-584 already records that the fixture cannot
+  cover it. Decided: keep it, because `/pin` validates a provider against
+  the select's own option list — the roster's one visible door — and
+  removing it would leave `/pin` refusing every provider by name. It is a
+  run-bar field, not a control beside send, so the AC's count is unaffected.
+
+---
+
 **Provenance.** The initial system (U0–U28) was settled 2026-11-12 from the
 armada interactive mockup ([`../design/armada-workspace-mockup.html`](../design/armada-workspace-mockup.html));
 U29–U33 from the fleet-core mockup the same day; U34–U38 from the onboarding
