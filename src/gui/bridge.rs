@@ -8979,6 +8979,20 @@ fn parse_capability(word: &str) -> Result<crate::channels::Capability, String> {
 fn channels_read(home: &std::path::Path) -> Value {
     const ACTIVITY_SHOWN: usize = 50;
     let service = crate::channels::service::document(home);
+    // The activity is read once, before the peer loop: the same lines
+    // that feed the door's feed also answer the passport's two derived
+    // facts — when a peer was last heard, and when the fleet last asked
+    // back — so one read serves both.
+    let activity = crate::channels::service::activity(home, ACTIVITY_SHOWN);
+    let last_stamp = |peer_id: &str, kinds: &[&str]| -> Option<String> {
+        activity
+            .iter()
+            .rev()
+            .find(|line| {
+                line.peer_id.as_deref() == Some(peer_id) && kinds.contains(&line.kind.as_str())
+            })
+            .map(|line| line.at.clone())
+    };
     let mut channels = Vec::new();
     for name in crate::channels::CHANNELS {
         let peers = crate::channels::PeerStore::load(home, name)
@@ -8987,15 +9001,26 @@ fn channels_read(home: &std::path::Path) -> Value {
                     .peers
                     .iter()
                     .map(|peer| {
+                        // Last heard is the peer's own newest inbound line
+                        // (a delivery it sent or a refusal it earned);
+                        // last asked is the newest outbound one (a reply
+                        // or a seat). Derived here rather than stored:
+                        // the log is capped at 500 lines, so a stamp on
+                        // disk would need a store field and stamping
+                        // sites in two plugins, and the newest 50 lines
+                        // already answer the question a passport asks.
                         json!({
                             "channel": name,
                             "id": peer.id,
                             "name": peer.name,
+                            "device_class": peer.device_class,
                             "capability": match peer.capability {
                                 crate::channels::Capability::Task => "task",
                                 crate::channels::Capability::Observe => "observe",
                             },
                             "paired": peer.created_at,
+                            "last_heard": last_stamp(&peer.id, &["delivery", "refusal"]),
+                            "last_asked": last_stamp(&peer.id, &["reply", "seat"]),
                             // A URL, not a secret: the surface says where
                             // an outcome goes.
                             "callback": peer.callback,
@@ -9024,7 +9049,6 @@ fn channels_read(home: &std::path::Path) -> Value {
             "pending": pending,
         }));
     }
-    let activity = crate::channels::service::activity(home, ACTIVITY_SHOWN);
     // The Telegram credential, by presence and source only. The value is
     // never part of this document.
     let (telegram_present, telegram_source) =
@@ -17640,6 +17664,121 @@ mod tests {
             .find(|peer| peer["channel"] == "webhook")
             .expect("the webhook peer is named");
         assert_eq!(webhook_peer["capability"], "may act");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The passport's two derived facts come from the activity log, not
+    /// from the store: last heard is the peer's newest inbound line (a
+    /// delivery or a refusal), last asked the newest outbound one (a
+    /// reply or a seat), each `null` when the log says nothing about the
+    /// peer. They are derived rather than stamped on disk because the
+    /// log is capped at 500 lines — a durable stamp would need a store
+    /// field and stamping sites in two plugins, and the newest lines
+    /// already answer what a passport asks.
+    #[test]
+    fn the_channels_read_derives_last_heard_and_last_asked_from_the_activity() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-channels-derived-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+
+        let mut webhook = crate::channels::PeerStore::default();
+        webhook.pair(
+            "wh1",
+            "the CI box",
+            "unused",
+            crate::channels::Capability::Task,
+            "2026-11-20T00:00:00Z",
+            None,
+        );
+        webhook.save(&home, "webhook").expect("the webhook store");
+        // A third peer with no lines at all: the passport's honest blank.
+        let mut telegram = crate::channels::PeerStore::default();
+        telegram.pair(
+            "4242",
+            "Alejandro",
+            "unused",
+            crate::channels::Capability::Observe,
+            "2026-11-20T00:00:00Z",
+            None,
+        );
+        telegram
+            .save(&home, "telegram")
+            .expect("the telegram store");
+        telegram.pair(
+            "quiet",
+            "the quiet one",
+            "unused",
+            crate::channels::Capability::Observe,
+            "2026-11-20T00:00:00Z",
+            None,
+        );
+        telegram
+            .save(&home, "telegram")
+            .expect("the telegram store");
+
+        // The log, oldest first as the writer leaves it: the newest
+        // line of each kind set is the one the passport shows.
+        let log = [
+            r#"{"at":"2026-11-20T09:00:00Z","kind":"reply","channel":"webhook","peer_id":"wh1"}"#,
+            r#"{"at":"2026-11-20T10:00:00Z","kind":"delivery","channel":"webhook","peer_id":"wh1"}"#,
+            r#"{"at":"2026-11-20T11:00:00Z","kind":"delivery","channel":"webhook","peer_id":"wh1"}"#,
+            r#"{"at":"2026-11-20T12:00:00Z","kind":"seat","channel":"telegram","peer_id":"4242"}"#,
+            r#"{"at":"2026-11-20T13:00:00Z","kind":"refusal","channel":"telegram","peer_id":"4242"}"#,
+            r#"{"at":"2026-11-20T14:00:00Z","kind":"state","channel":"webhook"}"#,
+        ];
+        std::fs::create_dir_all(home.join("channels")).unwrap();
+        std::fs::write(
+            home.join("channels").join("activity.jsonl"),
+            log.join("\n") + "\n",
+        )
+        .unwrap();
+
+        let document = channels_read(&home);
+        let channels = document["channels"].as_array().expect("the channels");
+        let webhook_peer = channels
+            .iter()
+            .find(|channel| channel["name"] == "webhook")
+            .and_then(|channel| channel["peers"].as_array())
+            .and_then(|peers| peers.first())
+            .expect("the webhook peer");
+        assert_eq!(
+            webhook_peer["last_heard"], "2026-11-20T11:00:00Z",
+            "the newest delivery wins, not the first"
+        );
+        assert_eq!(
+            webhook_peer["last_asked"], "2026-11-20T09:00:00Z",
+            "a reply is when the fleet last asked back"
+        );
+        let telegram_peers = channels
+            .iter()
+            .find(|channel| channel["name"] == "telegram")
+            .and_then(|channel| channel["peers"].as_array())
+            .expect("the telegram peers");
+        let talker = telegram_peers
+            .iter()
+            .find(|peer| peer["id"] == "4242")
+            .expect("the telegram peer");
+        assert_eq!(
+            talker["last_heard"], "2026-11-20T13:00:00Z",
+            "a refusal is still the peer being heard"
+        );
+        assert_eq!(talker["last_asked"], "2026-11-20T12:00:00Z");
+        // A peer the log never names shows nulls, not guesses.
+        let quiet = telegram_peers
+            .iter()
+            .find(|peer| peer["id"] == "quiet")
+            .expect("the quiet peer");
+        assert_eq!(quiet["last_heard"], serde_json::Value::Null);
+        assert_eq!(quiet["last_asked"], serde_json::Value::Null);
+        // A line that names no peer is nobody's fact.
+        assert_eq!(webhook_peer["last_asked"], "2026-11-20T09:00:00Z");
         std::fs::remove_dir_all(&home).ok();
     }
 
