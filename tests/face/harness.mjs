@@ -12049,6 +12049,75 @@ async function anInterruptedRowSaysSoInWords() {
     JSON.stringify(list.slice(0, 200)));
 }
 
+// P2's second acceptance: the board's columns equal the derived states.
+// The bridge derives each task's column word (queued, in-process, done) and
+// BOARD_STATES only names and orders them — a column the face invents or
+// drops would read as work standing somewhere its record says it is not.
+// A fixture set of plans and their tasks pins: one column per derived
+// state, in the order work moves, each column counting and holding
+// exactly the tasks its derivation puts there.
+async function theBoardColumnsEqualTheDerivedStates() {
+  const task = (id, column, extra) => ({ id, title: id, column, ...extra });
+  const plans = [
+    { id: 'the-ledger-plan', status: 'approved', queued: 1, tasks: [
+      task('led-queue', 'queued', { assignee: 'archivist' }),
+      task('led-run', 'in-process', { assignee: 'fleet' }),
+      task('led-done', 'done', { assignee: 'archivist' }),
+    ] },
+    { id: 'the-corpus-plan', status: 'approved', queued: 1, tasks: [
+      task('cor-queue', 'queued', { assignee: 'scraper' }),
+      task('cor-run', 'in-process', { assignee: 'fleet' }),
+    ] },
+  ];
+  const page = boot({
+    hash: '#/board',
+    documents: {
+      board: {
+        type: 'board',
+        counts: { queued: 2, 'in-process': 2, done: 1, plans: 2 },
+        plans, tasks: [], refused: [],
+      },
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+
+  const cards = page.rows('.board-card').filter((card) => {
+    const head = card.querySelector('h2');
+    return head && plans.some((plan) => plan.id === head.textContent);
+  });
+  check('P2 each fixture plan renders one card', cards.length === plans.length,
+    'cards=' + cards.length + ' plans=' + plans.length);
+  const expected = ['queued', 'in-process', 'done'];
+  cards.forEach((card) => {
+    const name = card.querySelector('h2').textContent;
+    const cols = card.querySelectorAll('.board-col');
+    const statuses = cols.map((col) => col.dataset.status);
+    check("P2 " + name + "'s columns equal the derived states in order",
+      JSON.stringify(statuses) === JSON.stringify(expected),
+      JSON.stringify(statuses));
+    const plan = plans.find((p) => p.id === name);
+    cols.forEach((col) => {
+      const standing = plan.tasks.filter((t) => t.column === col.dataset.status);
+      const count = col.querySelector('.board-col-count');
+      check('P2 ' + name + ' \u00b7 ' + col.dataset.status + ' counts its own tasks',
+        count && count.textContent === String(standing.length),
+        count ? count.textContent + ' vs ' + standing.length : 'no count');
+      standing.forEach((t) => {
+        const one = col.querySelector('.board-task[data-id="' + t.id + '"]');
+        check('P2 ' + t.id + ' stands in its derived column',
+          !!one, col.dataset.status + ' well');
+      });
+    });
+  });
+  const distinct = Array.from(new Set(
+    page.rows('.board-col').map((col) => col.dataset.status)));
+  check('P2 the board carries exactly the derived states and no others',
+    distinct.length === expected.length && expected.every((s) => distinct.includes(s)),
+    JSON.stringify(distinct));
+}
+
 // P0 of the face rethink: the topbar tells the truth or keeps quiet. A fresh
 // home has no route, no run and nothing measured — so it carries no pills and
 // no zeroes. A strip of "no route yet · 0 · 0% · idle" reads like a fault
@@ -16758,6 +16827,7 @@ const cases = [
   ['P0 the topbar keeps quiet on a fresh home', theTopbarKeepsQuietOnAFreshHome],
   ['2B the runbar covers its four controls', theRunbarCoversItsFourControls],
   ['P2 an interrupted row says so in words', anInterruptedRowSaysSoInWords],
+  ['P2 the board\u2019s columns equal the derived states', theBoardColumnsEqualTheDerivedStates],
   ['SWEEP every settings press acts or answers', everySettingsPressSaysSomething],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
