@@ -430,8 +430,8 @@ The rest, in order of how much is missing:
 | P3 | "send myself a message" round trip | **not built** — zero hits for any self-delivery surface; the pairing route exists |
 | P4 | router cost×quality scatter + `ungraded` | **not built** — `grep scatter|ungraded` = 0; the hourly chart and donut the AC retires are still painted |
 | P4 | delegation overlay with divergence tones | **not built** — graph and run tree are two separate cards, no join, no tones |
-| P4 | memory: recall is the first block | **not built** — and a passing case asserts the opposite |
-| P4 | why-this-recall breakdown | **not built** — the hit press shows raw `JSON.stringify`; every component is computed and then **discarded** |
+| P4 | memory: recall is the first block | **landed** `0166960` — flipped the case that asserted the opposite, red-proved |
+| P4 | why-this-recall breakdown | **landed** `354d886` + `87aa84c` — six channels recorded on the calib row (old lines decode to zeros and say so), served with their weights, summed against the score. Ranking untouched: no weight or `Score::compute` line changed. |
 | P4 | skills coverage map + fired feed | **not built** — the surface lists segment rows only |
 | P5 | morning read: five lines, on the bots door | **not built** — no such read anywhere |
 | P5 | workspace-history time scrubber | **not built** — no scrubber; the only range input is an unrelated design slider |
