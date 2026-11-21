@@ -926,11 +926,16 @@ function boot(options) {
       });
     }
     if (pathOnly === '/api/workspace-history') {
-      const askedProject = new URL('http://x' + url).searchParams.get('project') || '';
+      const asked = new URL('http://x' + url);
+      const askedProject = asked.searchParams.get('project') || '';
       if (askedProject) {
         const project = documents['workspace-project'];
+        // The scrubber's `at`: the moment the face asked for, handed to
+        // the case's own answerer — a moment-shaped document is the
+        // server's to answer, never the harness's to cut.
+        const askedAt = asked.searchParams.get('at');
         const document = typeof project === 'function'
-          ? project(askedProject)
+          ? project(askedProject, askedAt)
           : (project || documents['workspace-history'] || {});
         return Promise.resolve({
           status: 200,
@@ -2090,6 +2095,199 @@ async function theHistoryPaneNamesLostStoresAndReRegisters() {
     String(c.url).startsWith('/api/workspace-history/re-register') && c.method === 'POST');
   check('KI-511 the press posts the folder', posted.length === 1 &&
     /Projects\/fleet/.test(String(posted[0].body)), JSON.stringify(posted));
+}
+
+// P5: the workspace-history time scrubber. The document derives a
+// timeline and answers `state as of <instant>` from an `at` parameter;
+// the face asks for a moment and paints the rows that came back — it
+// never filters a full list behind the document's back. The sentence
+// under the range names the moment and the coverage from the
+// document's own answer, and the four edges are named: no history,
+// before-the-first, zero-coverage, newest-equals-unscrubbed.
+async function theHistoryScrubberAsksTheDocumentForAMoment() {
+  const base = 1793000000000;
+  const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const commit = (id, branch, mins, paths) => ({
+    id, branch, via: 'fs', time: base + mins * 60000, lww: paths,
+  });
+  const layer = (id, source) => ({
+    id, logical: 5, parent: source ? 'l1' : null,
+    sourceBranch: source ? 'child' : null, sourceCommit: source || null,
+    overwroteCount: 0,
+  });
+  const live = {
+    type: 'workspace-history', registered: true, project: 'fleet', folder: '/x/fleet',
+    version: 'v1', refused: [], note: null, truncated: null,
+    branches: [
+      { name: 'main', head: null, state: 'idle' },
+      { name: 'child-1', head: 'c1', state: 'open' },
+      { name: 'child-2', head: 'c3', state: 'open' },
+    ],
+    commits: [
+      commit('c1', 'child-1', 0, ['/notes.md']),
+      commit('c2', 'child-2', 61, ['/notes.md', '/src/main.rs']),
+      commit('c3', 'child-2', 122, ['/src/main.rs']),
+    ],
+    layers: [layer('l1'), layer('l2', 'c1'), layer('l3', 'c3')],
+    timeline: {
+      total: 3,
+      span: { first: iso(base - 60000), last: iso(base + 122 * 60000) },
+      // Bucket 0 opens a minute before the first commit: the moment it
+      // names precedes the first change, which is exactly edge (b).
+      buckets: [
+        { at: iso(base - 60000), changes: 1, files: 1, branches: 1 },
+        { at: iso(base + 3600000), changes: 1, files: 2, branches: 1 },
+        { at: iso(base + 7200000), changes: 1, files: 1, branches: 1 },
+      ],
+      as_of: null, covered: 3,
+    },
+  };
+  // The document's own as-of answer: rows at or before the moment, the
+  // moment named, the coverage said. The stub hands the case the
+  // server's job — the face must paint whatever comes back.
+  const asOf = (mins) => {
+    const atMs = base + mins * 60000;
+    const kept = live.commits.filter((c) => c.time <= atMs);
+    const keptIds = kept.map((c) => c.id);
+    const head = (branch) => {
+      let found = null;
+      kept.forEach((c) => { if (c.branch === branch) found = c.id; });
+      return found;
+    };
+    return {
+      ...live,
+      commits: kept,
+      branches: [
+        { name: 'main', head: null, state: 'idle' },
+        { name: 'child-1', head: head('child-1'),
+          state: head('child-1') ? 'open' : 'idle' },
+        { name: 'child-2', head: head('child-2'),
+          state: head('child-2') ? 'open' : 'idle' },
+      ],
+      layers: live.layers.filter((l) => !l.sourceCommit || keptIds.indexOf(l.sourceCommit) >= 0),
+      timeline: { ...live.timeline, as_of: iso(atMs), covered: kept.length },
+    };
+  };
+  const at0 = iso(base - 60000);
+  const at1 = iso(base + 3600000);
+  const page = boot({
+    hash: '#/workspace-history',
+    documents: {
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      'workspace-history-rail': {
+        type: 'workspace-history-rail', window_days: 42,
+        projects: [{ name: 'fleet', folder: '/x/fleet', active: true,
+          newest: base + 122 * 60000, branches: 3, commits: 3, layers: 3,
+          stored: 100, truncated: null, view: live }],
+        refused_projects: [], refused: [],
+      },
+      'workspace-project': (project, at) => {
+        if (at == null) return live;
+        if (at === at0) {
+          // Edge (b/c): the moment precedes the first change — the
+          // document names it, it is not an empty list of data.
+          return {
+            ...live, commits: [], layers: [layer('l1')],
+            branches: [
+              { name: 'main', head: null, state: 'idle' },
+              { name: 'child-1', head: null, state: 'idle' },
+              { name: 'child-2', head: null, state: 'idle' },
+            ],
+            note: 'before the first change \u2014 the moment asked for precedes ' +
+              'the history\u2019s first commit (' + iso(base) + ')',
+            timeline: { ...live.timeline, as_of: at0, covered: 0 },
+          };
+        }
+        if (at === at1) return asOf(61);
+        return live;
+      },
+    },
+  });
+  page.open();
+  await flush();
+  let board = page.text('workspace-history-board');
+  check('P5 the scrubber card is on the history surface',
+    /the time scrubber/.test(board), board.slice(0, 300));
+  check('P5 the newest bucket selected by default is the unscrubbed document',
+    /the newest \u00b7 3 of 3 changes/.test(board), board.slice(0, 600));
+  check('P5 the live read sent no at', page.calls.filter((c) =>
+    String(c.url).indexOf('at=') >= 0).length === 0,
+    page.calls.map((c) => String(c.url)).join(' | '));
+  let range = page.rows('.canvas-range').find((one) =>
+    (one.getAttribute && one.getAttribute('aria-label')) === 'the moment the history is shown as of');
+  check('P5 the range rides the timeline\u2019s buckets', !!range &&
+    String(range.max) === '2' && String(range.value) === '2',
+    range && range.max + '/' + range.value);
+  // Scrub to the middle bucket: one fetch naming the moment, the
+  // document's rows and coverage painted.
+  range.value = '1';
+  range.fire('change', {});
+  await flush();
+  const asked1 = page.calls.filter((c) => String(c.url).indexOf('at=' + encodeURIComponent(at1)) >= 0);
+  check('P5 the scrub asks the document for the moment', asked1.length === 1,
+    page.calls.map((c) => String(c.url)).join(' | '));
+  board = page.text('workspace-history-board');
+  check('P5 the sentence names the moment and the coverage',
+    /as of \d{2}:\d{2} \u00b7 2 of 3 changes/.test(board), board.slice(0, 600));
+  check('P5 the rows are the document\u2019s, at or before the moment',
+    /2 commits/.test(board) && !/3 commits/.test(board), board.slice(0, 600));
+  // Edge (b/c): the first bucket's moment precedes the first change.
+  range.value = '0';
+  range.fire('change', {});
+  await flush();
+  board = page.text('workspace-history-board');
+  check('P5 a moment before the first change is named, not an empty list',
+    /before the first change \u00b7 0 of 3 changes/.test(board), board.slice(0, 600));
+  check('P5 before-the-first never reads as no history',
+    !/no changes recorded yet/.test(board), board.slice(0, 600));
+  // Back to the newest bucket: the scrub is put down, the rows are the
+  // live document's own again (edge d).
+  range = page.rows('.canvas-range').find((one) =>
+    (one.getAttribute && one.getAttribute('aria-label')) === 'the moment the history is shown as of');
+  range.value = '2';
+  range.fire('change', {});
+  await flush();
+  board = page.text('workspace-history-board');
+  check('P5 the newest bucket restores the unscrubbed document',
+    /the newest \u00b7 3 of 3 changes/.test(board) && /3 commits/.test(board),
+    board.slice(0, 600));
+  // Edge (a): a project whose history has nothing in it names itself.
+  const empty = boot({
+    hash: '#/workspace-history',
+    documents: {
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      'workspace-history-rail': {
+        type: 'workspace-history-rail', window_days: 42,
+        projects: [{ name: 'fresh', folder: '/x/fresh', active: true,
+          newest: base, branches: 1, commits: 0, layers: 1, stored: 0,
+          truncated: null,
+          view: { type: 'workspace-history', registered: true, project: 'fresh',
+            folder: '/x/fresh', version: 'v0', refused: [], note: null,
+            truncated: null, branches: [{ name: 'main', head: null, state: 'idle' }],
+            commits: [], layers: [layer('l1')],
+            timeline: { total: 0, span: null, buckets: [], as_of: null, covered: 0 } } }],
+        refused_projects: [], refused: [],
+      },
+      'workspace-project': () => ({
+        type: 'workspace-history', registered: true, project: 'fresh',
+        folder: '/x/fresh', version: 'v0', refused: [], note: null,
+        truncated: null, branches: [{ name: 'main', head: null, state: 'idle' }],
+        commits: [], layers: [layer('l1')],
+        timeline: { total: 0, span: null, buckets: [], as_of: null, covered: 0 },
+      }),
+    },
+  });
+  empty.open();
+  await flush();
+  board = empty.text('workspace-history-board');
+  check('P5 no history is named by name, never a zero',
+    /no changes recorded yet/.test(board), board.slice(0, 600));
+  check('P5 a history with nothing in it offers no scrub',
+    !page.rows('.canvas-range').some ||
+      empty.rows('.canvas-range').filter((one) =>
+        (one.getAttribute && one.getAttribute('aria-label')) ===
+          'the moment the history is shown as of').length === 0,
+    String(empty.rows('.canvas-range').length));
 }
 
 async function aReopenedConversationSeedsItsHealth() {
@@ -18370,6 +18568,7 @@ const cases = [
   ['C0 the health card names what is down and the repair', theHealthCardNamesWhatIsDownAndTheRepair],
   ['KI-510 a routed event paints the live decision with its facts', aRoutedEventPaintsTheLiveDecisionWithItsFacts],
   ['KI-511 the history pane names lost stores and re-registers', theHistoryPaneNamesLostStoresAndReRegisters],
+  ['P5 the history scrubber asks the document for a moment', theHistoryScrubberAsksTheDocumentForAMoment],
   ['MS a capacity refusal paints a polite queued card', aCapacityRefusalPaintsAPoliteQueuedCard],
   ['MS two concurrent sessions render their own transcripts', twoConcurrentSessionsRenderTheirOwnTranscripts],
   ['MS a reopened face is idle and not wedged', aReopenedFaceIsIdleAndNotWedged],

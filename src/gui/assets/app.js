@@ -18748,6 +18748,12 @@ import { node, svg, clip } from './core/dom.js';
       .then(function (doc) {
         if (doc.unchanged) return;
         face.history = doc;
+        // A held moment re-asks after the live read: the substrate may
+        // have moved, and the as-of rows must answer the document that
+        // now carries the timeline, not the one the scrub remembers.
+        if (face.historyScrub) {
+          readWorkspaceHistoryAt(face.historyScrub.at, face.historyScrub.index);
+        }
         // The files card's ref follows the tree: the first branch that
         // is not main, or main itself, so a fresh read lands somewhere
         // real rather than on an empty selector.
@@ -18795,6 +18801,8 @@ import { node, svg, clip } from './core/dom.js';
         window.location.hash = '#/workspace-history/' + encodeURIComponent(id);
         face.historyBranch = null;
         face.history = null;
+        face.historyScrub = null;
+        face.historyScrubIndex = null;
         face.workspaceCardAsked = true;
         paintWorkspaceHistory();
         readWorkspaceProject(true);
@@ -18827,6 +18835,117 @@ import { node, svg, clip } from './core/dom.js';
       ['the files', historyFiles(read)]
     ]);
     document.body.dataset.objectCard = 'open';
+  }
+
+  /// The document the pane paints: the held moment's as-of answer while
+  /// a scrub is on, the live one otherwise. The face asks for a moment
+  /// and paints what came back — it never filters a full list behind
+  /// the document's back.
+  function visibleWorkspaceHistory() {
+    return (face.historyScrub && face.historyScrub.doc) || face.history;
+  }
+
+  /// The scrubber's read: one fetch naming the moment, and the
+  /// document's own answer painted — the rows, the moment (`as_of`) and
+  /// the coverage (`covered` of `total`) all come from the document.
+  /// The newest bucket is the live read: no `at` rides, the scrub is
+  /// put down, and the rows are the unscrubbed document's own.
+  function readWorkspaceHistoryAt(atIso, index) {
+    var rail = face.historyRail;
+    var projects = (rail && rail.projects) || [];
+    var folder = workspaceSectionId(rail);
+    var chosen = projects.filter(function (p) { return p.folder === folder; })[0];
+    if (!chosen) chosen = projects[0];
+    if (!chosen) return Promise.resolve();
+    var ask = '/api/workspace-history?project=' + encodeURIComponent(chosen.folder);
+    if (atIso != null) ask += '&at=' + encodeURIComponent(atIso);
+    return fetch(ask, { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        if (atIso == null) {
+          face.historyScrub = null;
+          face.historyScrubIndex = null;
+        } else {
+          face.historyScrub = { at: atIso, index: index, doc: doc };
+          face.historyScrubIndex = index;
+        }
+        if (face.panel === 'workspace-history') paintWorkspaceHistory();
+      })
+      .catch(function () { });
+  }
+
+  /// The time scrubber: a range over the timeline's buckets that moves
+  /// the moment and re-reads. The sentence under it names the moment
+  /// and the coverage — both from the document's own answer, never a
+  /// count the face derived. The edges are named: a history with
+  /// nothing in it says "no changes recorded yet" by name, never a
+  /// zero; a moment before the first change says so, never an empty
+  /// list pretending to be data.
+  function historyScrubber(read) {
+    var card = boardCard(12, 'the time scrubber', 'the work as it stood');
+    var timeline = read && read.timeline;
+    var total = timeline && timeline.total ? timeline.total : 0;
+    var covered = timeline && timeline.covered != null ? timeline.covered : total;
+    var sentence;
+    if (!timeline || total === 0) {
+      sentence = 'no changes recorded yet';
+    } else if (timeline.as_of && covered === 0) {
+      sentence = 'before the first change \u00b7 0 of ' + total + ' changes';
+    } else if (timeline.as_of) {
+      var at = new Date(timeline.as_of);
+      var hhmm = ('0' + at.getHours()).slice(-2) + ':' + ('0' + at.getMinutes()).slice(-2);
+      sentence = 'as of ' + hhmm + ' \u00b7 ' + covered + ' of ' + total + ' changes';
+    } else {
+      sentence = 'the newest \u00b7 ' + covered + ' of ' + total + ' changes';
+    }
+    var said = node('p', 'board-empty', sentence);
+    said.dataset.scrubSentence = sentence;
+    card.appendChild(said);
+    var buckets = (timeline && timeline.buckets) || [];
+    if (buckets.length > 1) {
+      var control = node('input', 'canvas-range');
+      control.type = 'range';
+      control.min = 0;
+      control.max = buckets.length - 1;
+      control.step = 1;
+      control.value = face.historyScrubIndex != null
+        ? String(face.historyScrubIndex)
+        : String(buckets.length - 1);
+      control.setAttribute('aria-label', 'the moment the history is shown as of');
+      control.addEventListener('change', function () {
+        var index = Number(control.value);
+        var bucket = buckets[index];
+        if (!bucket) return;
+        // The newest bucket puts the scrub down: the live read, no
+        // moment named.
+        readWorkspaceHistoryAt(
+          index === buckets.length - 1 ? null : bucket.at,
+          index === buckets.length - 1 ? null : index
+        );
+      });
+      card.appendChild(control);
+      var span = (timeline && timeline.span) || {};
+      if (span.first && span.last) {
+        var ends = node('div', 'svc-line');
+        ends.appendChild(document.createTextNode(
+          momentWords(span.first) + ' \u2192 ' + momentWords(span.last)));
+        card.appendChild(ends);
+      }
+    }
+    return card;
+  }
+
+  /// A bucket instant in the words the ends line reads: the date when
+  /// the span crosses days, the clock when it does not.
+  function momentWords(iso) {
+    var at = new Date(iso);
+    var date = ('0' + at.getDate()).slice(-2) + '/'
+      + ('0' + (at.getMonth() + 1)).slice(-2);
+    var clock = ('0' + at.getHours()).slice(-2) + ':' + ('0' + at.getMinutes()).slice(-2);
+    return date + ' ' + clock;
   }
 
   function paintWorkspaceHistory() {
@@ -18917,7 +19036,7 @@ import { node, svg, clip } from './core/dom.js';
       if (at > 0) reason = reason.slice(0, at);
       return project.name + ': ' + clip(reason.trim(), 140);
     });
-    var read = face.history;
+    var read = visibleWorkspaceHistory();
     if (!read) {
       el.workspaceHistoryBoard.appendChild(boardCard(12, 'reading', null, null));
       return;
@@ -18958,6 +19077,7 @@ import { node, svg, clip } from './core/dom.js';
         : '\u2014', 'dedupe'],
       [(read.refused || []).length, 'reads refused', (read.refused || []).length ? 'down' : null]
     ], read.project ? 'project ' + read.project : 'no project registered'));
+    body.appendChild(historyScrubber(read));
     if ((read.refused || []).length) {
       body.appendChild(refusedCard(read.refused));
     }
