@@ -445,6 +445,14 @@ pub struct RouterSnapshot {
     pub models: Vec<ModelRow>,
     /// The recent route rows, newest first.
     pub recent: Vec<RecentRow>,
+    /// The day's cost×quality scatter: one point per (model × workload)
+    /// the routes served, each carrying the calibration grade its
+    /// provider's cell gives — or the reason it cannot be graded. A
+    /// point that cannot be graded carries no rate at all, because a
+    /// figure the provider does not report must never be plotted as a
+    /// zero (KI-547: never rank a provider by a figure it does not
+    /// report).
+    pub scatter: Vec<ScatterPoint>,
     /// The day's calls bucketed by their own UTC hour, in clock order,
     /// with the hours that saw no call left out. A day column chart is
     /// this and nothing else: the shape of the day the ledger recorded.
@@ -533,6 +541,38 @@ impl RecentRow {
     }
 }
 
+/// One scatter point: a (model × workload) pair the day's route rows
+/// served, with the calls, latency, and tokens the rows rode, and the
+/// calibration grade its provider's cell gives — or the word for why
+/// the pair cannot be graded. The grade is the cell itself, so the
+/// scatter's figures are the calibration's own and no second math
+/// stands beside them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScatterPoint {
+    pub model: String,
+    pub provider: String,
+    /// The workload the routes named, `unshaped` when none did.
+    pub workload: String,
+    pub calls: u64,
+    /// The calls whose walk ended in a served attempt — the same
+    /// reading the ledger and the row list give one run.
+    pub served: u64,
+    pub latency_mean_ms: Option<u64>,
+    pub latency_max_ms: Option<u64>,
+    /// The total tokens the rows' serving usage recorded, or `None`
+    /// when no row in the group carried usage — a day without usage
+    /// figures says so rather than counting zero.
+    pub tokens: Option<u64>,
+    /// The provider×workload calibration cell, present only when the
+    /// cell is fit — an unfit cell renders no score, so the point
+    /// carries no grade to plot.
+    pub grade: Option<crate::calib::CalibrationCell>,
+    /// Why the point is ungraded, when it is: `no judged rows`, or what
+    /// an unfit cell still needs. KI-547's lesson: never rank a
+    /// provider by a figure it does not report.
+    pub ungraded: Option<String>,
+}
+
 /// The judge's counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JudgeCounters {
@@ -554,6 +594,27 @@ pub fn read_router(state: &RouterState, day: &str) -> RouterSnapshot {
     // the board renders an empty day over a day that routed.
     let rows = crate::calib::read_op_day(&state.root, day, crate::calib::OP_ROUTE, ROUTER_ROW_CAP);
     let route_rows: Vec<&crate::calib::ReadRow> = rows.iter().collect();
+    // The scatter's grades come off the day's judged rows: one extra
+    // capped read of the same day file, bounded by their own op. A day
+    // with no judged rows yet is not a refusal — it is a day the judge
+    // has not graded — but a day file that cannot be read at all is,
+    // and the snapshot contract names a refused read rather than
+    // letting it read as an empty calibration.
+    let judged = crate::calib::read_op_day(
+        &state.root,
+        day,
+        crate::calib::OP_ROUTE_JUDGED,
+        ROUTER_ROW_CAP,
+    );
+    let cells = crate::calib::calibration(&judged);
+    let mut refused = Vec::new();
+    let day_file = crate::calib::day_path(&state.root, day);
+    if day_file.is_file() && File::open(&day_file).is_err() {
+        refused.push(format!(
+            "the day's judged rows could not be read at {}",
+            day_file.display()
+        ));
+    }
     RouterSnapshot {
         read_at: now_stamp(),
         judge: Some((
@@ -570,11 +631,12 @@ pub fn read_router(state: &RouterState, day: &str) -> RouterSnapshot {
         totals: route_totals(&route_rows),
         models: model_rows(&route_rows),
         recent: recent_rows(&route_rows),
+        scatter: scatter_points(&route_rows, &cells),
         hours: hour_columns(&route_rows),
         judge_counters: judge_counters(&route_rows),
         workloads: workload_mix(&route_rows),
         guidance: demotion_guidance(state),
-        refused: Vec::new(),
+        refused,
     }
 }
 
@@ -789,6 +851,105 @@ fn workload_mix(rows: &[&crate::calib::ReadRow]) -> Vec<(String, u64)> {
     }
     counts.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
     counts
+}
+
+/// The day's scatter: one point per (model × workload) the route rows
+/// name, in the order the rows first name each pair. The pair's grade
+/// is its provider's calibration cell for the workload the row carries,
+/// joined from the day's judged rows — and a pair whose cell cannot be
+/// graded is labelled with its reason instead of a rate (KI-547: never
+/// rank a provider by a figure it does not report).
+fn scatter_points(
+    rows: &[&crate::calib::ReadRow],
+    cells: &[crate::calib::CalibrationCell],
+) -> Vec<ScatterPoint> {
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut grouped: HashMap<(String, String), Vec<&crate::calib::ReadRow>> = HashMap::new();
+    for row in rows {
+        let key = (row.model.clone(), row.workload.clone());
+        if !grouped.contains_key(&key) {
+            order.push(key.clone());
+        }
+        grouped.entry(key).or_default().push(row);
+    }
+    order
+        .into_iter()
+        .filter_map(|key| {
+            let group = grouped.remove(&key)?;
+            let first = group[0];
+            let served = group
+                .iter()
+                .filter(|row| {
+                    row.attempts
+                        .last()
+                        .is_some_and(|attempt| attempt.outcome == "served")
+                })
+                .count() as u64;
+            let latencies: Vec<u64> = group
+                .iter()
+                .map(|row| row.latency_ms)
+                .filter(|ms| *ms > 0)
+                .collect();
+            let mean = if latencies.is_empty() {
+                None
+            } else {
+                Some(latencies.iter().sum::<u64>() / latencies.len() as u64)
+            };
+            let carried_usage = group.iter().any(|row| row.usage.is_some());
+            let tokens = carried_usage.then(|| {
+                group
+                    .iter()
+                    .filter_map(|row| row.usage.as_ref().map(|usage| usage.total_tokens))
+                    .sum()
+            });
+            // The cell is the provider's, keyed the route row's own way:
+            // the workload the row names, empty when none did. The word
+            // the face reads is the workload's shaped name.
+            let cell = crate::calib::cell(cells, &first.provider, &first.workload);
+            let (grade, ungraded) = match cell {
+                // KI-547: never rank a provider by a figure it does not
+                // report. A fit cell is graded with its own figures; an
+                // unfit cell renders no score, so the point carries no
+                // rate — only the word for what the cell still needs —
+                // and a pair the judge never graded has no rate at all.
+                Some(cell) if cell.fit == crate::calib::FitState::Fit => (Some(cell.clone()), None),
+                Some(cell) => (None, Some(unfit_reason(cell))),
+                None => (None, Some("no judged rows".to_string())),
+            };
+            Some(ScatterPoint {
+                model: first.model.clone(),
+                provider: first.provider.clone(),
+                workload: if first.workload.is_empty() {
+                    "unshaped".to_string()
+                } else {
+                    first.workload.clone()
+                },
+                calls: group.len() as u64,
+                served,
+                latency_mean_ms: mean,
+                latency_max_ms: latencies.iter().max().copied(),
+                tokens,
+                grade,
+                ungraded,
+            })
+        })
+        .collect()
+}
+
+/// Why a cell cannot be graded, in the calibration's own words: the
+/// graded rows it still needs, or the confidence span, or — for a pair
+/// the judge never graded — no judged rows at all. An unfit cell renders
+/// no score (KI-547), so the reason is all the point carries.
+fn unfit_reason(cell: &crate::calib::CalibrationCell) -> String {
+    let rows = cell.needs_rows();
+    if rows > 0 {
+        format!(
+            "unfit: needs {rows} row{}",
+            if rows == 1 { "" } else { "s" }
+        )
+    } else {
+        "unfit: needs a wider confidence span".to_string()
+    }
 }
 
 /// Fleet's own failover feedback: the candidates the calibration is
@@ -3736,6 +3897,35 @@ mod tests {
         .to_string()
     }
 
+    /// One `route_judged` row, the shape the stream writes: the judgment
+    /// the lane made of one route, keyed so the owner's disposition can
+    /// address it, with the confidence the weighting weighs and the cost
+    /// the spend reads.
+    fn judged_row(
+        ts: &str,
+        route_key: &str,
+        provider: &str,
+        workload: &str,
+        verdict: &str,
+        confidence: f64,
+        cost_usd: f64,
+    ) -> String {
+        serde_json::json!({
+            "ts": ts,
+            "op": crate::calib::OP_ROUTE_JUDGED,
+            "route_key": route_key,
+            "provider": provider,
+            "workload": workload,
+            "verdict": verdict,
+            "confidence": confidence,
+            "reason": "the lane judged the workload",
+            "cost_usd": cost_usd,
+            "latency_ms": 900,
+            "lane": "sys1",
+        })
+        .to_string()
+    }
+
     /// One `tool_screen` row, the shape the stream writes. A busy day's
     /// screens are what bury the route rows, so the regression test
     /// writes a day of them.
@@ -3871,7 +4061,41 @@ mod tests {
     fn the_router_board_reads_fleets_own_routing_state_into_its_snapshot() {
         let scratch = Scratch::new("router-state");
         let day = "2026-10-16";
-        write_day(scratch.path(), day, &a_days_rows());
+        let mut lines = a_days_rows();
+        // The judged rows the scatter grades with. stepfun's `quick`
+        // cell is fit — eight graded rows, confidences spanning 0.35,
+        // two of them wrong — so its wrong-rate is a score. zai's
+        // `standard_code` cell is two graded rows into an eight-row
+        // minimum, so it renders no score. stepfun's `hard` cell has no
+        // judged rows at all: the day routed to it and the judge never
+        // graded it.
+        for index in 0..crate::calib::FIT_MIN_ROWS {
+            lines.push(judged_row(
+                &format!("2026-10-16T10:{index:02}:00Z"),
+                &format!("stepfun-quick-{index}"),
+                "stepfun",
+                "quick",
+                if index >= 6 {
+                    crate::calib::VERDICT_WRONG
+                } else {
+                    crate::calib::VERDICT_RIGHT
+                },
+                0.95 - index as f64 * 0.05,
+                0.0002,
+            ));
+        }
+        for index in 0..2 {
+            lines.push(judged_row(
+                &format!("2026-10-16T10:1{index}:00Z"),
+                &format!("zai-standard-{index}"),
+                "zai-coding-plan",
+                "standard_code",
+                crate::calib::VERDICT_RIGHT,
+                0.90,
+                0.0002,
+            ));
+        }
+        write_day(scratch.path(), day, &lines);
         let state = state(&scratch);
 
         let snapshot = read_router(&state, day);
@@ -3973,6 +4197,63 @@ mod tests {
                 ("standard_code".to_string(), 1),
             ]
         );
+        // The scatter: one point per (model × workload) the day served,
+        // in the order the rows first name each pair — not one per row.
+        assert_eq!(snapshot.scatter.len(), 3, "{:?}", snapshot.scatter);
+        let first = &snapshot.scatter[0];
+        assert_eq!(first.model, "stepfun/step-3.7-flash");
+        assert_eq!(first.provider, "stepfun");
+        assert_eq!(first.workload, "quick");
+        assert_eq!(first.calls, 2);
+        assert_eq!(first.served, 2);
+        assert_eq!(first.latency_mean_ms, Some(778));
+        assert_eq!(first.latency_max_ms, Some(812));
+        // No route row of the day carried usage, so the point carries no
+        // token figure — not a zero pretending to be one.
+        assert_eq!(first.tokens, None);
+        // The graded point carries the calibration cell's own figures —
+        // the same weighted wrong-rate the calibration panel serves, not
+        // a second math beside it.
+        let grade = first.grade.as_ref().expect("stepfun/quick is a fit cell");
+        assert_eq!(grade.right, 6);
+        assert_eq!(grade.wrong, 2);
+        assert!(
+            (grade.weighted_wrong_rate - (0.65 + 0.60) / 6.2).abs() < 1e-9,
+            "{:?}",
+            grade.weighted_wrong_rate
+        );
+        assert_eq!(grade.fit, crate::calib::FitState::Fit);
+        // The cost per right is the cell's own spend over its right
+        // count, and it is the provider cell's figure: the provider's
+        // models share it, never split it.
+        let cost = grade.cost_per_right.expect("the cell graded right");
+        assert!((cost - 0.0016 / 6.0).abs() < 1e-12, "{cost}");
+        // The unfit pair carries no grade at all — the cell renders no
+        // score, so there is no rate to plot — and names what it needs.
+        let second = &snapshot.scatter[1];
+        assert_eq!(second.model, "zai-coding-plan/GLM-5.3-Flash");
+        assert_eq!(second.workload, "standard_code");
+        assert!(
+            second.grade.is_none(),
+            "KI-547: never rank a provider by a figure it does not report — \
+             an unfit cell renders no score, so the point must carry no grade \
+             (plotted rate {:?})",
+            second.grade.as_ref().map(|cell| cell.weighted_wrong_rate)
+        );
+        assert_eq!(second.ungraded.as_deref(), Some("unfit: needs 6 rows"));
+        // The pair with no judged rows is labelled, not plotted as a
+        // zero rate.
+        let third = &snapshot.scatter[2];
+        assert_eq!(third.model, "stepfun/step-5-preview");
+        assert_eq!(third.workload, "hard");
+        assert!(
+            third.grade.is_none(),
+            "KI-547: never rank a provider by a figure it does not report — \
+             a pair with no judged rows has no rate to report, so the point \
+             must carry no grade (plotted rate {:?})",
+            third.grade.as_ref().map(|cell| cell.weighted_wrong_rate)
+        );
+        assert_eq!(third.ungraded.as_deref(), Some("no judged rows"));
         // Nothing was refused: every read is Fleet's own file.
         assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
     }

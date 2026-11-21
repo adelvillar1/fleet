@@ -5109,6 +5109,13 @@ mod tests {
         assert_eq!(document["pin"], serde_json::Value::Null);
         // An empty day is a ledger with nothing in it, not a refusal.
         assert_eq!(document["totals"], serde_json::Value::Null);
+        // The scatter of an empty day is an empty plot, not a refusal.
+        assert!(
+            document["scatter"]
+                .as_array()
+                .is_some_and(|points| points.is_empty()),
+            "{document}"
+        );
         assert!(
             document["recent"]
                 .as_array()

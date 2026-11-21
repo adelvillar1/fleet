@@ -3576,6 +3576,10 @@ mod tests {
                 cached: 15_738,
                 errors: 321,
             }),
+            // The TUI's fixture carries no scatter yet: the board pane's
+            // router card reads the ledger and the rows, and the scatter
+            // rides the GUI document.
+            scatter: Vec::new(),
             workloads: vec![("standard_code".to_string(), 10_557)],
             guidance: vec![(
                 "stepfun".to_string(),

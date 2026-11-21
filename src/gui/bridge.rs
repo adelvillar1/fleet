@@ -7002,6 +7002,23 @@ fn router_read(home: &std::path::Path) -> Value {
             "ms": row.ms,
             "reason": row.reason,
         })).collect::<Vec<_>>(),
+        // The cost×quality scatter, one point per (model × workload). The
+        // grade rides as the calibration cell itself — the same shape
+        // `cell_json` shapes for the calibration panel, so the two
+        // surfaces cannot disagree about what a cell says — and an
+        // ungraded point carries its reason and no rate (KI-547).
+        "scatter": snapshot.scatter.iter().map(|point| json!({
+            "model": point.model,
+            "provider": point.provider,
+            "workload": point.workload,
+            "calls": point.calls,
+            "served": point.served,
+            "latency_mean_ms": point.latency_mean_ms,
+            "latency_max_ms": point.latency_max_ms,
+            "tokens": point.tokens,
+            "grade": point.grade.as_ref().map(cell_json),
+            "ungraded": point.ungraded,
+        })).collect::<Vec<_>>(),
         "hours": snapshot.hours.iter().map(|column| json!({
             "hour": column.hour,
             "calls": column.calls,
