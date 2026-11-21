@@ -320,6 +320,30 @@ item's accept produces a conversation whose first record names the peer
 (fixture + red-proof against today's list); three screenshots refreshed
 (`surface-sessions`, a new `surface-board`, `surface-desk-drawer`).
 
+### P2 inbox — built, reviewed, and the review found two real hazards
+
+Five commits after the ruling (`4da00c7` … `44dd2a0`, docs `ac95779`), then an
+adversarial review returned **SHIP-WITH-FIXES** with two findings a green gate
+could never have caught, and five fixes landed (`f48a193` … `81ac1c5`):
+
+1. **The hold store's read-modify-write was unlocked.** Three hazards, each
+   proved red on the unfixed tree before the fix: two concurrent accepts both
+   took the same key and ran the inbound **twice**; an accept and a decline both
+   succeeded over one hold; and a stale write-back **resurrected a hold that had
+   been accepted**, because the webhook serves each connection in a spawned task
+   and the sink could file while an accept was inside `deliver`. Now one
+   process-wide lock, and `take` persists before anything runs.
+2. **A corrupt `held.json` lied.** The sink answered `Refusal::Held` ("it will be
+   accepted or declined from the inbox") when the hold was never written — so the
+   delivery was gone, not held — and the inbox swallowed the load error into an
+   empty queue. Now `Refusal::Unfiled` tells the truth and the document carries
+   `held_error`, which the face paints instead of the empty state.
+
+Also from the review: a driver-refused hold is re-filed under a **new id**
+(documented), the decline draft lives per row with the confirm disabled until it
+has words, and hold ids carry full epoch nanos (the old tail repeated every
+second).
+
 ### P2 inbox — owner ruling 2026-11-21: triage, as a deferral class
 
 The AC ("an inbox item's accept produces a conversation whose first record names
@@ -460,7 +484,7 @@ The rest, in order of how much is missing:
 | P3 | turn spine in the persona's tint | **landed** `aa25e5a` |
 | P3 | `/breakout` `/distil` `/archive` from composer **and** head | **landed** `6d9732c` — head buttons existed, commands did not |
 | P3 | bots door: passport per paired peer + ≥10-event feed | **landed** `6b69e98` + `ed7bd32` + `1f7150f` + `7995dc6` — `device_class` persisted with a `serde(default)` field (old stores load unchanged: proven by test), last-heard/last-asked derived from the capped activity log rather than a new store field, `acts`/`listens` aligned across both bridge documents, and the passport rows in the face. The live-pairing half still needs a run. |
-| P3 | "send myself a message" round trip | **not built** — zero hits for any self-delivery surface; the pairing route exists |
+| P3 | "send myself a message" round trip | **landed** `a189fb5` + `79a001b` + `ca0c85f` — `/api/channels/rehearse` pushes a real `Inbound` through `service.sink()` (no bypass of `Driver::deliver`), so the session first record is `Record::Channel` naming channel and peer; the feed derives `rehearsal {at, session, delivered, answered}` with zero migration; the card says "The door heard you; no answer came back" when the run produced no reply line. |
 | P4 | router cost×quality scatter + `ungraded` | **landed** `71c44aa` + `db36732` + `6f7a50a` — the scatter grades only what the day can grade (a cell is graded iff it exists and `fit`; otherwise it carries `ungraded` and its reason and claims no axis position), and the hour chart + model donut retire while `donut` itself stays (the tower's report card uses it). |
 | P4 | delegation overlay with divergence tones | **not built** — graph and run tree are two separate cards, no join, no tones |
 | P4 | memory: recall is the first block | **landed** `0166960` — flipped the case that asserted the opposite, red-proved |
