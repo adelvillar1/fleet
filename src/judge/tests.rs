@@ -1531,7 +1531,7 @@ fn a_cell_counts_its_zero_confidence_rows_and_names_the_reweighting_on_its_card(
 /// `JUDGE_LANE`) rather than the beat itself — that plumbing lives here and
 /// the other beats borrow it. Found by scanning the whole census; the
 /// hand-kept list this guard used to carry had never looked at most of them.
-const DRIVERS: [&str; 13] = [
+const DRIVERS: [&str; 14] = [
     // The beat's own file and its tests.
     "judge.rs",
     "judge/tests.rs",
@@ -1553,6 +1553,9 @@ const DRIVERS: [&str; 13] = [
     "extract.rs",
     // The face reads a disposition.
     "gui/bridge.rs",
+    // The learning seam borrows the evidence renderer: the same record the
+    // judge was asked about is the state a confirmed answer is taught on.
+    "laya.rs",
     // Both bound a value by `JUDGE_BUDGET_USD_DAY`.
     "onboard.rs",
     "settings.rs",

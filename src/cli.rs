@@ -352,6 +352,10 @@ pub struct JudgeOptions {
     /// instead of the whole day — the timing instrument, so a judgment
     /// can land while the run's context is live.
     pub run: Option<String>,
+    /// Apply the day's CONFIRMED judgments to Laya's learner instead of
+    /// judging: the learning seam, batch-only, idempotent by route key.
+    /// Composes with `--day`; never with a disposition or `--dry-run`.
+    pub apply_laya: bool,
 }
 
 /// One `fleet judge --agree/--disagree/--waive` request: the word, and
@@ -1789,6 +1793,7 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
     let mut run: Option<String> = None;
     let mut dry_run = false;
+    let mut apply_laya = false;
     let mut disposition: Option<(String, String)> = None;
     let mut index = 0;
     while index < args.len() {
@@ -1796,6 +1801,7 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
         match arg {
             "--help" | "-h" => return Ok(Command::Help),
             "--dry-run" => dry_run = true,
+            "--apply-laya" => apply_laya = true,
             "--day" => day = Some(take_value(args, &mut index, arg)?),
             "--run" => run = Some(take_value(args, &mut index, arg)?),
             "--agree" | "--disagree" | "--waive" => {
@@ -1853,11 +1859,31 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
                 .to_string(),
         );
     }
+    // The learning seam is its own form: it reads the day's CONFIRMED rows
+    // and teaches them, so it neither grades a row nor rehearses one.
+    if apply_laya {
+        if disposition.is_some() {
+            return Err(
+                "--apply-laya applies the day's confirmed judgments; a disposition is a write to                  one row and does not combine with it"
+                    .to_string(),
+            );
+        }
+        if dry_run {
+            return Err(
+                "--apply-laya is a batch that spends nothing on the lane and writes the learner's                  state; --dry-run rehearses a judgment, not this"
+                    .to_string(),
+            );
+        }
+        if run.is_some() {
+            return Err("--apply-laya reads the whole day; --run scopes a judgment".to_string());
+        }
+    }
     Ok(Command::Judge(JudgeOptions {
         day,
         dry_run,
         disposition,
         run,
+        apply_laya,
     }))
 }
 
@@ -5760,6 +5786,7 @@ mod tests {
                 dry_run: false,
                 disposition: None,
                 run: None,
+                apply_laya: false,
             })
         );
         assert_eq!(
@@ -5769,6 +5796,7 @@ mod tests {
                 dry_run: true,
                 disposition: None,
                 run: None,
+                apply_laya: false,
             })
         );
         // The dispositions address one judged row by its key, and each
@@ -5788,6 +5816,7 @@ mod tests {
                         key: "a1b2c3d4e5f60718".to_string()
                     }),
                     run: None,
+                    apply_laya: false,
                 })
             );
         }
@@ -5802,6 +5831,21 @@ mod tests {
         assert!(parse(&args(&["judge", "--day", "2026-13-45"])).is_err());
         assert!(parse(&args(&["judge", "extra"])).is_err());
         assert_eq!(parse(&args(&["judge", "--help"])).unwrap(), Command::Help);
+        // The learning seam is its own form: it reads the day's confirmed
+        // rows, so it takes the day and nothing that grades or rehearses.
+        assert_eq!(
+            parse(&args(&["judge", "--apply-laya", "--day", "2026-11-21"])).unwrap(),
+            Command::Judge(JudgeOptions {
+                day: Some("2026-11-21".to_string()),
+                dry_run: false,
+                disposition: None,
+                run: None,
+                apply_laya: true,
+            })
+        );
+        assert!(parse(&args(&["judge", "--apply-laya", "--agree", "k"])).is_err());
+        assert!(parse(&args(&["judge", "--apply-laya", "--dry-run"])).is_err());
+        assert!(parse(&args(&["judge", "--apply-laya", "--run", "h"])).is_err());
     }
 
     #[test]

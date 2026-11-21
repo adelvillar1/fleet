@@ -332,7 +332,15 @@ pub fn joined_turn_outcome<'a>(rows: &'a [ReadRow], route: &ReadRow) -> Option<&
 /// workload judgment is made in the same frame the beat grades in. The
 /// task's text is absent by design and the prompt says so. Pure: the
 /// caller passes everything in.
-pub fn compose_prompt(route: &ReadRow, turn: Option<&ReadRow>) -> String {
+/// The route row's redacted outcome evidence, rendered as the record block
+/// the ask carries — and the record alone, without the question around it.
+///
+/// Two callers, one text: [`compose_prompt`] wraps it in the judgment's
+/// instructions, and the learning seam ([`crate::laya`]) feeds it to Laya's
+/// `Learner` as the STATE a confirmed answer was confirmed FOR. Sharing the
+/// renderer is what keeps the learner reading the same record the judge read;
+/// a second copy of these lines would drift the moment either side changed.
+pub fn evidence_record(route: &ReadRow, turn: Option<&ReadRow>) -> String {
     let shape = if route.workload.is_empty() {
         "unshaped"
     } else {
@@ -418,7 +426,18 @@ pub fn compose_prompt(route: &ReadRow, turn: Option<&ReadRow>) -> String {
         }
         None => record.push("the run's outcome: not joinable to this route".to_string()),
     }
-    let body = bound(&record.join("\n"), EVIDENCE_CHARS);
+    bound(&record.join("\n"), EVIDENCE_CHARS)
+}
+
+/// The ask's prompt: the route row's redacted outcome evidence, composed
+/// so the lane judges *this* decision, *for this workload shape*. The
+/// prompt poses the three-way question — right, wrong, or insufficient,
+/// with the two negative states defined and kept apart — so the lane's
+/// workload judgment is made in the same frame the beat grades in. The
+/// task's text is absent by design and the prompt says so. Pure: the
+/// caller passes everything in.
+pub fn compose_prompt(route: &ReadRow, turn: Option<&ReadRow>) -> String {
+    let body = evidence_record(route, turn);
     format!(
         "A Fleet routing decision is described below, exactly as the calibration stream \
          recorded it. The task's own text is NOT included — the rows are redacted by design, \

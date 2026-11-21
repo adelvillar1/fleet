@@ -3269,6 +3269,52 @@ fn resolve_plan(arg: &str) -> std::path::PathBuf {
 /// — exits nonzero, because the consuming-lanes rule is that such a leg
 /// is NO ANSWER and a silent success would ship it as one. A disposition
 /// exits 0 when it landed and 1 when its key named no judged row.
+/// `fleet judge --apply-laya`: apply the day's confirmed judgments to Laya's
+/// learner, in the provider's own venv, through the sys1 lane's service
+/// script. Exit 1 when the batch is refused by name (nothing to teach, no
+/// venv, an applier that will not run) — a seam that cannot say why it did
+/// nothing is a seam that reads as healthy while it is broken.
+fn laya_learn_command(home: &std::path::Path, root: &std::path::Path, day: &str) -> ExitCode {
+    let rows = fleet::calib::read_day(root, day, usize::MAX);
+    let batch = fleet::laya::batch(&rows);
+    if let Some(refusal) = batch.refusal.clone() {
+        print!("{}", fleet::laya::render(day, &batch, None, Some(&refusal)));
+        return ExitCode::FAILURE;
+    }
+    // The sys1 lane's home is where the applier lives; it resolves the way
+    // every other lane reference resolves (env override, then the services
+    // root), never from the caller's cwd.
+    let sys1 = fleet::lanes::LANES
+        .iter()
+        .find(|lane| lane.name == "sys1")
+        .expect("the sys1 lane is registered");
+    let sys1_home = match fleet::lanes::resolve_home(sys1) {
+        fleet::lanes::LaneHome::Resolved { home, .. } => home,
+        fleet::lanes::LaneHome::Unavailable { reason } => {
+            print!(
+                "{}",
+                fleet::laya::render(
+                    day,
+                    &batch,
+                    None,
+                    Some(&format!("the sys1 lane does not resolve: {reason}"))
+                )
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    match fleet::laya::apply(home, &sys1_home, &batch.records) {
+        Ok(report) => {
+            print!("{}", fleet::laya::render(day, &batch, Some(&report), None));
+            ExitCode::SUCCESS
+        }
+        Err(reason) => {
+            print!("{}", fleet::laya::render(day, &batch, None, Some(&reason)));
+            ExitCode::FAILURE
+        }
+    }
+}
+
 async fn judge_command(options: &cli::JudgeOptions) -> ExitCode {
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
@@ -3288,6 +3334,12 @@ async fn judge_command(options: &cli::JudgeOptions) -> ExitCode {
                 ExitCode::FAILURE
             }
         };
+    }
+    // The learning seam: the day's CONFIRMED judgments teach laya's learner.
+    // Batch-only and idempotent; it never judges a row, never spends on the
+    // lane, and never touches the route chain.
+    if options.apply_laya {
+        return laya_learn_command(&home, &root, &day);
     }
     let outcome = fleet::judge::judge(fleet::judge::JudgeRequest {
         root: &root,

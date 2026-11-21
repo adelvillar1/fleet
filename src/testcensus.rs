@@ -94,6 +94,7 @@ pub(crate) const MODULES: &[(&str, &str)] = &[
     ("install.rs", include_str!("install.rs")),
     ("journal.rs", include_str!("journal.rs")),
     ("judge.rs", include_str!("judge.rs")),
+    ("laya.rs", include_str!("laya.rs")),
     ("keepalive.rs", include_str!("keepalive.rs")),
     ("judge/tests.rs", include_str!("judge/tests.rs")),
     ("lane_client.rs", include_str!("lane_client.rs")),

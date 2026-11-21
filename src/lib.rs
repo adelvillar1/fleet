@@ -62,6 +62,7 @@ pub mod judge;
 pub mod keepalive;
 pub mod lane_client;
 pub mod lanes;
+pub mod laya;
 pub mod layerfs_tools;
 pub mod layerfs_view;
 pub mod lesson;
