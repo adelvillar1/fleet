@@ -12,6 +12,72 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.8.23 — 2026-11-20
+
+A gate that cannot be red at cut time, one environment lock for the whole
+suite, and a build that went from twenty minutes to two.
+
+**The test environment is written in one place.** 85 call sites set or removed
+a process-wide variable across ~20 modules, guarded by three different locks —
+`testsupport::env_lock`, a crate-level `TEST_ENV_LOCK`, and a
+`layerfs_tools::EnvGuard` that took **no lock at all**, so 27 of that module's
+tests mutated the environment unserialized. Two classes of flake had already
+come out of it in one day (KI-578: a test inheriting the machine's git default
+branch; KI-579: a `route` test reading a provider key out of the process). All
+of it now goes through one `env_lock()` and one `EnvVar`, whose `Drop` restores
+what was there — including restoring an *absence*, and including one guard a
+test can move several times without leaking an intermediate value back.
+`every_environment_write_is_a_named_site` scans the census and carries five
+named production exemptions (the bootstrap, `adopt_login_path`, the `apply_env`
+composer, the delegation's own trace variable, and the settings card applying a
+choice to the running process); a new unnamed write reddens by file name. The
+migration also found two real leaks, not races: `BLEND1_VECTORS_DIR` and five
+`LAYERFS_*` variables were removed at the end of their tests rather than
+restored, so a machine that had them set lost them for the rest of the run.
+
+**Builds cost a third of what they did.** A cold release build measured 20m21s
+twice. Five causes, four fixed: fat LTO → thin (warm relink 3m45s → 3m07s),
+sccache wired through `~/.cargo/config.toml` (cold 2m14s, 454 of 1,000 compile
+requests from cache), `jobs = 6` for the link's peak (2.21 GiB RSS on a 16 GiB
+machine), and `[profile.dev] debug = 1, incremental = false`, which took
+`target/debug` from **22.2 GiB to 3.9 GiB** and free disk from 39 GiB to 73 GiB.
+A dev rebuild from an empty debug directory now measures 95s.
+
+**Structure guards scan the crate, not a list.** The three beat guards read
+hand-written arrays — 27, 30 and 42 modules — so a delegation guard saw 27 of
+142 module files and 115 modules had never been looked at by any of them. The
+census (`testcensus::MODULES`, asserted equal to the crate's own module tree in
+both directions) replaces the lists: all three now scan 142, and a new module
+cannot land without answering for it.
+
+**Colour is not a cell.** `cards::fit` measured each word by summing
+`UnicodeWidthChar`, so an ANSI SGR sequence counted as visible cells — `\x1b[90m`
+charged seven — and a line that fitted wrapped anyway. `fit` is now
+escape-aware: a sequence is carried, never charged, never split. The property
+test had missed it because no fixture carried colour; one does now.
+
+**The face tells the truth or keeps quiet.** One press contract
+(`pressFeedback`, remembering its sentence per key so a repaint cannot wipe the
+answer), one answer head (`answerHead`: eyebrow, title, sentence, verb — and no
+counts in the head), one way to carry an object into the composer (`carry`), six
+persona tints per theme with AA proved by arithmetic, and a topbar that shows no
+pills and no zeroes on a fresh home instead of `no route yet · 0 · 0% · idle`.
+The permission control is one cycling chip — ask → autonomous → full access →
+ask — and it skips full access entirely when no working folder bounds it, so it
+cannot arm a grant the server would refuse. The first-run door's ladder is
+claimed per step (`done`/`now`/`next`), and a case now pins it rather than the
+stylesheet's prose.
+
+**Tests: 2,433 → 2,671** (+238). The face harness runs **1,497 checks across 209
+cases**, up from 1,483 across 207 — every new case red-proved by breaking the
+thing it describes first. Eight plans from the measured deep dive completed
+(`gate-fmt-cleanup`, `run-checkpoint-reclaim`, `guard-list-inversion`,
+`corpus-root-resolver`, `press-feedback-primitive`, `card-width-primitive`,
+`build-cost`, `test-env-isolation`). Seven KIs closed (571, 575, 578, 579, 581,
+582, 583); two noted (KI-577: single-shot runs never start the checkpoint
+reclaim; KI-584: the harness cannot represent a `<select>`, so provider pinning
+has no case and cannot get one on today's fixture).
+
 ## v0.8.22 — 2026-11-20
 
 Delegation you can size, skills chosen by your brief instead of by file
