@@ -46,7 +46,9 @@ cannot be dismissed or archived — accept and decline are the decision.
   the conversation it creates or resumes opens with the channel record that
   names the peer — the same first record every auto-run writes, which is what
   lets a pane say "via webhook · the CI box" beside the conversation. A hold
-  the driver refuses goes back in the store.
+  the driver refuses goes back in the store — **under a new id**: the refused
+  key resolves and never answers again, and the re-filed delivery shows as
+  its own fresh row, so the run is never triggered twice by one key.
 - **decline** — `{"op":"decline","key":"held:<id>","reason":"…"}`. The hold
   leaves the store and the activity log gains a `refusal` line carrying the
   owner's reason. A decline without its reason is refused by name.
