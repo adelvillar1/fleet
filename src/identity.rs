@@ -463,13 +463,14 @@ mod tests {
         let home = scratch();
         let operator = PrincipalId::new("operator");
         link_device(&home, "box-7", &operator).unwrap();
-        // SAFETY: this test owns the variable for its own duration; the
-        // suite serializes env-touching cases behind the crate's ambient
-        // discipline elsewhere, and this name is unique to this test.
-        unsafe { std::env::set_var(PROCESS_DEVICE_ENV, "box-7") };
+        // The shared guard (env-isolation pass 3): this test took no lock
+        // before, so a parallel reader could observe the device mid-flight.
+        let _lock = crate::testsupport::env_lock();
+        let mut device = crate::testsupport::EnvVar::swapping(PROCESS_DEVICE_ENV);
+        device.to("box-7");
         assert_eq!(principal_for(&home), operator);
         // An unset variable is the owner's ordinary run.
-        unsafe { std::env::remove_var(PROCESS_DEVICE_ENV) };
+        device.clear();
         assert_eq!(principal_for(&home), PrincipalId::owner());
         fs::remove_dir_all(&home).ok();
     }

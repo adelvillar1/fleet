@@ -211,4 +211,58 @@ mod tests {
             "the original absence comes back, not the value this test last set"
         );
     }
+
+    /// The plan's load-bearing guard: an environment write has to be a *named*
+    /// site. Every test-side write goes through this module now, so a new
+    /// `set_var` anywhere else is either a mistake or a decision someone has to
+    /// write down here — with the reason, next to the count.
+    #[test]
+    fn every_environment_write_is_a_named_site() {
+        // (file, allowed writes, why this file may write the environment)
+        const NAMED: &[(&str, usize, &str)] = &[
+            (
+                "main.rs",
+                1,
+                "the bootstrap: the home's .env into the process before threads spawn children",
+            ),
+            (
+                "shellpath.rs",
+                1,
+                "adopt_login_path: once at start, before any child exists",
+            ),
+            (
+                "layerfs_tools.rs",
+                1,
+                "apply_env: the bootstrap composer; children are handed a map",
+            ),
+            (
+                "subagents.rs",
+                1,
+                "the delegation's own trace variable, which its child reads",
+            ),
+            (
+                "gui/bridge.rs",
+                1,
+                "the settings card applying a choice to the running process",
+            ),
+            ("testsupport.rs", 9, "the primitive itself"),
+        ];
+        let mut problems = Vec::new();
+        for (name, source) in crate::testcensus::MODULES {
+            let writes = source.matches("std::env::set_var(").count()
+                + source.matches("std::env::remove_var(").count();
+            let allowed = NAMED
+                .iter()
+                .find(|(file, _, _)| file == name)
+                .map(|(_, allowed, _)| *allowed)
+                .unwrap_or(0);
+            if writes != allowed {
+                problems.push(format!("{name}: {writes} write(s), {allowed} named"));
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "unnamed environment writes — name each in NAMED with its reason: {problems:?}"
+        );
+    }
 }

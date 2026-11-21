@@ -1434,26 +1434,6 @@ mod tests {
         );
     }
 
-    struct EnvGuard {
-        name: &'static str,
-        previous: Option<std::ffi::OsString>,
-    }
-    impl EnvGuard {
-        fn set(name: &'static str, value: &std::path::Path) -> EnvGuard {
-            let previous = std::env::var_os(name);
-            std::env::set_var(name, value);
-            EnvGuard { name, previous }
-        }
-    }
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(self.name, value),
-                None => std::env::remove_var(self.name),
-            }
-        }
-    }
-
     /// A stub CLI that answers `--version` (the gate's check) and
     /// FAILS every real call: the one-read view must never invoke it,
     /// so a fan-out that sneaks back reddens here.
@@ -1669,9 +1649,9 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         )
         .unwrap();
 
-        let _home = EnvGuard::set("FLEET_HOME", &home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         let (script, count) = stub_history(&root.join("history"), &live_shape_answer());
-        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
         let err = history(&registration(), &home, None).expect_err("the dead worker refuses");
         assert!(err.contains("worker is not running"), "{err}");
         assert!(err.contains(&closed_port.to_string()), "{err}");
@@ -1772,11 +1752,11 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         ));
         let _ = std::fs::remove_dir_all(&root);
         let home = view_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         let cli = stub_cli_refuses_calls(&root.join("stub"));
-        let _cli = EnvGuard::set("FLEET_LAYERFS_BIN", &cli);
+        let _cli = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_BIN", &cli);
         let (script, count) = stub_history(&root.join("history"), &live_shape_answer());
-        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
 
         let view = history(&registration(), &home, None).expect("the view assembles");
         let HistoryRead::Full(view) = view else {
@@ -1882,12 +1862,12 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         ));
         let _ = std::fs::remove_dir_all(&root);
         let home = view_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         let (script, count) = stub_history(
             &root.join("history"),
             r#"console.log(JSON.stringify({ kind: "unchanged", version: "same-token" }));"#,
         );
-        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
         let read = history(&registration(), &home, Some("same-token")).expect("the read");
         match read {
             HistoryRead::Unchanged(version) => assert_eq!(version, "same-token"),
@@ -1912,7 +1892,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         ));
         let _ = std::fs::remove_dir_all(&root);
         let home = view_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         let body = r#"console.log(JSON.stringify({
   kind: "ok", version: "v2", store: { stats: {} }, project: "fleet",
   branches: [], moreBranches: true,
@@ -1920,7 +1900,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
   layers: [], moreLayers: true, workspaces: [],
 }));"#;
         let (script, _count) = stub_history(&root.join("history"), body);
-        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
         let view = history(&registration(), &home, None).expect("the view");
         let HistoryRead::Full(view) = view else {
             panic!("full");
@@ -1944,7 +1924,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
   layers: [], moreLayers: false, workspaces: [],
 }));"#,
         );
-        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
         let view = history(&registration(), &home, None).expect("the view");
         let HistoryRead::Full(view) = view else {
             panic!("full");
@@ -1967,12 +1947,12 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         ));
         let _ = std::fs::remove_dir_all(&root);
         let home = view_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         let (script, _) = stub_history(
             &root.join("history"),
             r#"console.error("worker down"); process.exit(1);"#,
         );
-        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
         let error = history(&registration(), &home, None).expect_err("the failure is named");
         assert!(error.contains("script failed"), "{error}");
         assert!(error.contains("worker down"), "{error}");
@@ -1994,7 +1974,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         ));
         let _ = std::fs::remove_dir_all(&root);
         let home = view_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         let body = r#"console.log(JSON.stringify({
   kind: "ok", version: "v4", store: { stats: {} }, project: "fleet",
   branches: [
@@ -2015,7 +1995,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
   moreLayers: false, workspaces: [],
 }));"#;
         let (script, _) = stub_history(&root.join("history"), body);
-        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
         let view = history(&registration(), &home, None).expect("the view");
         let HistoryRead::Full(view) = view else {
             panic!("full");
@@ -2131,7 +2111,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         ));
         let _ = std::fs::remove_dir_all(&root);
         let (fleet_home, layerfs_home) = tail_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &fleet_home);
         let traces = layerfs_home.join("traces");
         // Two agents: one file with two complete lines, one whose last
         // line is torn mid-write.
@@ -2234,7 +2214,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         ));
         let _ = std::fs::remove_dir_all(&root);
         let (fleet_home, layerfs_home) = tail_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &fleet_home);
         let traces = layerfs_home.join("traces");
         let file = traces.join("20261026T100000Z-cccccc.jsonl");
         std::fs::write(
@@ -2309,7 +2289,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
             }
         });
         std::fs::write(fleet_home.join("config.json"), with_projects.to_string()).unwrap();
-        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &fleet_home);
         let traces = layerfs_home.join("traces");
         std::fs::write(
             traces.join("20261026T100000Z-dddddd.jsonl"),
@@ -2378,7 +2358,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         ));
         let _ = std::fs::remove_dir_all(&root);
         let (fleet_home, layerfs_home) = tail_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &fleet_home);
         let traces = layerfs_home.join("traces");
         let mut body = String::new();
         for index in 0..250 {
@@ -2472,9 +2452,9 @@ esac
         ));
         let _ = std::fs::remove_dir_all(&root);
         let home = view_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         let cli = stub_cli_instrument(&root.join("stub"));
-        let _cli = EnvGuard::set("FLEET_LAYERFS_BIN", &cli);
+        let _cli = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_BIN", &cli);
         // The script answers the comparable mapping (a Layer id to its
         // Commit) and the revisions page; everything else is CLI.
         let (script, _count) = stub_history(
@@ -2496,7 +2476,7 @@ if (process.argv[4] === "--comparable") {
     branches: [], moreBranches: false, commits: [], more: {}, layers: [], moreLayers: false, workspaces: [] }));
 }"#,
         );
-        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
 
         let cwd = Path::new("/nowhere");
         // Text: the window's own lines and the next-window cursor.
@@ -2617,7 +2597,7 @@ if (process.argv[4] === "--comparable") {
         let _ = std::fs::remove_dir_all(&root);
         let (fleet_home, layerfs_home) = tail_home(&root);
         std::fs::remove_dir_all(layerfs_home.join("traces")).unwrap();
-        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &fleet_home);
         let mut tail = TraceTail::default();
         let doc = workspace_calls(Path::new("/nowhere"), None, &mut tail);
         let note = doc
@@ -2652,7 +2632,7 @@ if (process.argv[4] === "--comparable") {
         ));
         let _ = std::fs::remove_dir_all(&root);
         let fleet_home = view_home(&root);
-        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let _home = crate::testsupport::EnvVar::set_os("FLEET_HOME", &fleet_home);
         // Three registrations: two active, one stale, one whose read
         // dies. The config carries all four; the stub tells them apart
         // by the store path the composed environment sets.
@@ -2687,7 +2667,7 @@ if (process.argv[4] === "--comparable") {
         .unwrap();
         std::fs::write(fleet_home.join("config.json"), document.to_string()).unwrap();
         let cli = stub_cli_refuses_calls(&root.join("stub"));
-        let _cli = EnvGuard::set("FLEET_LAYERFS_BIN", &cli);
+        let _cli = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_BIN", &cli);
         // The stub: the live answer for the active stores, a commit
         // fifty days old for the stale one, and a refusal for the dead
         // one — keyed on LAYERFS_STORE_PATH, which backend_answer sets
@@ -2726,7 +2706,7 @@ if (store.endsWith("stale.sqlite")) {
 "#,
         )
         .unwrap();
-        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let _history = crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_HISTORY", &script);
 
         let rail = workspace_projects();
         assert_eq!(rail["type"], "workspace-history-rail");

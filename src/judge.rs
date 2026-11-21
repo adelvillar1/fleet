@@ -2023,19 +2023,8 @@ mod resource_tests {
         // a std MutexGuard held across the await below is a deadlock risk and
         // clippy refuses it, which is the right call.
         {
-            static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-            struct Cap(Option<std::ffi::OsString>);
-            impl Drop for Cap {
-                fn drop(&mut self) {
-                    match &self.0 {
-                        Some(value) => std::env::set_var(JUDGE_BUDGET_ENV, value),
-                        None => std::env::remove_var(JUDGE_BUDGET_ENV),
-                    }
-                }
-            }
-            let _lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-            let _cap = Cap(std::env::var_os(JUDGE_BUDGET_ENV));
-            std::env::set_var(JUDGE_BUDGET_ENV, "0");
+            let _lock = crate::testsupport::env_lock();
+            let _cap = crate::testsupport::EnvVar::set(JUDGE_BUDGET_ENV, "0");
             // The spend check is pure and happens before any lane work, so the
             // whole assertion runs inside this scope with no await in it.
             let cap = budget_usd_day();

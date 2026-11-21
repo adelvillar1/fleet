@@ -3330,15 +3330,19 @@ esac
             read("LAYERFS_STORE_PATH").as_deref(),
             Some(store.to_string_lossy().as_ref())
         );
-        for name in [
+        // Cleared for the assertions below and put back on drop: the old
+        // `remove_var` loop deleted whatever the machine had for the rest of
+        // the run, which is the leak class this migration exists to end.
+        let _cleared: Vec<crate::testsupport::EnvVar> = [
             "LAYERFS_HOME",
             "LAYERFS_WORKER_ENDPOINT",
             "LAYERFS_DAEMON",
             "LAYERFS_IMAGE",
             "LAYERFS_STORE_PATH",
-        ] {
-            std::env::remove_var(name);
-        }
+        ]
+        .iter()
+        .map(|name| crate::testsupport::EnvVar::unset(name))
+        .collect();
 
         // The named absence: no `layerfs` section says what to run —
         // read through the uncached reader, since the process-level

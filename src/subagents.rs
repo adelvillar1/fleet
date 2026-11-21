@@ -4716,27 +4716,8 @@ console.log(JSON.stringify({
         )
         .unwrap();
 
-        struct EnvGuard {
-            name: &'static str,
-            previous: Option<std::ffi::OsString>,
-        }
-        impl EnvGuard {
-            fn set(name: &'static str, value: &std::path::Path) -> EnvGuard {
-                let previous = std::env::var_os(name);
-                std::env::set_var(name, value);
-                EnvGuard { name, previous }
-            }
-        }
-        impl Drop for EnvGuard {
-            fn drop(&mut self) {
-                match &self.previous {
-                    Some(value) => std::env::set_var(self.name, value),
-                    None => std::env::remove_var(self.name),
-                }
-            }
-        }
         let _lock = crate::testsupport::env_lock();
-        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+        let _home_env = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         crate::layerfs_tools::set_folder_for_test(&folder);
 
         let mut progress: Vec<u8> = Vec::new();

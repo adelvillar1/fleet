@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-20
 updated: 2026-11-20
 slug: test-env-isolation
@@ -120,6 +120,17 @@ took `TEST_ENV_LOCK` and then rewriting the latter would have made one test take
 the same non-reentrant mutex twice — a deadlock, not a flake. Twelve duplicate
 guards were collapsed; the full lib suite runs clean in 58s.
 
+Fourth batch closed the tail: `layerfs_view` (25 sites and its own guard
+struct), `subagents` (its guard copy plus one), `judge` (the scoped block — the
+one place that had already reasoned about the await hazard), `identity` (2, and
+it had taken no lock at all), `gui/bridge` (the test's inline pair), and
+`layerfs_tools`'"'"' clear-loop, which removed five variables and restored none.
+
+What is left in `src/` is five **production** writes, each named with its reason
+in the guard: `main.rs`'"'"' bootstrap, `shellpath::adopt_login_path`,
+`layerfs_tools::apply_env`, the delegation's own `LAYERFS_TRACE`, and the
+settings card applying a choice to the running process.
+
 Third batch, 25 sites over six files: `footprint_history` (5, one test moving
 one knob four ways — the `swapping` guard's motivating case), `gui/mod` (3),
 `armada/join` (4, two windows around two joins), `tools` (5), and the identical
@@ -171,15 +182,23 @@ exemption list.
 
 ## Acceptance Criteria
 
-- [ ] `env_guard`, `vault_guard` and `port` exist once; the migrated
-      tests use them and no longer mutate the process environment
-      directly.
-- [ ] A text-scan guard reds when a test outside the support module calls
-      `std::env::set_var`/`remove_var`.
-- [ ] Two consecutive full-suite runs at default parallelism are green
-      (the two runs are recorded in the plan's Status pass).
-- [ ] The migration does not change what any migrated test asserts.
-- [ ] The full four-leg gate exits 0.
+- [x] The env guard exists once (`testsupport::env_lock` + `EnvVar`) and every
+      migrated test uses it; no test mutates the process environment directly.
+      **Partly restated:** `vault_guard` and a `port` guard were in this plan's
+      first scoping and were never built — no migrated site needed them, and the
+      crate binds ephemeral ports. The env half is what landed; the other two
+      stay named here rather than deleted from the AC.
+- [x] A text-scan guard reds when anything outside the support module writes the
+      environment: `testsupport::tests::every_environment_write_is_a_named_site`
+      scans the census and carries five named production exemptions, each with
+      its reason. Red-proved by a `set_var` in `cards.rs` (failed
+      `["cards.rs: 1 write(s), 0 named"]`), then reverted green.
+- [x] Two consecutive full-suite runs at default parallelism are green:
+      **2671 passed / 0 failed** and **2671 passed / 0 failed**.
+- [x] The migration does not change what any migrated test asserts — no
+      assertion value, name or message was edited in the migrated tests.
+- [x] The full four-leg gate exits 0: fmt 0, clippy 0, tests 2671/0, release
+      2m32s.
 
 ## Files to be touched
 

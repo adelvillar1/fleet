@@ -17255,18 +17255,19 @@ mod tests {
     /// errs with that sentence — the card's own words, never a CLI verb.
     /// The pin names nothing under the scratch home, the same sealed
     /// shape tests/install.rs runs through the binary.
+    // The environment lock is held across the await below on purpose: the
+    // pinned bundle must stand for the whole repair, and nothing inside the
+    // future takes the same lock, so the lint's general warning does not apply.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_substrate_repair_names_its_refusal_where_the_press_stood() {
         let (bridge, _sources, _door) = bridge().await;
         let bridge = Arc::new(bridge);
         let home = bridge.home_path();
-        let prior = std::env::var("FLEET_LAYERFS_BUNDLE").ok();
-        std::env::set_var("FLEET_LAYERFS_BUNDLE", home.join("no-bundle"));
+        let _lock = crate::testsupport::env_lock();
+        let _bundle =
+            crate::testsupport::EnvVar::set_os("FLEET_LAYERFS_BUNDLE", home.join("no-bundle"));
         let outcome = bridge.repair_layerfs().await;
-        match prior {
-            Some(value) => std::env::set_var("FLEET_LAYERFS_BUNDLE", value),
-            None => std::env::remove_var("FLEET_LAYERFS_BUNDLE"),
-        }
         let error = outcome.expect_err("the pinned bundle is not there");
         assert!(error.contains("is not there"), "{error}");
         assert!(error.contains("FLEET_LAYERFS_BUNDLE"), "{error}");
