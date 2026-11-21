@@ -11038,8 +11038,19 @@ const memoryDoc = (() => {
     },
     archive: [{ name: 'archived-one', description: 'the expired fact',
       date: '2026-10-01', path: '/repo/memories/.archive/archived-one.md' }],
-    hits: [{ ts: '2026-10-30T09:00:00Z', fact: 'fact-03', shape: 'build',
-      score: 0.61 }],
+    hits: [
+      { ts: '2026-10-30T09:00:00Z', fact: 'fact-03', shape: 'build',
+        score: 0.61, vector: 0.5, keyword: 0.4, trajectory: 0.6,
+        history: 0.88, freshness: 0.5, provenance: 0.5, off_shape: false },
+      { ts: '2026-10-30T09:05:00Z', fact: 'fact-07', shape: 'build',
+        score: 0.42 },
+    ],
+    // The bridge serves the weights once for the document, straight
+    // from the ranker's constants (memory.rs W_*).
+    weights: {
+      vector: 0.15, keyword: 0.15, trajectory: 0.3,
+      history: 0.25, freshness: 0.1, provenance: 0.05,
+    },
     refused: [],
   };
 })();
@@ -11382,6 +11393,50 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
       today.text('memory-board').includes('fact-03') &&
       today.text('memory-board').includes('0.61'),
     today.rows('.section-body')[0].dataset.section);
+
+  // The why-this-recall panel: a hit's press opens the six recorded
+  // channels, each named with its weight and its weighted contribution
+  // to the total, summing visibly to the score (the P4 AC; the plan's
+  // four-weights figure is dead history — the live ranker runs six).
+  const hitRow = [...today.rows('.rail-row')]
+    .find((row) => row.textContent.includes('fact-03'));
+  check('MEM the today section keeps a pressable hit row',
+    !!hitRow, today.text('memory-board').slice(0, 200));
+  hitRow.click();
+  await flush(60);
+  const why = today.text('dock-object-body');
+  check('MEM the why-this-recall panel names the six channels',
+    ['vector', 'keyword', 'trajectory', 'history', 'freshness', 'provenance']
+      .every((word) => why.includes(word)),
+    why.slice(0, 300));
+  check('MEM the panel names each channel with its weight',
+    ['\u00d70.15', '\u00d70.30', '\u00d70.25', '\u00d70.10', '\u00d70.05']
+      .every((weight) => why.includes(weight)),
+    why.slice(0, 300));
+  check('MEM the panel shows each channel\u2019s contribution',
+    ['0.075', '0.060', '0.180', '0.220', '0.050', '0.025']
+      .every((part) => why.includes(part)),
+    why.slice(0, 300));
+  check('MEM the panel sums to the score',
+    why.includes('0.610') && why.includes('the score'),
+    why.slice(0, 300));
+  today.fireOn('dock-object-close', 'click');
+  await flush(40);
+
+  // A hit recorded before the breakdown existed (score present, no
+  // channels) says so — it never pretends the channels were zero
+  // channels, and it does not print a fake decomposition.
+  const oldRow = [...today.rows('.rail-row')]
+    .find((row) => row.textContent.includes('fact-07'));
+  oldRow.click();
+  await flush(60);
+  const oldWhy = today.text('dock-object-body');
+  check('MEM a pre-breakdown hit says so, never a guessed breakdown',
+    oldWhy.includes('recorded before the breakdown') &&
+      oldWhy.includes('0.42') && !oldWhy.includes('\u00d70.15'),
+    oldWhy.slice(0, 300));
+  today.fireOn('dock-object-close', 'click');
+  await flush(40);
 }
 
 

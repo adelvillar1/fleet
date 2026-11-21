@@ -8267,10 +8267,67 @@ import { node, svg, clip } from './core/dom.js';
     return card;
   }
 
-  /// What the cycle forgot: the archive's facts, read-only, the
-  /// collision serials named by their own file names.
-  /// One day's recall: the facts the stream recorded as surfaced, plus
-  /// this run's own recalls from the event log. The today section's card.
+  /// Why this recall: the hit's six recorded channels, each named with
+  /// its weight and its weighted contribution to the total, summing
+  /// visibly to the score the fact ranked at (the P4 AC — the plan's
+  /// four-weights figure is dead history; the live ranker runs six, and
+  /// the weights are the document's own, never a face copy). A hit
+  /// recorded before the breakdown existed (a score with no channels)
+  /// says so rather than pretending its channels were zero channels.
+  var MEMORY_CHANNEL_ORDER =
+    ['vector', 'keyword', 'trajectory', 'history', 'freshness', 'provenance'];
+  var MEMORY_CHANNEL_WORDS = {
+    vector: 'the embedded direction',
+    keyword: 'the token overlap',
+    trajectory: 'the recorded phrases\u2019 match',
+    history: 'recall-count over the ceiling',
+    freshness: 'the 90-day decay',
+    provenance: 'the basis'
+  };
+
+  function memoryWhyRecall(read, hit) {
+    var weights = (read && read.weights) || {};
+    var channels = MEMORY_CHANNEL_ORDER.map(function (id) {
+      var weight = weights[id] || 0;
+      var value = typeof hit[id] === 'number' ? hit[id] : 0;
+      return { weight: weight, value: value, part: weight * value };
+    });
+    var preBreakdown = hit.score > 0 &&
+      channels.every(function (channel) { return channel.value === 0; });
+    var panel = node('div', 'rail-list');
+    if (preBreakdown) {
+      panel.appendChild(node('p', 'board-note',
+        'recorded before the breakdown \u2014 the stream kept only the score, ' +
+        hit.score.toFixed(2) + ', so the channels were never written.'));
+      if (hit.off_shape) {
+        panel.appendChild(node('p', 'board-note',
+          'off-shape: the fact entered through the spillover, not the instruction\u2019s own shape.'));
+      }
+      return panel;
+    }
+    channels.forEach(function (channel, index) {
+      var row = node('div', 'rail-row');
+      var body = node('div');
+      body.appendChild(node('b', null, MEMORY_CHANNEL_ORDER[index]));
+      body.appendChild(node('p', null, MEMORY_CHANNEL_WORDS[MEMORY_CHANNEL_ORDER[index]] +
+        ' \u00b7 \u00d7' + channel.weight.toFixed(2) + ' \u00b7 ' + channel.value.toFixed(3)));
+      row.appendChild(body);
+      row.appendChild(node('span', 'rail-em', channel.part.toFixed(3)));
+      panel.appendChild(row);
+    });
+    var sum = channels.reduce(function (total, channel) {
+      return total + channel.part;
+    }, 0);
+    panel.appendChild(node('p', 'rail-label',
+      'the six channels sum to ' + sum.toFixed(3) + ' \u2014 the score ' +
+      hit.score.toFixed(2) + ' the fact ranked at.'));
+    if (hit.off_shape) {
+      panel.appendChild(node('p', 'board-note',
+        'off-shape: the fact entered through the spillover, not the instruction\u2019s own shape.'));
+    }
+    return panel;
+  }
+
   function memHits(read, hits, recalls) {
     var card = boardCard(4, 'today\u2019s recall', hits.length + ' hits',
       'one row per fact a recall surfaced, plus this run\u2019s own recalls from the event log.');
@@ -8303,7 +8360,7 @@ import { node, svg, clip } from './core/dom.js';
         row.appendChild(node('span', 'rail-em', hit.score.toFixed(2)));
         row.addEventListener('click', function () {
           openDrawer('recall \u00b7 ' + hit.fact, [
-            ['the record', node('pre', 'raw', JSON.stringify(hit, null, 2))]
+            ['why this recall', memoryWhyRecall(read, hit)]
           ]);
         });
         list.appendChild(row);
