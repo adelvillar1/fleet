@@ -5248,33 +5248,38 @@ impl Bridge {
         // files them in. The capability word comes from the peer's own
         // roster, the same read the passport shows — a hold that has
         // since lost its pairing shows an honest blank.
-        let held: Vec<Value> = {
+        let (held, held_error): (Vec<Value>, Option<String>) = {
             let home = self.home.clone();
             tokio::task::spawn_blocking(move || match crate::channels::HoldStore::load(&home) {
-                Ok(store) => store
-                    .holds
-                    .iter()
-                    .map(|hold| {
-                        json!({
-                            "id": hold.id,
-                            "channel": hold.channel,
-                            "peer_id": hold.peer_id,
-                            "peer": hold.peer,
-                            "task": hold.task,
-                            "at": hold.at,
-                            "session": hold.session,
-                            "callback": hold.callback,
-                            "capability": held_capability(&home, &hold.channel, &hold.peer_id),
+                Ok(store) => (
+                    store
+                        .holds
+                        .iter()
+                        .map(|hold| {
+                            json!({
+                                "id": hold.id,
+                                "channel": hold.channel,
+                                "peer_id": hold.peer_id,
+                                "peer": hold.peer,
+                                "task": hold.task,
+                                "at": hold.at,
+                                "session": hold.session,
+                                "callback": hold.callback,
+                                "capability": held_capability(&home, &hold.channel, &hold.peer_id),
+                            })
                         })
-                    })
-                    .collect::<Vec<Value>>(),
-                // A store that cannot be read shows no holds rather than
-                // failing the whole read; an accept or decline of one is
-                // still refused by the op, which reads the store itself.
-                Err(_) => Vec::new(),
+                        .collect::<Vec<Value>>(),
+                    None,
+                ),
+                // A store that cannot be read is not an empty queue: the
+                // document carries the read error beside the empty array,
+                // so no surface can mistake "nothing is held" for "the
+                // holds could not be read" — the rows are unactionable,
+                // and the owner must be told why (the review's FIX 2).
+                Err(error) => (Vec::new(), Some(error.to_string())),
             })
             .await
-            .unwrap_or_default()
+            .unwrap_or((Vec::new(), Some("the held read did not land".to_string())))
         };
         // Every row carries its own identity and the fact's fingerprint:
         // the key names the row across reads, the signature changes when
@@ -5330,6 +5335,7 @@ impl Bridge {
             "cron": cron,
             "doctor": doctor,
             "held": held,
+            "held_error": held_error,
             "archived": archived,
             "dismissed": dismissed,
             "total": total,
@@ -16902,6 +16908,51 @@ mod goal_tests {
         assert!(
             !store.holds.iter().any(|hold| hold.peer_id == "abc"),
             "the accepted hold is still in the store"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// FIX 2, the inbox side: a hold store that cannot be read is
+    /// SURFACED in the document, not rendered as an honest-looking empty
+    /// queue — an empty `held` array that says "nothing needs you" while
+    /// holds sit unreadable behind it is the lie the review named.
+    #[tokio::test]
+    async fn a_corrupt_hold_store_is_surfaced_in_the_inbox_document() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-inbox-corrupt-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(home.join("channels")).unwrap();
+        std::fs::write(
+            crate::channels::HoldStore::path(&home),
+            "{ \"holds\": [ { \"id\": ",
+        )
+        .unwrap();
+        let bridge = detached(&home);
+        let document = bridge.owner_inbox().await;
+        let error = document["held_error"]
+            .as_str()
+            .expect("the document must surface the held store's read error, not an empty queue");
+        assert!(
+            error.contains("not readable") || error.contains("held.json"),
+            "the surfaced error must name the unreadable store: {error}"
+        );
+        // The array itself stays empty — there is nothing to render — and
+        // a decision on a stale key still refuses by name.
+        assert_eq!(document["held"].as_array().unwrap().len(), 0);
+        let decided = bridge
+            .inbox_op(r#"{"op":"accept","key":"held:h0001"}"#)
+            .await
+            .expect_err("a decision on an unreadable store is refused");
+        assert!(
+            decided.contains("could not be read"),
+            "the decision must name the unreadable store: {decided}"
         );
         std::fs::remove_dir_all(&home).ok();
     }

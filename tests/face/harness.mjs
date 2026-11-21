@@ -5661,6 +5661,32 @@ async function heldTurnsIntoAListAtThree() {
     [...listRows[0].querySelectorAll('button')].map((b) => b.textContent).join('|'));
 }
 
+// The held store's own read error (the review's FIX 2): a document that
+// carries `held_error` is not "nothing needs you" — the pane says what
+// it cannot read, and the lie of the empty queue is not painted.
+async function aCorruptHeldStoreIsSurfacedNotAnEmptyQueue() {
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: inboxDoc({
+      held: [],
+      held_error: '…/channels/held.json is not readable: expected value',
+      total: 0,
+    }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const said = page.rows('.ib-refusal').map((r) => r.textContent).join(' ');
+  check('IBC the held store error is surfaced in the pane',
+    /held store could not be read/.test(said) && /not readable/.test(said),
+    said || 'no .ib-refusal in the pane');
+  check('IBC the corrupt store is not an empty queue',
+    page.IDS['ib-empty'].hidden === true,
+    String(page.IDS['ib-empty'].hidden));
+}
+
 
 // PWS (the project-work plan): both work surfaces are one pattern — the
 // projects rail, the artifact's work, and the thread with the composer.
@@ -17909,6 +17935,8 @@ const cases = [
     aHeldDeliveryIsOneCardWithTwoVerbsAndTheAcceptPosts],
   ['IBC a declined hold names its reason', aDeclinedHoldNamesItsReason],
   ['IBC holds turn into a list at three', heldTurnsIntoAListAtThree],
+  ['IBC a corrupt held store is surfaced, not an empty queue',
+    aCorruptHeldStoreIsSurfacedNotAnEmptyQueue],
   ['PWS the desk is projects, work and a thread', theDeskOrganisesByProjectAndThread],
   ['P1 the desk reaches design deliverables', theDeskReachesDesignDeliverables],
   ['P2 the health lens is visible and findable', theHealthLensIsVisibleAndFindable],

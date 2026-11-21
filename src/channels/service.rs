@@ -620,41 +620,48 @@ impl ChannelService {
             if hold_wanted(&home, &inbound.peer) {
                 let at = crate::boards::now_stamp();
                 match crate::channels::HoldStore::file_locked(&home, &inbound, &at) {
-                    Ok(id) => record(
-                        &home,
-                        Activity {
-                            at,
-                            kind: "held".to_string(),
-                            channel: inbound.peer.channel.clone(),
-                            peer: Some(inbound.peer.name.clone()),
-                            peer_id: Some(inbound.peer.id.clone()),
-                            session: None,
-                            task: Some(Activity::first_line(&inbound.task)),
-                            detail: Some(id),
-                        },
-                    ),
+                    Ok(id) => {
+                        // The hold is filed and real: the peer is told it
+                        // waits for the owner's decision.
+                        record(
+                            &home,
+                            Activity {
+                                at,
+                                kind: "held".to_string(),
+                                channel: inbound.peer.channel.clone(),
+                                peer: Some(inbound.peer.name.clone()),
+                                peer_id: Some(inbound.peer.id.clone()),
+                                session: None,
+                                task: Some(Activity::first_line(&inbound.task)),
+                                detail: Some(id),
+                            },
+                        );
+                        return Err(Refusal::Held);
+                    }
                     // The hold could not be filed: the delivery must
-                    // neither run nor vanish, so it is refused with the
-                    // failure said in the log — the owner repairs the
-                    // store, the peer is told to hold on.
-                    Err(_) => record(
-                        &home,
-                        Activity {
-                            at,
-                            kind: "refusal".to_string(),
-                            channel: inbound.peer.channel.clone(),
-                            peer: Some(inbound.peer.name.clone()),
-                            peer_id: Some(inbound.peer.id.clone()),
-                            session: None,
-                            task: Some(Activity::first_line(&inbound.task)),
-                            detail: Some(
-                                "the held file could not be written; the delivery was not run"
-                                    .to_string(),
-                            ),
-                        },
-                    ),
+                    // neither run nor vanish, and it must not be reported
+                    // as held — nothing is waiting for the owner, and the
+                    // peer is told so by name (`Unfiled`, not `Held`),
+                    // with the store's own failure in the log.
+                    Err(error) => {
+                        record(
+                            &home,
+                            Activity {
+                                at,
+                                kind: "refusal".to_string(),
+                                channel: inbound.peer.channel.clone(),
+                                peer: Some(inbound.peer.name.clone()),
+                                peer_id: Some(inbound.peer.id.clone()),
+                                session: None,
+                                task: Some(Activity::first_line(&inbound.task)),
+                                detail: Some(format!(
+                                    "the held file could not be written: {error}"
+                                )),
+                            },
+                        );
+                        return Err(Refusal::Unfiled);
+                    }
                 }
-                return Err(Refusal::Held);
             }
             admit(&driver, &home, &inbound)
         })
@@ -1380,6 +1387,100 @@ mod tests {
         assert!(Refusal::Held
             .to_string()
             .contains("held for the owner's decision"));
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// FIX 2, the sink side: with the hold store corrupt, the delivery
+    /// is neither run nor held — the hold could not be written, so
+    /// NOTHING is waiting for the owner. The refusal must say that
+    /// truth, never the `Held` promise that the delivery will be
+    /// accepted or declined from the inbox it will never reach.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_hold_the_sink_cannot_file_refuses_with_the_truth() {
+        let home = temp_home("corrupt");
+        let mut store = PeerStore::default();
+        store.pair(
+            "abc",
+            "the CI box",
+            &crate::channels::mint_peer_token().unwrap(),
+            Capability::Task,
+            "stamp",
+            None,
+        );
+        store.save(&home, "webhook").unwrap();
+        crate::settings::set(&home, "channels.hold", "webhook").expect("the setting");
+        // The store is corrupt: a half-written held.json.
+        std::fs::create_dir_all(home.join("channels")).unwrap();
+        std::fs::write(
+            crate::channels::HoldStore::path(&home),
+            "{ \"holds\": [ { \"id\": ",
+        )
+        .unwrap();
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let driver = Arc::new(Driver::new(
+            Arc::new(bridge),
+            crate::channels::Policy::new(home.clone()),
+        ));
+        let service = ChannelService::new(
+            Arc::new(
+                Bridge::detached(
+                    home.clone(),
+                    "deepseek-flash".to_string(),
+                    Some("session-test".to_string()),
+                )
+                .0,
+            ),
+            Arc::clone(&driver),
+            &Config {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        );
+        let sink = service.sink();
+        let inbound = Inbound {
+            peer: Peer::new("webhook", "abc", "the CI box"),
+            session: None,
+            task: "run the tests".to_string(),
+            reply: Reply::None,
+        };
+        let refusal = sink(inbound).expect_err("the delivery cannot be held");
+        // The truth: not held, nothing waiting, the store's failure said.
+        let words = refusal.to_string();
+        assert!(
+            !words.contains("it will be accepted or declined"),
+            "the refusal promised a hold that does not exist: {words}"
+        );
+        assert!(
+            words.contains("not held") || words.contains("could not be written"),
+            "the refusal must name the unfiled hold: {words}"
+        );
+        // Nothing ran: no dispatch settled for the delivery.
+        let journal = crate::journal::Journal::open(&home).unwrap();
+        assert!(
+            !journal
+                .replay(0)
+                .unwrap()
+                .iter()
+                .any(|event| event.kind == "dispatch"),
+            "a delivery whose hold could not be written settled a dispatch"
+        );
+        // And the log carries the store's failure, not a held line.
+        let lines = activity(&home, 10);
+        let line = lines.last().expect("the refusal line");
+        assert_eq!(line.kind, "refusal");
+        assert!(
+            line.detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("could not be"),
+            "the log must name the store's failure: {line:?}"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 }

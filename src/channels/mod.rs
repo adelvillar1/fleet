@@ -120,6 +120,12 @@ pub enum Refusal {
     /// The peer is configured to hold: the delivery is filed for the
     /// owner's decision, not refused, and the peer is told so.
     Held,
+    /// The delivery was NOT held: the hold store could not be written,
+    /// so nothing is waiting for the owner. Distinct from `Held` so the
+    /// peer is never told a lie — a delivery whose hold did not land
+    /// will never be accepted or declined from the inbox, and it is not
+    /// parked somewhere it will be found later.
+    Unfiled,
 }
 
 impl std::fmt::Display for Refusal {
@@ -136,6 +142,12 @@ impl std::fmt::Display for Refusal {
                 write!(
                     out,
                     "the delivery is held for the owner's decision; it will be accepted or declined from the inbox"
+                )
+            }
+            Refusal::Unfiled => {
+                write!(
+                    out,
+                    "the delivery was not held: the hold could not be written, so nothing is waiting for the owner — deliver again once the home is repaired"
                 )
             }
         }

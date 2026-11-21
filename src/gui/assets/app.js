@@ -5360,7 +5360,18 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
 
-    if (!waiting) {
+    // The held store's own read error (the review's FIX 2): an empty
+    // queue and a queue the owner cannot read are not the same thing,
+    // and the second must not say "nothing needs you".
+    if (doc.held_error) {
+      var heldStore = node('p', 'ib-refusal',
+        'the held store could not be read \u2014 held deliveries are hidden until it is repaired: '
+          + doc.held_error);
+      heldStore.setAttribute('role', 'alert');
+      el.inboxBody.appendChild(heldStore);
+    }
+
+    if (!waiting && !doc.held_error) {
       if (el.inboxEmpty) {
         el.inboxEmpty.textContent = 'nothing needs you';
         el.inboxEmpty.hidden = false;
