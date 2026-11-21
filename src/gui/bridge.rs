@@ -7303,13 +7303,21 @@ fn delegation_read(home: &std::path::Path, session: &str) -> Value {
     // read once and walked down the trees — one source per picture.
     let branches = crate::layerfs_view::session_branches();
     let node = |node: &crate::boards::DelegationNode| delegation_node(node, &branches);
+    // The overlay join: the same day's rows, joined on the plan node
+    // each row records, over the declared graph's nodes. The overlay is
+    // computed here and carried on the document — the face derives
+    // nothing the read can answer.
+    let graph = snapshot.graph.as_ref().map(|graph| {
+        let (overlays, divergences) = crate::boards::delegation_overlay(home, &graph.nodes);
+        graph_document(graph, &overlays, &divergences)
+    });
     json!({
         "type": "delegation",
         "read_at": snapshot.read_at,
         "depth_cap": snapshot.depth_cap,
         "live": snapshot.live.as_ref().map(node),
         "history": snapshot.history.iter().map(node).collect::<Vec<_>>(),
-        "graph": snapshot.graph.as_ref().map(graph_document),
+        "graph": graph,
         "refused": snapshot.refused,
     })
 }
@@ -14601,10 +14609,29 @@ fn delegation_node(
 }
 
 /// The dependency graph: the nodes in declaration order, the edges as
-/// index pairs into that order, and the graph's own aggregates.
-fn graph_document(graph: &crate::boards::GraphSnapshot) -> Value {
-    json!({
-        "nodes": graph.nodes.iter().map(|node| json!({
+/// index pairs into that order, and the graph's own aggregates — plus
+/// the delegation overlay, computed by the read and carried here rather
+/// than derived on the page.
+fn graph_document(
+    graph: &crate::boards::GraphSnapshot,
+    overlays: &std::collections::HashMap<String, crate::boards::NodeOverlay>,
+    divergences: &crate::boards::Divergences,
+) -> Value {
+    let node_doc = |node: &crate::boards::GraphNode| {
+        // The overlay the day's delegation rows put on this node:
+        // which child sessions were spawned for it, how many, and the
+        // divergence word when the graph and the rows disagree. A
+        // summary node (never dispatched) and a node the rows say
+        // nothing about both read as no overlay — the face renders
+        // what the document carries and derives nothing.
+        let overlay = overlays.get(&node.id).map(|overlay| {
+            json!({
+                "spawned_sessions": overlay.spawned_sessions,
+                "spawn_count": overlay.spawn_count,
+                "divergence": overlay.divergence,
+            })
+        });
+        json!({
             "id": node.id,
             "cost": node.cost,
             "score": node.score,
@@ -14615,6 +14642,7 @@ fn graph_document(graph: &crate::boards::GraphSnapshot) -> Value {
             "paths": node.paths,
             "capabilities": node.capabilities,
             "prereqs": node.prereqs,
+            "summary": node.summary,
             "unlock": {
                 "score_zero": node.unlock.score_zero,
                 "resource_free": node.unlock.resource_free,
@@ -14633,7 +14661,11 @@ fn graph_document(graph: &crate::boards::GraphSnapshot) -> Value {
                 "state": delta.state,
                 "reason": delta.reason,
             })),
-        })).collect::<Vec<_>>(),
+            "overlay": overlay,
+        })
+    };
+    json!({
+        "nodes": graph.nodes.iter().map(&node_doc).collect::<Vec<_>>(),
         "edges": graph.edges.iter().map(|(from, to)| json!({
             "from": from,
             "to": to,
@@ -14643,6 +14675,16 @@ fn graph_document(graph: &crate::boards::GraphSnapshot) -> Value {
         "revisions": graph.revisions,
         "diff_score": graph.diff_score,
         "replan": graph.replan,
+        // The graph-level counts of the two divergences, and the
+        // evidence they rest on: a node whose child was refused before
+        // a row landed reads `never spawned` while the graph says
+        // `running`, and this line names the rows as the source rather
+        // than overriding the graph's own status word.
+        "divergences": {
+            "never_spawned": divergences.never_spawned,
+            "ran_twice": divergences.ran_twice,
+            "basis": crate::boards::Divergences::BASIS,
+        },
     })
 }
 

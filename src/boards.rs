@@ -1116,6 +1116,10 @@ pub struct GraphNode {
     /// The named reason this node is held, or `None` when it is not.
     pub reason: Option<String>,
     pub delta: Option<DeltaShape>,
+    /// A summary node has children and no work of its own: it is never
+    /// dispatched, so the delegation overlay never counts it. The flag
+    /// rides the file the graph was read from, defaulted off.
+    pub summary: bool,
 }
 
 /// The three unlock conditions, reported separately and all necessary —
@@ -1158,6 +1162,116 @@ impl UnlockShape {
 pub struct DeltaShape {
     pub state: String,
     pub reason: String,
+}
+
+/// The delegation overlay one declared node carries: what the day's
+/// delegation rows say this node's work was — which child sessions were
+/// spawned for it, how many, and the divergence word when the graph's
+/// declared work and the run's log disagree.
+///
+/// The join that makes this possible is the row's own `node` field
+/// (`DelegatedRunRow.node`), which the row records at land time because
+/// a session log's `start` record does not carry it. Rows written
+/// before the field existed carry no node; the tolerant read puts their
+/// sessions nowhere, which shows as `spawned_sessions: []` — the same
+/// rule `workspace_branch` reads by, and the reason a node reads
+/// `never spawned` under an old row's watch instead of the read
+/// refusing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeOverlay {
+    /// The child session ids the rows joined to this node, in the
+    /// rows' own order (oldest first).
+    pub spawned_sessions: Vec<String>,
+    /// How many rows joined. One is the declared shape; zero and
+    /// more-than-one are the two divergences.
+    pub spawn_count: usize,
+    /// `never spawned` when no row names this node, `ran twice` (with
+    /// the count past two) when more than one does, and `None` when the
+    /// node spawned exactly one child — the shape the graph declared.
+    pub divergence: Option<String>,
+}
+
+/// The graph-level counts of the two divergences, over every
+/// non-summary node. `basis` names the evidence the counts rest on: a
+/// node whose child was refused before a row landed reads `never
+/// spawned` while the graph says `running`, and this line says the
+/// rows said so — the overlay never overrides the graph's own status
+/// word.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Divergences {
+    pub never_spawned: usize,
+    pub ran_twice: usize,
+}
+
+impl Divergences {
+    pub const BASIS: &'static str = "the day's delegation rows";
+
+    /// The evidence line the document carries beside the counts.
+    pub fn basis(&self) -> &'static str {
+        Self::BASIS
+    }
+}
+
+/// The overlay the day's delegation rows put on a declared graph: one
+/// [`NodeOverlay`] per non-summary node, and the two counts the whole
+/// graph reads as. Summary nodes are never dispatched (P6), so they
+/// carry no overlay and are never counted.
+pub fn delegation_overlay(
+    home: &Path,
+    nodes: &[GraphNode],
+) -> (HashMap<String, NodeOverlay>, Divergences) {
+    // The OP-bounded read, the same one the LayerFS view uses for its
+    // branch join: a busy day's file is mixed-op, and a whole-stream
+    // tail can hold no delegation row at all.
+    let user_home = std::env::var("HOME").ok();
+    let root = crate::calib::resolve_root(home, user_home.as_deref());
+    let day = crate::calib::today();
+    let rows = crate::calib::read_op_day(&root, &day, crate::calib::OP_DELEGATION, 512);
+    let mut spawned_by_node: HashMap<String, Vec<String>> = HashMap::new();
+    for row in &rows {
+        let node = row.node.trim();
+        let session = row.session.trim();
+        if node.is_empty() || session.is_empty() {
+            continue;
+        }
+        spawned_by_node
+            .entry(node.to_string())
+            .or_default()
+            .push(session.to_string());
+    }
+    let mut overlays: HashMap<String, NodeOverlay> = HashMap::new();
+    let mut divergences = Divergences::default();
+    for node in nodes {
+        if node.summary {
+            continue;
+        }
+        let spawned = spawned_by_node.remove(&node.id).unwrap_or_default();
+        let spawn_count = spawned.len();
+        let divergence = match spawn_count {
+            0 => {
+                divergences.never_spawned += 1;
+                Some("never spawned".to_string())
+            }
+            1 => None,
+            2 => {
+                divergences.ran_twice += 1;
+                Some("ran twice".to_string())
+            }
+            more => {
+                divergences.ran_twice += 1;
+                Some(format!("ran twice \u{d7}{more}"))
+            }
+        };
+        overlays.insert(
+            node.id.clone(),
+            NodeOverlay {
+                spawned_sessions: spawned,
+                spawn_count,
+                divergence,
+            },
+        );
+    }
+    (overlays, divergences)
 }
 
 /// One log's opening record: what it runs, the `kind` that marks a
@@ -1545,6 +1659,7 @@ fn graph_snapshot(home: &Path, refused: &mut Vec<String>) -> Option<GraphSnapsho
                     state: delta.state.label().to_string(),
                     reason: delta.reason.label().to_string(),
                 }),
+                summary: node.summary,
             }
         })
         .collect();
@@ -5740,6 +5855,238 @@ mod tests {
             "a node at the cap grew children: {:?}",
             grandchild.children
         );
+    }
+
+    // --- the delegation overlay ----------------------------------------------
+
+    /// The day's delegation rows, written straight to the calibration day
+    /// file the overlay reads. The file is the contract — the same way
+    /// the graph fixture is written as its file — because a row built
+    /// through the writer would be one writer away from a line the
+    /// reader never sees.
+    fn write_delegation_rows(home: &Path, rows: &[serde_json::Value]) {
+        let root = crate::calib::resolve_root(home, std::env::var("HOME").ok().as_deref());
+        let path = crate::calib::day_path(&root, &crate::calib::today());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let lines: Vec<String> = rows.iter().map(serde_json::Value::to_string).collect();
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+    }
+
+    /// One declared node, built for the overlay's tests: the read's own
+    /// shape, with only the fields the overlay and its counting touch.
+    fn overlay_node(id: &str, summary: bool, status: &str) -> GraphNode {
+        GraphNode {
+            id: id.to_string(),
+            cost: 1,
+            score: 1,
+            longest_chain: 1,
+            peak: 1,
+            status: status.to_string(),
+            state: "waiting".to_string(),
+            approach: None,
+            paths: Vec::new(),
+            capabilities: String::new(),
+            prereqs: Vec::new(),
+            unlock: UnlockShape {
+                score_zero: false,
+                resource_free: true,
+                deps_verified: true,
+                unlocked: false,
+                waiting: Vec::new(),
+                failed: Vec::new(),
+                unresolved: Vec::new(),
+                held: Vec::new(),
+            },
+            reason: None,
+            delta: None,
+            summary,
+        }
+    }
+
+    fn overlay_row(node: &str, session: &str) -> serde_json::Value {
+        let mut row = serde_json::json!({
+            "op": "delegation",
+            "ts": "2026-11-21T09:00:00Z",
+            "session": session,
+            "outcome": "completed",
+        });
+        if !node.is_empty() {
+            row["node"] = serde_json::json!(node);
+        }
+        row
+    }
+
+    /// The AC the overlay exists for: a fixture graph's divergence counts
+    /// equal the fixture's declared graph minus the run's log. Three
+    /// declared nodes, three spawned sessions joined the way the rows
+    /// joined them — one child on `n1`, none on `n2`, two on `n3` — so
+    /// the counts are one `never spawned` and one `ran twice`.
+    #[test]
+    fn the_overlay_joins_the_rows_to_the_nodes_and_names_the_two_divergences() {
+        let scratch = Scratch::new("overlay-join");
+        write_delegation_rows(
+            scratch.path(),
+            &[
+                // An old row, written before the field existed: its
+                // session joins nothing, and nothing is dropped.
+                overlay_row("", "c-old"),
+                overlay_row("n1", "c1"),
+                overlay_row("n3", "c3a"),
+                overlay_row("n3", "c3b"),
+            ],
+        );
+        let nodes = [
+            overlay_node("n1", false, "pending"),
+            overlay_node("n2", false, "pending"),
+            overlay_node("n3", false, "pending"),
+        ];
+        let (overlays, divergences) = delegation_overlay(scratch.path(), &nodes);
+        let n1 = &overlays["n1"];
+        assert_eq!(n1.spawned_sessions, vec!["c1".to_string()]);
+        assert_eq!(n1.spawn_count, 1);
+        assert_eq!(n1.divergence, None, "one child is the declared shape");
+        let n2 = &overlays["n2"];
+        assert_eq!(n2.spawned_sessions, Vec::<String>::new());
+        assert_eq!(n2.spawn_count, 0);
+        assert_eq!(n2.divergence.as_deref(), Some("never spawned"));
+        let n3 = &overlays["n3"];
+        assert_eq!(
+            n3.spawned_sessions,
+            vec!["c3a".to_string(), "c3b".to_string()]
+        );
+        assert_eq!(n3.spawn_count, 2);
+        assert_eq!(n3.divergence.as_deref(), Some("ran twice"));
+        // The counts are the declared graph minus the run's log: three
+        // declared nodes, three spawn events, so one of each divergence.
+        assert_eq!(divergences.never_spawned, 1);
+        assert_eq!(divergences.ran_twice, 1);
+        assert_eq!(
+            divergences.basis(),
+            "the day's delegation rows",
+            "the counts name the evidence they rest on"
+        );
+    }
+
+    /// A summary node has children and no work of its own — it is never
+    /// dispatched, so it carries no overlay and is never counted, even
+    /// when it spawned nothing.
+    #[test]
+    fn a_summary_node_is_never_counted_by_the_overlay() {
+        let scratch = Scratch::new("overlay-summary");
+        let nodes = [
+            overlay_node("leaf", false, "pending"),
+            overlay_node("group", true, "pending"),
+        ];
+        let (overlays, divergences) = delegation_overlay(scratch.path(), &nodes);
+        assert!(
+            !overlays.contains_key("group"),
+            "a summary carried an overlay: {overlays:?}"
+        );
+        assert_eq!(
+            overlays["leaf"].divergence.as_deref(),
+            Some("never spawned")
+        );
+        assert_eq!(
+            divergences.never_spawned, 1,
+            "only the dispatchable node was counted"
+        );
+        assert_eq!(divergences.ran_twice, 0);
+    }
+
+    /// The honest edge, pinned: a node dispatched whose child was
+    /// refused before a row landed has no row to join, so the overlay
+    /// says `never spawned` — and says nothing about the node's own
+    /// status, which stays the graph's `running`. The counts name the
+    /// rows as their basis rather than overriding the status word.
+    #[test]
+    fn the_overlay_never_overrides_the_graphs_own_status_word() {
+        let scratch = Scratch::new("overlay-status");
+        let nodes = [overlay_node("dispatched", false, "running")];
+        let (overlays, divergences) = delegation_overlay(scratch.path(), &nodes);
+        let dispatched = &overlays["dispatched"];
+        assert_eq!(dispatched.divergence.as_deref(), Some("never spawned"));
+        assert_eq!(nodes[0].status, "running", "the status is the graph's");
+        assert_eq!(divergences.never_spawned, 1);
+        assert_eq!(divergences.basis(), Divergences::BASIS);
+    }
+
+    /// Past the second spawn the word carries the count: a node that ran
+    /// three times reads `ran twice ×3` on the node and one `ran twice`
+    /// at the graph level — the divergence is one node's, however many
+    /// children it burned.
+    #[test]
+    fn a_node_spawned_three_times_carries_the_count() {
+        let scratch = Scratch::new("overlay-thrice");
+        write_delegation_rows(
+            scratch.path(),
+            &[
+                overlay_row("n3", "c3a"),
+                overlay_row("n3", "c3b"),
+                overlay_row("n3", "c3c"),
+            ],
+        );
+        let nodes = [overlay_node("n3", false, "failed")];
+        let (overlays, divergences) = delegation_overlay(scratch.path(), &nodes);
+        assert_eq!(
+            overlays["n3"].divergence.as_deref(),
+            Some("ran twice \u{d7}3")
+        );
+        assert_eq!(divergences.ran_twice, 1, "one node diverged, not three");
+    }
+
+    /// The flag's whole path: a summary declared in the file reads back
+    /// through the snapshot uncounted, and a file written before the
+    /// flag existed reads every node as dispatchable — the tolerant
+    /// read, not a refusal.
+    #[test]
+    fn the_summary_flag_rides_the_file_and_an_old_file_reads_it_off() {
+        let scratch = Scratch::new("overlay-file");
+        std::fs::write(
+            crate::graph::path_in(scratch.path()),
+            serde_json::json!({
+                "nodes": [
+                    {"id": "leaf", "cost": 1, "status": "pending"},
+                    {"id": "group", "cost": 0, "status": "pending", "summary": true},
+                ],
+                "revisions": [],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut refused = Vec::new();
+        let snapshot = graph_snapshot(scratch.path(), &mut refused).expect("the graph read");
+        assert_eq!(snapshot.nodes.len(), 2, "{snapshot:?}");
+        assert!(!snapshot.nodes[0].summary);
+        assert!(snapshot.nodes[1].summary);
+        let (overlays, divergences) = delegation_overlay(scratch.path(), &snapshot.nodes);
+        assert!(!overlays.contains_key("group"));
+        assert_eq!(
+            overlays["leaf"].divergence.as_deref(),
+            Some("never spawned")
+        );
+        assert_eq!(divergences.never_spawned, 1);
+
+        // An old file, verbatim: no `summary` key anywhere. Every node
+        // reads dispatchable, which is the tolerant read — the flag was
+        // simply not on disk yet.
+        let scratch = Scratch::new("overlay-old-file");
+        std::fs::write(
+            crate::graph::path_in(scratch.path()),
+            serde_json::json!({
+                "nodes": [
+                    {"id": "leaf", "cost": 1, "status": "pending"},
+                    {"id": "group", "cost": 0, "status": "pending"},
+                ],
+                "revisions": [],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut refused = Vec::new();
+        let snapshot = graph_snapshot(scratch.path(), &mut refused).expect("the old graph read");
+        assert!(!snapshot.nodes[1].summary, "an old node is dispatchable");
+        let (overlays, _) = delegation_overlay(scratch.path(), &snapshot.nodes);
+        assert!(overlays.contains_key("group"));
     }
 
     #[test]

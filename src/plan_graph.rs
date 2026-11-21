@@ -562,7 +562,8 @@ impl PlanGraph {
                         .with_paths(declared.paths.clone())
                         .with_capabilities(Capabilities::from(&declared.capabilities))
                         .with_approach(declared.approach.clone())
-                        .with_assignee(declared.assignee.clone()),
+                        .with_assignee(declared.assignee.clone())
+                        .with_summary(declared.summary),
                 )
                 .map_err(|error| PlanError::Graph(error.to_string()))?;
             if !declared.serves.trim().is_empty() {

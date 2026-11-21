@@ -166,6 +166,47 @@ fn a_graph_that_will_not_read_is_named_rather_than_defaulted() {
     let _ = std::fs::remove_file(&malformed);
 }
 
+/// The summary flag rides the file like every other declared fact, and
+/// a file written before the flag existed reads its nodes as ordinary
+/// — the tolerant read, never a refusal.
+#[test]
+fn the_summary_flag_rides_the_file_and_an_old_file_reads_it_off() {
+    let path = scratch("summary-round-trip");
+    let mut graph = Graph::new();
+    graph.add(Node::new("leaf", 2)).unwrap();
+    graph
+        .add(
+            Node::new("group", 0)
+                .with_summary(true)
+                .with_prereqs(["leaf"]),
+        )
+        .unwrap();
+    graph.save(&path).unwrap();
+    let loaded = Graph::load(&path).unwrap();
+    assert!(!loaded.node("leaf").unwrap().summary);
+    assert!(loaded.node("group").unwrap().summary);
+
+    // The pre-flag file, verbatim: no `summary` key anywhere, and the
+    // node reads dispatchable rather than refusing the load.
+    let old = scratch("summary-old");
+    std::fs::write(
+        &old,
+        serde_json::json!({
+            "nodes": [{"id": "group", "cost": 0, "status": "pending"}],
+            "revisions": [],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let loaded = Graph::load(&old).unwrap();
+    assert!(
+        !loaded.node("group").unwrap().summary,
+        "an old file's node is dispatchable"
+    );
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&old);
+}
+
 // --- the replan --------------------------------------------------------------
 
 use crate::subagents::{Delta, DeltaReason, DeltaState};

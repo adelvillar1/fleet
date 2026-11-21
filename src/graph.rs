@@ -289,6 +289,13 @@ pub struct Node {
     pub delta: Option<crate::subagents::Delta>,
     /// Where the node stands. Transitions go through the graph.
     pub status: Status,
+    /// A summary node has children and no work of its own (P6): it is
+    /// never dispatched, so the delegation overlay must never count it
+    /// as a node a child should have been spawned for. It rides the
+    /// file like every other declared fact, defaulted off — a runtime
+    /// file written before the flag existed reads its nodes as
+    /// ordinary nodes, which is the tolerant read, not a guess.
+    pub summary: bool,
     /// The highest score this node's closure has carried: the readiness
     /// bar's denominator. Scores only fall, so the peak is the score at
     /// the graph's widest — a node's distance to its own minima.
@@ -315,6 +322,7 @@ impl Node {
             assignee: String::new(),
             delta: None,
             status: Status::Pending,
+            summary: false,
             peak: 0,
             dispatches: 0,
         }
@@ -364,6 +372,14 @@ impl Node {
     /// decides rather than the graph inventing an owner.
     pub fn with_assignee(mut self, assignee: impl Into<String>) -> Self {
         self.assignee = assignee.into();
+        self
+    }
+
+    /// Mark the node a summary — children, no work of its own. A plan
+    /// that declares a summary says so, and the graph honours the word
+    /// rather than re-deriving it from the shape.
+    pub fn with_summary(mut self, summary: bool) -> Self {
+        self.summary = summary;
         self
     }
 
@@ -2326,6 +2342,13 @@ pub struct NodeFile {
     pub delta: Option<crate::subagents::Delta>,
     #[serde(default)]
     pub status: Status,
+    /// The summary flag, when the plan declared one: a summary is never
+    /// dispatched, and the delegation overlay counts only nodes a child
+    /// could have been spawned for. `serde(default)` keeps an older
+    /// runtime file readable — it reads back as an ordinary node, which
+    /// is the tolerant read the tolerance rule requires.
+    #[serde(default)]
+    pub summary: bool,
     /// The dispatch count, so a respawn bound survives a restart: a
     /// node demoted after its second respawn reads back still
     /// exhausted.
@@ -2374,6 +2397,7 @@ impl Graph {
                     assignee: node.assignee.clone(),
                     delta: node.delta.clone(),
                     status: node.status,
+                    summary: node.summary,
                     dispatches: node.dispatches,
                     peak: node.peak,
                 })
@@ -2409,6 +2433,7 @@ impl Graph {
             // so the load restores it rather than re-declaring it.
             if let Some(added) = graph.nodes.iter_mut().find(|added| added.id == id) {
                 added.status = node.status;
+                added.summary = node.summary;
                 added.dispatches = node.dispatches;
                 // And so does the delta: the diff score is derived from
                 // the nodes, so a graph that lost its deltas on save
