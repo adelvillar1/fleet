@@ -7732,6 +7732,46 @@ async function theStrategyStepShowsItsPreview() {
       bylines[2].length === 0, 'bylines=' + bylines[2].length);
   }
 
+  // The turn's spine (the face rethink's P3): every transcript turn
+  // carries the speaker spine — the block tagged with its author and the
+  // author's presence tint, and the sheet carrying the rule itself.
+  async function everyTurnCarriesItsSpeakerSpine() {
+    const page = boot({
+      documents: {
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          events: [
+            { type: 'message', role: 'owner', text: 'the brief' },
+            { type: 'message', role: 'assistant', text: 'Landed the first page.', persona: 'designer' },
+            { type: 'message', role: 'assistant', text: 'The hero reads thin.', persona: 'scholar' },
+          ]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    const turns = page.rows('.turn');
+    check('SPINE every turn in the transcript carries the spine',
+      turns.length === 3, 'turns=' + turns.length);
+    if (turns.length !== 3) return;
+    check('SPINE the owner\u2019s turn wears the owner\u2019s tint',
+      turns[0].getAttribute('data-turn') === 'you' &&
+        String(turns[0].style.getPropertyValue('--tint')) === 'var(--accent)',
+      String(turns[0].getAttribute('data-turn')) + ' ' +
+        String(turns[0].style.getPropertyValue('--tint')));
+    const blocks = page.rows('.assistant.md-rendered');
+    check('SPINE each member\u2019s turn names its author in the named tint',
+      blocks[0].getAttribute('data-turn') === 'designer' &&
+        String(blocks[0].style.getPropertyValue('--tint')) === 'var(--lane-4)' &&
+        blocks[1].getAttribute('data-turn') === 'scholar' &&
+        String(blocks[1].style.getPropertyValue('--tint')) === 'var(--lane-0)',
+      blocks.map((one) => String(one.getAttribute('data-turn') || '?') + ':' +
+        String(one.style.getPropertyValue('--tint'))).join('|'));
+    check('SPINE the sheet carries the turn spine rule',
+      ruleBlock('.turn').indexOf('border-left: 2px solid') !== -1, ruleBlock('.turn'));
+  }
+
   // An owner-supplied avatar (the huddles plan's C11): where the role
   // keeps an image, the mark carries it instead of the derived initial —
   // in the rooms row and in the room head alike.
@@ -16944,6 +16984,7 @@ const cases = [
   ['P2 the board\u2019s columns equal the derived states', theBoardColumnsEqualTheDerivedStates],
   ['P2 the desk lists every artifact the log names and nothing else', theDeskListsEveryArtifactTheLogNames],
   ['P3 the cast strip carries one disc and a state word per member', theCastStripCarriesEachMembersStateWord],
+  ['P3 every transcript turn carries its speaker\u2019s tinted spine', everyTurnCarriesItsSpeakerSpine],
   ['SWEEP every settings press acts or answers', everySettingsPressSaysSomething],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],

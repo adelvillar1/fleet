@@ -1952,7 +1952,9 @@ import { node, svg, clip } from './core/dom.js';
   }
 
   function ownerRow(event) {
-    var el0 = node('div', 'owner');
+    var el0 = node('div', 'owner turn');
+    el0.setAttribute('data-turn', 'you');
+    el0.style.setProperty('--tint', presence('you').tint);
     el0.appendChild(node('span', 'owner-tag', 'you'));
     // The words render once, below: the session-ref branch and the plain
     // branch between them own the whole text. The original one-line body
@@ -3215,6 +3217,13 @@ import { node, svg, clip } from './core/dom.js';
             var byline = node('div', 'byline');
             byline.appendChild(node('span', 'byline-who', event.persona));
             said.appendChild(byline);
+            // The turn's spine (the face rethink's P3): the block wears
+            // its author's presence tint on a 2px left rule — presence()
+            // is the one tint table, so the byline's name and the spine
+            // cannot disagree.
+            said.className = 'assistant md-rendered turn';
+            said.setAttribute('data-turn', event.persona);
+            said.style.setProperty('--tint', presence(event.persona).tint);
           }
           var answer = markdown(event.text);
           highlightMentions(answer);

@@ -9267,6 +9267,14 @@ body[data-work="collapsed"] .room-back { display: grid; }
   color: var(--dsw-alias-ink-tertiary);
 }
 
+/* The turn's spine (the face rethink's P3): every transcript turn
+   carries a 2px rule in its speaker's presence tint, so a room's
+   members read apart at a glance. */
+.turn {
+  border-left: 2px solid var(--tint, var(--dsw-alias-accent));
+  padding-left: 10px;
+}
+
 /* A member's proposal to convene a role the room lacks (the huddles plan's
    C5). Dashed so it reads as a suggestion, never as work already done. */
 .suggest {
