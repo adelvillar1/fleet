@@ -7997,6 +7997,50 @@ import { node, svg, clip } from './core/dom.js';
       });
       card.appendChild(queue);
     }
+    // The coverage map and the fired feed: the document's own block,
+    // painted as it stands — the split the read derived, the unused
+    // list as the what-to-learn-next half, and the newest firings. A
+    // skill with no fires reads "not used yet", never a failure; and
+    // when nothing records fires the block names its basis instead of
+    // printing a zero.
+    var coverage = read.coverage;
+    if (coverage) {
+      var map = node('div', 'coverage');
+      var split = node('p', 'board-note', coverage.basis
+        ? coverage.basis
+        : coverage.fired_skills + ' fired \u00b7 '
+          + coverage.unused_skills + ' not used yet in '
+          + (coverage.sessions || 0) + ' scanned session'
+          + (coverage.sessions === 1 ? '' : 's'));
+      map.appendChild(split);
+      var unused = coverage.unused || [];
+      if (unused.length) {
+        var gaps = node('div', 'rail-list');
+        unused.forEach(function (name) {
+          var row = node('div', 'rail-row');
+          row.appendChild(node('b', null, name));
+          row.appendChild(node('p', null, 'not used yet'));
+          gaps.appendChild(row);
+        });
+        map.appendChild(gaps);
+      }
+      var feed = coverage.feed || [];
+      if (feed.length) {
+        var feedList = node('div', 'rail-list');
+        feed.forEach(function (firing) {
+          var row = node('div', 'rail-row');
+          row.dataset.firing = firing.skill;
+          row.appendChild(node('b', null, firing.skill));
+          row.appendChild(node('p', null,
+            firing.at + ' \u00b7 ' + firing.session + ' \u00b7 ' + firing.surface));
+          feedList.appendChild(row);
+        });
+        map.appendChild(feedList);
+      } else if (coverage.feed_reason) {
+        map.appendChild(node('p', 'board-note', coverage.feed_reason));
+      }
+      card.appendChild(map);
+    }
     // The library itself: the same one-line rows the skills surface
     // drew — the uses mark, the budget press naming what sits behind
     // it, the row's press opening the skill's pane card — reused whole,
@@ -9480,6 +9524,8 @@ import { node, svg, clip } from './core/dom.js';
       ['the skill', node('p', 'derivation',
         (skill.category || 'everything-else') + ' \u00b7 ' +
         skill.uses + ' uses across ' + (face.skills ? face.skills.sessions : 0) + ' scanned sessions' +
+        (skill.references ? ' \u00b7 ' + skill.references + ' references' : '') +
+        (skill.scripts ? ' \u00b7 ' + skill.scripts + ' scripts' : '') +
         ' \u00b7 ' + skill.path)],
       // The sinkhole audit's read: when the file last changed (computed
       // per read, shown nowhere before).
