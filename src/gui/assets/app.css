@@ -2342,10 +2342,11 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .home-stat:hover { background: var(--dsw-alias-surface-raised); }
 
 .home-stat-value {
-  font-size: 22px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 21px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
   line-height: 1.1;
 }
 
@@ -4379,27 +4380,28 @@ pre.drawer-code {
 
 .page-eyebrow {
   margin: 0 0 8px;
-  color: var(--dsw-alias-accent-lift);
-  font-size: 12px;
+  color: var(--eyebrow-ink);
+  font-size: var(--eyebrow-size);
   font-weight: 600;
-  letter-spacing: 0.13em;
+  letter-spacing: var(--eyebrow-track);
+  line-height: 1.4;
   text-transform: uppercase;
 }
 
 .page-head .page-title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(28px, 3vw, 36px);
-  font-weight: 500;
-  line-height: 1.05;
-  letter-spacing: -0.025em;
+  font-size: var(--title-surface);
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
 }
 
 .page-note {
-  max-width: 72ch;
-  margin: 8px 0 0;
-  color: var(--dsw-alias-ink-secondary);
-  font-size: 12.5px;
+  max-width: 62ch;
+  margin: 10px 0 0;
+  color: var(--measure-ink);
+  font-size: var(--measure-size);
   line-height: 1.6;
 }
 
@@ -4464,11 +4466,12 @@ pre.drawer-code {
 .tile:hover { background: var(--dsw-alias-surface-raised); }
 
 .tile-value {
-  font-size: var(--card-value);
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
 }
 
 .tile-label {
@@ -4510,9 +4513,11 @@ pre.drawer-code {
 
 .board-head h2 {
   margin: 0;
-  font-size: 13.5px;
+  font-family: var(--font-display);
+  font-size: var(--title-card);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
 .board-stamp {
@@ -4525,11 +4530,11 @@ pre.drawer-code {
 }
 
 .board-note {
-  max-width: 80ch;
-  margin: 0 0 14px;
-  color: var(--dsw-alias-ink-tertiary);
-  font-size: 12px;
-  line-height: 1.55;
+  max-width: 72ch;
+  margin: 4px 0 14px;
+  color: var(--measure-ink);
+  font-size: 12.5px;
+  line-height: 1.6;
 }
 
 .board-note[hidden] { display: none; }
@@ -5395,10 +5400,10 @@ pre.drawer-code {
 .surface-title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(30px, 3.2vw, 38px);
-  font-weight: 500;
-  line-height: 1.03;
-  letter-spacing: -0.03em;
+  font-size: var(--title-surface);
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
 }
 
 .surface-tool {
@@ -9182,10 +9187,10 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .room-title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 21px;
-  font-weight: 500;
+  font-size: var(--title-room);
+  font-weight: 600;
   line-height: 1.1;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.025em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -9237,11 +9242,11 @@ body[data-work="collapsed"] .room-back { display: grid; }
 }
 .room-goal b {
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: var(--eyebrow-size);
   font-weight: 600;
-  letter-spacing: 0.11em;
+  letter-spacing: var(--eyebrow-track);
   text-transform: uppercase;
-  color: var(--dsw-alias-ink-tertiary);
+  color: var(--eyebrow-ink);
 }
 .room-goal span { color: var(--dsw-alias-ink); }
 .room-members { display: flex; align-items: center; flex-wrap: wrap; padding: 10px 0 12px; }
@@ -9401,11 +9406,11 @@ body[data-work="collapsed"] .room-back { display: grid; }
   margin: 0 0 8px;
 }
 .suggest-label {
-  font-size: 12px;
+  font-size: var(--eyebrow-size);
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--eyebrow-track);
   text-transform: uppercase;
-  color: var(--dsw-alias-ink-tertiary);
+  color: var(--eyebrow-ink);
   margin: 0 0 4px;
 }
 .suggest-why {
@@ -9445,7 +9450,10 @@ body[data-work="collapsed"] .room-back { display: grid; }
   box-shadow: var(--shadow-2);
 }
 .door .form h2 {
+  font-family: var(--font-display);
   font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   margin: 0 0 6px;
 }
 .door .sub {
@@ -9456,11 +9464,11 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .field { margin: 0 0 14px; }
 .field label {
   display: block;
-  font-size: 12px;
+  font-size: var(--eyebrow-size);
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--eyebrow-track);
   text-transform: uppercase;
-  color: var(--dsw-alias-ink-secondary);
+  color: var(--eyebrow-ink);
   margin: 0 0 6px;
 }
 .field input[type="text"] {
@@ -11769,7 +11777,12 @@ body[data-armada="off"] .surfaces-link[data-address="armada"] { display: none; }
 }
 
 .board-col-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
-.board-col-name { font-family: var(--disp); font-weight: 600; font-size: 13px; }
+.board-col-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.015em;
+}
 .board-col-count {
   margin-left: auto;
   font-family: var(--mono);
