@@ -322,9 +322,15 @@ pub struct EvalScenarioRow {
     /// The family the scenario belongs to, e.g. `conversation-fold`.
     pub family: String,
     pub passed: bool,
-    /// The failure's name, omitted when the scenario passed.
+    /// The failure's name, omitted when the scenario passed. A skipped
+    /// scenario carries its skip reason here, prefixed `skipped:`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
+    /// Whether the scenario skipped — the surface it drives is absent on
+    /// this machine, so it is neither passed nor failed. False on every
+    /// run that never wrote a skip.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub skipped: bool,
 }
 
 /// One eval-corpus run: the fixed suite's per-scenario verdicts and its
@@ -2585,6 +2591,11 @@ pub struct ReadEvalScenario {
     pub passed: bool,
     #[serde(default)]
     pub failure: String,
+    /// Whether the scenario skipped — the surface it drives is absent on
+    /// the machine that ran the corpus. False on rows written before the
+    /// field existed, which is every row a skip never touched.
+    #[serde(default)]
+    pub skipped: bool,
 }
 
 /// One gate step as a `propose` row carries it: the step's name, whether
@@ -5960,12 +5971,14 @@ mod tests {
                 family: "tool-loop".to_string(),
                 passed: true,
                 failure: None,
+                skipped: false,
             },
             EvalScenarioRow {
                 scenario: "conversation-fold".to_string(),
                 family: "conversation-fold".to_string(),
                 passed: false,
                 failure: Some("the post-fold request lost the summary".to_string()),
+                skipped: false,
             },
         ]))
         .unwrap();
@@ -5996,12 +6009,14 @@ mod tests {
                     family: "session-corpus".to_string(),
                     passed: true,
                     failure: None,
+                    skipped: false,
                 },
                 EvalScenarioRow {
                     scenario: "agent-continuation".to_string(),
                     family: "agent-continuation".to_string(),
                     passed: false,
                     failure: Some("the resume lost the tail".to_string()),
+                    skipped: false,
                 },
             ])],
         );
@@ -6029,12 +6044,14 @@ mod tests {
                     family: "memory".to_string(),
                     passed: true,
                     failure: None,
+                    skipped: false,
                 },
                 EvalScenarioRow {
                     scenario: "conversation-fold".to_string(),
                     family: "conversation-fold".to_string(),
                     passed: false,
                     failure: Some("the summary did not ride".to_string()),
+                    skipped: false,
                 },
             ])],
         );

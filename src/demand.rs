@@ -838,6 +838,7 @@ mod tests {
                     } else {
                         Some("jagged".to_string())
                     },
+                    skipped: false,
                 }],
                 input_sha256: None,
             }));

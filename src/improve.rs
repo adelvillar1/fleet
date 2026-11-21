@@ -4642,6 +4642,8 @@ mod tests {
                 family: "tool-loop".to_string(),
                 passed: index < passed,
                 failure: (index >= passed).then(|| "seeded failure".to_string()),
+                skipped: false,
+                detail: None,
             })
             .collect();
         let report = eval::EvalReport::from(outcomes);

@@ -535,6 +535,12 @@ pub enum ScenarioFamily {
     /// evidence refusal, and its surface (the adopt-on-contrast plan's
     /// P3).
     Improve,
+    /// The design run's review loop, scored end to end (the P5 clause):
+    /// a brief seeds a board, the version renders through the browser
+    /// lane's own capture, the render is reviewed against the brief with
+    /// a defect its pixels name, a revision lands, and the delta proves
+    /// it by a measured pixel count.
+    DesignLoop,
 }
 
 impl ScenarioFamily {
@@ -553,19 +559,33 @@ impl ScenarioFamily {
             ScenarioFamily::GroundedLane => "grounded-lane",
             ScenarioFamily::Nomenclature => "nomenclature",
             ScenarioFamily::Improve => "improve",
+            ScenarioFamily::DesignLoop => "design-loop",
         }
     }
 }
 
 /// One scenario's graded verdict: its name, its family, whether it
-/// passed, and the failure's name when it did not. The whole point of
-/// the corpus is that a failure is *named*.
+/// passed, the failure's name when it did not, and — when the scenario
+/// measured as it ran — the per-step measurements the report prints
+/// (the design loop's capture size, dimensions, named defect and pixel
+/// delta). A skipped scenario is neither passed nor failed: the surface
+/// it needs is absent, the skip reason names what would have been
+/// proved, and the corpus stays green without it (a machine without a
+/// browser engine did not regress).
 #[derive(Debug, Clone)]
 pub struct ScenarioOutcome {
     pub scenario: String,
     pub family: String,
     pub passed: bool,
     pub failure: Option<String>,
+    /// Whether the scenario skipped: the surface it drives is absent on
+    /// this machine, and the skip reason rides `failure` prefixed
+    /// `skipped:` — a named skip, never a silent pass and never a
+    /// failure the corpus goes red on.
+    pub skipped: bool,
+    /// The per-step measurements the scenario took, one line per step,
+    /// printed in the card under the verdict.
+    pub detail: Option<String>,
 }
 
 impl ScenarioOutcome {
@@ -575,6 +595,8 @@ impl ScenarioOutcome {
             family: family.label().to_string(),
             passed: true,
             failure: None,
+            skipped: false,
+            detail: None,
         }
     }
 
@@ -584,7 +606,37 @@ impl ScenarioOutcome {
             family: family.label().to_string(),
             passed: false,
             failure: Some(reason.into()),
+            skipped: false,
+            detail: None,
         }
+    }
+
+    /// A skip: the scenario did not run because the surface it drives is
+    /// absent, and `reason` names both that absence and what would have
+    /// been proved. Neither pass nor fail — the corpus does not go red
+    /// on a machine that never had the surface, and it does not claim
+    /// the scenario passed either.
+    pub fn skip(
+        scenario: &str,
+        family: ScenarioFamily,
+        reason: impl Into<String>,
+    ) -> ScenarioOutcome {
+        ScenarioOutcome {
+            scenario: scenario.to_string(),
+            family: family.label().to_string(),
+            passed: false,
+            failure: Some(format!("skipped: {}", reason.into())),
+            skipped: true,
+            detail: None,
+        }
+    }
+
+    /// Attach the per-step measurements. Every link a graded loop drove
+    /// carries the number it measured, so a verdict is readable without
+    /// re-running anything.
+    pub fn with_detail(mut self, detail: impl Into<String>) -> ScenarioOutcome {
+        self.detail = Some(detail.into());
+        self
     }
 }
 
@@ -785,20 +837,33 @@ impl EvalReport {
             .count()
     }
 
-    /// The scenarios that failed, named, in corpus order.
+    /// The scenarios that skipped: the surface each drives is absent on
+    /// this machine. Neither passed nor failed — the report names the
+    /// skip and the corpus's score divides them out.
+    pub fn skipped(&self) -> usize {
+        self.scenarios
+            .iter()
+            .filter(|scenario| scenario.skipped)
+            .count()
+    }
+
+    /// The scenarios that failed, named, in corpus order. A skipped
+    /// scenario is not a failure: its surface was absent, not regressed.
     pub fn failed(&self) -> Vec<&ScenarioOutcome> {
         self.scenarios
             .iter()
-            .filter(|scenario| !scenario.passed)
+            .filter(|scenario| !scenario.passed && !scenario.skipped)
             .collect()
     }
 
     /// The aggregate score: `passed / total`, or 1.0 for an empty corpus.
+    /// A skip divides out — the score grades the scenarios that could run.
     pub fn score(&self) -> f64 {
-        if self.scenarios.is_empty() {
+        let run = self.scenarios.len() - self.skipped();
+        if run == 0 {
             return 1.0;
         }
-        self.passed() as f64 / self.scenarios.len() as f64
+        self.passed() as f64 / run as f64
     }
 
     /// Whether the corpus is green: every scenario passed.
@@ -829,6 +894,7 @@ impl EvalReport {
                     family: scenario.family.clone(),
                     passed: scenario.passed,
                     failure: scenario.failure.clone(),
+                    skipped: scenario.skipped,
                 })
                 .collect(),
             // The judged artifact's identity: the corpus's own fixed
@@ -1217,12 +1283,21 @@ pub fn render(report: &EvalReport) -> String {
     } else {
         format!("{WARN}regression{RESET}")
     };
+    let skipped = report.skipped();
     out.push_str(&format!(
         "{BOLD}fleet eval{RESET} {DIM}\u{2014} {} scenario{} \u{b7} score {:.2} \u{b7} {verdict}{RESET}\n\n",
         report.scenarios.len(),
         plural(report.scenarios.len()),
         report.score(),
     ));
+    if skipped > 0 {
+        out.push_str(&format!(
+            "{DIM}{} scenario{} skipped \u{2014} the surface {} absent on this machine; the score grades the rest{RESET}\n\n",
+            skipped,
+            plural(skipped),
+            if skipped == 1 { "is" } else { "are" },
+        ));
+    }
     // The one machine-readable line the improve gate's subprocess probe
     // reads back: the run's score, on every run, green or red. The
     // contrast is only meaningful if the probe never has to guess.
@@ -1242,7 +1317,9 @@ pub fn render(report: &EvalReport) -> String {
 }
 
 fn scenario_card(scenario: &ScenarioOutcome) -> String {
-    let (state, color) = if scenario.passed {
+    let (state, color) = if scenario.skipped {
+        ("skip", DIM)
+    } else if scenario.passed {
         ("pass", OK)
     } else {
         ("FAIL", WARN)
@@ -1257,7 +1334,18 @@ fn scenario_card(scenario: &ScenarioOutcome) -> String {
         scenario.family
     )];
     if let Some(failure) = &scenario.failure {
-        lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{failure}{RESET}"));
+        // A skip is not a failure: the reason rides the same slot but
+        // reads dim, beside the skip state, not as a red name.
+        if scenario.skipped {
+            lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{failure}{RESET}"));
+        } else {
+            lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{failure}{RESET}"));
+        }
+    }
+    if let Some(detail) = &scenario.detail {
+        for line in detail.lines() {
+            lines.push(format!("{DIM}\u{2502}{RESET} {TEXT}{line}{RESET}"));
+        }
     }
     let bottom = format!(
         "{DIM}\u{2514}{}\u{2518}{RESET}",
@@ -1287,7 +1375,9 @@ pub fn render_last(root: &Path) -> String {
         row.ts, row.passed, row.failed, row.score
     ));
     for scenario in &row.scenarios {
-        let (state, color) = if scenario.passed {
+        let (state, color) = if scenario.skipped {
+            ("skip", DIM)
+        } else if scenario.passed {
             ("pass", OK)
         } else {
             ("FAIL", WARN)
@@ -1298,7 +1388,14 @@ pub fn render_last(root: &Path) -> String {
             name = scenario.scenario,
         );
         if !scenario.failure.is_empty() {
-            line.push_str(&format!("  {WARN}\u{2014} {}{RESET}", scenario.failure));
+            // A skip's reason reads dim, beside the skip state — the same
+            // slot the failure rides, never a red name for an absent
+            // surface.
+            if scenario.skipped {
+                line.push_str(&format!("  {DIM}\u{2014} {}{RESET}", scenario.failure));
+            } else {
+                line.push_str(&format!("  {WARN}\u{2014} {}{RESET}", scenario.failure));
+            }
         }
         out.push_str(&line);
         out.push('\n');
@@ -5762,6 +5859,8 @@ mod tests {
             family: "tool-loop".to_string(),
             passed,
             failure: (!passed).then(|| format!("{name} broke").to_string()),
+            skipped: false,
+            detail: None,
         }
     }
 
