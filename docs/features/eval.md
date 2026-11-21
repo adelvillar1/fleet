@@ -182,6 +182,31 @@ its status leaves `open`. The bare form names the repo's own
 family) and writes nothing; `--ledger` points the read at a file.
 Either way it is read-only — the human-owned guard, unchanged.
 
+## The design loop (scenario `design-loop-closes`)
+
+One scored scenario closes the design loop end to end: a scratch home and a
+board with the brief; the render goes through the same browser-lane capture the
+product launches (`obscura`, discovered live, not mocked); the **defect is read
+from the render's own pixels** — the brief's coffee band measured at its real
+coverage, printed to a tenth of a percent; the review is recorded on the board;
+the revision lands as live content and a version; the second capture is compared
+to the first **by a measured pixel delta**, threshold 0.50. Every step names
+itself and its measurement; a fault names which link broke, first-fail.
+
+Two honesty rules came out of the no-op proof (the revision forced back equal to
+version one):
+
+- **"A revision landed" is arithmetic, not faith** — with Δ = 0.000 the
+  scenario fails by name: `the revision changed nothing: delta 0.000`.
+- **The sentence must read the measurement it carries** — the red run exposed a
+  sentence composed before its own check, printing "the defect is fixed" over a
+  0.2% band. The line now reads the coverage: *fixed* only at ≥ the threshold,
+  and `NOT fixed (needs ≥90%)` otherwise.
+
+Absence of a browser engine is a **named SKIP** with the reason in the detail —
+a skip is not a pass and not a failure. Run it alone with
+`sh scripts/design-eval.sh`.
+
 ## Deliberately not built
 
 - **sdm1's turn-duration prediction** — a learned model of how long a

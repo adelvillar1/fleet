@@ -784,6 +784,9 @@ pub fn corpus() -> Vec<Scenario> {
         Scenario::new("improve-lesson-store", ScenarioFamily::Improve, |bin| {
             Box::pin(improve_lesson_store(bin))
         }),
+        Scenario::new("design-loop-closes", ScenarioFamily::DesignLoop, |bin| {
+            Box::pin(design_loop_closes(bin))
+        }),
     ]
 }
 
@@ -5627,7 +5630,853 @@ async fn blend1_corpus_recall(mock_bin: PathBuf) -> ScenarioOutcome {
     )
 }
 
-// --- the gaps (C6) ------------------------------------------------------------
+// --- the design loop (P5) ---------------------------------------------------
+
+/// The design loop's brief: what the owner proposes on the board, and
+/// what the review reads the render against. It names one measurable
+/// fact — the coffee band `#4B2E2A` filling the frame — so the review's
+/// defect comes from the render's own pixels, never from taste.
+const DESIGN_BRIEF: &str = "Landing hero for Morning Roast: the whole frame is one coffee band, \
+     #4B2E2A, edge to edge — no white anywhere.";
+
+/// The first page the designer's fixture lands: it answers the brief's
+/// subject but not its band — the defect the review must catch. A real
+/// run's first render is a model's work; here the page is a fixture and
+/// the loop's graded surface is everything around it (see the driver's
+/// doc comment).
+const DESIGN_PAGE_ONE: &str = concat!(
+    "<!doctype html><html><head><meta charset=\"utf-8\">",
+    "<style>html,body{margin:0;padding:0;width:100%;height:100%;",
+    "background:#FFFFFF;font-family:Georgia,serif}</style></head>",
+    "<body><h1 style=\"margin:24px;color:#1A1A1A\">Morning Roast</h1>",
+    "<p style=\"margin:24px;color:#333333\">Fresh coffee, every morning.</p></body></html>"
+);
+
+/// The revision: the brief's band, edge to edge. What a live model would
+/// derive from the review's named defect, staged so the loop's other
+/// links are graded offline.
+const DESIGN_PAGE_TWO: &str = concat!(
+    "<!doctype html><html><head><meta charset=\"utf-8\">",
+    "<style>html,body{margin:0;padding:0;width:100%;height:100%;",
+    "background:#4B2E2A;font-family:Georgia,serif}</style></head>",
+    "<body><h1 style=\"margin:24px;color:#F5EDE4\">Morning Roast</h1></body></html>"
+);
+
+/// The band the brief names, RGB of `#4B2E2A`.
+const DESIGN_BAND: [u8; 3] = [0x4B, 0x2E, 0x2A];
+
+/// The per-channel distance still inside the band (and still "the same
+/// pixel" for the delta). Antialiasing and color management live inside
+/// this margin; the band itself is far outside it.
+const DESIGN_CHANNEL_TOLERANCE: i32 = 24;
+
+/// The seeded defect's ceiling: the first render may be at most this
+/// much band before the review's premise fails. A white page measures
+/// ~0; anything near this means the fixture did not stage the defect.
+const DESIGN_BAND_DEFECT_MAX: f64 = 0.10;
+
+/// The revision's floor: the fixed render must be at least this much
+/// band. A full-bleed band measures ~1 (the headline's few pixels are
+/// the only ones outside it).
+const DESIGN_BAND_FIXED_MIN: f64 = 0.90;
+
+/// The delta's floor: the revision must move at least this share of the
+/// render's pixels. White-to-band moves essentially all of them; a
+/// no-op revision measures exactly 0.000 and fails by name.
+const DESIGN_DELTA_MIN: f64 = 0.50;
+
+/// One browser engine the lane could launch: which one, and the binary
+/// that would run. The scenario pre-flights this so a machine without
+/// an engine skips by name instead of failing.
+pub struct BrowserEngine {
+    pub engine: &'static str,
+    pub binary: String,
+}
+
+/// The engine the browser lane would launch right now, by the service's
+/// own rule (the lane child's locator, mirrored): the home's
+/// `config.json` picks the engine — `obscura` unless the owner chose
+/// chrome — and the lane falls back to Chrome only when obscura cannot
+/// start. The probes are the service's own lists: `BROWSER_OBSCURA`,
+/// the home's `bin`, the usual absolute places and PATH for obscura;
+/// `BROWSER_CHROME`, the PATH names, the macOS app bundles and the
+/// puppeteer headless shells for Chrome. `None` when neither is there.
+pub fn browser_engine() -> Option<BrowserEngine> {
+    let obscura = find_obscura().map(|binary| BrowserEngine {
+        engine: "obscura",
+        binary,
+    });
+    if obscura.is_some() {
+        return obscura;
+    }
+    find_chrome().map(|binary| BrowserEngine {
+        engine: "chrome",
+        binary,
+    })
+}
+
+/// The skip reason the design loop grades when no engine is found: it
+/// names the absence, the places probed, and what the scenario would
+/// have proved — the whole point of a named skip.
+pub fn engine_skip_reason() -> String {
+    "the browser lane has no engine to launch — obscura and Chrome were \
+     both absent (looked for BROWSER_OBSCURA, $FLEET_HOME/bin/obscura, \
+     /usr/local/bin/obscura, /opt/homebrew/bin/obscura and `obscura` on \
+     PATH; BROWSER_CHROME, the google-chrome and chromium names on PATH, \
+     the /Applications and ~/Applications app bundles, and the \
+     ~/.cache/puppeteer headless shells). The scenario would have \
+     proved the design loop end to end: a version rendered through the \
+     browser lane's own capture, the render reviewed against the brief \
+     with a defect its pixels name, a revision landing as a version, \
+     and a pixel delta above threshold proving the revision."
+        .to_string()
+}
+
+// The owner's engine choice is read by the lane's own service; the
+// scenario's probe cares only whether SOME engine will launch, which is
+// the outcome of the service's rule (obscura, then Chrome).
+
+/// Executable-file test, unix mode bits included: a path that exists but
+/// cannot run is as absent as one that does not exist.
+fn executable(path: &std::path::Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// First `name` on PATH, the `which` the locators fall back to.
+fn on_path(name: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if executable(&candidate) {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// obscura's binary: the owner's override, the home's bin, the usual
+/// absolute places, then PATH — the lane service's own list.
+fn find_obscura() -> Option<String> {
+    if let Some(override_path) = std::env::var_os("BROWSER_OBSCURA") {
+        let override_path = std::path::PathBuf::from(override_path);
+        return if executable(&override_path) {
+            Some(override_path.to_string_lossy().into_owned())
+        } else {
+            None
+        };
+    }
+    let home = std::env::var("FLEET_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".to_string()))
+        });
+    for candidate in [
+        home.join("bin").join("obscura"),
+        std::path::PathBuf::from("/usr/local/bin/obscura"),
+        std::path::PathBuf::from("/opt/homebrew/bin/obscura"),
+    ] {
+        if executable(&candidate) {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    on_path("obscura")
+}
+
+/// Chrome's binary: the Chrome driver's own list — the override, the
+/// PATH names, the macOS app bundles, then the puppeteer cache's newest
+/// headless shell.
+fn find_chrome() -> Option<String> {
+    if let Some(override_path) = std::env::var_os("BROWSER_CHROME") {
+        let override_path = std::path::PathBuf::from(override_path);
+        return if executable(&override_path) {
+            Some(override_path.to_string_lossy().into_owned())
+        } else {
+            None
+        };
+    }
+    for name in [
+        "google-chrome-stable",
+        "google-chrome",
+        "chromium",
+        "chromium-browser",
+    ] {
+        if let Some(found) = on_path(name) {
+            return Some(found);
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    for bundle in [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        &format!("{home}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        &format!("{home}/Applications/Chromium.app/Contents/MacOS/Chromium"),
+    ] {
+        let candidate = std::path::PathBuf::from(bundle);
+        if executable(&candidate) {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    // The puppeteer cache holds one directory per version and visits in
+    // directory order, not version order — so the candidates collect and
+    // the newest version wins, the way the Chrome driver reads it.
+    let mut shells: Vec<([u64; 4], String)> = Vec::new();
+    let cache = std::path::PathBuf::from(&home).join(".cache/puppeteer");
+    let Ok(entries) = std::fs::read_dir(&cache) else {
+        return None;
+    };
+    for version_dir in entries.flatten() {
+        let Ok(arches) = std::fs::read_dir(version_dir.path()) else {
+            continue;
+        };
+        for arch_dir in arches.flatten() {
+            let Ok(bins) = std::fs::read_dir(arch_dir.path()) else {
+                continue;
+            };
+            for bin in bins.flatten() {
+                let name = bin.file_name().to_string_lossy().into_owned();
+                if !name.starts_with("chrome-headless-shell") || !executable(&bin.path()) {
+                    continue;
+                }
+                let mut parts = [0u64; 4];
+                for (index, part) in version_dir
+                    .file_name()
+                    .to_string_lossy()
+                    .split('.')
+                    .take(4)
+                    .enumerate()
+                {
+                    parts[index] = part.parse().unwrap_or(0);
+                }
+                shells.push((parts, bin.path().to_string_lossy().into_owned()));
+            }
+        }
+    }
+    shells.sort_by_key(|shell| shell.0);
+    shells.pop().map(|(_, path)| path)
+}
+
+/// One capture's decoded raster: the dimensions the PNG declares and its
+/// RGBA pixels, transformed to a single shape so the measurement reads
+/// the same whatever the engine encoded.
+struct Raster {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    channels: usize,
+}
+
+impl Raster {
+    /// The share of pixels whose first three channels sit within
+    /// tolerance of `band`. The brief's one measurable fact.
+    fn coverage(&self, band: [u8; 3]) -> f64 {
+        if self.width == 0 || self.height == 0 || self.channels < 3 {
+            return 0.0;
+        }
+        let total = self.width as u64 * self.height as u64;
+        let hits = self
+            .pixels
+            .chunks(self.channels)
+            .filter(|pixel| {
+                (0..3).all(|c| (pixel[c] as i32 - band[c] as i32).abs() <= DESIGN_CHANNEL_TOLERANCE)
+            })
+            .count() as f64;
+        hits / total as f64
+    }
+
+    /// The share of pixels this raster and `after` disagree on beyond
+    /// tolerance — the arithmetic "a revision landed" is graded by.
+    fn delta(&self, after: &Raster) -> Result<f64, String> {
+        if self.width != after.width || self.height != after.height {
+            return Err(format!(
+                "the captures are not comparable: {}×{} against {}×{}",
+                self.width, self.height, after.width, after.height
+            ));
+        }
+        if self.channels < 3 || after.channels < 3 {
+            return Err("a capture did not decode to RGB".to_string());
+        }
+        let total = self.width as u64 * self.height as u64;
+        let differing = (0..total as usize)
+            .filter(|index| {
+                let before = &self.pixels[index * self.channels..index * self.channels + 3];
+                let after = &after.pixels[index * after.channels..index * after.channels + 3];
+                (0..3)
+                    .any(|c| (before[c] as i32 - after[c] as i32).abs() > DESIGN_CHANNEL_TOLERANCE)
+            })
+            .count() as f64;
+        Ok(differing / total as f64)
+    }
+}
+
+/// Decode one capture: the PNG the engine wrote, transformed to RGBA at
+/// eight bits. A capture that does not parse is a named capture failure,
+/// never a blank frame.
+fn decode_png(bytes: &[u8]) -> Result<Raster, String> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::ALPHA | png::Transformations::STRIP_16);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("the capture does not parse as a PNG: {error}"))?;
+    let size = reader
+        .output_buffer_size()
+        .ok_or_else(|| "the capture names no decodable buffer".to_string())?;
+    let mut buffer = vec![0u8; size];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("the capture's pixels did not decode: {error}"))?;
+    buffer.truncate(info.buffer_size());
+    let channels = info.color_type.samples();
+    if channels < 3 {
+        return Err(format!(
+            "the capture decoded to {:?}; the measurement needs RGB",
+            info.color_type
+        ));
+    }
+    Ok(Raster {
+        width: info.width,
+        height: info.height,
+        pixels: buffer,
+        channels,
+    })
+}
+
+/// The version page, served the way the product's capture route serves
+/// it: a loopback HTTP server whose `/api/design/version/…` path answers
+/// with the DOCUMENT's own html for the named version — read through
+/// `canvas::load`, never a copy — under the same headers the GUI route
+/// sends. This is the one piece the scenario stands in for: the real
+/// route lives in the GUI server, and the scenario grades the lane's
+/// capture, not the GUI's socket handling. One connection per request,
+/// nothing else listening, loopback only.
+struct VersionPages {
+    port: u16,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl VersionPages {
+    fn serve(home: PathBuf) -> Result<VersionPages, String> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .map_err(|error| format!("the loopback version page could not bind: {error}"))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| format!("the loopback version page could not poll: {error}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|error| format!("the loopback version page has no port: {error}"))?
+            .port();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_for_thread = Arc::clone(&stop);
+        let thread = std::thread::spawn(move || {
+            while !stop_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut request = [0u8; 2048];
+                        let read = stream.read(&mut request).unwrap_or(0);
+                        let line = String::from_utf8_lossy(&request[..read]);
+                        let path = line
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or_default()
+                            .to_string();
+                        let rest = path.trim_start_matches("/api/design/version/");
+                        let mut parts = rest.splitn(3, '/');
+                        let slug = parts.next().unwrap_or_default();
+                        let frame_id = parts.next().unwrap_or_default();
+                        let version_id = parts.next().unwrap_or_default();
+                        let html = crate::canvas::load(&home, slug).ok().and_then(|project| {
+                            let frame = project.frames.iter().find(|frame| frame.id == frame_id)?;
+                            let version = frame
+                                .versions
+                                .iter()
+                                .find(|version| version.id == version_id)?;
+                            Some(version.html.clone())
+                        });
+                        match html {
+                            Some(html) => {
+                                let head = format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; \
+                                     charset=utf-8\r\nContent-Length: {}\r\n\
+                                     Connection: close\r\nCache-Control: no-store\r\n\
+                                     X-Content-Type-Options: nosniff\r\n\
+                                     Content-Security-Policy: default-src 'none'; \
+                                     style-src 'unsafe-inline'; img-src data: https:; \
+                                     font-src data:; script-src 'none'; \
+                                     frame-ancestors 'none'; base-uri 'none'; \
+                                     form-action 'none'\r\n\r\n",
+                                    html.len()
+                                );
+                                let _ = stream.write_all(head.as_bytes());
+                                let _ = stream.write_all(html.as_bytes());
+                            }
+                            None => {
+                                let _ = stream.write_all(
+                                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\
+                                      Connection: close\r\n\r\n",
+                                );
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                }
+            }
+        });
+        Ok(VersionPages {
+            port,
+            stop,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for VersionPages {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// The id of a frame's newest version carrying `html` — the version id
+/// the capture names. A version is the writer's own snapshot of that
+/// content; a page the document does not carry as a version is a named
+/// failure, never a guessed id.
+fn design_version_of(
+    home: &Path,
+    slug: &str,
+    frame_id: &str,
+    html: &str,
+) -> Result<String, String> {
+    let project = crate::canvas::load(home, slug)?;
+    let frame = project
+        .frames
+        .iter()
+        .find(|frame| frame.id == frame_id)
+        .ok_or_else(|| format!("no frame `{frame_id}` on the board"))?;
+    frame
+        .versions
+        .iter()
+        .rev()
+        .find(|version| version.html == html)
+        .map(|version| version.id.clone())
+        .ok_or_else(|| "the page carries no version yet".to_string())
+}
+
+/// One capture, the product's own sequence: the browser lane spawns for
+/// this one capture (the way the face's capture drives it), opens the
+/// version page at the frame's route, screenshots it at the frame's own
+/// size into the versions root, and lands the bytes on the version with
+/// `record_version_image`. The pixels come from the engine the lane
+/// launched — never a hand-written PNG. Returns the file's name beside
+/// the board and its decoded raster.
+async fn design_capture(
+    home: &Path,
+    slug: &str,
+    frame_id: &str,
+    version_id: &str,
+    width: f64,
+    height: f64,
+    port: u16,
+) -> Result<(String, Raster), String> {
+    let lane_home = crate::lanes::services_root()
+        .map_err(|error| {
+            format!(
+                "the bundled browser service is missing ({error}); the capture \
+                 has no lane to drive"
+            )
+        })?
+        .join("browser");
+    let lane = crate::lanes::LANES
+        .iter()
+        .find(|lane| lane.name == "browser")
+        .ok_or_else(|| "no lane named `browser`".to_string())?;
+    let spec = crate::lanes::launch_spec(lane, &lane_home);
+    let server = crate::mcp::McpServer::spawn(&spec)
+        .map_err(|error| format!("the browser lane could not start: {error}"))?;
+    let result = async {
+        server
+            .initialize()
+            .await
+            .map_err(|error| format!("the browser lane did not answer: {error}"))?;
+        let url =
+            format!("http://127.0.0.1:{port}/api/design/version/{slug}/{frame_id}/{version_id}");
+        let opened = server
+            .call_tool("browser_navigate", json!({ "url": url }))
+            .await
+            .map_err(|error| format!("the version page did not open: {error}"))?;
+        if opened.is_error {
+            return Err(format!("the version page did not open: {}", opened.text()));
+        }
+        let dir = crate::canvas::versions_root(home, slug);
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+        let path = dir.join(format!("{version_id}.png"));
+        let shot = server
+            .call_tool(
+                "browser_screenshot",
+                json!({
+                    "path": path.display().to_string(),
+                    "width": width as i64,
+                    "height": height as i64,
+                }),
+            )
+            .await
+            .map_err(|error| format!("the version page did not capture: {error}"))?;
+        if shot.is_error {
+            return Err(format!("the version page did not capture: {}", shot.text()));
+        }
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("the capture did not land: {error}"))?;
+        if bytes.is_empty() {
+            return Err("the capture landed empty".to_string());
+        }
+        let name = crate::canvas::record_version_image(home, slug, frame_id, version_id, &bytes)
+            .map_err(|error| format!("the capture could not be recorded: {error}"))?;
+        let raster = decode_png(&bytes)?;
+        Ok((name, raster))
+    }
+    .await;
+    let _ = server.close().await;
+    result
+}
+
+/// The design loop, scored end to end — the plan's P5 clause, the last
+/// unbuilt one. The brief proposes the design on a scratch board, the
+/// version renders through the browser lane's own capture, the render
+/// is reviewed against the brief with a defect its pixels name, the
+/// revision lands, and the delta between the two captures proves it by
+/// a measured pixel count.
+///
+/// Offline by construction: no model call, no network beyond loopback,
+/// no live provider. What the scenario grades is the loop's
+/// record-keeping chain — the capture lands beside the board and
+/// carries the frame's pixels, the review's defect is measured from
+/// that capture and lands on the document, the revision's version
+/// exists, and the delta is arithmetic. What a live provider would add
+/// — proposing the first page from the brief, deriving the fix from the
+/// named defect — is the one link outside the graded surface, staged
+/// here as fixtures that are still rendered by the real engine.
+async fn design_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "design-loop-closes";
+    let family = ScenarioFamily::DesignLoop;
+    let mut steps: Vec<String> = Vec::new();
+
+    // The pre-flight: the engine the lane would launch. Absent, the
+    // scenario skips — named, never a silent pass and never a red run.
+    let Some(engine) = browser_engine() else {
+        let reason = engine_skip_reason();
+        return ScenarioOutcome::skip(NAME, family, reason.clone())
+            .with_detail(format!("brief: {DESIGN_BRIEF}\n{reason}\nverdict: SKIP"));
+    };
+    steps.push(format!(
+        "engine: {} at {} — the lane launches it the way the product does",
+        engine.engine, engine.binary
+    ));
+
+    // Seed: a scratch home, one board, the brief in the board's own
+    // conversation, and the first page on it at the frame's size.
+    let home = match scratch_dir("design-loop") {
+        Ok(dir) => dir,
+        Err(error) => {
+            return ScenarioOutcome::fail(
+                NAME,
+                family,
+                format!("setup: the scratch home could not be made: {error}"),
+            )
+        }
+    };
+    let seed = (|| -> Result<(String, String), String> {
+        let (slug, _) = crate::canvas::create(&home, "Morning Roast")?;
+        crate::canvas::append_chat(&home, &slug, "owner", DESIGN_BRIEF, &[])?;
+        let frame_id = crate::canvas::put_frame_sized(
+            &home,
+            &slug,
+            "Morning Roast hero",
+            DESIGN_PAGE_ONE,
+            None,
+            None,
+            "eval-fixture",
+            Some((480.0, 320.0)),
+        )?;
+        Ok((slug, frame_id))
+    })();
+    let (slug, frame_id) = match seed {
+        Ok(pair) => pair,
+        Err(error) => {
+            std::fs::remove_dir_all(&home).ok();
+            return ScenarioOutcome::fail(NAME, family, format!("setup: {error}"));
+        }
+    };
+    steps.push(format!(
+        "brief: proposed on the board `{slug}` ({frame_id}) — {DESIGN_BRIEF}"
+    ));
+
+    // The version page, served from the document for the lane to open.
+    let pages = match VersionPages::serve(home.clone()) {
+        Ok(pages) => pages,
+        Err(error) => {
+            std::fs::remove_dir_all(&home).ok();
+            return ScenarioOutcome::fail(NAME, family, format!("setup: {error}"));
+        }
+    };
+
+    // The loop, one link at a time: capture → review → revision →
+    // capture → delta → review. Every fault is a named link failure the
+    // report stops measuring at.
+    let graded = async {
+        let version_one = design_version_of(&home, &slug, &frame_id, DESIGN_PAGE_ONE)
+            .map_err(|error| ("setup".to_string(), error))?;
+        let (name_one, raster_one) = design_capture(
+            &home,
+            &slug,
+            &frame_id,
+            &version_one,
+            480.0,
+            320.0,
+            pages.port,
+        )
+        .await
+        .map_err(|error| ("capture".to_string(), error))?;
+        steps.push(format!(
+            "capture v1: landed beside the board as {name_one}, {}×{} px",
+            raster_one.width, raster_one.height
+        ));
+
+        // Review v1: the defect comes from the render's own pixels.
+        let coverage_one = raster_one.coverage(DESIGN_BAND);
+        let defect = format!(
+            "the brief's coffee band covers {:.1}% of the render; the brief \
+             demands it fill the frame — defect: the band is missing",
+            coverage_one * 100.0
+        );
+        let review = json!({
+            "summary": defect,
+            "measured": { "band_coverage": coverage_one },
+            "at": crate::calib::stamp(),
+        });
+        crate::canvas::put_review(&home, &slug, &frame_id, review).map_err(|error| {
+            (
+                "review".to_string(),
+                format!("the verdict could not be recorded: {error}"),
+            )
+        })?;
+        steps.push(format!(
+            "review v1: DEFECT — {defect} (measured from the capture)"
+        ));
+
+        // The revision: the fix becomes the frame's live content, and
+        // the writer snapshots what it replaced. A version carrying the
+        // fixed page itself is the snapshot the writer makes on the
+        // next write — every version capture names a version id, and
+        // the document has no other way to carry a version of the live
+        // page — so the revision lands with the same call twice: the
+        // first takes the fix live, the second makes it a version.
+        for _ in 0..2 {
+            crate::canvas::put_frame(
+                &home,
+                &slug,
+                "Morning Roast hero",
+                DESIGN_PAGE_TWO,
+                None,
+                Some(&frame_id),
+                "eval-fixture",
+            )
+            .map_err(|error| ("revision".to_string(), error))?;
+        }
+        let live_is_fixed = crate::canvas::load(&home, &slug)
+            .ok()
+            .and_then(|project| {
+                project
+                    .frames
+                    .iter()
+                    .find(|frame| frame.id == frame_id)
+                    .map(|frame| frame.html == DESIGN_PAGE_TWO)
+            })
+            .unwrap_or(false);
+        if !live_is_fixed {
+            return Err((
+                "revision".to_string(),
+                "the frame's live content is not the revision".to_string(),
+            ));
+        }
+        let version_two = design_version_of(&home, &slug, &frame_id, DESIGN_PAGE_TWO)
+            .map_err(|error| ("revision".to_string(), error))?;
+        steps.push(format!(
+            "revision: landed as {version_two} — the brief's band, edge to edge"
+        ));
+
+        // Capture v2, through the same lane sequence.
+        let (name_two, raster_two) = design_capture(
+            &home,
+            &slug,
+            &frame_id,
+            &version_two,
+            480.0,
+            320.0,
+            pages.port,
+        )
+        .await
+        .map_err(|error| ("capture".to_string(), error))?;
+        steps.push(format!(
+            "capture v2: landed beside the board as {name_two}, {}×{} px",
+            raster_two.width, raster_two.height
+        ));
+
+        // The delta: "a revision landed" is arithmetic.
+        let changed = raster_one
+            .delta(&raster_two)
+            .map_err(|error| ("delta".to_string(), error))?;
+        steps.push(format!(
+            "delta: {:.1}% of pixels moved (threshold {:.0}%)",
+            changed * 100.0,
+            DESIGN_DELTA_MIN * 100.0
+        ));
+
+        // Review v2: the named defect, re-measured against what the
+        // pixels actually show. A 0.2% band is not "fixed", whatever the
+        // delta said — the sentence must read the measurement it carries.
+        let coverage_two = raster_two.coverage(DESIGN_BAND);
+        let fixed = coverage_two >= DESIGN_BAND_FIXED_MIN;
+        let fixed_line = if fixed {
+            format!(
+                "review v2: band coverage {:.1}% — the defect is fixed",
+                coverage_two * 100.0
+            )
+        } else {
+            format!(
+                "review v2: band coverage {:.1}% — the defect is NOT fixed (needs ≥{:.0}%)",
+                coverage_two * 100.0,
+                DESIGN_BAND_FIXED_MIN * 100.0
+            )
+        };
+        if fixed {
+            let review = json!({
+                "summary": fixed_line.clone(),
+                "measured": { "band_coverage": coverage_two },
+                "at": crate::calib::stamp(),
+            });
+            let _ = crate::canvas::put_review(&home, &slug, &frame_id, review);
+        }
+        steps.push(fixed_line);
+
+        // The grade, first-fail with each link named, the measurement
+        // in the label. A `true` whose step cannot reach the grade
+        // (each capture, the revision) already failed above by link.
+        Ok(vec![
+            (
+                format!(
+                    "capture: v1's PNG landed beside the board ({}×{} px, {name_one})",
+                    raster_one.width, raster_one.height
+                ),
+                true,
+            ),
+            (
+                format!(
+                    "review: the render's defect reproduced (band coverage \
+                     {:.1}% < {:.0}%)",
+                    coverage_one * 100.0,
+                    DESIGN_BAND_DEFECT_MAX * 100.0
+                ),
+                coverage_one < DESIGN_BAND_DEFECT_MAX,
+            ),
+            (
+                "review: the verdict landed on the document".to_string(),
+                crate::canvas::load(&home, &slug)
+                    .ok()
+                    .and_then(|project| {
+                        project
+                            .frames
+                            .iter()
+                            .find(|frame| frame.id == frame_id)
+                            .map(|frame| frame.review.is_some())
+                    })
+                    .unwrap_or(false),
+            ),
+            (
+                format!("revision: the fixed page landed as {version_two}"),
+                true,
+            ),
+            (
+                format!(
+                    "capture: v2's PNG landed beside the board ({}×{} px, {name_two})",
+                    raster_two.width, raster_two.height
+                ),
+                true,
+            ),
+            (
+                if changed == 0.0 {
+                    "the revision changed nothing: delta 0.000".to_string()
+                } else {
+                    format!(
+                        "delta: the revision changed {:.1}% of the render's \
+                         pixels (threshold {:.0}%)",
+                        changed * 100.0,
+                        DESIGN_DELTA_MIN * 100.0
+                    )
+                },
+                changed > DESIGN_DELTA_MIN,
+            ),
+            (
+                format!(
+                    "review: the named defect is fixed (band coverage {:.1}% \
+                     ≥ {:.0}%)",
+                    coverage_two * 100.0,
+                    DESIGN_BAND_FIXED_MIN * 100.0
+                ),
+                fixed,
+            ),
+        ])
+    }
+    .await;
+
+    drop(pages);
+    std::fs::remove_dir_all(&home).ok();
+    match graded {
+        Err((link, reason)) => {
+            let label = format!("{link}: {reason}");
+            let detail = format!(
+                "brief: {DESIGN_BRIEF}\n{}\nverdict: FAIL — {label}",
+                steps.join("\n")
+            );
+            ScenarioOutcome::fail(NAME, family, label).with_detail(detail)
+        }
+        Ok(checks) => match checks.iter().find(|(_, ok)| !ok) {
+            Some((label, _)) => {
+                let detail = format!(
+                    "brief: {DESIGN_BRIEF}\n{}\nverdict: FAIL — {label}",
+                    steps.join("\n")
+                );
+                ScenarioOutcome::fail(NAME, family, label.clone()).with_detail(detail)
+            }
+            None => {
+                let detail = format!(
+                    "brief: {DESIGN_BRIEF}\n{}\nverdict: PASS — the design loop \
+                     closed: capture, review, revision and delta all measured",
+                    steps.join("\n")
+                );
+                ScenarioOutcome::pass(NAME, family).with_detail(detail)
+            }
+        },
+    }
+}
 
 /// One uncovered class: a failure class the stream shows that the
 /// corpus does not grade. The article's jaggedness rule — test the
@@ -5755,6 +6604,179 @@ pub fn promote(home: &Path, gap: &Gap) -> Result<std::path::PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- the design loop's measurements (P5) -------------------------------
+
+    /// The engine probe's skip: a machine with neither engine must skip
+    /// with a reason that names both the absence and what would have
+    /// been proved — never a silent pass, never a red run.
+    #[test]
+    fn a_missing_engine_skips_with_the_proof_named() {
+        let reason = engine_skip_reason();
+        assert!(reason.contains("no engine"), "{reason}");
+        // The skip names what would have been proved: the loop's links.
+        assert!(reason.contains("capture"), "{reason}");
+        assert!(reason.contains("review"), "{reason}");
+        assert!(reason.contains("revision"), "{reason}");
+        assert!(reason.contains("delta"), "{reason}");
+        // And the skip itself is neither a pass nor a red failure.
+        let outcome =
+            ScenarioOutcome::skip("design-loop-closes", ScenarioFamily::DesignLoop, &reason);
+        assert!(outcome.skipped);
+        assert!(!outcome.passed);
+        assert!(
+            outcome
+                .failure
+                .as_deref()
+                .is_some_and(|failure| failure.starts_with("skipped:")),
+            "{:?}",
+            outcome.failure
+        );
+        // The report math: a skip divides out, keeps the corpus green.
+        let report = EvalReport::from(vec![
+            ScenarioOutcome::pass("other", ScenarioFamily::ToolLoop),
+            ScenarioOutcome::skip("design-loop-closes", ScenarioFamily::DesignLoop, &reason),
+        ]);
+        assert_eq!(report.skipped(), 1);
+        assert!(report.failed().is_empty());
+        assert!(report.green());
+        assert!((report.score() - 1.0).abs() < 1e-9, "{}", report.score());
+    }
+
+    /// The review's defect is arithmetic on the render's own pixels: a
+    /// white render names a missing band, a band-filled render names it
+    /// fixed, and an identical pair measures delta 0.000 — the red-proof
+    /// shape, as numbers.
+    #[test]
+    fn the_review_reads_a_defect_from_the_pixels_it_names() {
+        let white = Raster {
+            width: 4,
+            height: 4,
+            pixels: vec![255u8; 64],
+            channels: 4,
+        };
+        let banded = Raster {
+            width: 4,
+            height: 4,
+            pixels: {
+                let pixels = [0x4Bu8, 0x2E, 0x2A, 255].to_vec();
+                pixels.repeat(16)
+            },
+            channels: 4,
+        };
+        assert!(
+            white.coverage(DESIGN_BAND) < DESIGN_BAND_DEFECT_MAX,
+            "{}",
+            white.coverage(DESIGN_BAND)
+        );
+        assert!(
+            banded.coverage(DESIGN_BAND) >= DESIGN_BAND_FIXED_MIN,
+            "{}",
+            banded.coverage(DESIGN_BAND)
+        );
+        // The revision that changed everything moves every pixel.
+        let delta = white.delta(&banded).unwrap();
+        assert!((delta - 1.0).abs() < 1e-9, "{delta}");
+        // The red-proof shape: a revision that is a copy measures zero.
+        let same = white.delta(&white).unwrap();
+        assert_eq!(same, 0.0);
+        // And two rasters of different shapes are not comparable.
+        let tall = Raster {
+            width: 2,
+            height: 8,
+            pixels: vec![0; 64],
+            channels: 4,
+        };
+        assert!(white.delta(&tall).is_err());
+    }
+
+    /// A capture decodes through the same path the engine's PNG takes:
+    /// encode an RGBA PNG (the way a screenshot is written), decode it,
+    /// and read the band off it.
+    #[test]
+    fn a_capture_decodes_and_reads_the_band() {
+        let width = 3;
+        let height = 2;
+        let mut png = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            // The full frame at once: the encoder writes every row's
+            // pixels from one buffer, not one row per call.
+            let mut pixels = Vec::new();
+            for _ in 0..height {
+                pixels.extend_from_slice(&[0x4B, 0x2E, 0x2A, 255]);
+                pixels.extend_from_slice(&[0x4B, 0x2E, 0x2A, 255]);
+                pixels.extend_from_slice(&[255, 255, 255, 255]);
+            }
+            writer.write_image_data(&pixels).unwrap();
+        }
+        let raster = decode_png(&png).expect("the capture decodes");
+        assert_eq!(raster.width, width);
+        assert_eq!(raster.height, height);
+        // Two of three pixels are band: 0.667, the arithmetic the review
+        // grades a defect from.
+        let coverage = raster.coverage(DESIGN_BAND);
+        assert!((coverage - 2.0 / 3.0).abs() < 1e-9, "{coverage}");
+        assert!(decode_png(b"not a png").is_err());
+    }
+
+    /// The version page serves the DOCUMENT's own html — read through
+    /// `canvas::load`, never a copy — and names a missing version 404.
+    #[test]
+    fn the_version_page_serves_the_documents_own_html() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-eval-design-page-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        let (slug, _) = crate::canvas::create(&home, "Morning Roast").unwrap();
+        let frame_id = crate::canvas::put_frame_sized(
+            &home,
+            &slug,
+            "hero",
+            DESIGN_PAGE_ONE,
+            None,
+            None,
+            "eval-fixture",
+            Some((480.0, 320.0)),
+        )
+        .unwrap();
+        let version_id = design_version_of(&home, &slug, &frame_id, DESIGN_PAGE_ONE).unwrap();
+        let pages = VersionPages::serve(home.clone()).unwrap();
+
+        let read = |path: String| -> String {
+            use std::io::{Read, Write};
+            let mut stream = std::net::TcpStream::connect(("127.0.0.1", pages.port)).unwrap();
+            stream
+                .write_all(format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").as_bytes())
+                .unwrap();
+            let mut text = String::new();
+            let _ = stream.read_to_string(&mut text);
+            text
+        };
+
+        let good = read(format!(
+            "/api/design/version/{slug}/{frame_id}/{version_id}"
+        ));
+        assert!(good.starts_with("HTTP/1.1 200 OK"), "{good}");
+        assert!(
+            good.contains("Content-Security-Policy: default-src 'none'"),
+            "{good}"
+        );
+        assert!(good.ends_with(DESIGN_PAGE_ONE), "{good}");
+        let missing = read(format!("/api/design/version/{slug}/{frame_id}/v-nope"));
+        assert!(missing.starts_with("HTTP/1.1 404 Not Found"), "{missing}");
+
+        drop(pages);
+        std::fs::remove_dir_all(&home).ok();
+    }
 
     // --- KI-446: the mock child follows wherever cargo built ---------------
 
@@ -5932,6 +6954,7 @@ mod tests {
                 "dependency-graph",
                 "delta-replan",
                 "improve-lesson-store",
+                "design-loop-closes",
             ]
         );
     }

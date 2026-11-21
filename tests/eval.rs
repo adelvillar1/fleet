@@ -42,17 +42,18 @@ async fn the_corpus_runs_green_and_lands_a_queryable_row() {
     let report = eval::run(&root, &mock_bin()).await;
 
     // Every scenario in the fixed corpus passes on the current code, and
-    // the run is deterministic: twenty-one scenarios, score 1.0, no
-    // regression.
+    // the run is deterministic: twenty-two scenarios, score 1.0, no
+    // regression — a scenario whose surface is absent skips by name and
+    // divides out of the score, never red.
     assert!(
         report.green(),
         "the corpus regressed: {:?}",
         report.failed()
     );
-    assert_eq!(report.scenarios.len(), 21);
+    assert_eq!(report.scenarios.len(), 22);
     assert_eq!(report.score(), 1.0);
 
-    // The three fork families plus the three everyday shapes are all here.
+    // The three fork families plus the everyday shapes are all here.
     let families: Vec<&str> = report
         .scenarios
         .iter()
@@ -71,6 +72,7 @@ async fn the_corpus_runs_green_and_lands_a_queryable_row() {
         "delegation",
         "nomenclature",
         "improve",
+        "design-loop",
     ] {
         assert!(
             families.contains(&family),
@@ -82,11 +84,24 @@ async fn the_corpus_runs_green_and_lands_a_queryable_row() {
     // verdicts and the aggregate score — the corpus's scores are queryable.
     let row = eval::last_row(&root).expect("the eval row landed");
     assert_eq!(row.op, calib::OP_EVAL_CORPUS);
-    assert_eq!(row.passed, 21);
     assert_eq!(row.failed, 0);
     assert_eq!(row.score, 1.0);
-    assert_eq!(row.scenarios.len(), 21);
-    assert!(row.scenarios.iter().all(|scenario| scenario.passed));
+    assert_eq!(row.scenarios.len(), 22);
+    // Every scenario passed or skipped by name; the aggregate counts the
+    // runs that could run.
+    assert!(
+        row.scenarios
+            .iter()
+            .all(|scenario| scenario.passed || scenario.skipped),
+        "{:?}",
+        row.scenarios
+    );
+    let skipped = row
+        .scenarios
+        .iter()
+        .filter(|scenario| scenario.skipped)
+        .count();
+    assert_eq!(row.passed + skipped, 22);
 
     // The judged artifact's identity rides the row: the corpus's own
     // fixed definition, hashed — the key an explanation joins on.
@@ -122,8 +137,12 @@ async fn a_broken_scenario_injected_through_the_seam_fails_with_its_name() {
         .unwrap();
     assert!(!broken.passed);
     assert_eq!(broken.failure.as_deref(), Some("the seam broke it"));
-    // The real scenarios beside it still passed.
-    assert_eq!(report.passed(), 21);
+    // The real scenarios beside it still passed (a scenario whose
+    // surface is absent skips, which is not a pass and not a failure —
+    // passed plus skipped covers every scenario that could run; the
+    // count is taken from the corpus itself, not a literal, so adding
+    // a scenario to `corpus()` cannot redden this seam test).
+    assert_eq!(report.passed() + report.skipped(), scenarios.len() - 1);
     assert_eq!(report.failed().len(), 1);
 }
 
