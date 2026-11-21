@@ -238,6 +238,15 @@ pub const SETTINGS: &[Setting] = &[
                   override of the door, not the only one.",
     },
     Setting {
+        key: "channels.hold",
+        kind: Kind::Text,
+        file: File::Config,
+        summary: "Comma-separated channel names and `channel:peer` keys whose inbound \
+                  deliveries wait for the owner's inbox decision instead of running at once — \
+                  `webhook`, or `webhook:abc` for one peer. Empty is the default: every \
+                  delivery auto-runs.",
+    },
+    Setting {
         key: "update_last_check",
         kind: Kind::Text,
         file: File::Config,

@@ -45,10 +45,13 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod held;
 pub mod outbox;
 pub mod service;
 pub mod telegram;
 pub mod webhook;
+
+pub use held::{Hold, HoldStore};
 
 pub use service::{ChannelReport, ChannelService, Config as ServiceConfig, Phase, Status};
 
@@ -114,6 +117,9 @@ pub enum Refusal {
     Unknown,
     /// The peer is paired but may only listen.
     ObserveOnly,
+    /// The peer is configured to hold: the delivery is filed for the
+    /// owner's decision, not refused, and the peer is told so.
+    Held,
 }
 
 impl std::fmt::Display for Refusal {
@@ -124,6 +130,12 @@ impl std::fmt::Display for Refusal {
                 write!(
                     out,
                     "that peer may only listen; it cannot hand fleet a task"
+                )
+            }
+            Refusal::Held => {
+                write!(
+                    out,
+                    "the delivery is held for the owner's decision; it will be accepted or declined from the inbox"
                 )
             }
         }

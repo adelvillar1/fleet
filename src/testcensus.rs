@@ -41,6 +41,7 @@ pub(crate) const MODULES: &[(&str, &str)] = &[
     ("canvas.rs", include_str!("canvas.rs")),
     ("capabilities.rs", include_str!("capabilities.rs")),
     ("catalog.rs", include_str!("catalog.rs")),
+    ("channels/held.rs", include_str!("channels/held.rs")),
     ("channels/mod.rs", include_str!("channels/mod.rs")),
     ("channels/outbox.rs", include_str!("channels/outbox.rs")),
     ("channels/service.rs", include_str!("channels/service.rs")),

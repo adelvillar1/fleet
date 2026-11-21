@@ -34,7 +34,7 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::channels::{Channel, Driver, Inbound, PeerStore, Refusal, Reply, SeatCard};
+use crate::channels::{Channel, Driver, Inbound, Peer, PeerStore, Refusal, Reply, SeatCard};
 use crate::gui::bridge::Bridge;
 
 /// How often a live service refreshes its heartbeat.
@@ -159,7 +159,8 @@ impl Status {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Activity {
     pub at: String,
-    /// `delivery`, `refusal`, `reply`, `seat`, `answer`, or `state`.
+    /// `delivery`, `refusal`, `held`, `reply`, `seat`, `answer`, or
+    /// `state`.
     pub kind: String,
     pub channel: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -245,6 +246,89 @@ pub fn activity(home: &Path, limit: usize) -> Vec<Activity> {
         .into_iter()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
+}
+
+/// One delivery, end to end, with its activity line: the sink's own
+/// body, split out so the inbox's accept can run a held delivery through
+/// the same door the auto-run takes — the driver, the same checks, the
+/// same line in the log — without re-triggering the hold.
+pub fn admit(driver: &Driver, home: &Path, inbound: &Inbound) -> Result<String, Refusal> {
+    let asked = Activity::first_line(&inbound.task);
+    let result = driver.deliver(inbound);
+    let at = crate::boards::now_stamp();
+    match &result {
+        Ok(session) => record(
+            home,
+            Activity {
+                at,
+                kind: "delivery".to_string(),
+                channel: inbound.peer.channel.clone(),
+                peer: Some(inbound.peer.name.clone()),
+                peer_id: Some(inbound.peer.id.clone()),
+                session: Some(session.clone()),
+                task: Some(asked),
+                detail: None,
+            },
+        ),
+        Err(refusal) => record(
+            home,
+            Activity {
+                at,
+                kind: "refusal".to_string(),
+                channel: inbound.peer.channel.clone(),
+                peer: Some(inbound.peer.name.clone()),
+                peer_id: Some(inbound.peer.id.clone()),
+                session: None,
+                task: Some(asked),
+                detail: Some(refusal.to_string()),
+            },
+        ),
+    }
+    result
+}
+
+/// `channels.hold` from the home's config: the channel names and
+/// `channel:peer` keys whose deliveries wait for the owner's decision
+/// instead of running — a comma-separated setting, or an array for a
+/// hand-written config. Anything unreadable or absent is the empty list —
+/// the hold is opt-in, and a config the face cannot read must never turn
+/// into "hold everything".
+fn hold_rules(home: &Path) -> Vec<String> {
+    let text = match std::fs::read_to_string(home.join("config.json")) {
+        Ok(text) => text,
+        Err(_) => return Vec::new(),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(parsed) => parsed,
+        Err(_) => return Vec::new(),
+    };
+    let hold = parsed
+        .get("channels")
+        .and_then(|channels| channels.get("hold"));
+    match hold {
+        // The settings' own writer stores the text knob as one string.
+        Some(serde_json::Value::String(text)) => text
+            .split(',')
+            .map(|rule| rule.trim().to_string())
+            .filter(|rule| !rule.is_empty())
+            .collect(),
+        // A hand-written config may list the rules as an array.
+        Some(serde_json::Value::Array(rules)) => rules
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(|rule| rule.trim().to_string())
+            .filter(|rule| !rule.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Whether this peer's deliveries are held for the owner's decision: the
+/// rule is the channel's name, or `channel:peer` for one peer only.
+pub fn hold_wanted(home: &Path, peer: &Peer) -> bool {
+    hold_rules(home)
+        .iter()
+        .any(|rule| rule == &peer.channel || *rule == format!("{}:{}", peer.channel, peer.id))
 }
 
 /// What a channel is built from: the bridge the deliveries run through,
@@ -526,43 +610,58 @@ impl ChannelService {
     }
 
     /// The sink every plugin hands its deliveries to: the driver, with
-    /// the activity line recorded on both ends of the decision.
+    /// the activity line recorded on both ends of the decision — and,
+    /// ahead of both, the deferral door: a peer configured to hold waits
+    /// for the owner's decision instead of running.
     pub(crate) fn sink(&self) -> Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync> {
         let driver = Arc::clone(&self.driver);
         let home = self.home.clone();
         Arc::new(move |inbound: Inbound| {
-            let asked = Activity::first_line(&inbound.task);
-            let result = driver.deliver(&inbound);
-            let at = crate::boards::now_stamp();
-            match &result {
-                Ok(session) => record(
-                    &home,
-                    Activity {
-                        at,
-                        kind: "delivery".to_string(),
-                        channel: inbound.peer.channel.clone(),
-                        peer: Some(inbound.peer.name.clone()),
-                        peer_id: Some(inbound.peer.id.clone()),
-                        session: Some(session.clone()),
-                        task: Some(asked),
-                        detail: None,
-                    },
-                ),
-                Err(refusal) => record(
-                    &home,
-                    Activity {
-                        at,
-                        kind: "refusal".to_string(),
-                        channel: inbound.peer.channel.clone(),
-                        peer: Some(inbound.peer.name.clone()),
-                        peer_id: Some(inbound.peer.id.clone()),
-                        session: None,
-                        task: Some(asked),
-                        detail: Some(refusal.to_string()),
-                    },
-                ),
+            if hold_wanted(&home, &inbound.peer) {
+                let at = crate::boards::now_stamp();
+                match crate::channels::HoldStore::load(&home)
+                    .ok()
+                    .and_then(|mut store| {
+                        let id = store.file(&inbound, &at);
+                        store.save(&home).ok().map(|_| id)
+                    }) {
+                    Some(id) => record(
+                        &home,
+                        Activity {
+                            at,
+                            kind: "held".to_string(),
+                            channel: inbound.peer.channel.clone(),
+                            peer: Some(inbound.peer.name.clone()),
+                            peer_id: Some(inbound.peer.id.clone()),
+                            session: None,
+                            task: Some(Activity::first_line(&inbound.task)),
+                            detail: Some(id),
+                        },
+                    ),
+                    // The hold could not be filed: the delivery must
+                    // neither run nor vanish, so it is refused with the
+                    // failure said in the log — the owner repairs the
+                    // store, the peer is told to hold on.
+                    None => record(
+                        &home,
+                        Activity {
+                            at,
+                            kind: "refusal".to_string(),
+                            channel: inbound.peer.channel.clone(),
+                            peer: Some(inbound.peer.name.clone()),
+                            peer_id: Some(inbound.peer.id.clone()),
+                            session: None,
+                            task: Some(Activity::first_line(&inbound.task)),
+                            detail: Some(
+                                "the held file could not be written; the delivery was not run"
+                                    .to_string(),
+                            ),
+                        },
+                    ),
+                }
+                return Err(Refusal::Held);
             }
-            result
+            admit(&driver, &home, &inbound)
         })
     }
 
@@ -1086,6 +1185,196 @@ mod tests {
         let peers = peers(&home, "webhook");
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].capability, Capability::Observe);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The hold rules read tolerantly: the settings' own comma-separated
+    /// text, a hand-written array, an absent key, and — the fail-safe —
+    /// a config that cannot be read at all, which must mean auto-run,
+    /// never "hold everything".
+    #[test]
+    fn the_hold_rules_read_tolerantly_and_fail_open() {
+        let home = temp_home("hold-rules");
+        let peer = Peer::new("webhook", "abc", "the CI box");
+        let telegram = Peer::new("telegram", "abc", "the same name");
+        assert!(!hold_wanted(&home, &peer), "no config at all holds nobody");
+        // The settings' own writer: one comma-separated string.
+        crate::settings::set(&home, "channels.hold", "webhook, telegram:x").expect("the setting");
+        assert!(hold_wanted(&home, &peer), "the whole channel holds");
+        let on_telegram = Peer::new("telegram", "x", "the one held");
+        let other_telegram = Peer::new("telegram", "y", "another");
+        assert!(hold_wanted(&home, &on_telegram), "one peer by channel:id");
+        assert!(!hold_wanted(&home, &other_telegram));
+        assert!(
+            !hold_wanted(&home, &telegram),
+            "telegram:x names one telegram peer, not this one"
+        );
+        // A hand-written config may list the rules as an array.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{"channels":{"hold":["webhook:abc"]}}"#,
+        )
+        .unwrap();
+        assert!(hold_wanted(&home, &peer), "one peer by channel:id");
+        let stranger = Peer::new("webhook", "zzz", "a stranger");
+        assert!(!hold_wanted(&home, &stranger));
+        // Broken config, missing config, a wrong-typed knob: auto-run.
+        std::fs::write(home.join("config.json"), "not json at all").unwrap();
+        assert!(!hold_wanted(&home, &peer), "broken config means auto-run");
+        std::fs::write(home.join("config.json"), r#"{"channels":{"hold":42}}"#).unwrap();
+        assert!(
+            !hold_wanted(&home, &peer),
+            "a wrong-typed knob holds nobody"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The default is pinned: with no hold configured, a paired peer's
+    /// delivery still auto-runs — the deferral class must never become a
+    /// silent behaviour change.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_delivery_with_no_hold_configured_still_auto_runs() {
+        let home = temp_home("auto-run");
+        let mut store = PeerStore::default();
+        store.pair(
+            "abc",
+            "the CI box",
+            &crate::channels::mint_peer_token().unwrap(),
+            Capability::Task,
+            "stamp",
+            None,
+        );
+        store.save(&home, "webhook").unwrap();
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let driver = Arc::new(Driver::new(
+            Arc::new(bridge),
+            crate::channels::Policy::new(home.clone()),
+        ));
+        let service = ChannelService::new(
+            Arc::new(
+                Bridge::detached(
+                    home.clone(),
+                    "deepseek-flash".to_string(),
+                    Some("session-test".to_string()),
+                )
+                .0,
+            ),
+            Arc::clone(&driver),
+            &Config {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        );
+        let sink = service.sink();
+        let inbound = Inbound {
+            peer: Peer::new("webhook", "abc", "the CI box"),
+            session: None,
+            task: "run the tests".to_string(),
+            reply: Reply::None,
+        };
+        let session = sink(inbound).expect("the delivery auto-runs");
+        assert!(!session.is_empty());
+        // No hold was filed, and the line in the log is a delivery.
+        assert!(
+            !crate::channels::HoldStore::path(&home).exists(),
+            "an unconfigured home files nothing"
+        );
+        let lines = activity(&home, 10);
+        assert_eq!(lines.last().expect("the line").kind, "delivery");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A peer configured to hold has its delivery filed in full — peer,
+    /// task, reply — with a `held` line in the log, and nothing runs: no
+    /// session, no dispatch.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_configured_peer_s_delivery_is_held_not_run() {
+        let home = temp_home("held");
+        let mut store = PeerStore::default();
+        store.pair(
+            "abc",
+            "the CI box",
+            &crate::channels::mint_peer_token().unwrap(),
+            Capability::Task,
+            "stamp",
+            None,
+        );
+        store.save(&home, "webhook").unwrap();
+        crate::settings::set(&home, "channels.hold", "webhook").expect("the setting");
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let driver = Arc::new(Driver::new(
+            Arc::new(bridge),
+            crate::channels::Policy::new(home.clone()),
+        ));
+        let service = ChannelService::new(
+            Arc::new(
+                Bridge::detached(
+                    home.clone(),
+                    "deepseek-flash".to_string(),
+                    Some("session-test".to_string()),
+                )
+                .0,
+            ),
+            Arc::clone(&driver),
+            &Config {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        );
+        let sink = service.sink();
+        let inbound = Inbound {
+            peer: Peer::new("webhook", "abc", "the CI box"),
+            session: None,
+            task: "run the tests\ntwice over".to_string(),
+            reply: Reply::Url("http://127.0.0.1:9/callback".to_string()),
+        };
+        assert_eq!(sink(inbound.clone()), Err(Refusal::Held));
+        // The hold is filed with the whole delivery in it.
+        let held = crate::channels::HoldStore::load(&home).unwrap();
+        assert_eq!(held.holds.len(), 1);
+        let hold = &held.holds[0];
+        assert_eq!(hold.peer_id, "abc");
+        assert_eq!(hold.task, "run the tests\ntwice over", "the task in full");
+        assert_eq!(
+            hold.callback.as_deref(),
+            Some("http://127.0.0.1:9/callback")
+        );
+        assert_eq!(
+            hold.to_inbound().reply,
+            Reply::Url("http://127.0.0.1:9/callback".to_string())
+        );
+        // Nothing ran: no session for the peer, and the log says held.
+        let journal = crate::journal::Journal::open(&home).unwrap();
+        assert!(
+            !journal
+                .replay(0)
+                .unwrap()
+                .iter()
+                .any(|event| event.kind == "dispatch"),
+            "a held delivery settles no dispatch"
+        );
+        let lines = activity(&home, 10);
+        let line = lines.last().expect("the held line");
+        assert_eq!(line.kind, "held");
+        assert_eq!(line.peer_id.as_deref(), Some("abc"));
+        assert_eq!(line.task.as_deref(), Some("run the tests"));
+        assert_eq!(line.detail.as_deref(), Some(hold.id.as_str()));
+        // The peer is told what happened, in the refusal's own words.
+        assert!(Refusal::Held
+            .to_string()
+            .contains("held for the owner's decision"));
         std::fs::remove_dir_all(&home).ok();
     }
 }
