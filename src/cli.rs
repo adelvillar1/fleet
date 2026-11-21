@@ -576,6 +576,12 @@ pub struct InstallOptions {
     /// Bootstrap the heavy-lane venvs: per-lane, idempotent, and
     /// degrade-without — a lane that cannot build is skipped by name.
     pub lanes: bool,
+    /// Bootstrap one PROVIDER's venv instead of the lanes: a decision
+    /// provider that runs in-process inside a lane (laya, today) needs
+    /// its own Python stack, and this is the press that builds it. Named
+    /// by the provider id, which is also its venv directory under
+    /// `<home>/venvs/`.
+    pub provider: Option<String>,
 }
 
 /// Options for `fleet reload`. The bare command restarts the agent and
@@ -3089,24 +3095,42 @@ fn parse_ki(args: &[String]) -> Result<Command, String> {
 /// ignored one.
 fn parse_install(args: &[String]) -> Result<Command, String> {
     let mut lanes = false;
+    let mut provider: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
         match arg {
             "--help" | "-h" => return Ok(Command::Help),
             "--lanes" => lanes = true,
+            "--provider" => {
+                let name = take_value(args, &mut index, arg)?;
+                // The registry is the only place a provider venv is
+                // defined, so an unknown name is refused here rather than
+                // building a venv nothing reads.
+                if crate::install::provider_venv(&name).is_none() {
+                    let known: Vec<&str> = crate::install::PROVIDER_VENVS
+                        .iter()
+                        .map(|venv| venv.name)
+                        .collect();
+                    return Err(format!(
+                        "`{name}` has no provider venv; known: {}",
+                        known.join(", ")
+                    ));
+                }
+                provider = Some(name);
+            }
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown install option `{arg}`"));
             }
             _ => {
                 return Err(format!(
-                    "`{arg}` takes no value here; install takes only --lanes (see `fleet help`)"
+                    "`{arg}` takes no value here; install takes --lanes and --provider <id> (see `fleet help`)"
                 ));
             }
         }
         index += 1;
     }
-    Ok(Command::Install(InstallOptions { lanes }))
+    Ok(Command::Install(InstallOptions { lanes, provider }))
 }
 
 /// `fleet reload`: the delivery's own verb. The bare form restarts the
@@ -4695,12 +4719,30 @@ mod tests {
         // the venv bootstrap and nothing else.
         assert_eq!(
             parse(&args(&["install"])).unwrap(),
-            Command::Install(InstallOptions { lanes: false })
+            Command::Install(InstallOptions {
+                lanes: false,
+                provider: None
+            })
         );
         assert_eq!(
             parse(&args(&["install", "--lanes"])).unwrap(),
-            Command::Install(InstallOptions { lanes: true })
+            Command::Install(InstallOptions {
+                lanes: true,
+                provider: None
+            })
         );
+        // --provider names one provider's venv; an unregistered name is
+        // refused by name rather than building a venv nothing reads.
+        assert_eq!(
+            parse(&args(&["install", "--provider", "laya"])).unwrap(),
+            Command::Install(InstallOptions {
+                lanes: false,
+                provider: Some("laya".to_string())
+            })
+        );
+        let refused = parse(&args(&["install", "--provider", "nope"])).unwrap_err();
+        assert!(refused.contains("laya"), "{refused}");
+        assert!(parse(&args(&["install", "--provider"])).is_err());
         // The install is one sequence: a stray flag and a stray word
         // are each a usage error rather than a silently ignored one.
         assert!(parse(&args(&["install", "--all"])).is_err());

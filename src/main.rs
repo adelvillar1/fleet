@@ -5409,6 +5409,24 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
     } else {
         None
     };
+    // A provider's own venv (laya today): the press a lane's health row
+    // names when the provider is installed nowhere. Its own step, not a
+    // lane — the provider runs in-process inside sys1 and has no launch
+    // spec, so `--lanes` must not claim it and this must not claim a lane.
+    if let Some(name) = options.provider.as_deref() {
+        let mut progress = std::io::stdout();
+        match fleet::install::bootstrap_provider_venv(&home, name, None, &mut progress) {
+            Some(outcome) => {
+                if let Some(provider) = fleet::install::provider_venv(name) {
+                    print!(
+                        "{}",
+                        fleet::install::render_provider_line(&home, provider, &outcome)
+                    );
+                }
+            }
+            None => eprintln!("fleet: install: no provider venv named `{name}`"),
+        }
+    }
     print!("{}", fleet::install::render_tail(&home, lanes.as_deref()));
     // The gate: the doctor's own checks, unchanged. The install's exit
     // code is the doctor's.

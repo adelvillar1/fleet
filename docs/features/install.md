@@ -12,8 +12,8 @@ plan's slice 15 line in `docs/plans/2026-10-13-fleet-everyday-harness.md`.
 
 ## The surface
 
-`fleet install [--lanes]` is one sequence, not a toolkit — a stray flag
-or word is a usage error. It prints one line per step in the house
+`fleet install [--lanes] [--provider <id>]` is one sequence, not a toolkit —
+a stray flag or word is a usage error. It prints one line per step in the house
 style (the fork's `+`/`=`/`!` vocabulary: created, present, named), then
 ends on the doctor's own checks:
 
@@ -65,6 +65,38 @@ credentials ok   set (…abcd)
 home        ok   writable (/Users/x/.fleet)
 …
 ```
+
+### The provider venvs (`--provider`)
+
+A decision provider that runs **in-process inside a lane** needs a Python
+stack of its own but is not a lane: it has no launch spec, no MCP surface
+and no health tool, so `--lanes` must not claim it and the install names it
+on its own line instead.
+
+```
+  ! laya          provider venv (decision): not built — `fleet install --provider laya`
+```
+
+`fleet install --provider laya` builds `<home>/venvs/laya` with
+`pip install laya` and writes the same receipt a lane's venv carries, so a
+second press reads `present` and does nothing. The venv is what sys1's
+`providers.laya_venv` points at; nothing else has to be exported.
+
+Two rules this press keeps:
+
+- **A venv that was already there is retried over, never removed.** `uv venv`
+  refuses a directory that already holds a venv, so the press passes
+  `--allow-existing`: an interrupted prior run's half-built venv (python,
+  no receipt) is adopted, its packages checked, and the receipt written.
+  Without the flag such a venv could only ever be *skipped* — the press
+  would be unable to finish the very venv it exists for.
+- **A skip is not a failure of the install.** A tool that cannot build the
+  venv names its reason on the line, and the install's exit code is still
+  the doctor's.
+
+The face presses the same action at `POST /api/repair/provider` with
+`{"name": "laya"}` — the row sys1's `sys1_probe` renders carries the press
+in its reason sentence.
 
 The summary line is where a degraded `--lanes` run shows: a skipped
 lane is counted in the report itself, not only in its own line. It is

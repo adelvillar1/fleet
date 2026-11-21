@@ -196,6 +196,43 @@ pub struct Lane {
     pub note: &'static str,
 }
 
+/// The provider venvs: a decision provider that needs a Python stack of its
+/// own, served IN-PROCESS rather than as a lane.
+///
+/// Same receipt contract, same `<home>/venvs/<name>` root, same idempotence
+/// as [`LANES`] — only the registry differs, and the difference is the point:
+/// a provider is not a lane. It has no launch spec, no MCP surface of its own
+/// and no health tool; it runs inside sys1, addressed by a config key
+/// (`providers.laya_venv`), and sys1's own `sys1_probe` reports whether it
+/// answers. Adding it to [`LANES`] would make `fleet install --lanes` claim a
+/// lane that does not exist.
+pub const PROVIDER_VENVS: &[Lane] = &[Lane {
+    name: "laya",
+    role: "decision",
+    packages: &["laya"],
+    env_var: None,
+    env_target: EnvTarget::Root,
+    note: "point ~/.config/sys1/config.toml at it: [providers] laya_venv = \"<venv>\"",
+}];
+
+/// The provider venv with this name, when one is registered.
+pub fn provider_venv(name: &str) -> Option<&'static Lane> {
+    PROVIDER_VENVS.iter().find(|venv| venv.name == name)
+}
+
+/// Bootstrap one provider venv under `home`, by name. `None` when no
+/// provider of that name is registered — the caller names the known ones
+/// rather than inventing a venv nothing reads.
+pub fn bootstrap_provider_venv(
+    home: &Path,
+    name: &str,
+    path: Option<&OsStr>,
+    progress: &mut (dyn std::io::Write + Send),
+) -> Option<LaneOutcome> {
+    let provider = provider_venv(name)?;
+    Some(bootstrap_lane(home, provider, path, progress))
+}
+
 /// The five lanes, one per vendored core, in the fork's order.
 ///
 /// The package sets are the fork's, with one fix at the vendoring
@@ -615,9 +652,21 @@ const UV_PYTHON: &str = "3.12";
 /// when uv does not resolve on PATH. A tool that runs and fails — or
 /// that runs past the bound — is a named error, not a silent second
 /// attempt: the failure is the lane's, and it is named.
+///
+/// `--allow-existing` is what makes the "retried over, never removed"
+/// contract above true: `uv venv` refuses a directory that already holds
+/// a venv, so without the flag a half-built venv (an interrupted prior
+/// run, a hand-made one, one built by a pre-receipt version) could only
+/// ever be Skipped — the press would be unable to adopt the very venv it
+/// is supposed to finish. With it, the venv is reused, the package
+/// install is a no-op where the packages are in, and the receipt lands.
 fn create_venv(venv: &Path, run: &mut LaneRun<'_>) -> Result<VenvTool, ToolError> {
     let venv_arg = venv.to_string_lossy().into_owned();
-    match run_tool("uv", &["venv", &venv_arg, "--python", UV_PYTHON], run) {
+    match run_tool(
+        "uv",
+        &["venv", &venv_arg, "--python", UV_PYTHON, "--allow-existing"],
+        run,
+    ) {
         Ok(()) => Ok(VenvTool::Uv),
         // Only an absent uv falls back: a uv that ran and failed, or
         // one that was killed at the bound, is the lane's own answer.
@@ -1668,10 +1717,34 @@ pub fn render_tail(home: &Path, lanes: Option<&[LaneResult]>) -> String {
         )),
     }
     out.push_str(&render_credentials(home));
+    // The provider venvs: a decision provider that runs in-process inside
+    // a lane has no launch spec and so no lane row — this is where the
+    // install names it, and the press that builds it.
+    for provider in PROVIDER_VENVS.iter() {
+        let venv = venv_dir(home, provider);
+        let state = if venv_is_finished(&venv, provider) {
+            format!("{}", venv.display())
+        } else {
+            format!("not built — `fleet install --provider {}`", provider.name)
+        };
+        out.push_str(&format!(
+            "  {DIM}!{RESET} {TEXT}{:<12}{RESET} {DIM}provider venv ({}): {state}{RESET}\n",
+            provider.name, provider.role
+        ));
+    }
     out.push_str(&format!(
         "\n{DIM}── doctor ── the install's exit code is the doctor's ──{RESET}\n"
     ));
     out
+}
+
+/// One provider venv's line for the install report — the same shape a
+/// lane's line draws, so a provider that could not build is named rather
+/// than silently absent. `render_lane_line` already carries the venv's
+/// path and the wiring the core reads (`lane_wiring`), which for a
+/// provider venv is the config key its `note` names.
+pub fn render_provider_line(home: &Path, provider: &Lane, outcome: &LaneOutcome) -> String {
+    render_lane_line(provider, outcome, &venv_dir(home, provider))
 }
 
 /// The lane section's summary line: how many lanes are ready and how
@@ -2418,5 +2491,109 @@ mod tests {
         );
         assert!(!no_build.contains("current"), "{no_build}");
         assert!(!no_build.contains("fleet reload"), "{no_build}");
+    }
+
+    // ── the provider venvs ───────────────────────────────────────────────
+
+    /// A provider venv is a venv, not a lane: same receipt contract, same
+    /// root, and it is NOT in `LANES` (a lane row for it would claim a
+    /// launch spec and an MCP surface it does not have).
+    #[test]
+    fn a_provider_venv_is_registered_and_is_not_a_lane() {
+        let laya = provider_venv("laya").expect("laya's provider venv is registered");
+        assert_eq!(laya.name, "laya");
+        assert_eq!(laya.role, "decision");
+        assert_eq!(laya.packages, &["laya"]);
+        // No export: sys1 reads it as the config key `providers.laya_venv`,
+        // which the note names.
+        assert_eq!(laya.env_var, None);
+        assert!(laya.note.contains("laya_venv"), "{}", laya.note);
+        assert!(
+            !LANES.iter().any(|lane| lane.name == "laya"),
+            "laya is a provider, not a lane"
+        );
+        // An unregistered name is refused rather than inventing a venv
+        // nothing reads.
+        assert!(provider_venv("nope").is_none());
+        let home = scratch("provider-venv-registry");
+        let mut sink: Vec<u8> = Vec::new();
+        assert!(bootstrap_provider_venv(&home, "nope", None, &mut sink).is_none());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The install report names the provider venv and, when it is not
+    /// built, the exact press that builds it — the sentence sys1's
+    /// availability reason and the lane-health row both quote.
+    #[test]
+    fn the_report_names_an_unbuilt_provider_venv_and_its_press() {
+        let home = scratch("provider-venv-report");
+        let lanes: Vec<LaneResult> = Vec::new();
+        let report = strip_ansi(&render_tail(&home, Some(&lanes)));
+        assert!(report.contains("provider venv (decision)"), "{report}");
+        assert!(report.contains("fleet install --provider laya"), "{report}");
+        // A built venv (python AND the receipt) reads as its path, not as
+        // a press.
+        let laya = provider_venv("laya").unwrap();
+        let venv = venv_dir(&home, laya);
+        fs::create_dir_all(venv.join("bin")).unwrap();
+        fs::write(venv.join("bin").join("python"), "").unwrap();
+        fs::write(venv.join(LANE_RECEIPT), "lane laya\n").unwrap();
+        let built = strip_ansi(&render_tail(&home, Some(&lanes)));
+        assert!(!built.contains("fleet install --provider laya"), "{built}");
+        assert!(built.contains(&venv.display().to_string()), "{built}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The contract `bootstrap_lane`'s own comment states — a venv that was
+    /// already there is "retried over, never removed" — was not true:
+    /// `uv venv` refuses a directory that already holds a venv, so a
+    /// half-built venv could only ever be Skipped. The stand-in reproduces
+    /// uv's refusal unless `--allow-existing` is passed, so the flag is
+    /// what this test holds.
+    #[cfg(unix)]
+    #[test]
+    fn a_half_built_venv_is_adopted_not_skipped() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = scratch("adopt-venv");
+        let tools = scratch("adopt-tools");
+        fs::create_dir_all(&tools).unwrap();
+        let uv = tools.join("uv");
+        // `venv` refuses an existing directory unless --allow-existing is
+        // in the argv, exactly as uv does; `pip` succeeds.
+        let script = "#!/bin/sh\n\
+             if [ \"$1\" = \"venv\" ]; then\n\
+               allow=0\n\
+               for arg in \"$@\"; do [ \"$arg\" = \"--allow-existing\" ] && allow=1; done\n\
+               if [ -d \"$2/bin\" ] && [ \"$allow\" = \"0\" ]; then\n\
+                 echo 'error: A virtual environment already exists' >&2; exit 2;\n\
+               fi\n\
+               /bin/mkdir -p \"$2/bin\" && : > \"$2/bin/python\"; exit 0;\n\
+             fi\n\
+             exit 0\n";
+        fs::write(&uv, script).unwrap();
+        fs::set_permissions(&uv, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let laya = provider_venv("laya").unwrap();
+        let venv = venv_dir(&home, laya);
+        // A venv someone else made: python present, no receipt.
+        fs::create_dir_all(venv.join("bin")).unwrap();
+        fs::write(venv.join("bin").join("python"), "").unwrap();
+
+        let mut sink: Vec<u8> = Vec::new();
+        let outcome = bootstrap_lane(&home, laya, Some(tools.as_os_str()), &mut sink);
+        assert_eq!(outcome, LaneOutcome::Installed, "{outcome:?}");
+        assert!(
+            receipt_names(&venv, laya),
+            "the adopted venv carries the receipt"
+        );
+        // And the second run is Present, not a rebuild.
+        let mut sink: Vec<u8> = Vec::new();
+        assert_eq!(
+            bootstrap_lane(&home, laya, Some(tools.as_os_str()), &mut sink),
+            LaneOutcome::Present
+        );
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&tools);
     }
 }

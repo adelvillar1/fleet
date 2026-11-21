@@ -1545,6 +1545,35 @@ async fn serve_connection(
             Ok(document) => write_reply(&mut stream, api(200, document)).await,
             Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
         },
+        // One provider's venv (the laya row's press): the provider runs
+        // in-process inside sys1, so it has no lane to rebuild — this is
+        // the install action its health row names.
+        ("POST", "/api/repair/provider") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let name = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("name")
+                        .and_then(|name| name.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            if name.is_empty() {
+                return write_reply(
+                    &mut stream,
+                    bad_request("`name` must be a provider id, e.g. {\"name\": \"laya\"}"),
+                )
+                .await;
+            }
+            match bridge.install_provider(name).await {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("POST", "/api/corpus/sync") => match bridge.corpus_sync().await {
             Ok(document) => write_reply(&mut stream, api(200, document)).await,
             Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,

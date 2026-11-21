@@ -4692,6 +4692,54 @@ impl Bridge {
         }))
     }
 
+    /// Build one provider's venv (the laya card's press): a decision
+    /// provider that runs in-process inside a lane has no launch spec of
+    /// its own, so the lane rebuild does not cover it and this press
+    /// does. `bootstrap_provider_venv` is idempotent (the receipt), so a
+    /// press on a built venv is a no-op named as present. Loopback-only.
+    pub async fn install_provider(
+        self: &std::sync::Arc<Self>,
+        name: String,
+    ) -> Result<Value, String> {
+        if crate::install::provider_venv(&name).is_none() {
+            let known: Vec<&str> = crate::install::PROVIDER_VENVS
+                .iter()
+                .map(|venv| venv.name)
+                .collect();
+            return Err(format!(
+                "`{name}` has no provider venv; known: {}",
+                known.join(", ")
+            ));
+        }
+        let _guard = self.repair_in_flight.lock().await;
+        let home = self.home.clone();
+        let asked = name.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let mut sink: Vec<u8> = Vec::new();
+            crate::install::bootstrap_provider_venv(&home, &asked, None, &mut sink)
+        })
+        .await
+        .map_err(|_| "the provider install did not land".to_string())?;
+        let Some(outcome) = outcome else {
+            return Err(format!("`{name}` has no provider venv"));
+        };
+        let (word, said) = match &outcome {
+            crate::install::LaneOutcome::Present => {
+                ("present", "the venv was already built".to_string())
+            }
+            crate::install::LaneOutcome::Installed => {
+                ("installed", "the venv was built".to_string())
+            }
+            crate::install::LaneOutcome::Skipped { reason } => ("skipped", reason.clone()),
+        };
+        Ok(json!({
+            "type": "provider-venv",
+            "provider": name,
+            "outcome": word,
+            "detail": said,
+        }))
+    }
+
     /// Rebuild the lane venvs (the self-healing extension): the owner
     /// pressed "rebuild the lanes" for a lane that cannot answer.
     /// `bootstrap_lane` is idempotent (the receipt), so only a missing or
