@@ -7112,7 +7112,29 @@ fn memory_read(home: &std::path::Path, memories: &std::path::Path, cwd: &std::pa
             "fact": hit.fact,
             "shape": hit.shape,
             "score": hit.score,
+            // The why-this-recall breakdown: the six recorded channels
+            // and the spillover mark, off the row — the face sums the
+            // weighted channels against the score, and marks a row with
+            // all-zero channels "recorded before the breakdown".
+            "vector": hit.vector,
+            "keyword": hit.keyword,
+            "trajectory": hit.trajectory,
+            "history": hit.history,
+            "freshness": hit.freshness,
+            "provenance": hit.provenance,
+            "off_shape": hit.off_shape,
         })).collect::<Vec<_>>(),
+        // The channel weights, served once for the whole document: the
+        // face names each channel with its weight, and the weights are
+        // the ranker's own constants — one source, never a face copy.
+        "weights": {
+            "vector": crate::memory::W_VECTOR,
+            "keyword": crate::memory::W_KEYWORD,
+            "trajectory": crate::memory::W_TRAJECTORY,
+            "history": crate::memory::W_HISTORY,
+            "freshness": crate::memory::W_FRESHNESS,
+            "provenance": crate::memory::W_PROVENANCE,
+        },
         "refused": snapshot.refused,
     })
 }
@@ -16342,6 +16364,83 @@ mod tests {
             r.compactions = 2;
         });
         assert_eq!(shape_row["compactions"], 2);
+    }
+
+    #[test]
+    fn the_memory_hits_serve_the_channels_the_weights_and_the_spillover_mark() {
+        // The P4 why-this-recall contract at the serving boundary: a hit
+        // row carries the six channels and the off-shape mark beside its
+        // score, an old scalar-only row reads back zero-channeled, and
+        // the weights ride once for the document — the face's panel sums
+        // weight × channel against the score off this shape.
+        let home = std::env::temp_dir().join(format!("fleet-memory-hits-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let memories = home.join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        // The calibration root the home resolves first: config.json
+        // names it, so the test never touches the real stream.
+        let logs =
+            std::env::temp_dir().join(format!("fleet-memory-hits-logs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&logs);
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(
+            home.join("config.json"),
+            serde_json::json!({ "calib": { "log_root": logs.to_str().unwrap() } }).to_string(),
+        )
+        .unwrap();
+        let day = crate::calib::today();
+        let file = crate::calib::day_path(&logs, &day);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let scored = serde_json::json!({
+            "op": crate::calib::OP_RECALL_HIT,
+            "ts": format!("{}T09:00:01Z", day),
+            "fact": "a-fact", "shape": "debugging", "score": 0.82,
+            "vector": 0.50, "keyword": 0.40, "trajectory": 0.60,
+            "history": 0.88, "freshness": 0.50, "provenance": 0.50,
+            "off_shape": false,
+        });
+        // The exact shape the stream wrote before the breakdown.
+        let old = serde_json::json!({
+            "op": crate::calib::OP_RECALL_HIT,
+            "ts": format!("{}T09:00:02Z", day),
+            "fact": "b-fact", "shape": "", "score": 0.44,
+        });
+        std::fs::write(&file, format!("{}\n{}\n", scored, old)).unwrap();
+
+        let document = super::memory_read(&home, &memories, &memories);
+        assert_eq!(document["type"], "memory");
+        let hits = document["hits"].as_array().expect("the hits");
+        assert_eq!(hits.len(), 2, "{document:?}");
+        assert_eq!(hits[0]["fact"], "a-fact");
+        assert_eq!(hits[0]["score"], 0.82);
+        assert_eq!(hits[0]["vector"], 0.50);
+        assert_eq!(hits[0]["keyword"], 0.40);
+        assert_eq!(hits[0]["trajectory"], 0.60);
+        assert_eq!(hits[0]["history"], 0.88);
+        assert_eq!(hits[0]["freshness"], 0.50);
+        assert_eq!(hits[0]["provenance"], 0.50);
+        assert_eq!(hits[0]["off_shape"], false);
+        assert_eq!(hits[1]["fact"], "b-fact");
+        assert_eq!(hits[1]["score"], 0.44);
+        assert_eq!(hits[1]["vector"], 0.0);
+        assert_eq!(hits[1]["provenance"], 0.0);
+        assert_eq!(hits[1]["off_shape"], false);
+        // The weights are the ranker's own constants, served once for
+        // the document — never a face copy that could drift.
+        assert_eq!(document["weights"]["vector"], crate::memory::W_VECTOR);
+        assert_eq!(document["weights"]["keyword"], crate::memory::W_KEYWORD);
+        assert_eq!(
+            document["weights"]["trajectory"],
+            crate::memory::W_TRAJECTORY
+        );
+        assert_eq!(document["weights"]["history"], crate::memory::W_HISTORY);
+        assert_eq!(document["weights"]["freshness"], crate::memory::W_FRESHNESS);
+        assert_eq!(
+            document["weights"]["provenance"],
+            crate::memory::W_PROVENANCE
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&logs);
     }
 
     // --- the design canvas ---------------------------------------------------

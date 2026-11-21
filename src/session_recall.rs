@@ -1026,6 +1026,17 @@ pub fn record_hit(
             fact: session_id.to_string(),
             shape: shape.to_string(),
             score,
+            // The session archive's own ranking carries no recorded
+            // channel breakdown — the channels stay zero, so the face
+            // marks the row "recorded before the breakdown" rather than
+            // inventing a decomposition the session ranker never kept.
+            vector: 0.0,
+            keyword: 0.0,
+            trajectory: 0.0,
+            history: 0.0,
+            freshness: 0.0,
+            provenance: 0.0,
+            off_shape: false,
         }));
     }
 }

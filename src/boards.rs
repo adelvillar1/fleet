@@ -1451,14 +1451,23 @@ pub struct MemoryFact {
 }
 
 /// One recall hit the stream recorded, off the row's own fields: the
-/// fact, the shape the instruction routed under, and the score it ranked
-/// at.
+/// fact, the shape the instruction routed under, the score it ranked
+/// at, and the six channels that produced the score (all zero on a row
+/// written before the breakdown existed — the panel marks that row,
+/// never a recompute).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemoryHit {
     pub ts: String,
     pub fact: String,
     pub shape: String,
     pub score: f64,
+    pub vector: f64,
+    pub keyword: f64,
+    pub trajectory: f64,
+    pub history: f64,
+    pub freshness: f64,
+    pub provenance: f64,
+    pub off_shape: bool,
 }
 
 /// One read of the corpus and the day's recall hits.
@@ -1539,6 +1548,13 @@ pub fn read_memory(root: &Path, calib_root: &Path, day: &str) -> MemorySnapshot 
                 fact: row.fact.clone(),
                 shape: row.shape.clone(),
                 score: row.score,
+                vector: row.vector,
+                keyword: row.keyword,
+                trajectory: row.trajectory,
+                history: row.history,
+                freshness: row.freshness,
+                provenance: row.provenance,
+                off_shape: row.off_shape,
             })
             .collect();
     let preview = crate::memory::preview(root, day);
@@ -5680,8 +5696,29 @@ mod tests {
         )
     }
 
-    /// One `recall_hit` row, the shape the stream writes.
+    /// One `recall_hit` row, the shape the stream writes: the score and
+    /// the six channels that produced it.
     fn hit_row(ts: &str, fact: &str, shape: &str, score: f64) -> String {
+        serde_json::json!({
+            "op": crate::calib::OP_RECALL_HIT,
+            "ts": ts,
+            "fact": fact,
+            "shape": shape,
+            "score": score,
+            "vector": 0.50,
+            "keyword": 0.40,
+            "trajectory": 0.60,
+            "history": 0.88,
+            "freshness": 0.50,
+            "provenance": 0.50,
+            "off_shape": false,
+        })
+        .to_string()
+    }
+
+    /// One `recall_hit` row as the stream wrote it before the channel
+    /// breakdown existed: scalar score only.
+    fn old_hit_row(ts: &str, fact: &str, shape: &str, score: f64) -> String {
         serde_json::json!({
             "op": crate::calib::OP_RECALL_HIT,
             "ts": ts,
@@ -5736,6 +5773,10 @@ mod tests {
                 screen_row("2026-10-16T09:00:00Z"),
                 hit_row("2026-10-16T09:00:01Z", "a-fact", "debugging", 0.82),
                 hit_row("2026-10-16T09:00:02Z", "a-protected", "planning", 0.71),
+                // A row written before the channel breakdown existed:
+                // score only. It reads back with zero channels rather
+                // than being dropped.
+                old_hit_row("2026-10-16T09:00:03Z", "a-fact", "debugging", 0.44),
             ],
         );
 
@@ -5771,10 +5812,29 @@ mod tests {
         assert_eq!(folded.recall_count, 3);
         // The hits are the day's recall rows, oldest first, and the
         // screening rows between them do not ride along.
-        assert_eq!(snapshot.hits.len(), 2, "{:?}", snapshot.hits);
+        assert_eq!(snapshot.hits.len(), 3, "{:?}", snapshot.hits);
         assert_eq!(snapshot.hits[0].fact, "a-fact");
         assert_eq!(snapshot.hits[0].shape, "debugging");
+        // The channels ride the hit: the panel sums them against the
+        // score, so the read must carry them, not the score alone.
+        assert_eq!(snapshot.hits[0].vector, 0.50);
+        assert_eq!(snapshot.hits[0].keyword, 0.40);
+        assert_eq!(snapshot.hits[0].trajectory, 0.60);
+        assert_eq!(snapshot.hits[0].history, 0.88);
+        assert_eq!(snapshot.hits[0].freshness, 0.50);
+        assert_eq!(snapshot.hits[0].provenance, 0.50);
+        assert!(!snapshot.hits[0].off_shape);
         assert_eq!(snapshot.hits[1].fact, "a-protected");
+        // The pre-breakdown row survives, honestly zero-channeled.
+        assert_eq!(snapshot.hits[2].fact, "a-fact");
+        assert_eq!(snapshot.hits[2].score, 0.44);
+        assert_eq!(snapshot.hits[2].vector, 0.0);
+        assert_eq!(snapshot.hits[2].keyword, 0.0);
+        assert_eq!(snapshot.hits[2].trajectory, 0.0);
+        assert_eq!(snapshot.hits[2].history, 0.0);
+        assert_eq!(snapshot.hits[2].freshness, 0.0);
+        assert_eq!(snapshot.hits[2].provenance, 0.0);
+        assert!(!snapshot.hits[2].off_shape);
     }
 
     #[test]

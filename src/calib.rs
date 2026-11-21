@@ -193,6 +193,31 @@ pub struct RecallHitRow {
     pub shape: String,
     /// The composite score the fact ranked at.
     pub score: f64,
+    /// The six channels that produced the score, recorded as the score
+    /// was computed (the plan's P4 why-this-recall AC). `total` is the
+    /// weighted sum of these — the face prints the sum against the
+    /// score. `#[serde(default)]` on every channel: a row written
+    /// before the breakdown existed decodes with all-zero channels, and
+    /// the face marks such a row "recorded before the breakdown"
+    /// instead of pretending the channels were zero channels.
+    #[serde(default)]
+    pub vector: f64,
+    #[serde(default)]
+    pub keyword: f64,
+    #[serde(default)]
+    pub trajectory: f64,
+    #[serde(default)]
+    pub history: f64,
+    #[serde(default)]
+    pub freshness: f64,
+    #[serde(default)]
+    pub provenance: f64,
+    /// Whether the hit entered through the spillover rather than the
+    /// instruction's shape's own pool — the "off-shape" mark the
+    /// assembly prints. Rows written before the field existed read
+    /// `false`, the same honesty the channels' zero default carries.
+    #[serde(default)]
+    pub off_shape: bool,
 }
 
 /// One node's fact-gate verdict: the gates that ran, whether every one
@@ -2342,6 +2367,27 @@ pub struct ReadRow {
     /// other op.
     #[serde(default)]
     pub score: f64,
+    /// The six channels a `recall_hit` row recorded with its score —
+    /// the why-this-recall breakdown. All zero for an older row written
+    /// before the breakdown existed (the `#[serde(default)]` carries
+    /// them), and for every other op.
+    #[serde(default)]
+    pub vector: f64,
+    #[serde(default)]
+    pub keyword: f64,
+    #[serde(default)]
+    pub trajectory: f64,
+    #[serde(default)]
+    pub history: f64,
+    #[serde(default)]
+    pub freshness: f64,
+    #[serde(default)]
+    pub provenance: f64,
+    /// Whether a `recall_hit` row's fact entered through the spillover
+    /// rather than the instruction's shape's own pool. False for an
+    /// older row and for every other op.
+    #[serde(default)]
+    pub off_shape: bool,
     /// The kind and name a `lifecycle` row carries — `tools`/`skills`/
     /// `loops`/`workflows` and the thing acted on, or `onboarding` and
     /// the step. Empty for every other op.
@@ -4510,6 +4556,34 @@ mod tests {
             fact: fact.to_string(),
             shape: shape.to_string(),
             score,
+            // The helper keeps the pre-breakdown shape: scalar score
+            // only. The tolerance test below is the one that writes the
+            // channels.
+            vector: 0.0,
+            keyword: 0.0,
+            trajectory: 0.0,
+            history: 0.0,
+            freshness: 0.0,
+            provenance: 0.0,
+            off_shape: false,
+        })
+    }
+
+    /// One recall hit with its channel breakdown, as `record_hits`
+    /// writes it: the score and the six channels that produced it.
+    fn scored_recall_hit_row(fact: &str, shape: &str, score: f64) -> Row {
+        Row::RecallHit(RecallHitRow {
+            ts: "2026-10-13T12:00:03Z".to_string(),
+            fact: fact.to_string(),
+            shape: shape.to_string(),
+            score,
+            vector: 0.50,
+            keyword: 0.40,
+            trajectory: 0.60,
+            history: 0.88,
+            freshness: 0.50,
+            provenance: 0.50,
+            off_shape: false,
         })
     }
 
@@ -5270,6 +5344,55 @@ mod tests {
         assert_eq!(value["fact"], "fleet-gate-is-local");
         assert_eq!(value["shape"], "build");
         assert_eq!(value["score"], 0.42);
+        // A scalar row still writes the channel fields — the zero
+        // default, the pre-breakdown shape the reader must not mistake
+        // for a missing row.
+        assert_eq!(value["vector"], 0.0);
+        assert_eq!(value["off_shape"], false);
+
+        // A scored row carries the breakdown beside the score.
+        let scored =
+            serde_json::to_string(&scored_recall_hit_row("a-fact", "build", 0.61)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&scored).unwrap();
+        assert_eq!(value["vector"], 0.50);
+        assert_eq!(value["keyword"], 0.40);
+        assert_eq!(value["trajectory"], 0.60);
+        assert_eq!(value["history"], 0.88);
+        assert_eq!(value["freshness"], 0.50);
+        assert_eq!(value["provenance"], 0.50);
+    }
+
+    #[test]
+    fn a_recall_hit_row_written_before_the_channels_decodes_to_zeros() {
+        // The tolerance the widening owes the stream: an old line —
+        // score only, no channel fields — reads back with all-zero
+        // channels, not an error, so every row the corpus already wrote
+        // survives the field's arrival. The zeros are what the face
+        // marks "recorded before the breakdown".
+        let root = scratch("read-recall-old");
+        let day = "2026-10-13";
+        let path = day_path(&root, day);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            // The exact shape the stream wrote before the breakdown: no
+            // channel fields, no off_shape.
+            "{\"op\":\"recall_hit\",\"ts\":\"2026-10-13T12:00:03Z\",\
+              \"fact\":\"a-fact\",\"shape\":\"build\",\"score\":0.42}\n",
+        )
+        .unwrap();
+        let rows = read_day(&root, day, 64);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].op, OP_RECALL_HIT);
+        assert_eq!(rows[0].score, 0.42);
+        assert_eq!(rows[0].vector, 0.0);
+        assert_eq!(rows[0].keyword, 0.0);
+        assert_eq!(rows[0].trajectory, 0.0);
+        assert_eq!(rows[0].history, 0.0);
+        assert_eq!(rows[0].freshness, 0.0);
+        assert_eq!(rows[0].provenance, 0.0);
+        assert!(!rows[0].off_shape);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

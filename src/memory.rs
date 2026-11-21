@@ -3237,6 +3237,19 @@ impl Memory {
                     fact: hit.fact.name.clone(),
                     shape: shape.clone(),
                     score: hit.score.total,
+                    // The channels ride with the score they produced,
+                    // recorded at the moment the ranking ran — the
+                    // why-this-recall panel reads them off the row, not
+                    // recomputed at read time (the instruction is not in
+                    // the row, and a recompute would disagree with
+                    // `total` after a recall-count bump).
+                    vector: hit.score.vector,
+                    keyword: hit.score.keyword,
+                    trajectory: hit.score.trajectory,
+                    history: hit.score.history,
+                    freshness: hit.score.freshness,
+                    provenance: hit.score.provenance,
+                    off_shape: hit.off_shape,
                 }));
             }
         }
@@ -9575,6 +9588,31 @@ mod tests {
         assert_eq!(row.fact, "hit-me");
         assert_eq!(row.shape, "deploy");
         assert!((row.score - hits[0].score.total).abs() < 1e-12, "{row:?}");
+        // The channels ride the row at the values the ranking computed:
+        // the why-this-recall panel sums them against the score, so the
+        // row must carry the breakdown, never a read-time recompute.
+        assert!((row.vector - hits[0].score.vector).abs() < 1e-12, "{row:?}");
+        assert!(
+            (row.keyword - hits[0].score.keyword).abs() < 1e-12,
+            "{row:?}"
+        );
+        assert!(
+            (row.trajectory - hits[0].score.trajectory).abs() < 1e-12,
+            "{row:?}"
+        );
+        assert!(
+            (row.history - hits[0].score.history).abs() < 1e-12,
+            "{row:?}"
+        );
+        assert!(
+            (row.freshness - hits[0].score.freshness).abs() < 1e-12,
+            "{row:?}"
+        );
+        assert!(
+            (row.provenance - hits[0].score.provenance).abs() < 1e-12,
+            "{row:?}"
+        );
+        assert!(!row.off_shape);
         // An unclassified instruction records an empty shape, not an
         // invented one.
         let stream = calib::Stream::open(&stream_root);
