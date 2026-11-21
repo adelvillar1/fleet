@@ -7271,7 +7271,14 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr);
   }
-  .topbar, .meter, .stage { grid-column: 1; }
+  .topbar, .meter, .stage, .console-bar { grid-column: 1; }
+  /* KI-586: the console-bar kept its wide-shell `grid-column: 2 / -1`
+     here, and below 900 there IS no explicit track 2 — so the bar opened
+     an implicit auto track floor-sized by its own min-content (measured
+     458.03px at 900/720/460), and the single `minmax(0, 1fr)` track the
+     stage rides got only the remainder: stage 564 → 442 → 262 → 2 → 0px
+     at 1440/900/720/460/390. One column, one track, the stage keeps the
+     phone's full width. */
 
   .surfaces {
     position: fixed;
