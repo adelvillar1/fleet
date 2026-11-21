@@ -962,6 +962,7 @@ impl Driver {
                             &self.bridge.home_path(),
                             &peer.channel,
                             &peer.id,
+                            Some(session),
                             &reply,
                             &text,
                         );
@@ -1626,6 +1627,11 @@ mod tests {
         assert!(
             answer.detail.is_some(),
             "the answer is recorded even though the rehearsal asked for nowhere"
+        );
+        assert_eq!(
+            answer.session.as_deref(),
+            Some(session.as_str()),
+            "the reply line names the session it answers, so the round trip can be matched"
         );
         drop(door);
         std::fs::remove_dir_all(&home).ok();

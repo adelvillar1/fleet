@@ -9294,6 +9294,38 @@ fn channels_read(home: &std::path::Path) -> Value {
             })
             .map(|line| line.at.clone())
     };
+    // The proof of life, derived in the same pass: the newest `delivery`
+    // line for the rehearsal peer is the round trip's outgoing half, and
+    // a later `reply` line for the same peer is its answer. Derived here
+    // rather than stored — the log is capped, so a stamp on disk would
+    // need a store field and stamping sites in two plugins, the same
+    // reasoning the last-heard/last-asked derivation already holds.
+    let rehearsal_of = |channel: &str, peer_id: &str| -> Value {
+        let Some(index) = activity.iter().rposition(|line| {
+            line.kind == "delivery"
+                && line.channel == channel
+                && line.peer_id.as_deref() == Some(peer_id)
+        }) else {
+            return Value::Null;
+        };
+        let delivered = &activity[index];
+        let answered = activity[index + 1..].iter().any(|later| {
+            later.kind == "reply"
+                && later.channel == channel
+                && later.peer_id.as_deref() == Some(peer_id)
+        });
+        json!({
+            "at": delivered.at,
+            "session": delivered.session,
+            "delivered": true,
+            "answered": answered,
+        })
+    };
+    // The document's own rehearsal: the newest one across the channels,
+    // so a surface renders the proof without hunting the peer out of the
+    // passport list. An unanswered rehearsal stays unanswered here — the
+    // newest fact wins, never the flattering one.
+    let mut document_rehearsal = Value::Null;
     let mut channels = Vec::new();
     for name in crate::channels::CHANNELS {
         let peers = crate::channels::PeerStore::load(home, name)
@@ -9322,6 +9354,21 @@ fn channels_read(home: &std::path::Path) -> Value {
                             "paired": peer.created_at,
                             "last_heard": last_stamp(&peer.id, &["delivery", "refusal"]),
                             "last_asked": last_stamp(&peer.id, &["reply", "seat"]),
+                            "rehearsal": if peer.name == "myself" {
+                                let rehearsed = rehearsal_of(name, &peer.id);
+                                if !rehearsed.is_null()
+                                    && (document_rehearsal.is_null()
+                                        || rehearsed["at"].as_str().unwrap_or_default()
+                                            > document_rehearsal["at"]
+                                                .as_str()
+                                                .unwrap_or_default())
+                                {
+                                    document_rehearsal = rehearsed.clone();
+                                }
+                                rehearsed
+                            } else {
+                                Value::Null
+                            },
                             // A URL, not a secret: the surface says where
                             // an outcome goes.
                             "callback": peer.callback,
@@ -9361,6 +9408,7 @@ fn channels_read(home: &std::path::Path) -> Value {
         "channels": channels,
         "activity": activity,
         "activity_bound": ACTIVITY_SHOWN,
+        "rehearsal": document_rehearsal,
         "telegram": {
             "present": telegram_present,
             "source": telegram_source,
@@ -18613,6 +18661,134 @@ mod tests {
             Some("send myself a message — the proof of life rehearsal")
         );
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The proof of life is derived, never stored: the same pass that
+    /// reads the last-heard/last-asked stamps reads the rehearsal's round
+    /// trip off the feed — the newest `delivery` line for the `myself`
+    /// peer, answered when a later `reply` line names the same peer. A
+    /// delivery with no reply after it is the honest unanswered shape,
+    /// and no peer but the rehearsal's carries a rehearsal at all.
+    #[test]
+    fn the_channels_read_derives_the_rehearsal_round_trip_from_the_feed() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-rehearsal-derived-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+
+        let mut webhook = crate::channels::PeerStore::default();
+        webhook.pair(
+            "wh1",
+            "the CI box",
+            "unused",
+            crate::channels::Capability::Task,
+            "2026-11-20T00:00:00Z",
+            None,
+        );
+        // The rehearsal peer, matched by name: its id is whatever the
+        // pairing minted.
+        webhook.pair(
+            "e5f6",
+            "myself",
+            "unused",
+            crate::channels::Capability::Task,
+            "2026-11-20T00:00:00Z",
+            None,
+        );
+        webhook.save(&home, "webhook").expect("the webhook store");
+        let mut telegram = crate::channels::PeerStore::default();
+        telegram.pair(
+            "myself",
+            "myself",
+            "unused",
+            crate::channels::Capability::Task,
+            "2026-11-20T00:00:00Z",
+            None,
+        );
+        telegram
+            .save(&home, "telegram")
+            .expect("the telegram store");
+
+        // The log, oldest first: a webhook round trip — delivery then a
+        // later reply for the same peer — and a telegram delivery with no
+        // reply after it, the honest unanswered shape.
+        let log = [
+            r#"{"at":"2026-11-20T09:00:00Z","kind":"reply","channel":"webhook","peer_id":"wh1"}"#,
+            r#"{"at":"2026-11-20T15:00:00Z","kind":"delivery","channel":"webhook","peer_id":"e5f6","session":"s-proof","task":"send myself a message — the proof of life rehearsal"}"#,
+            r#"{"at":"2026-11-20T16:00:00Z","kind":"reply","channel":"webhook","peer_id":"e5f6","session":"s-proof"}"#,
+            r#"{"at":"2026-11-20T17:00:00Z","kind":"delivery","channel":"telegram","peer_id":"myself","session":"s-tg","task":"send myself a message — the proof of life rehearsal"}"#,
+        ];
+        std::fs::create_dir_all(home.join("channels")).unwrap();
+        std::fs::write(
+            home.join("channels").join("activity.jsonl"),
+            log.join("\n") + "\n",
+        )
+        .unwrap();
+
+        let document = channels_read(&home);
+        let channels = document["channels"].as_array().expect("the channels");
+        let myself = channels
+            .iter()
+            .find(|channel| channel["name"] == "webhook")
+            .and_then(|channel| channel["peers"].as_array())
+            .and_then(|peers| peers.iter().find(|peer| peer["name"] == "myself"))
+            .expect("the webhook rehearsal peer");
+        assert_eq!(myself["rehearsal"]["delivered"], true);
+        assert_eq!(
+            myself["rehearsal"]["answered"], true,
+            "the reply line answered the delivery"
+        );
+        assert_eq!(myself["rehearsal"]["at"], "2026-11-20T15:00:00Z");
+        assert_eq!(myself["rehearsal"]["session"], "s-proof");
+        // A peer with no rehearsal line shows null, not a guess.
+        let ci_box = channels
+            .iter()
+            .find(|channel| channel["name"] == "webhook")
+            .and_then(|channel| channel["peers"].as_array())
+            .and_then(|peers| peers.first())
+            .expect("the webhook peer");
+        assert_eq!(ci_box["rehearsal"], serde_json::Value::Null);
+
+        // The unanswered shape: the door heard the telegram rehearsal and
+        // no reply line came after it.
+        let talker = channels
+            .iter()
+            .find(|channel| channel["name"] == "telegram")
+            .and_then(|channel| channel["peers"].as_array())
+            .and_then(|peers| peers.first())
+            .expect("the telegram rehearsal peer");
+        assert_eq!(talker["rehearsal"]["delivered"], true);
+        assert_eq!(
+            talker["rehearsal"]["answered"], false,
+            "a delivery with no reply after it is not an answer"
+        );
+        assert_eq!(talker["rehearsal"]["session"], "s-tg");
+
+        // The document carries the rehearsal too — the newest one across
+        // the channels — so a surface renders the proof without hunting
+        // the peer out of the passport list.
+        assert_eq!(document["rehearsal"]["session"], "s-tg");
+        assert_eq!(document["rehearsal"]["answered"], false);
+        // A home with no rehearsal lines carries a null, not a green card.
+        let quiet = std::env::temp_dir().join(format!(
+            "fleet-rehearsal-derived-quiet-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(quiet.join("channels")).unwrap();
+        let quiet_document = channels_read(&quiet);
+        assert_eq!(quiet_document["rehearsal"], serde_json::Value::Null);
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::remove_dir_all(&quiet).ok();
     }
 
     /// The owner's stop and steer write the file the turn loop reads,

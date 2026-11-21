@@ -818,8 +818,18 @@ pub fn note_seat(home: &Path, channel: &str, peer_id: &str, seat: &SeatCard) {
     );
 }
 
-/// A reply's channel-side record.
-pub fn note_reply(home: &Path, channel: &str, peer_id: &str, to: &Reply, text: &str) {
+/// A reply's channel-side record. The session rides the line when the
+/// caller knows it — the watcher does — so the round trip a reply closes
+/// can be matched to the delivery it answers. A refusal's reply names no
+/// session: nothing ran.
+pub fn note_reply(
+    home: &Path,
+    channel: &str,
+    peer_id: &str,
+    session: Option<&str>,
+    to: &Reply,
+    text: &str,
+) {
     record(
         home,
         Activity {
@@ -828,7 +838,7 @@ pub fn note_reply(home: &Path, channel: &str, peer_id: &str, to: &Reply, text: &
             channel: channel.to_string(),
             peer: Some(peer_name(home, channel, peer_id)),
             peer_id: Some(peer_id.to_string()),
-            session: None,
+            session: session.map(str::to_string),
             task: None,
             detail: match to {
                 Reply::Url(url) => Some(format!("{url} · {}", Activity::first_line(text))),

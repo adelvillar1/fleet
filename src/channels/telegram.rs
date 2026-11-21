@@ -229,6 +229,10 @@ impl Telegram {
                                         home,
                                         "telegram",
                                         &inbound.peer.id,
+                                        // The delivery never ran, so the
+                                        // refusal's reply belongs to no
+                                        // session.
+                                        None,
                                         &inbound.reply,
                                         &refusal.to_string(),
                                     );
