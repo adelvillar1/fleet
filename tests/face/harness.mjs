@@ -18475,6 +18475,87 @@ async function everyButtonOnAnOwnerActionSurfaceDoesSomething() {
   }
 }
 
+// P1, the receipts gutter: one row per turn, and every count on it equal
+// to the session log's own records for that turn. The rail derives from
+// `face.events` — the `turn` events are the boundaries and each later
+// record belongs to the last turn that announced itself — so this case
+// counts the same fixture by hand and demands the rail agree, kind by
+// kind, and draws nothing for a kind the turn did not record.
+async function theGutterCountsEachTurnsReceipts() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('receipts-1', 'completed', { title: 'a run with receipts' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/receipts-1', documents: doc });
+  await flush();
+  page.open();
+  await flush();
+  // A fresh home has no turn, so it has no rail: the gutter is a record
+  // of what happened, never a frame waiting to be filled.
+  check('P1 gutter a conversation with no turn carries no rail',
+    page.IDS.gutter.hidden === true && page.rows('.gutter-turn').length === 0,
+    'hidden=' + page.IDS.gutter.hidden + ' rows=' + page.rows('.gutter-turn').length);
+
+  page.push({ type: 'turn', turn: 1 });
+  page.push({ type: 'routed', provider: 'acme', model: 'm', how: 'pinned' });
+  page.push({ type: 'memory', facts: 3, shape: 'square', root: '/w/notes' });
+  page.push({ type: 'memory', facts: 2, shape: 'square', root: '/w/notes' });
+  page.push({ type: 'tool_call', tool: 'use_skill', summary: 'the review skill' });
+  page.push({ type: 'tool_call', tool: 'read_file', summary: 'src/main.rs' });
+  page.push({ type: 'control', control: 'steer', body: { steer: 'go left' } });
+  page.push({ type: 'turn', turn: 2 });
+  page.push({ type: 'tool_call', tool: 'grep', summary: 'fn main' });
+  page.push({ type: 'tool_call', tool: 'read_file', summary: 'Cargo.toml' });
+  page.push({ type: 'routed', provider: 'acme', model: 'm', how: 'judged' });
+  await flush(80);
+
+  const rows = page.rows('.gutter-turn');
+  check('P1 gutter one row per turn', rows.length === 2,
+    rows.map((r) => r.dataset.turn).join(','));
+  const glyphs = (rowEl) => page.rows('.gutter-glyph')
+    .filter((g) => String(g.parentNode && g.parentNode.dataset
+      ? g.parentNode.dataset.turn : '') === String(rowEl.dataset.turn));
+  const counts = (rowEl) => {
+    const out = {};
+    glyphs(rowEl).forEach((g) => { out[g.dataset.kind] = Number(g.dataset.count); });
+    return out;
+  };
+  // Turn 1's records, counted by hand: 1 routed, 2 memory, 1 use_skill,
+  // 1 control, 1 other tool call.
+  const first = counts(rows[0] || { dataset: {} });
+  check('P1 gutter turn one carries the log\u2019s route count', first.route === 1, JSON.stringify(first));
+  check('P1 gutter turn one carries the log\u2019s recall count', first.recall === 2, JSON.stringify(first));
+  check('P1 gutter turn one carries the log\u2019s skill count', first.skill === 1, JSON.stringify(first));
+  check('P1 gutter turn one carries the log\u2019s approval count', first.approval === 1, JSON.stringify(first));
+  check('P1 gutter turn one carries the log\u2019s tool count', first.tools === 1, JSON.stringify(first));
+  // Turn 2's: 2 tool calls, 1 routed, and nothing else — a kind the turn
+  // never recorded draws no glyph at all (a zero is not a receipt).
+  const second = counts(rows[1] || { dataset: {} });
+  check('P1 gutter turn two counts only what it recorded',
+    second.tools === 2 && second.route === 1 && second.recall === undefined &&
+      second.skill === undefined && second.approval === undefined,
+    JSON.stringify(second));
+  // The tool glyph names the calls it stands for: "with which tool" is
+  // half of what a receipt is.
+  const toolGlyph = glyphs(rows[0] || { dataset: {} }).filter((g) => g.dataset.kind === 'tools')[0];
+  check('P1 gutter the tool glyph names its tools',
+    !!toolGlyph && /read_file/.test(toolGlyph.title) && /turn 1/.test(toolGlyph.title),
+    toolGlyph ? toolGlyph.title : 'no glyph');
+  // A press opens the receipt's record, and the record is the log's own:
+  // two memory events, both in the card.
+  const recallGlyph = glyphs(rows[0] || { dataset: {} }).filter((g) => g.dataset.kind === 'recall')[0];
+  if (recallGlyph) recallGlyph.click();
+  await flush(60);
+  const card = page.text('dock-object-body') || page.text('drawer-body');
+  check('P1 gutter a glyph opens its receipt\u2019s own record',
+    /recall \u00b7/.test(card) && (card.match(/recall \u00b7/g) || []).length === 2,
+    card.slice(0, 160));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -18734,6 +18815,7 @@ const cases = [
   ['S6 the spine feeds the lenses and the pivot stays in place', theSpineFeedsTheLensesAndThePivotStaysInPlace],
   ['S6 the connections column collapses from its own door', theConnectionsColumnCollapsesFromItsOwnDoor],
   ['U13 the drawer waits for the owner on desk and learning', theDrawerWaitsForTheOwnerOnDeskAndLearning],
+  ['P1 gutter the rail counts each turn\u2019s receipts from the log', theGutterCountsEachTurnsReceipts],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

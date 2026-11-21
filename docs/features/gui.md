@@ -168,6 +168,33 @@ separator the keyboard steps with the arrow keys. While a drag is in
 flight a live page's pointer events stand down, so the frame cannot
 swallow the move.
 
+## The receipts gutter
+
+Beside the transcript, a 28 px rail carries one row per turn. Each row
+holds that turn's receipts — **route · recall · skill · approval ·
+tools** — as a glyph with its count, and every count is derived from the
+log the transcript already holds: the `turn` events are the boundaries
+and each later record belongs to the last turn that announced itself,
+which is the rule the rows themselves are tagged by. Nothing is
+invented, so a kind a turn never recorded draws no glyph at all (a zero
+is not a receipt), and a turn with no receipt keeps its place on the
+rail as a bare mark rather than leaving a gap that would read as a turn
+that never happened. The mapping is the log's own vocabulary: route ←
+`routed`, recall ← `memory`, skill ← a `tool_call` to the skills tool,
+approval ← `control`, tools ← every other `tool_call`. The tool glyph
+names the calls it stands for on hover (`3 tools · read_file, grep`),
+because "with which tool" is half of what a receipt is.
+
+A press on a glyph is a link to its turn: the rail scrolls to that
+turn's mark and opens the record — the tool row's own detail when the
+flow holds one, the drawer's card for a receipt the run strip folded.
+The cards stay in the flow (hard rule 5 keeps them in the log); the
+rail makes the anatomy scannable without moving a single receipt. It
+paints only when a record it counts lands (a token delta never walks the
+log), it is hidden on a conversation with no turn, and it is rebuilt
+from the log on every load rather than cached. The harness counts a
+two-turn fixture by hand and demands the rail agree kind by kind.
+
 ## Selected objects and related suggestions
 
 Selecting an object opens the same right-hand inspector, non-modal, so

@@ -432,6 +432,16 @@
       </div>
 
       <div class="log" id="log" aria-live="polite" aria-relevant="text">
+        <!-- The receipts gutter (the face rethink's P1): a 28 px rail
+             beside the transcript, one row per turn, holding that turn's
+             receipts — route, recall, skill, approval, tools. Every count
+             on it is read from the log the transcript already carries
+             (the `turn` events are the boundaries, each later record
+             belongs to the last turn that announced itself), so the rail
+             cannot say anything the record does not. The cards stay in the
+             flow (hard rule 5): a press on a glyph jumps to its turn and
+             opens the record, it never moves the receipt. -->
+        <nav class="gutter" id="gutter" aria-label="the run's receipts, one row per turn" hidden></nav>
         <!-- The return anchor (D6): while the owner reads backwards,
              arriving events count instead of yanking them down; this
              control names the count and returns on a press. -->

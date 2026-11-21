@@ -207,27 +207,33 @@ are not in the landing at all, so the AC holds — the comment is describing an
 older landing, and the case now pins the state that matters (the token plus the
 absence of a bar) rather than trusting the prose.
 
-**P1, the gutter: measured, not started.** Two facts decide its shape, and both
-are now answered — which is why the next pass can build instead of asking:
+**P1, the gutter: built, and derived rather than invented.** The three
+measured facts above decided its shape, and it landed as the rail they
+implied — not as a per-turn wrapper around the log's 30-odd row builders:
 
-1. **Nothing named `gutter` exists** in `app.js`, `index.html` or `app.css`. This
-   is a build, not coverage.
-2. **`skill` is a tool kind, not an event.** The log's event types are `turn`,
-   `routed`, `tool_call`, `tool_result`, `seat`, `memory`, `lane`, `delegation`,
-   `control`, `plan`, `artifact`, `finished`, `failed`. A skill call arrives as
-   `tool_call` carrying the kind — `SessionEvent` has `kind: Option<String>`
-   (`src/session.rs:1370`), and `agent::kind_of` is what computes it
-   (`src/agent.rs:355-367`). So the spine's five counts map to: route ← `routed`,
-   recall ← `memory`, skill ← `tool_call {kind: "skill"}`, approval ← `control`,
-   tools ← `tool_call`.
+1. `#gutter` is a 28 px rail inside the log, one row per turn. It ships
+   its own measure (the stylesheet's visual pass owns the look), so the
+   face is readable before that pass lands.
+2. Every count comes from one walk of `face.events`, grouped by the
+   `turn` boundaries and tagged by the same rule `row()` tags rows by —
+   so the rail cannot say anything the log does not. The spine's five
+   counts map to `routed`, `memory`, `tool_call{use_skill}`, `control`
+   and every other `tool_call` (the `skills` library-load event is a
+   different receipt: what was loaded, not what was used).
+3. A glyph with a zero draws nothing, a turn with no receipts keeps its
+   place as a bare mark, and a press jumps to the turn's mark and opens
+   its record (the tool row's detail, or the drawer's card for the strip's
+   folded receipts). The cards never move out of the flow.
 
-3. **The log is flat.** `row()` appends every row straight to `face.stream` and
-   tags it with `face.lastTurn` (`src/gui/assets/app.js:1693-1699`). A 28 px spine
-   *per turn* therefore needs either a per-turn wrapper the 30-odd row builders
-   append into, or a margin spine positioned from row offsets. That is a change
-   to the log's own path, not a decoration beside it — so it is its own pass.
-
-Next: P1 — the conversation: one field, the receipts gutter, fork-at-turn.
+Coverage: `P1 gutter the rail counts each turn's receipts from the log`
+counts a two-turn fixture by hand and demands the rail agree kind by kind,
+that a kind the turn never recorded draws nothing, that the tool glyph
+names its tools, and that a press opens the log's own records. Red-proved
+twice: `gutterTurns` returning nothing failed nine checks by name
+(`one row per turn`, each count, the glyph's title, the press), and
+dropping the no-zero guard failed `turn two counts only what it recorded`
+with `{"route":1,"recall":0,"skill":0,"approval":0,"tools":2}`. Harness
+1665 checks across 234 cases.
 
 ## Phases
 

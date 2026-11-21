@@ -1229,6 +1229,7 @@ import { node, svg, clip } from './core/dom.js';
     contextMeter: document.getElementById('context-meter'),
     contextFill: document.getElementById('context-fill'),
     log: document.getElementById('log'),
+    gutter: document.getElementById('gutter'),
     toLive: document.getElementById('to-live'),
     empty: document.getElementById('empty'),
     emptyTitle: document.getElementById('empty-title'),
@@ -2591,6 +2592,179 @@ import { node, svg, clip } from './core/dom.js';
     }
   }
 
+  // The receipts gutter (the face rethink's P1): a 28 px rail beside the
+  // transcript, one row per turn, each row carrying that turn's receipts.
+  // Every count is read from the log the transcript already carries —
+  // `turn` events are the boundaries, and each later record belongs to
+  // the last turn that announced itself, which is the rule row() tags
+  // rows by — so the rail cannot say anything the record does not. A
+  // kind with no receipt in a turn draws nothing: a zero is not a receipt.
+  var GUTTER_KINDS = [
+    { kind: 'route', mark: '\u21e2', name: 'route',
+      hit: function (event) { return event.type === 'routed'; } },
+    { kind: 'recall', mark: '\u2726', name: 'recall',
+      hit: function (event) { return event.type === 'memory'; } },
+    // A skill receipt is a call to the skills tool — the plan's spine maps
+    // skill to a tool call, and the log names the tool rather than a kind
+    // (`skills`, the library's own load, is a different receipt: what was
+    // loaded, not what was used).
+    { kind: 'skill', mark: '\u25c8', name: 'skill',
+      hit: function (event) {
+        return event.type === 'tool_call' && event.tool === 'use_skill';
+      } },
+    { kind: 'approval', mark: '\u2691', name: 'approval',
+      hit: function (event) { return event.type === 'control'; } },
+    { kind: 'tools', mark: '\u2692', name: 'tools',
+      hit: function (event) {
+        return event.type === 'tool_call' && event.tool !== 'use_skill';
+      } }
+  ];
+
+  // One walk of the log, grouped by the turn each record belongs to. The
+  // same walk serves the rail and its presses, so what a glyph counts and
+  // what it opens cannot disagree.
+  function gutterTurns() {
+    var turns = [];
+    var held = null;
+    (face.events || []).forEach(function (event) {
+      if (event.type === 'turn') {
+        // A resumed run restarts its counter; the transcript draws one
+        // mark per number (turnRow is reached only when the number
+        // changes), so the rail folds the repeat into the turn already
+        // standing rather than drawing a second row the flow has not.
+        if (held && held.turn === event.turn) return;
+        held = { turn: event.turn, counts: {}, events: {} };
+        GUTTER_KINDS.forEach(function (kind) {
+          held.counts[kind.kind] = 0;
+          held.events[kind.kind] = [];
+        });
+        turns.push(held);
+        return;
+      }
+      if (!held) return;
+      GUTTER_KINDS.forEach(function (kind) {
+        if (!kind.hit(event)) return;
+        held.counts[kind.kind] += 1;
+        held.events[kind.kind].push(event);
+      });
+    });
+    return turns;
+  }
+
+  // What a glyph says on hover and to a screen reader: the count, the
+  // turn, and — for tools — the names of the calls it stands for, because
+  // "with which tool" is half of what a receipt is.
+  function gutterTitle(one, kind) {
+    var count = one.counts[kind.kind];
+    var line = count + ' ' + kind.name + (count === 1 ? '' : 's') +
+      ' \u00b7 turn ' + one.turn;
+    if (kind.kind === 'tools') {
+      var names = {};
+      one.events.tools.forEach(function (event) { names[event.tool] = true; });
+      var list = Object.keys(names);
+      if (list.length) {
+        line += ' \u00b7 ' + list.slice(0, 6).join(', ') +
+          (list.length > 6 ? ' \u00b7 ' + (list.length - 6) + ' more' : '');
+      }
+    }
+    return line;
+  }
+
+  // The rail's geometry, in one place. The stylesheet's visual pass owns
+  // the surface's look; the rail ships its own measure so the face is
+  // readable before that pass lands — 28 px is the transcript's own
+  // margin, so the rail rides it rather than narrowing the measure.
+  function gutterMeasure() {
+    if (!el.gutter) return;
+    el.gutter.style.position = 'sticky';
+    el.gutter.style.top = '0';
+    el.gutter.style.float = 'left';
+    el.gutter.style.width = '28px';
+    el.gutter.style.maxHeight = '78vh';
+    el.gutter.style.overflowY = 'auto';
+    el.gutter.style.zIndex = '3';
+  }
+
+  function paintGutter() {
+    if (!el.gutter) return;
+    // The rail reads the whole log, so it repaints only when a record it
+    // counts has landed: a token stream must not walk the log per delta.
+    if (!face.gutterDirty) return;
+    face.gutterDirty = false;
+    gutterMeasure();
+    var turns = gutterTurns();
+    el.gutter.textContent = '';
+    el.gutter.hidden = !turns.length;
+    if (!turns.length) return;
+    turns.forEach(function (one) {
+      var line = node('div', 'gutter-turn');
+      line.dataset.turn = String(one.turn);
+      var drew = false;
+      GUTTER_KINDS.forEach(function (kind) {
+        var count = one.counts[kind.kind];
+        if (!count) return;
+        drew = true;
+        var button = node('button', 'gutter-glyph');
+        button.type = 'button';
+        button.dataset.kind = kind.kind;
+        button.dataset.count = String(count);
+        button.appendChild(node('span', 'gutter-mark', kind.mark));
+        button.appendChild(node('span', 'gutter-count', String(count)));
+        button.title = gutterTitle(one, kind);
+        button.setAttribute('aria-label', button.title);
+        button.addEventListener('click', function () {
+          openGutterReceipt(one.turn, kind.kind);
+        });
+        line.appendChild(button);
+      });
+      // A turn with no receipt at all keeps its place: the rail is one row
+      // per turn, and a gap would read as a turn that never happened.
+      if (!drew) {
+        line.appendChild(node('span', 'gutter-mark', '\u00b7'));
+        line.title = 'turn ' + one.turn + ' \u00b7 no receipts recorded';
+      }
+      el.gutter.appendChild(line);
+    });
+  }
+
+  // A press on a glyph jumps to its turn and opens the record: the tool
+  // row's own detail when the flow holds one, and the drawer's card for a
+  // receipt the strip folded (route, recall, skill and approval never get
+  // a row of their own — hard rule 5 keeps them in the strip, so the rail
+  // opens the record rather than a second copy of it).
+  function openGutterReceipt(turn, kind) {
+    var one = null;
+    gutterTurns().forEach(function (candidate) {
+      if (candidate.turn === turn) one = candidate;
+    });
+    if (!one) return;
+    var mark = null;
+    face.rows.forEach(function (made) {
+      if (made.turn === turn && made.el &&
+          String(made.el.className || '').indexOf('turn-mark') !== -1) mark = made;
+    });
+    if (mark && mark.el.scrollIntoView) mark.el.scrollIntoView({ block: 'start' });
+    if (kind === 'tools') {
+      var row = null;
+      face.rows.forEach(function (made) {
+        if (!row && made.turn === turn && made.el && made.el.dataset &&
+            made.el.dataset.tool) row = made;
+      });
+      if (row) {
+        if (row.el.scrollIntoView) row.el.scrollIntoView({ block: 'center' });
+        var open = row.el.querySelector('.card-open');
+        if (open && !row.el.classList.contains('open')) open.click();
+        return;
+      }
+    }
+    var events = one.events[kind] || [];
+    if (!events.length) return;
+    openDrawer('the receipts \u00b7 turn ' + turn, events.map(function (event) {
+      return [kind + ' \u00b7 ' + stripLine(event),
+        node('pre', 'raw', JSON.stringify(event, null, 2))];
+    }));
+  }
+
   function stripPaint() {
     if (!face.stripEl) {
       var el0 = node('div', 'run-strip');
@@ -3197,6 +3371,14 @@ import { node, svg, clip } from './core/dom.js';
       face.stream.appendChild(divider);
     }
     face.events.push(event);
+    // The receipts gutter's own dirty flag (P1): the rail walks the log,
+    // so only a record it counts — a turn boundary or one of the five
+    // receipts — makes it repaint. A token delta never does.
+    if (event.type === 'turn' || event.type === 'routed' ||
+        event.type === 'memory' || event.type === 'skills' ||
+        event.type === 'control' || event.type === 'tool_call') {
+      face.gutterDirty = true;
+    }
     // Reading backwards: count instead of yank (D6).
     if (!face.stick && face.unread != null) {
       face.unread += 1;
@@ -3774,6 +3956,7 @@ import { node, svg, clip } from './core/dom.js';
     paintComposer();
     paintQueue();
     paintProcess();
+    paintGutter();
     // The router's live decision is the run's own `routed` event, so it
     // is repainted with the stream rather than waiting for the board's
     // clock. The rest of that panel is the board's read and does not move
@@ -10879,6 +11062,9 @@ import { node, svg, clip } from './core/dom.js';
     if (face.seat) paintTabCue();
     face.events = [];
     face.rows = [];
+    // The rail is rebuilt from the log this load replays: the flag makes
+    // the first paint after the replay draw it.
+    face.gutterDirty = true;
     // The shelf comes off the state document (the log's own send_file
     // results); the live stream appends the same shape as it lands.
     face.roomFiles = (state.deliverables || []).slice();
@@ -10915,6 +11101,9 @@ import { node, svg, clip } from './core/dom.js';
     el.log.textContent = '';
     face.stream = node('div', 'stream');
     el.log.appendChild(face.stream);
+    // The receipts gutter rides the log's own clearing: it is the log's
+    // rail, not a child of the stream, so it goes back in first.
+    if (el.gutter) el.log.insertBefore(el.gutter, face.stream);
     // The back-to-live control lives in the log and must survive its
     // own clearing — sticky at the foot, always the last child.
     if (el.toLive) el.log.appendChild(el.toLive);
