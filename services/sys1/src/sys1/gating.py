@@ -46,7 +46,10 @@ _DEFAULT_FLOORS = {
     "openjev": 0.65,     # community reproduction, slightly less trusted
     "kev": 0.7,          # openai wire
     "tev1": 0.7,         # openai wire
-    "laya": 0.6,         # openai wire, unconfirmed calibration
+    "laya": 0.6,         # in-process native wire: choice/score confidence is the top-1
+                         # probability (answer_confidence); an abstain arrives as no label,
+                         # so it escalates without a floor comparison. 0.6 is the starting
+                         # seat, not a fitted floor — no judged rows exist for it yet.
     "decide_1b": 0.7,    # gliner wire (Decide semantics)
     "decide_multi": 0.65,  # gliner wire, multilingual boundary variant
 }

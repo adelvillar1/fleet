@@ -67,6 +67,30 @@
         "what": "the `validate` task — one choice head id `validity` over supported/contradicted/unverifiable, the dream pass's evidence judgment",
         "why": "fleet's dream pass (fleet memories --validate, the memory-dreaming plan's C3) calls sys1_classify with task validate over a fact-and-transcript pair; the lane judges the fact against the evidence its `source` names, and the verdict's confidence gates the pass's acting",
         "since": "2026-11-07"
+      },
+      {
+        "file": "src/sys1/providers.py",
+        "what": "the laya provider becomes an IN-PROCESS one: `_laya_wire` runs `laya.Agent().predict(...)` in the laya venv's own interpreter (the `_gliner_wire`/`decide_1b` subprocess precedent, no HTTP), `laya_questions` builds laya's typed-question spec from sys1's heads, and availability is `_laya_installed` — the package's directory inside `laya_venv`, not a server on :8454. `laya_api_url` stays as the served-shape fallback the vendor entry assumed. The tier stays `candidate`: it is measured, never pre-enabled.",
+        "why": "the vendored entry shipped laya on `_openai_wire` with its own note that the wire was provisional ('adjust laya_api_url / the wire factory when its serving shape is confirmed'). Measured against the installed 0.5.2 tree, the library's real surface is a typed decision engine — `agent.predict(state, questions)` returning choice/score/noul with `probabilities`, `answer_confidence`, a conformal `prediction_set`, `abstain`, `unbound` and `route` — which a chat-completions shim would flatten into prose. The native wire keeps every one of those fields on the Answer",
+        "since": "2026-11-21"
+      },
+      {
+        "file": "src/sys1/parsers.py",
+        "what": "`parse_laya` — laya's answer envelope into sys1's Answer dict for all three head kinds: `confidence` is laya's `answer_confidence` (top-1 probability) and the engine's own normalized `confidence` rides beside it as `laya_confidence`; an `abstain` is a REFUSAL (label None, reason in `_declined`, which judge.rs's fail_open and route.rs's parse_workload already read as no answer); a `prediction_set` holding more than one option is surfaced with `ambiguous: True`; no confidence is ever invented",
+        "why": "the abstain/prediction-set semantics are laya's own and are the reason the provider is worth measuring; folding them into a single number would make the calibration stream read a guess as a decision",
+        "since": "2026-11-21"
+      },
+      {
+        "file": "src/sys1/config.py",
+        "what": "providers.laya_venv (default ~/.fleet/venvs/laya), laya_max_chars (200,000), laya_timeout_seconds (180), and `laya_model` defaulting to EMPTY — which is `laya.Agent()`, the vega engine. Naming one of laya's classic encoders loads the 421M encoder instead, whose answer carries no abstain and no prediction set",
+        "why": "measured on the installed tree: `laya.Agent()` (no model) loads the 0.8B-reader vega engine with the conformal/abstain semantics, while `laya.Agent('convaiinnovations/laya')` loads the classic 421M encoder with the older answer shape. The spec and the vendored entry both guessed the encoder; the library says otherwise, so the default follows the library",
+        "since": "2026-11-21"
+      },
+      {
+        "file": "tests/test_laya.py",
+        "what": "the availability pins (a venv with the package in it is available; a bare `uv venv` is not; a missing venv names `fleet install --provider laya`; the served URL is still the fallback; laya stays a candidate and out of `glide,drex,jev`), the question-spec pins, the three-head parse pins (abstain as refusal, multi-option set surfaced, no invented confidence), and a live in-process round-trip that SKIPS by name when the venv is absent",
+        "why": "a skip is not a pass: the live leg only claims a pass when the venv really answers, and the hermetic legs pin the shape without a model",
+        "since": "2026-11-21"
       }
     ]
   }

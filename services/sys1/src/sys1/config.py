@@ -172,10 +172,30 @@ DEFAULTS: dict = {
         "tev1_api_url": "https://api.together.xyz/v1/chat/completions",
         "tev1_model": "TogetherTevalabs/tev1",
         "tev1_api_key_env": "TOGETHER_API_KEY",
-        # Laya (Convai; 421M ModernBERT decision model) — OpenAI-compatible
-        # when served; swap the url for your endpoint.
+        # Laya (Convai; a frozen reader with a physics decision head) — run
+        # IN-PROCESS from its own venv, no HTTP: `pip install laya`, and
+        # `laya_venv` is the venv `_laya_wire` subprocesses into (the same
+        # in-process shape `decide_1b` uses, its own venv because laya's
+        # deps are its own).
+        #
+        # `laya_model` EMPTY means `laya.Agent()` — the library's own default,
+        # which since laya 0.5 is the vega engine (a frozen 0.8B reader with
+        # the physics head). That is the checkpoint with the semantics this
+        # provider speaks: conformal `prediction_set`, calibrated `abstain`,
+        # `unbound`, and a `route` word. Naming one of laya's classic encoders
+        # (`convaiinnovations/laya`) loads the 421M encoder instead, whose
+        # answer carries only choice/score/noul + `answer_confidence` — no
+        # abstain, no prediction set — and the parse handles both shapes.
+        #
+        # `laya_api_url` is NOT dead: it is the served-shape fallback the
+        # vendor entry assumed. When the venv is absent and something
+        # answers on that URL, the provider speaks the OpenAI wire to it;
+        # the native wire is the primary and the venv's presence decides.
+        "laya_venv": str(Path.home() / ".fleet" / "venvs" / "laya"),
+        "laya_model": "",
+        "laya_max_chars": 200_000,      # ~73,728 tokens of headroom at ~2.7 chars/token
+        "laya_timeout_seconds": 180,    # the first call loads the reader; later calls are ~0.2 s
         "laya_api_url": "http://127.0.0.1:8454/v1/chat/completions",
-        "laya_model": "convai/laya",
         "laya_api_key_env": "LAYA_API_KEY",
         # GLiNER-family variants run through the same local venv as `local`;
         # only the model name differs (zero network).

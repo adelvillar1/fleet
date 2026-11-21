@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import socket
 import subprocess
@@ -34,12 +35,13 @@ from .parsers import (
     parse_gliner2,
     parse_jev,
     parse_julia,
+    parse_laya,
     parse_liquid,
     parse_modernbert,
     parse_scaledown,
     parse_typellm,
 )
-from .types import Answer, Head, Provider
+from .types import Answer, Head, Provider, declined
 
 # ── HTTP core (stdlib-only) ──────────────────────────────────────────────────
 
@@ -930,6 +932,223 @@ def _local_venv_python(cfg: dict) -> Path:
     return Path(cfg["providers"].get("local_venv", "/private/tmp/gliner-decide")) / "bin" / "python"
 
 
+# ── Laya (in-process, its own venv) ──────────────────────────────────────────
+
+
+def _laya_venv(cfg: dict) -> Path:
+    raw = cfg.get("providers", {}).get("laya_venv") or ""
+    return Path(os.path.expanduser(str(raw))) if raw else Path()
+
+
+def _laya_venv_python(cfg: dict) -> Path:
+    venv = _laya_venv(cfg)
+    return venv / "bin" / "python" if venv.parts else Path("")
+
+
+def _laya_installed(cfg: dict) -> bool:
+    """
+    Whether the laya package is IN the configured venv.
+
+    The check is the import's own precondition — the package's directory in
+    that venv's site-packages — not the venv's existence and not a server on
+    a port. `uv venv` creates `bin/python` before any package lands, so the
+    python alone is no evidence (the lane receipt's lesson); a venv with
+    laya's `__init__.py` in it is one where `import laya` resolves. Spawning
+    the interpreter for a real import is the readiness probe's job
+    (`sys1_probe`), not a per-report availability check.
+    """
+    venv = _laya_venv(cfg)
+    if not venv.parts or not _laya_venv_python(cfg).exists():
+        return False
+    for pattern in (
+        "lib/python*/site-packages/laya/__init__.py",
+        "Lib/site-packages/laya/__init__.py",
+    ):
+        for path in venv.glob(pattern):
+            if path.is_file():
+                return True
+    return False
+
+
+def _laya_available(cfg: dict) -> bool:
+    """
+    Laya is available when its venv carries the package (the native wire), or
+    when something answers on `laya_api_url` (the served-shape fallback the
+    vendor entry assumed). The venv is the primary: it is the path that runs
+    in-process and needs no network.
+    """
+    if _laya_installed(cfg):
+        return True
+    url = _url_for("laya", cfg)
+    if not url:
+        return False
+    return _key_available("laya", cfg) and _tcp_open(url)
+
+
+def _laya_wire(pid: str):
+    """
+    Classify fn for Laya, run in-process in its own venv.
+
+    The precedent is `_gliner_wire`'s subprocess leg (`decide_1b`): the model
+    is loaded by the venv's own interpreter, in-process, with no HTTP hop and
+    no wire to re-encode. The difference is what the answer carries — laya
+    answers with a conformal `prediction_set`, a calibrated `abstain`, an
+    `unbound` flag and a `route` word beside `choice`/`score`/`noul`, and all
+    of them ride the Answer dict, because a wire that flattened them into
+    prose (a chat-completions shim) would be inventing a confidence laya did
+    not give.
+
+    An abstaining answer is a REFUSAL, not a guess: the label goes out as
+    None with the reason in `_declined`, which is the shape `judge.rs`'s
+    `fail_open` and `route.rs`'s `parse_workload` already treat as no answer
+    (fall back, escalate) rather than a confident wrong one.
+    """
+
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
+        pcfg = cfg["providers"]
+        questions = laya_questions(heads)
+        if not questions:
+            telemetry["error_kind"] = "no-questions"
+            return {h.id: declined("no-labels") for h in heads}
+
+        venv_python = _laya_venv_python(cfg)
+        if not venv_python.parts or not venv_python.exists():
+            # The served-shape fallback the vendor note assumed: only when
+            # something actually answers there. Otherwise the refusal names
+            # the press that fixes it.
+            url = _url_for(pid, cfg)
+            if url and _tcp_open(url):
+                telemetry["mode"] = "served-fallback"
+                return _openai_wire(pid)(text, heads, cfg, telemetry, images=images)
+            raise RuntimeError(
+                f"Laya venv not found at {venv_python} — `fleet install --provider laya` builds it"
+            )
+
+        model = str(pcfg.get("laya_model") or "")
+        max_chars = int(pcfg.get("laya_max_chars") or 200_000)
+        timeout = float(pcfg.get("laya_timeout_seconds") or 180)
+        t0 = time.monotonic()
+        proc = subprocess.run(
+            [
+                str(venv_python),
+                "-c",
+                _LAYA_INLINE,
+                model,
+                text[:max_chars],
+                json.dumps(questions),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        telemetry["latency_ms"] = int((time.monotonic() - t0) * 1000)
+        telemetry["retries"] = 0
+        telemetry["mode"] = "in-process"
+        if proc.returncode != 0:
+            telemetry["error_kind"] = "subprocess"
+            telemetry["stderr"] = (proc.stderr or "")[:300]
+            telemetry["structured_ok"] = False
+            raise RuntimeError(f"Laya failed: {(proc.stderr or '')[:300]}")
+        try:
+            parsed = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            telemetry["error_kind"] = "json"
+            telemetry["structured_ok"] = False
+            telemetry["stdout"] = (proc.stdout or "")[:200]
+            raise RuntimeError(f"Laya returned non-JSON: {(proc.stdout or '')[:200]!r}")
+        if isinstance(parsed, dict) and parsed.get("error"):
+            telemetry["error_kind"] = "provider"
+            telemetry["structured_ok"] = False
+            raise RuntimeError(f"Laya error: {str(parsed['error'])[:300]}")
+        usage = parsed.get("usage") or {}
+        if usage.get("input_tokens") is not None:
+            telemetry["token_prompt"] = usage.get("input_tokens")
+            telemetry["token_completion"] = usage.get("output_tokens") or 0
+            telemetry["token_total"] = (usage.get("input_tokens") or 0) + (
+                usage.get("output_tokens") or 0
+            )
+        telemetry["structured_ok"] = True
+        out = parse_laya(parsed, heads, questions)
+        telemetry["abstained"] = sum(
+            1 for a in out.values() if a.get("_declined") and "abstain" in str(a.get("_declined"))
+        )
+        return out
+
+    return _fn
+
+
+def laya_questions(heads: list[Head]) -> dict[str, dict]:
+    """
+    The `{question id: {type, instructions, criteria}}` spec `laya.Agent.predict`
+    takes, built from sys1's heads. Pure: no laya import, so the shape is
+    testable without the venv.
+
+    Choice heads carry their labels as criteria (a label's description when the
+    head has one, the label itself otherwise); score heads carry their ordered
+    levels, index 0 = lowest, exactly as laya's ordinal scale reads them; noul
+    heads carry the question alone (laya's noul is the probability of "yes").
+    A choice head with no labels cannot be asked and is left out, so it
+    declines downstream instead of being asked an empty question.
+    """
+    out: dict[str, dict] = {}
+    for head in heads:
+        if head.kind == "score":
+            out[head.id] = {
+                "type": "score",
+                "instructions": head.task,
+                "criteria": _ordinal_levels(head),
+            }
+        elif head.kind == "noul":
+            out[head.id] = {"type": "noul", "instructions": head.task}
+        else:
+            criteria = {
+                str(label): (head.descriptions or {}).get(label, str(label))
+                for label in head.labels
+            }
+            if not criteria:
+                continue
+            out[head.id] = {"type": "choice", "instructions": head.task, "criteria": criteria}
+    return out
+
+
+# The in-process leg: laya loaded by its own venv's interpreter. stdout is
+# captured while the model loads so a library banner cannot corrupt the
+# JSON the wire reads (the `_LOCAL_INLINE` precedent).
+_LAYA_INLINE = r"""
+import io, json, sys
+
+old_stdout = sys.stdout
+sys.stdout = io.StringIO()
+
+try:
+    import laya
+
+    model = sys.argv[1]
+    text = sys.argv[2]
+    questions = json.loads(sys.argv[3])
+
+    agent = laya.Agent(model_id_or_path=model) if model else laya.Agent()
+    out = agent.predict(text, questions)
+    result = {
+        "answers": out.get("answers") or {},
+        "usage": out.get("usage") or {},
+        "latency_ms": out.get("latency_ms"),
+        "mode": out.get("mode"),
+    }
+except Exception as exc:
+    result = {"error": "%s: %s" % (type(exc).__name__, exc)}
+
+sys.stdout = old_stdout
+print(json.dumps(result, default=str))
+"""
+
+
 # ── ModernBERT eval provider (sentence-encoder similarity, no fine-tuning) ────
 
 _MODERNBERT_INLINE = """
@@ -1277,15 +1496,20 @@ register(
 register(
     Provider(
         id="laya",
-        name="Laya (Convai, 421M ModernBERT)",
-        classify=_openai_wire("laya"),
-        is_available=_self_hosted_available("laya"),
-        is_configured=_endpoint_configured("laya"),
-        description="Convai's 421M decision model. Wire assumptions are provisional — "
-        "adjust laya_api_url / the wire factory when its serving shape is confirmed.",
+        name="Laya (Convai, in-process)",
+        classify=_laya_wire("laya"),
+        is_available=_laya_available,
+        is_configured=_laya_available,
+        description="Convai's Laya decision engine run IN-PROCESS in its own venv, no network: a "
+        "frozen reader with a physics decision head, typed choice/score/noul answers carrying a "
+        "conformal prediction_set, a calibrated abstain and an unbound flag. An abstaining answer "
+        "is a refusal (no label), never a guessed one.",
         tier="candidate",
-        wire="openai",
-        meta={"setup": "serve Laya behind an OpenAI-compatible endpoint (wire unconfirmed)"},
+        wire="laya",
+        meta={
+            "setup": "`fleet install --provider laya` builds ~/.fleet/venvs/laya (pip install laya); "
+            "laya_venv points sys1 at it. laya_api_url stays the served-shape fallback."
+        },
     )
 )
 register(
@@ -1378,6 +1602,18 @@ def availability_reason(pid: str, cfg: dict) -> str:
     if pid not in enabled_set(cfg):
         return "disabled by providers.enabled flag"
     pcfg = cfg.get("providers", {})
+    if provider.wire == "laya":
+        if _laya_installed(cfg):
+            return "available"
+        served = _url_for(pid, cfg)
+        # An empty URL is not a listener: `_tcp_open` would probe the default
+        # host:port and read a stranger's port as our fallback.
+        if served and _tcp_open(served):
+            return f"venv not installed — serving the fallback endpoint at {served}"
+        return (
+            f"laya not installed in {pcfg.get('laya_venv', '')} — "
+            "`fleet install --provider laya` builds it"
+        )
     if provider.wire in ("gliner", "modernbert"):
         venv = pcfg.get("local_venv", "/private/tmp/gliner-decide")
         return "available" if _venv_available(cfg) else f"venv not found at {venv}"
@@ -1398,6 +1634,14 @@ def provider_config_view(pid: str, cfg: dict) -> dict:
     """The config surface a dashboard needs per provider (never the key value)."""
     pcfg = cfg.get("providers", {})
     wire = REGISTRY[pid].wire if pid in REGISTRY else "openai"
+    if wire == "laya":
+        return {
+            "kind": "venv",
+            "venv": str(_laya_venv(cfg)),
+            "model": pcfg.get("laya_model", ""),
+            "installed": _laya_installed(cfg),
+            "served_url": _url_for(pid, cfg),
+        }
     if wire == "gliner":
         model_key = {"local": "local_model", "decide_1b": "decide_1b_model", "decide_multi": "decide_multi_model"}.get(
             pid, f"{pid}_model"
@@ -1422,6 +1666,18 @@ def probe(pid: str, cfg: dict | None = None, timeout: float = 1.0) -> dict:
     if provider is None:
         return {"ok": False, "detail": "not registered"}
     t0 = time.monotonic()
+    if provider.wire == "laya":
+        ok = _laya_installed(cfg)
+        venv = _laya_venv(cfg)
+        return {
+            "ok": ok,
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+            "detail": (
+                f"laya installed in {venv}"
+                if ok
+                else f"laya not installed in {venv} — `fleet install --provider laya` builds it"
+            ),
+        }
     if provider.wire in ("gliner", "modernbert"):
         ok = _venv_available(cfg)
         return {

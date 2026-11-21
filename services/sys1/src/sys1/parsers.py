@@ -580,6 +580,148 @@ def _legacy_answer(head: Head, raw: dict) -> Answer:
     return {"label": label, "confidence": conf, "type": "choice"}
 
 
+# ── Laya (in-process, typed decisions) ───────────────────────────────────────
+
+
+def parse_laya(
+    parsed: dict, heads: list[Head], spec: dict[str, dict] | None = None
+) -> dict[str, Answer]:
+    """
+    Parse laya's answer envelope into sys1's Answer shape.
+
+    Laya answers `{"answers": {qid: {...}}}` where each entry carries the
+    typed decision plus the engine's own statistics: `choice` / `score` /
+    `noul`, the full `probabilities`, `answer_confidence` (the top-1
+    probability — laya's "how sure of this answer", thresholdable as
+    encoder-head confidence is), a conformal `prediction_set`, a calibrated
+    `abstain`, an `unbound` off-distribution flag, and a `route` word
+    (`auto`/`review`) with its `route_reason`.
+
+    Three rules the wire must not break:
+
+    - **Never invent a confidence.** `confidence` is `answer_confidence` when
+      laya gives one and absent otherwise; the engine's other number (its
+      `confidence`, a normalized margin) rides beside it as `laya_confidence`
+      rather than replacing it, because the two are different statistics.
+    - **An abstain is a refusal.** The label goes out as None with the
+      engine's own reason in `_declined`: `judge.rs`'s `fail_open` and
+      `route.rs`'s `parse_workload` already read a missing label as no
+      answer, so the answer falls back instead of asserting a guess.
+    - **The prediction set rides along.** A set holding more than one option
+      is the engine saying the input is genuinely ambiguous; it stays on the
+      answer (and `ambiguous` says so in one word) rather than being hidden
+      behind a top-1 label that would read as certain.
+
+    `spec` is `laya_questions(heads)`, needed to map a score head's level
+    index back to `score_min + index` and to rebuild the legend.
+    """
+    spec = spec or {}
+    answers = parsed.get("answers") if isinstance(parsed, dict) else None
+    if not isinstance(answers, dict):
+        return {head.id: declined("missing") for head in heads}
+    return {head.id: _laya_answer(head, answers.get(head.id), spec.get(head.id) or {}) for head in heads}
+
+
+def _laya_answer(head: Head, raw: Any, head_spec: dict) -> Answer:
+    if not isinstance(raw, dict):
+        return declined("missing")
+    probs = {
+        str(k): float(v)
+        for k, v in (raw.get("probabilities") or {}).items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+    abstained = bool(raw.get("abstain"))
+    reason = str(raw.get("route_reason") or "abstained at the calibrated risk")
+    extras: dict = {}
+    for keep in (
+        "prediction_set",
+        "abstain",
+        "unbound",
+        "route",
+        "route_reason",
+        "readout",
+        "expected_score",
+    ):
+        if raw.get(keep) is not None:
+            extras[keep] = raw[keep]
+    prediction_set = raw.get("prediction_set")
+    if isinstance(prediction_set, list) and len(prediction_set) > 1:
+        extras["ambiguous"] = True
+
+    if head.kind == "noul":
+        p_yes = raw.get("noul")
+        if not isinstance(p_yes, (int, float)) or isinstance(p_yes, bool):
+            return declined("no-noul")
+        if abstained:
+            answer: Answer = {
+                "type": "noul",
+                "noul": None,
+                "probabilities": probs,
+                "_declined": f"laya {reason}",
+            }
+        else:
+            # No `confidence`: the probability of "true" IS the answer, and
+            # gating derives max(p, 1 - p) exactly as it does for Jev's noul.
+            answer = {"type": "noul", "noul": float(p_yes), "probabilities": probs}
+        answer.update(extras)
+        return answer
+
+    if head.kind == "score":
+        level = raw.get("score")
+        index = int(level) if isinstance(level, (int, float)) and not isinstance(level, bool) else None
+        levels = list(head_spec.get("criteria") or [])
+        if abstained or index is None:
+            answer = {
+                "type": "score",
+                "score": None,
+                "confidence": None,
+                "probabilities": probs,
+                "_declined": f"laya {reason}" if abstained else "no-score",
+            }
+            answer.update(extras)
+            return answer
+        answer = {
+            "type": "score",
+            "score": float(head.score_min + index),
+            "confidence": raw.get("answer_confidence"),
+            "probabilities": probs,
+        }
+        if levels:
+            answer["legend"] = {
+                str(head.score_min + i): str(level_text) for i, level_text in enumerate(levels)
+            }
+        answer.update(extras)
+        return answer
+
+    # choice
+    label = raw.get("choice")
+    confidence = raw.get("answer_confidence")
+    if abstained:
+        answer = {
+            "type": "choice",
+            "label": None,
+            "confidence": None,
+            "probabilities": probs,
+            "_declined": f"laya {reason}",
+        }
+        answer.update(extras)
+        return answer
+    if not isinstance(label, str) or not label:
+        return declined("no-label")
+    answer = {
+        "type": "choice",
+        "label": label,
+        "confidence": confidence if isinstance(confidence, (int, float)) else None,
+        "probabilities": probs,
+    }
+    if isinstance(raw.get("confidence"), (int, float)):
+        # laya's own statistic, kept apart from the top-1 probability: a
+        # floor fitted on one must not silently read the other.
+        answer["laya_confidence"] = float(raw["confidence"])
+    answer.update(extras)
+    return answer
+
+
 # ── ModernBERT eval ──────────────────────────────────────────────────────────
 
 def parse_modernbert(parsed: dict, heads: list[Head]) -> dict[str, Answer]:
