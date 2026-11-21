@@ -241,7 +241,7 @@ turn's row carries its cache half.*
 
 | | |
 |---|---|
-| ![the landing](docs/images/surface-landing.png) *the landing: one question over the composer — the onboard door when the home needs setup, the lenses in the rail* | ![the desk with the drawer](docs/images/surface-desk-drawer.png) *the desk, the inspector as a drawer over the work: the run, the receipts of what the conversation made, the files, the preview* |
+| ![the landing](docs/images/surface-landing.png) *the landing: one question over the composer — the onboard door when the home needs setup, the lenses in the rail* | ![the desk with the drawer](docs/images/surface-desk-drawer.jpg) *the desk, the inspector as a drawer over the work: the run, the receipts of what the conversation made, the files, the preview* |
 | ![a huddle](docs/images/surface-huddles.jpg) *a room: you and your bots, a deliverable on the shelf, a capability gap named* | ![the terminal](docs/images/tui-conversation.png) *the terminal face: the same core at a keyboard's density* |
 
 ## Install
