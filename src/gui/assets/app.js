@@ -9002,6 +9002,18 @@ import { node, svg, clip } from './core/dom.js';
     var card = boardCard(12, 'practice', null, null);
     card.appendChild(node('p', 'board-empty',
       'practice poses varied problems that require the knowledge to come to mind unnamed. One problem is active at a time.'));
+    // The graph's weakest link (the face-rethought plan's P5): the
+    // document ranks its own nodes and carries the sentence — the card
+    // prints it and offers the link as the default target. The manual
+    // start stays one press below it, untouched.
+    var weakness = read.graph ? read.graph.weakness : null;
+    if (weakness && weakness.node) {
+      card.appendChild(node('p', 'board-note', weakness.sentence));
+      card.appendChild(learningStartButton('practice', 'practitioner',
+        'practise the weakest link ' + weakness.node +
+        (weakness.practice ? ' \u2014 practise ' + weakness.practice : ''),
+        'practise the weakest link'));
+    }
     card.appendChild(learningStartButton('practice', 'practitioner',
       'start a practice \u2014 pose a problem that needs what I hold', 'start a practice'));
     var rows = read.practice ? read.practice.outcomes : [];

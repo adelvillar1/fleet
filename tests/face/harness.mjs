@@ -11929,6 +11929,78 @@ async function theLearningRailCarriesTheFourSections() {
     JSON.stringify(lessonStarts));
 }
 
+// The face-rethought plan's P5: practice from the graph's weakest link.
+// The document ranks its own nodes and carries the sentence; the card
+// prints it, offers the link as the default target, and the manual
+// start stays beside it.
+async function thePracticeCardNamesTheGraphsWeakestLink() {
+  const doc = learningDoc();
+  doc.graph.weakness = {
+    node: 'build',
+    why: 'its artifact did not verify',
+    practice: 'tools: bash',
+    sentence: 'the weakest link is `build` \u2014 its artifact did not verify \u2014 practise tools: bash',
+  };
+  const page = boot({
+    width: 1440, hash: '#/learning/practice',
+    documents: {
+      learning: doc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  page.open();
+  await flush(80);
+  const board = learnSurface(page);
+  check('PRACT the practice card prints the weakest link by name',
+    board.includes('the weakest link is `build`') &&
+      board.includes('practise tools: bash'),
+    board.slice(0, 300));
+  const starts = page.rows('.lr-start');
+  check('PRACT the card offers the link and the manual start side by side',
+    starts.length === 2 &&
+      /practise the weakest link/.test(starts[0].textContent) &&
+      /start a practice/.test(starts[1].textContent),
+    starts.map((s) => s.textContent).join(' | '));
+  // The default target names the link; the manual entry still posts the
+  // generic task — both paths reach the same session start.
+  starts[0].click();
+  await flush(60);
+  let posted = page.calls.filter((call) =>
+    call.url === '/api/learning/start' && call.method === 'POST');
+  check('PRACT the default target posts the weakest link',
+    posted.length === 1 &&
+      String(posted[0].body).includes('"kind":"practice"') &&
+      String(posted[0].body).includes('weakest link build') &&
+      String(posted[0].body).includes('practise tools: bash'),
+    JSON.stringify(posted));
+  page.calls.length = 0;
+  starts[1].click();
+  await flush(60);
+  posted = page.calls.filter((call) =>
+    call.url === '/api/learning/start' && call.method === 'POST');
+  check('PRACT the manual entry still posts the generic task',
+    posted.length === 1 &&
+      String(posted[0].body).includes('"kind":"practice"') &&
+      String(posted[0].body).includes('needs what I hold') &&
+      !String(posted[0].body).includes('weakest link'),
+    JSON.stringify(posted));
+  // No weakness in the document: the card reads exactly as before — one
+  // start, no invented target.
+  const bare = boot({
+    width: 1440, hash: '#/learning/practice',
+    documents: {
+      learning: learningDoc(), state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  bare.open();
+  await flush(80);
+  check('PRACT a graph without a weakness leaves the manual card alone',
+    bare.rows('.lr-start').length === 1 &&
+      !learnSurface(bare).includes('weakest link'),
+    bare.rows('.lr-start').map((s) => s.textContent).join(' | '));
+}
+
 async function theMemoryRailCarriesTheQueueAndTheVerbs() {
   const bootMemory = (hash) => boot({
     width: 1440, hash,
@@ -18171,6 +18243,7 @@ const cases = [
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
   ['LEARN the learning rail carries the four sections', theLearningRailCarriesTheFourSections],
+  ['PRACT the practice card names the graph\u2019s weakest link', thePracticeCardNamesTheGraphsWeakestLink],
   ['WORKSPACE the workspace rail carries the projects and the pane', theWorkspaceRailCarriesTheProjectsAndThePane],
   ['CAL the calibration rail carries the gate and the day', theCalibrationRailCarriesTheGateAndTheDay],
   ['CAL the lens surfaces the gained ops and their facts', theCalibrationLensSurfacesTheGainedOps],

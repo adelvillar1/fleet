@@ -1162,6 +1162,11 @@ impl UnlockShape {
 pub struct DeltaShape {
     pub state: String,
     pub reason: String,
+    /// What the delta cost the aggregate ([`crate::graph::diff_weight`]):
+    /// zero for a followed brief and a chosen improvement, priced for a
+    /// real deviation. The weakest-link ranking reads it, and carrying
+    /// it keeps the face from pricing the categories a second time.
+    pub weight: u64,
 }
 
 /// The delegation overlay one declared node carries: what the day's
@@ -1700,7 +1705,7 @@ fn read_stop(path: &Path) -> (Option<String>, Option<u64>) {
 /// file is not a failure — a home that has declared no graph is the
 /// ordinary state — but it is named, because an empty graph rendered in
 /// its place would read as "nothing is blocking anything".
-fn graph_snapshot(home: &Path, refused: &mut Vec<String>) -> Option<GraphSnapshot> {
+pub(crate) fn graph_snapshot(home: &Path, refused: &mut Vec<String>) -> Option<GraphSnapshot> {
     let path = crate::graph::path_in(home);
     if !path.exists() {
         refused.push(format!("{} holds no declared graph", path.display()));
@@ -1735,6 +1740,7 @@ fn graph_snapshot(home: &Path, refused: &mut Vec<String>) -> Option<GraphSnapsho
                 delta: node.delta.as_ref().map(|delta| DeltaShape {
                     state: delta.state.label().to_string(),
                     reason: delta.reason.label().to_string(),
+                    weight: crate::graph::diff_weight(delta),
                 }),
                 summary: node.summary,
             }
@@ -1757,6 +1763,102 @@ fn graph_snapshot(home: &Path, refused: &mut Vec<String>) -> Option<GraphSnapsho
         diff_score: graph.diff_score(),
         replan: graph.should_replan(),
     })
+}
+
+/// The graph's weakest link (the face-rethought plan's P5): the one node
+/// a practice move would help most. The ranking reads the same facts the
+/// unlock card prints — a node whose run failed first, then a node whose
+/// landed delta cost the aggregate, then the unverified node closest to
+/// done that still names why it is held. The derivation lives here
+/// beside the graph's own facts, not in the face: a document decides,
+/// a card prints.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Weakness {
+    /// The weakest node's id.
+    pub node: String,
+    /// Why it is the weakest link, in the node's own words: its held
+    /// reason, its delta's own labels, or its failed run's reason.
+    pub why: String,
+    /// The capability the node declares, as the phrase a brief names —
+    /// empty when the node declares none.
+    pub practice: String,
+    /// The sentence a card prints — which node, why, and what to
+    /// practise — so every surface that names the link names it the
+    /// same way.
+    pub sentence: String,
+}
+
+/// Rank the graph's nodes and name the weakest link, or `None` when no
+/// dispatchable node carries a reason a practice move would answer — an
+/// honest empty, not a manufactured target.
+pub fn weakest_link(nodes: &[GraphNode]) -> Option<Weakness> {
+    // A summary node is never dispatched, so nothing can be practised
+    // against it and it never ranks.
+    let eligible = nodes.iter().filter(|node| !node.summary);
+    // Tier 0: a failed node. Its dependents cannot land on it, and the
+    // failure is the reason a practice move would answer first.
+    let failed = eligible.clone().find(|node| node.status == "failed");
+    // Tier 1: a landed delta that cost the aggregate (a zero weight is a
+    // followed brief or a chosen improvement — neither is a weakness).
+    // The heaviest deviation wins; ties stay in declaration order.
+    let weight = |node: &GraphNode| node.delta.as_ref().map(|delta| delta.weight).unwrap_or(0);
+    let regression =
+        eligible
+            .clone()
+            .filter(|node| weight(node) > 0)
+            .fold(None::<&GraphNode>, |best, node| match best {
+                Some(best) if weight(best) >= weight(node) => Some(best),
+                _ => Some(node),
+            });
+    // Tier 2: an unverified node that still names why it is held, the
+    // one closest to done — the smallest remaining closure is the
+    // sharpest link a practice can close.
+    let held = eligible
+        .filter(|node| node.status != "verified")
+        .filter(|node| {
+            node.reason
+                .as_deref()
+                .map(|reason| !reason.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .min_by_key(|node| node.score);
+    failed.or(regression).or(held).map(|node| {
+        let delta = node.delta.as_ref();
+        let why = if node.status == "failed" {
+            node.reason
+                .clone()
+                .unwrap_or_else(|| "its run failed".to_string())
+        } else if weight(node) > 0 {
+            let delta = delta.expect("a ranked regression carries its delta");
+            format!("{} \u{b7} {}", delta.state, delta.reason)
+        } else {
+            node.reason.clone().unwrap_or_default()
+        };
+        let practice = node.capabilities.trim().to_string();
+        let sentence = if practice.is_empty() {
+            format!("the weakest link is `{}` \u{2014} {}", node.id, why)
+        } else {
+            format!(
+                "the weakest link is `{}` \u{2014} {} \u{2014} practise {}",
+                node.id, why, practice
+            )
+        };
+        Weakness {
+            node: node.id.clone(),
+            why,
+            practice,
+            sentence,
+        }
+    })
+}
+
+/// The declared graph's weakest link for a read that does not carry the
+/// whole snapshot: the same derivation the delegation board serves, over
+/// the home's own graph file. A home with no declared graph — or one
+/// that will not read — names no link rather than a manufactured one.
+pub(crate) fn graph_weakness(home: &Path) -> Option<Weakness> {
+    let mut refused = Vec::new();
+    graph_snapshot(home, &mut refused).and_then(|snapshot| weakest_link(&snapshot.nodes))
 }
 
 // --- the memory panel ------------------------------------------------------
@@ -5982,6 +6084,165 @@ mod tests {
 
     fn overlay_row(node: &str, session: &str) -> serde_json::Value {
         overlay_row_shape(node, session, "", "", "completed")
+    }
+
+    /// One declared node for the weakest-link tests: the read's own
+    /// shape, with only the fields the ranking reads.
+    fn link_node(id: &str, status: &str, score: u64, reason: Option<&str>) -> GraphNode {
+        GraphNode {
+            id: id.to_string(),
+            cost: 1,
+            score,
+            longest_chain: 1,
+            peak: 1,
+            status: status.to_string(),
+            state: "waiting".to_string(),
+            approach: None,
+            paths: Vec::new(),
+            capabilities: String::new(),
+            prereqs: Vec::new(),
+            unlock: UnlockShape {
+                score_zero: false,
+                resource_free: true,
+                deps_verified: true,
+                unlocked: false,
+                waiting: Vec::new(),
+                failed: Vec::new(),
+                unresolved: Vec::new(),
+                held: Vec::new(),
+            },
+            reason: reason.map(str::to_string),
+            delta: None,
+            summary: false,
+        }
+    }
+
+    /// A failed node: the ranking's first tier.
+    fn failed_node(id: &str, reason: &str) -> GraphNode {
+        link_node(id, "failed", 2, Some(reason))
+    }
+
+    /// A node carrying a delta that cost the aggregate: the second tier.
+    fn regressed_node(id: &str, weight: u64) -> GraphNode {
+        let mut node = link_node(id, "pending", 3, Some("waiting on plan"));
+        node.delta = Some(DeltaShape {
+            state: "deviated".to_string(),
+            reason: "infeasible".to_string(),
+            weight,
+        });
+        node
+    }
+
+    /// The weakest-link ranking is the document's own arithmetic, so the
+    /// tests pin the tiers: a failed run first, then a delta that cost
+    /// the aggregate, then the held node closest to done.
+    #[test]
+    fn the_failed_node_is_the_weakest_link() {
+        let nodes = vec![
+            link_node("held", "pending", 1, Some("waiting on plan")),
+            failed_node("build", "its artifact did not verify"),
+        ];
+        let weakness = weakest_link(&nodes).expect("a failed node ranks");
+        assert_eq!(weakness.node, "build");
+        assert!(weakness.why.contains("did not verify"), "{}", weakness.why);
+        assert!(
+            weakness.sentence.contains("`build`"),
+            "{}",
+            weakness.sentence
+        );
+    }
+
+    #[test]
+    fn a_costing_delta_outranks_a_held_one_and_loses_to_a_failure() {
+        let held_and_regressed = vec![
+            link_node("held", "pending", 1, Some("waiting on plan")),
+            regressed_node("deviated", 3),
+        ];
+        assert_eq!(
+            weakest_link(&held_and_regressed)
+                .expect("a costing delta ranks")
+                .node,
+            "deviated"
+        );
+        let all_three = vec![
+            regressed_node("deviated", 3),
+            failed_node("build", "its artifact did not verify"),
+        ];
+        assert_eq!(
+            weakest_link(&all_three)
+                .expect("the failure outranks the delta")
+                .node,
+            "build"
+        );
+    }
+
+    #[test]
+    fn the_heaviest_delta_wins_and_ties_stay_in_declaration_order() {
+        let nodes = vec![regressed_node("light", 2), regressed_node("heavy", 3)];
+        assert_eq!(weakest_link(&nodes).expect("ranks").node, "heavy");
+        let tied = vec![regressed_node("first", 3), regressed_node("second", 3)];
+        assert_eq!(weakest_link(&tied).expect("ranks").node, "first");
+    }
+
+    #[test]
+    fn the_held_rank_takes_the_lowest_score_with_a_reason() {
+        let nodes = vec![
+            link_node("far", "pending", 5, Some("waiting on plan")),
+            link_node("near", "pending", 1, Some("waiting on review")),
+        ];
+        assert_eq!(weakest_link(&nodes).expect("ranks").node, "near");
+        // A held node with no named reason is not a link a practice move
+        // answers — the why must be the node's own words.
+        let silent = vec![link_node("quiet", "pending", 1, None)];
+        assert!(weakest_link(&silent).is_none());
+    }
+
+    #[test]
+    fn an_empty_ranking_names_no_link_and_a_summary_never_ranks() {
+        let done = vec![link_node("built", "verified", 0, None)];
+        assert!(weakest_link(&done).is_none());
+        let mut summary = failed_node("summary", "its run failed");
+        summary.summary = true;
+        assert!(weakest_link(&[summary]).is_none());
+    }
+
+    #[test]
+    fn the_sentence_names_the_capability_when_the_node_declares_one() {
+        let mut node = failed_node("build", "its artifact did not verify");
+        node.capabilities = "tools: bash \u{b7} skills: vendoring-lanes".to_string();
+        let weakness = weakest_link(&[node]).expect("ranks");
+        assert_eq!(
+            weakness.practice,
+            "tools: bash \u{b7} skills: vendoring-lanes"
+        );
+        assert!(
+            weakness
+                .sentence
+                .ends_with("practise tools: bash \u{b7} skills: vendoring-lanes"),
+            "{}",
+            weakness.sentence
+        );
+    }
+
+    #[test]
+    fn the_learning_graph_weakness_reads_the_home_s_own_file() {
+        let scratch = Scratch::new("boards-weakness");
+        let mut graph = crate::graph::Graph::new();
+        graph
+            .add(crate::graph::Node::new("build", 5).with_capabilities(
+                crate::graph::Capabilities {
+                    tools: vec!["bash".to_string()],
+                    ..Default::default()
+                },
+            ))
+            .unwrap();
+        graph.fail("build").unwrap();
+        graph.save(&crate::graph::path_in(scratch.path())).unwrap();
+        let weakness = graph_weakness(scratch.path()).expect("the declared graph ranks");
+        assert_eq!(weakness.node, "build");
+        // A home with no declared graph names no link.
+        let empty = Scratch::new("boards-weakness-empty");
+        assert!(graph_weakness(empty.path()).is_none());
     }
 
     /// One row with its judged shape on it — the why-this-child half.

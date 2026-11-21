@@ -10282,7 +10282,15 @@ fn learning_document(
         "type": "learning",
         "read_at": epoch_millis(),
         "lesson": lesson,
-        "graph": { "propositions": propositions },
+        "graph": {
+            "propositions": propositions,
+            // The plan graph's weakest link (the face-rethought plan's
+            // P5): the same derivation the delegation board serves, read
+            // off this home's own declared graph. The practice card
+            // prints the sentence and offers the link as its default
+            // target; the manual start stays beside it.
+            "weakness": weakness_doc(&crate::boards::graph_weakness(home)),
+        },
         "practice": { "outcomes": practice },
         "history": { "lessons": history, "practice": practice_history },
     })
@@ -14612,6 +14620,24 @@ fn delegation_node(
     })
 }
 
+/// The weakness block as the browser reads it: the sentence the card
+/// prints and the fields it rests on, or `null` when every node is
+/// verified and none names a reason — the honest empty the derivation
+/// itself returns.
+fn weakness_doc(weakness: &Option<crate::boards::Weakness>) -> Value {
+    weakness
+        .as_ref()
+        .map(|weak| {
+            json!({
+                "node": weak.node,
+                "why": weak.why,
+                "practice": weak.practice,
+                "sentence": weak.sentence,
+            })
+        })
+        .unwrap_or(Value::Null)
+}
+
 /// The dependency graph: the nodes in declaration order, the edges as
 /// index pairs into that order, and the graph's own aggregates — plus
 /// the delegation overlay, computed by the read and carried here rather
@@ -14689,6 +14715,10 @@ fn graph_document(
         })).collect::<Vec<_>>(),
         "critical_path": graph.critical_path,
         "blocks_most_work": graph.blocks_most_work,
+        // The graph's weakest link (the face-rethought plan's P5): the
+        // document ranks its own nodes and names one, with the sentence
+        // a card prints. Nothing here is derived on the page.
+        "weakness": weakness_doc(&crate::boards::weakest_link(&graph.nodes)),
         "revisions": graph.revisions,
         "diff_score": graph.diff_score,
         "replan": graph.replan,
@@ -17997,6 +18027,109 @@ mod tests {
         let error = bridge.dictate_stop().await.unwrap_err();
         assert!(error.contains("no dictation is recording"), "{error}");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The learning document carries the plan graph's weakest link, read
+    /// off the home's own declared graph — the practice card's default
+    /// target is the document's arithmetic, not the page's.
+    #[test]
+    fn the_learning_document_carries_the_graphs_weakest_link() {
+        let home = scratch("learning-weakness");
+        let mut graph = crate::graph::Graph::new();
+        graph
+            .add(crate::graph::Node::new("build", 5).with_capabilities(
+                crate::graph::Capabilities {
+                    tools: vec!["bash".to_string()],
+                    ..Default::default()
+                },
+            ))
+            .unwrap();
+        graph.fail("build").unwrap();
+        graph.save(&crate::graph::path_in(&home)).unwrap();
+        let document = learning_document(&home, &home.join("memories"), None);
+        let weakness = &document["graph"]["weakness"];
+        assert_eq!(weakness["node"], "build");
+        assert_eq!(weakness["practice"], "tools: bash");
+        assert!(
+            weakness["sentence"].as_str().unwrap().contains("practise"),
+            "{}",
+            weakness["sentence"]
+        );
+        // A home with no declared graph reads the honest empty.
+        let bare = scratch("learning-weakness-bare");
+        let document = learning_document(&bare, &bare.join("memories"), None);
+        assert!(document["graph"]["weakness"].is_null());
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&bare);
+    }
+
+    /// One declared node for the graph document's weakness test: the
+    /// read's own shape, with only the fields the ranking reads.
+    fn link_node(id: &str, status: &str, reason: Option<&str>) -> crate::boards::GraphNode {
+        crate::boards::GraphNode {
+            id: id.to_string(),
+            cost: 1,
+            score: 1,
+            longest_chain: 1,
+            peak: 1,
+            status: status.to_string(),
+            state: "waiting".to_string(),
+            approach: None,
+            paths: Vec::new(),
+            capabilities: String::new(),
+            prereqs: Vec::new(),
+            unlock: crate::boards::UnlockShape {
+                score_zero: false,
+                resource_free: true,
+                deps_verified: true,
+                unlocked: false,
+                waiting: Vec::new(),
+                failed: Vec::new(),
+                unresolved: Vec::new(),
+                held: Vec::new(),
+            },
+            reason: reason.map(str::to_string),
+            delta: None,
+            summary: false,
+        }
+    }
+
+    /// The delegation board's graph document carries the weakest link:
+    /// the same block the learning read serves, over the snapshot the
+    /// board already holds.
+    #[test]
+    fn the_graph_document_carries_the_weakest_link() {
+        let nodes = vec![
+            link_node("held", "pending", Some("waiting on plan")),
+            link_node("build", "failed", Some("its artifact did not verify")),
+        ];
+        let snapshot = crate::boards::GraphSnapshot {
+            nodes,
+            edges: Vec::new(),
+            critical_path: Vec::new(),
+            blocks_most_work: None,
+            revisions: 0,
+            diff_score: 0,
+            replan: false,
+        };
+        let document = graph_document(
+            &snapshot,
+            None,
+            &std::collections::HashMap::new(),
+            &crate::boards::Divergences {
+                never_spawned: 0,
+                ran_twice: 0,
+            },
+        );
+        assert_eq!(document["weakness"]["node"], "build");
+        assert!(
+            document["weakness"]["sentence"]
+                .as_str()
+                .unwrap()
+                .contains("`build`"),
+            "{}",
+            document["weakness"]["sentence"]
+        );
     }
 
     /// The content match pass (D9): a query drives the rows from the
