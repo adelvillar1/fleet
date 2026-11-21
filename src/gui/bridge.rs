@@ -5126,6 +5126,39 @@ impl Bridge {
                 .await
                 .unwrap_or_default()
         };
+        // The deferral class (the owner's 2026-11-21 ruling): deliveries
+        // held for the owner's decision, read off the store the sink
+        // files them in. The capability word comes from the peer's own
+        // roster, the same read the passport shows — a hold that has
+        // since lost its pairing shows an honest blank.
+        let held: Vec<Value> = {
+            let home = self.home.clone();
+            tokio::task::spawn_blocking(move || match crate::channels::HoldStore::load(&home) {
+                Ok(store) => store
+                    .holds
+                    .iter()
+                    .map(|hold| {
+                        json!({
+                            "id": hold.id,
+                            "channel": hold.channel,
+                            "peer_id": hold.peer_id,
+                            "peer": hold.peer,
+                            "task": hold.task,
+                            "at": hold.at,
+                            "session": hold.session,
+                            "callback": hold.callback,
+                            "capability": held_capability(&home, &hold.channel, &hold.peer_id),
+                        })
+                    })
+                    .collect::<Vec<Value>>(),
+                // A store that cannot be read shows no holds rather than
+                // failing the whole read; an accept or decline of one is
+                // still refused by the op, which reads the store itself.
+                Err(_) => Vec::new(),
+            })
+            .await
+            .unwrap_or_default()
+        };
         // Every row carries its own identity and the fact's fingerprint:
         // the key names the row across reads, the signature changes when
         // the fact does — a dismissal hides a condition, never the next
@@ -5135,6 +5168,7 @@ impl Bridge {
         let mut asks = inbox_rows("ask", asks);
         let mut cron = inbox_rows("cron", cron);
         let mut doctor = inbox_rows("doctor", doctor);
+        let held = inbox_rows("held", held);
         // The owner's decisions: a dismissed row is hidden while its
         // signature holds, and an archived row lives in its own list —
         // kept with the day it went, restorable, alive or resolved.
@@ -5169,7 +5203,8 @@ impl Bridge {
             &decisions.dismissed,
             &[&live[0], &live[1], &live[2], &live[3], &live[4]],
         );
-        let total = seats.len() + onboarding.len() + asks.len() + cron.len() + doctor.len();
+        let total =
+            seats.len() + onboarding.len() + asks.len() + cron.len() + doctor.len() + held.len();
         json!({
             "type": "inbox",
             "seats": seats,
@@ -5177,6 +5212,7 @@ impl Bridge {
             "asks": asks,
             "cron": cron,
             "doctor": doctor,
+            "held": held,
             "archived": archived,
             "dismissed": dismissed,
             "total": total,
@@ -5331,9 +5367,82 @@ impl Bridge {
                 .await
                 .map_err(|_| "the inbox decision did not land".to_string())??;
             }
+            // The deferral class's two decisions (the owner's 2026-11-21
+            // ruling). An accept runs the held delivery through the
+            // channel driver's own door — `Driver::deliver`, which maps
+            // the peer to its session and writes the channel record that
+            // names it — so an accepted hold and an auto-run are the same
+            // delivery. A decline records a `refusal` line carrying the
+            // owner's reason. Both take the hold out of the store.
+            "accept" | "decline" => {
+                let reason = field("reason");
+                if op == "decline" && reason.as_deref().map(str::is_empty).unwrap_or(true) {
+                    return Err("a decline names its reason".to_string());
+                }
+                let id = key
+                    .strip_prefix("held:")
+                    .unwrap_or(&key)
+                    .to_string();
+                let service = self.hosted_channels();
+                let accepting = op == "accept";
+                tokio::task::spawn_blocking(move || {
+                    let mut store = crate::channels::HoldStore::load(&home).map_err(|error| {
+                        format!("the held file could not be read: {error}")
+                    })?;
+                    let hold = store
+                        .take(&id)
+                        .ok_or_else(|| format!("no held delivery is keyed {key} — it resolved"))?;
+                    if accepting {
+                        let Some(service) = service.as_ref() else {
+                            return Err(
+                                "no channel service is hosted — the held delivery has no driver"
+                                    .to_string(),
+                            );
+                        };
+                        // The delivery runs; its own activity line (the
+                        // delivery, or the refusal it earned) is recorded
+                        // by the same door the sink uses.
+                        let result = crate::channels::service::admit(
+                            service.driver(),
+                            &home,
+                            &hold.to_inbound(),
+                        );
+                        if let Err(refusal) = result {
+                            // The run did not happen: the hold goes back,
+                            // so the decision is still the owner's to make.
+                            store.file(&hold.to_inbound(), &hold.at);
+                            store.save(&home).map_err(|error| {
+                                format!("the held file could not be written: {error}")
+                            })?;
+                            return Err(format!("the held delivery was refused: {refusal}"));
+                        }
+                    } else {
+                        crate::channels::service::record(
+                            &home,
+                            crate::channels::service::Activity {
+                                at: crate::boards::now_stamp(),
+                                kind: "refusal".to_string(),
+                                channel: hold.channel.clone(),
+                                peer: Some(hold.peer.clone()),
+                                peer_id: Some(hold.peer_id.clone()),
+                                session: None,
+                                task: Some(
+                                    crate::channels::service::Activity::first_line(&hold.task),
+                                ),
+                                detail: reason.clone(),
+                            },
+                        );
+                    }
+                    store
+                        .save(&home)
+                        .map_err(|error| format!("the held file could not be written: {error}"))
+                })
+                .await
+                .map_err(|_| "the inbox decision did not land".to_string())??;
+            }
             other => {
                 return Err(format!(
-                    "`{other}` is not an inbox decision — dismiss, archive, restore or undismiss"
+                    "`{other}` is not an inbox decision — dismiss, archive, restore, undismiss, accept or decline"
                 ))
             }
         }
@@ -8078,6 +8187,24 @@ fn age_days(day: &str) -> i64 {
     days_of(ty, tm, td) - days_of(y, m, d)
 }
 
+/// The capability word a held row shows, read off the peer's own roster:
+/// the same two words the passport shows. A hold whose peer is no longer
+/// paired shows an honest blank rather than an invented word.
+fn held_capability(home: &std::path::Path, channel: &str, peer_id: &str) -> Option<&'static str> {
+    crate::channels::PeerStore::load(home, channel)
+        .ok()
+        .and_then(|store| {
+            store
+                .peers
+                .iter()
+                .find(|peer| peer.id == peer_id)
+                .map(|peer| match peer.capability {
+                    crate::channels::Capability::Task => "acts",
+                    crate::channels::Capability::Observe => "listens",
+                })
+        })
+}
+
 /// The key that names a row across reads: its class and its own id.
 fn inbox_rows(class: &str, rows: Vec<Value>) -> Vec<Value> {
     rows.into_iter()
@@ -8093,6 +8220,7 @@ fn inbox_rows(class: &str, rows: Vec<Value>) -> Vec<Value> {
                     .and_then(Value::as_str)
                     .unwrap_or_default(),
                 "cron" => row.get("name").and_then(Value::as_str).unwrap_or_default(),
+                "held" => row.get("id").and_then(Value::as_str).unwrap_or_default(),
                 _ => row.get("check").and_then(Value::as_str).unwrap_or_default(),
             }
             .to_string();
@@ -8129,6 +8257,16 @@ fn inbox_rows(class: &str, rows: Vec<Value>) -> Vec<Value> {
                         .and_then(Value::as_str)
                         .unwrap_or_default(),
                 ),
+                "held" => format!(
+                    "{}|{}|{}",
+                    row.get("channel")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    row.get("peer_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    row.get("task").and_then(Value::as_str).unwrap_or_default(),
+                ),
                 _ => row
                     .get("why")
                     .and_then(Value::as_str)
@@ -8157,6 +8295,13 @@ fn inbox_rows(class: &str, rows: Vec<Value>) -> Vec<Value> {
                         .and_then(Value::as_str)
                         .unwrap_or_default(),
                     row.get("name").and_then(Value::as_str).unwrap_or_default(),
+                ),
+                "held" => format!(
+                    "{} \u{00b7} via {}",
+                    row.get("peer").and_then(Value::as_str).unwrap_or_default(),
+                    row.get("channel")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
                 ),
                 _ => row
                     .get("check")
@@ -16145,6 +16290,189 @@ mod goal_tests {
             .expect("the restore must land");
         assert_eq!(restored["cron"].as_array().unwrap().len(), 1, "{restored}");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The deferral class's accept (the owner's 2026-11-21 ruling): the
+    /// held delivery runs through the channel driver's own door, so the
+    /// conversation's first record is the channel record that names the
+    /// peer — the thing that lets the pane say "via webhook · the CI
+    /// box". An accept that created the session itself could not produce
+    /// this record, which is why the op routes through `Driver::deliver`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_accepted_hold_runs_the_driver_and_the_first_record_names_the_peer() {
+        let home = std::env::temp_dir().join(format!("fleet-inbox-accept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut store = crate::channels::PeerStore::default();
+        store.pair(
+            "abc",
+            "the CI box",
+            &crate::channels::mint_peer_token().unwrap(),
+            crate::channels::Capability::Task,
+            "stamp",
+            None,
+        );
+        store.save(&home, "webhook").unwrap();
+        crate::identity::link_peer(
+            &home,
+            "webhook",
+            "abc",
+            &crate::identity::PrincipalId::owner(),
+        )
+        .unwrap();
+        let mut bridge = detached(&home);
+        let _door = bridge.connect();
+        let bridge = Arc::new(bridge);
+        let policy = crate::channels::Policy::new(home.clone());
+        let driver = Arc::new(crate::channels::Driver::new(Arc::clone(&bridge), policy));
+        let service = Arc::new(crate::channels::ChannelService::new(
+            Arc::clone(&bridge),
+            Arc::clone(&driver),
+            &crate::channels::ServiceConfig {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        ));
+        bridge.attach_channels(service.clone());
+        // A held delivery, filed the way the sink files one.
+        let mut holds = crate::channels::HoldStore::default();
+        let id = holds.file(
+            &crate::channels::Inbound {
+                peer: crate::channels::Peer::new("webhook", "abc", "the CI box"),
+                session: None,
+                task: "run the tests".to_string(),
+                reply: crate::channels::Reply::None,
+            },
+            "2026-11-21T10:00Z",
+        );
+        holds.save(&home).unwrap();
+        let before = bridge.owner_inbox().await;
+        assert_eq!(before["held"].as_array().unwrap().len(), 1, "{before}");
+        let document = bridge
+            .inbox_op(&format!(r#"{{"op":"accept","key":"held:{id}"}}"#))
+            .await
+            .expect("the accept must land");
+        // The hold left the queue.
+        assert_eq!(document["held"].as_array().unwrap().len(), 0, "{document}");
+        // The run went through the driver: a delivery line, and the
+        // session's FIRST record is the channel record naming the peer.
+        let lines = crate::channels::service::activity(&home, 10);
+        let line = lines.last().expect("the delivery line");
+        assert_eq!(line.kind, "delivery");
+        assert_eq!(line.peer_id.as_deref(), Some("abc"));
+        let session = line.session.clone().expect("the session");
+        let path = crate::session::session_path(&home, &session);
+        let records = crate::session::replay(&path).expect("the log replays");
+        assert!(
+            !records.is_empty(),
+            "an accepted hold leaves a conversation"
+        );
+        // The conversation opens with the peer's name: the first record
+        // past the creation's own Start is the channel record that names
+        // channel, peer id, and name. An accept that had minted the
+        // session itself would have no channel record here at all — the
+        // run's own words would come first, and the pane could not say
+        // "via webhook · the CI box" without reading it out of a store
+        // the log does not carry.
+        let first = records
+            .iter()
+            .position(|record| !matches!(record, crate::session::Record::Start { .. }))
+            .expect("a conversation with only a Start record in it");
+        match &records[first] {
+            crate::session::Record::Channel {
+                channel,
+                peer_id,
+                peer,
+            } => {
+                assert_eq!(channel, "webhook");
+                assert_eq!(peer_id, "abc");
+                assert_eq!(peer, "the CI box");
+            }
+            other => panic!("the first record is not the channel record: {other:?}"),
+        }
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The deferral class's decline: the hold leaves the store, and the
+    /// activity log gains a `refusal` line carrying the owner's reason —
+    /// the same log the auto-run's refusals ride, so one read answers
+    /// "what did the owner do about it".
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_declined_hold_leaves_a_refusal_line_with_its_reason() {
+        let home = std::env::temp_dir().join(format!("fleet-inbox-decline-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut store = crate::channels::PeerStore::default();
+        store.pair(
+            "abc",
+            "the CI box",
+            &crate::channels::mint_peer_token().unwrap(),
+            crate::channels::Capability::Task,
+            "stamp",
+            None,
+        );
+        store.save(&home, "webhook").unwrap();
+        let bridge = detached(&home);
+        let mut holds = crate::channels::HoldStore::default();
+        let id = holds.file(
+            &crate::channels::Inbound {
+                peer: crate::channels::Peer::new("webhook", "abc", "the CI box"),
+                session: None,
+                task: "wipe the tree\nand rebuild".to_string(),
+                reply: crate::channels::Reply::None,
+            },
+            "2026-11-21T10:00Z",
+        );
+        holds.save(&home).unwrap();
+        // A decline without its reason is refused by name.
+        let missing = bridge
+            .inbox_op(&format!(r#"{{"op":"decline","key":"held:{id}"}}"#))
+            .await
+            .err();
+        assert_eq!(
+            missing.as_deref(),
+            Some("a decline names its reason"),
+            "{missing:?}"
+        );
+        let document = bridge
+            .inbox_op(&format!(
+                r#"{{"op":"decline","key":"held:{id}","reason":"the tree is sacred"}}"#
+            ))
+            .await
+            .expect("the decline must land");
+        // The hold is gone from the queue and the store.
+        assert_eq!(document["held"].as_array().unwrap().len(), 0, "{document}");
+        let holds = crate::channels::HoldStore::load(&home).unwrap();
+        assert!(
+            holds.holds.is_empty(),
+            "a declined hold leaves the store: {holds:?}"
+        );
+        // The log carries the refusal with the reason in it.
+        let lines = crate::channels::service::activity(&home, 10);
+        let line = lines.last().expect("the refusal line");
+        assert_eq!(line.kind, "refusal");
+        assert_eq!(line.peer_id.as_deref(), Some("abc"));
+        assert_eq!(
+            line.detail.as_deref(),
+            Some("the tree is sacred"),
+            "the owner's reason rides the line"
+        );
+        assert_eq!(
+            line.task.as_deref(),
+            Some("wipe the tree"),
+            "the task's first line, like every refusal's"
+        );
+        // A stale key after the hold is gone is a refusal, not a guess.
+        let again = bridge
+            .inbox_op(&format!(
+                r#"{{"op":"decline","key":"held:{id}","reason":"twice"}}"#
+            ))
+            .await
+            .err();
+        let stale = format!("no held delivery is keyed held:{id} — it resolved");
+        assert_eq!(again.as_deref(), Some(stale.as_str()), "{again:?}");
+        std::fs::remove_dir_all(&home).ok();
     }
 
     /// The archive keeps the newest 200 rows and drops nothing else.
