@@ -3898,6 +3898,105 @@ impl Bridge {
         ))
     }
 
+    /// One version's raster, for the side-by-side: the capture the
+    /// browser lane wrote beside the board. A version without a capture
+    /// is refused by name — the face says so rather than painting blank.
+    pub fn design_version_image(
+        &self,
+        slug: &str,
+        _frame_id: &str,
+        version_id: &str,
+    ) -> Result<(String, Vec<u8>), String> {
+        crate::canvas::version_image(&self.home, slug, version_id)
+            .ok_or_else(|| format!("version `{version_id}` carries no image"))
+    }
+
+    /// Capture one version's page into a raster: the browser lane — the
+    /// one rasterizer fleet ships — opens the version's own preview
+    /// route at the frame's size, writes the PNG beside the board, and
+    /// the version record names it from here on. The lane is spawned for
+    /// this one capture and closed, as the page export does.
+    pub async fn design_version_capture(&self, body: &str) -> Result<Value, String> {
+        let arguments: Value = serde_json::from_str(body)
+            .map_err(|error| format!("the capture is not a JSON object: {error}"))?;
+        let slug = arguments
+            .get("project")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the capture names its project".to_string())?;
+        let frame_id = arguments
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the capture names its frame".to_string())?;
+        let version_id = arguments
+            .get("version")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the capture names its version".to_string())?;
+        // The face names its own loopback origin, as the page export
+        // does: the capture stays on this machine.
+        let origin = arguments
+            .get("origin")
+            .and_then(Value::as_str)
+            .unwrap_or("http://127.0.0.1:3080")
+            .trim_end_matches('/')
+            .to_string();
+        let loopback = origin.starts_with("http://127.0.0.1:")
+            || origin.starts_with("http://localhost:")
+            || origin.starts_with("http://[::1]:");
+        if !loopback {
+            return Err(format!(
+                "`{origin}` is not this machine's loopback address; the capture stays local"
+            ));
+        }
+        let project = crate::canvas::load(&self.home, slug)?;
+        let frame = project
+            .frames
+            .iter()
+            .find(|frame| frame.id == frame_id)
+            .ok_or_else(|| format!("no frame `{frame_id}` on this board"))?
+            .clone();
+        if !frame
+            .versions
+            .iter()
+            .any(|version| version.id == version_id)
+        {
+            return Err(format!("no version `{version_id}` on frame `{frame_id}`"));
+        }
+        let spec = crate::lanes::spec_for("browser")?;
+        let server = crate::mcp::McpServer::spawn(&spec)
+            .map_err(|error| format!("the browser service could not start: {error}"))?;
+        server
+            .initialize()
+            .await
+            .map_err(|error| format!("the browser service did not answer: {error}"))?;
+        let url = format!("{origin}/api/design/version/{slug}/{frame_id}/{version_id}");
+        let dir = crate::canvas::versions_root(&self.home, slug);
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+        let path = dir.join(format!("{version_id}.png"));
+        server
+            .call_tool("browser_navigate", json!({ "url": url }))
+            .await
+            .map_err(|error| format!("the version page did not open: {error}"))?;
+        server
+            .call_tool(
+                "browser_screenshot",
+                json!({ "path": path.display().to_string(), "width": frame.w as i64,
+                        "height": frame.h as i64 }),
+            )
+            .await
+            .map_err(|error| format!("the version page did not capture: {error}"))?;
+        let _ = server.close().await;
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("the capture did not land: {error}"))?;
+        let name =
+            crate::canvas::record_version_image(&self.home, slug, frame_id, version_id, &bytes)?;
+        Ok(json!({
+            "type": "design_version_capture",
+            "version": version_id,
+            "image": name,
+        }))
+    }
+
     /// The token diff between a stored version and the frame as it stands.
     pub fn design_diff(
         &self,
@@ -12404,6 +12503,12 @@ fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
                                         "name": version.name,
                                         "source": version.source,
                                         "created": version.created,
+                                        // Whether the version carries its own
+                                        // raster (the face-rethought plan's
+                                        // P5): the side-by-side reads this
+                                        // fact, and a version without one is
+                                        // named, never painted blank.
+                                        "image": version.image.is_some(),
                                     })
                                 })
                                 .collect::<Vec<_>>(),
@@ -18026,6 +18131,53 @@ mod tests {
         let (bridge, _sources) = Bridge::detached(home.clone(), "m".to_string(), None);
         let error = bridge.dictate_stop().await.unwrap_err();
         assert!(error.contains("no dictation is recording"), "{error}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The design document carries each version's image fact — whether
+    /// the version has pixels — so the side-by-side reads the document,
+    /// and a version without one is named, never painted blank.
+    #[tokio::test]
+    async fn the_design_document_carries_the_versions_image_fact() {
+        let home = scratch("design-image-fact");
+        let (slug, _) = crate::canvas::create(&home, "Sample board").unwrap();
+        crate::canvas::put_frame(
+            &home,
+            &slug,
+            "hero",
+            "<!doctype html><html><body><h1>hi</h1></body></html>",
+            None,
+            None,
+            "m",
+        )
+        .unwrap();
+        let document = design_read(&home, None);
+        let versions = &document["active"]["frames"][0]["versions"];
+        assert_eq!(versions[0]["image"], json!(false));
+        let version_id = versions[0]["id"].as_str().unwrap().to_string();
+        let frame_id = document["active"]["frames"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        crate::canvas::record_version_image(&home, &slug, &frame_id, &version_id, b"png-bytes")
+            .unwrap();
+        let document = design_read(&home, None);
+        assert_eq!(
+            document["active"]["frames"][0]["versions"][0]["image"],
+            json!(true)
+        );
+        // The serve path: the bytes ride their route; a version without
+        // a capture refuses by name.
+        let served = Bridge::detached(home.clone(), "m".to_string(), None)
+            .0
+            .design_version_image(&slug, &frame_id, &version_id)
+            .unwrap();
+        assert_eq!(served.1, b"png-bytes".to_vec());
+        let error = Bridge::detached(home.clone(), "m".to_string(), None)
+            .0
+            .design_version_image(&slug, &frame_id, "v-nope")
+            .unwrap_err();
+        assert!(error.contains("carries no image"), "{error}");
         let _ = std::fs::remove_dir_all(&home);
     }
 

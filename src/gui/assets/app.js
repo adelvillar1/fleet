@@ -26172,6 +26172,92 @@ import { node, svg, clip } from './core/dom.js';
     diffPane.appendChild(node('p', 'board-empty',
       'press a version\u2019s diff to see what its tokens changed'));
     var previewPane = node('div', 'canvas-diff-preview');
+    // The pixels, side by side (the face-rethought plan's P5): two
+    // chosen versions' own rasters, not their tokens. The document
+    // carries whether a version was captured; a version without one is
+    // named, never painted blank. The geometry is the card's own inline
+    // styles — a grid with a divider column, the images pixelated at
+    // their natural scale.
+    var compare = node('div', 'canvas-version-compare');
+    var choices = versions.slice().reverse();
+    if (choices.length >= 2) {
+      var picks = [choices[0], choices[1]];
+      var panes = node('div', 'canvas-version-panes');
+      panes.style.display = 'grid';
+      panes.style.gridTemplateColumns = '1fr 1px 1fr';
+      var paintPanes = function () {
+        panes.textContent = '';
+        picks.forEach(function (version, index) {
+          var pane = node('div', 'canvas-version-pane');
+          pane.appendChild(node('p', 'cfg-item-value',
+            version.name + ' \u00b7 ' + version.source + ' \u00b7 ' + version.created));
+          if (version.image) {
+            var shot = node('img', 'canvas-version-shot');
+            shot.src = '/api/design/version-image/' + encodeURIComponent(board.slug) + '/' +
+              encodeURIComponent(frame.id) + '/' + encodeURIComponent(version.id);
+            shot.alt = frame.name + ' at ' + version.id;
+            shot.style.imageRendering = 'pixelated';
+            shot.style.width = '100%';
+            pane.appendChild(shot);
+          } else {
+            // The honesty half: the record says what it does not carry.
+            pane.appendChild(node('p', 'board-empty', 'this version carries no image'));
+            var capture = node('button', 'replay-button', 'capture');
+            capture.type = 'button';
+            capture.dataset.act = 'design-version-capture-' + version.id;
+            capture.addEventListener('click', function () {
+              capture.disabled = true;
+              post('/api/design/version-capture', {
+                project: board.slug, id: frame.id, version: version.id,
+                origin: window.location.origin || 'http://127.0.0.1:3080'
+              }).then(function (reply) {
+                capture.disabled = false;
+                if (reply.status !== 200) {
+                  notice('the capture was refused',
+                    (reply.body && reply.body.error) || 'the browser service did not answer');
+                  return;
+                }
+                readDesign(true).then(function () {
+                  var fresh = designByID(frame.id);
+                  if (fresh) designVersionCard(fresh);
+                });
+              }).catch(function () { capture.disabled = false; });
+            });
+            pane.appendChild(capture);
+          }
+          panes.appendChild(pane);
+          if (index === 0) {
+            var divider = node('div', 'canvas-version-divider');
+            divider.style.background = 'var(--edge, #d8d4cd)';
+            panes.appendChild(divider);
+          }
+        });
+      };
+      var pickers = node('div', 'canvas-inline');
+      [0, 1].forEach(function (index) {
+        var select = node('select', 'knob-box');
+        select.setAttribute('aria-label', index === 0 ? 'the left version' : 'the right version');
+        choices.forEach(function (version) {
+          var option = node('option', null,
+            version.name + ' \u00b7 ' + version.source + ' \u00b7 ' + version.created);
+          option.value = version.id;
+          select.appendChild(option);
+        });
+        select.value = picks[index].id;
+        select.addEventListener('change', function () {
+          var chosen = choices.filter(function (one) { return one.id === select.value; })[0];
+          if (chosen) picks[index] = chosen;
+          paintPanes();
+        });
+        pickers.appendChild(select);
+      });
+      paintPanes();
+      compare.appendChild(pickers);
+      compare.appendChild(panes);
+    } else {
+      compare.appendChild(node('p', 'board-empty',
+        'a compare needs two versions \u2014 this frame carries ' + choices.length + '.'));
+    }
     versions.slice().reverse().forEach(function (version) {
       var row = node('div', 'cfg-fallback');
       row.appendChild(node('span', 'cfg-item-value', version.source + ' \u00b7 ' + version.created));
@@ -26242,6 +26328,7 @@ import { node, svg, clip } from './core/dom.js';
     });
     openDrawer(frame.name + ' \u00b7 versions', [
       ['the history, newest first', rows],
+      ['the pixels, side by side', compare],
       ['the token diff', diffPane],
       ['the older page', previewPane],
       ['hand-off', tsx],

@@ -105,6 +105,13 @@ pub struct Version {
     /// `generate` | `refine` | `restore`.
     pub source: String,
     pub created: String,
+    /// The version's own raster, when the browser lane captured one: the
+    /// PNG's file name beside the board, served by its own route. A
+    /// version carries none until a capture lands on it — an old store
+    /// (and every store until the owner asks for pixels) reads `None`,
+    /// and the face says so by name rather than painting a blank frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 /// One comment pin, at a normalized position over the frame (0–1 of the
@@ -3228,10 +3235,70 @@ fn push_version(frame: &mut Frame, source: &str) {
         tweak_values: frame.tweak_values.clone(),
         source: source.to_string(),
         created: crate::calib::stamp(),
+        image: None,
     });
     while frame.versions.len() > MAX_VERSIONS {
         frame.versions.remove(0);
     }
+}
+
+/// Where a board's version captures live, beside the board.
+pub fn versions_root(home: &Path, slug: &str) -> PathBuf {
+    canvas_root(home).join(slug).join("versions")
+}
+
+/// One version's captured raster: the PNG the browser lane wrote beside
+/// the board, with its MIME. A version without a capture has none — the
+/// caller names that rather than painting a blank frame.
+pub fn version_image(home: &Path, slug: &str, version_id: &str) -> Option<(String, Vec<u8>)> {
+    let path = versions_root(home, slug).join(format!("{version_id}.png"));
+    std::fs::read(&path)
+        .ok()
+        .map(|bytes| ("image/png".to_string(), bytes))
+}
+
+/// Land one version's captured raster: the bytes the browser lane
+/// captured are written beside the board and the version record names
+/// them from here on, so the document — not the face — carries whether
+/// the version has pixels.
+pub fn record_version_image(
+    home: &Path,
+    slug: &str,
+    frame_id: &str,
+    version_id: &str,
+    bytes: &[u8],
+) -> Result<String, String> {
+    let mut project = load(home, slug)?;
+    if !project.frames.iter().any(|frame| frame.id == frame_id) {
+        return Err(format!("no frame `{frame_id}` on this board"));
+    }
+    if !project.frames.iter().any(|frame| {
+        frame
+            .versions
+            .iter()
+            .any(|version| version.id == version_id)
+    }) {
+        return Err(format!("no version `{version_id}` on frame `{frame_id}`"));
+    }
+    let dir = versions_root(home, slug);
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+    let name = format!("{version_id}.png");
+    std::fs::write(dir.join(&name), bytes)
+        .map_err(|error| format!("the capture did not land: {error}"))?;
+    let frame = project
+        .frames
+        .iter_mut()
+        .find(|frame| frame.id == frame_id)
+        .expect("the frame was just checked");
+    let version = frame
+        .versions
+        .iter_mut()
+        .find(|version| version.id == version_id)
+        .expect("the version was just checked");
+    version.image = Some(name.clone());
+    save(home, slug, &project)?;
+    Ok(name)
 }
 
 /// The geometry and tweak write the face makes: position, size, name,
@@ -4123,6 +4190,43 @@ mod tests {
     }
 
     const PAGE: &str = "<!doctype html><html><head><style>:root{--page:#0b0e14;--ink:#e6e9ef;--accent:#3b6cf6}body{color:var(--ink);background:var(--page)}img{max-width:100%}:focus{outline:2px solid var(--accent)}</style><meta name=\"viewport\" content=\"width=device-width\"></head><body><h1>hi</h1><img src=\"data:image/png;base64,AA\" alt=\"a mark\"><form><input aria-label=\"email\"></form></body></html>";
+
+    /// An old store's version record carries no image field: it loads
+    /// unchanged, reads as carrying no raster, and serializes without
+    /// the field — the same tolerance the device class landed with.
+    #[test]
+    fn an_old_version_record_loads_unchanged_without_an_image() {
+        let json = r#"{"id":"v-1","name":"hero","html":"<h1>hi</h1>","tweak_values":{},"source":"generate","created":"2026-10-31T09:00:00Z"}"#;
+        let version: Version = serde_json::from_str(json).unwrap();
+        assert_eq!(version.image, None);
+        let text = serde_json::to_string(&version).unwrap();
+        assert!(!text.contains("image"), "{text}");
+    }
+
+    /// A capture lands on a version record, is served back with its
+    /// MIME, and an unknown version refuses by name.
+    #[test]
+    fn a_capture_lands_on_the_version_record_and_is_served() {
+        let home = scratch("version-image");
+        let (slug, _) = create(&home, "Sample board").unwrap();
+        let id = put_frame(&home, &slug, "hero", PAGE, None, None, "m").unwrap();
+        let project = load(&home, &slug).unwrap();
+        let version_id = project.frames[0].versions[0].id.clone();
+        assert_eq!(project.frames[0].versions[0].image, None);
+        let name = record_version_image(&home, &slug, &id, &version_id, b"png-bytes").unwrap();
+        assert_eq!(name, format!("{version_id}.png"));
+        let project = load(&home, &slug).unwrap();
+        assert_eq!(
+            project.frames[0].versions[0].image.as_deref(),
+            Some(name.as_str())
+        );
+        let served = version_image(&home, &slug, &version_id).unwrap();
+        assert_eq!(served.0, "image/png");
+        assert_eq!(served.1, b"png-bytes".to_vec());
+        let error = record_version_image(&home, &slug, &id, "v-nope", b"").unwrap_err();
+        assert!(error.contains("no version `v-nope`"), "{error}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     /// The design surface's own model set (the owner's ruling,
     /// 2026-10-31): three models, in the owner's order, and not a routing

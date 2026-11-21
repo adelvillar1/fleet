@@ -2229,6 +2229,38 @@ async fn serve_connection(
                 }
             }
         }
+        // One version's raster, for the side-by-side: the capture the
+        // browser lane wrote beside the board. A version without a
+        // capture is refused by name — the face says so rather than
+        // painting blank.
+        ("GET", path) if path.starts_with("/api/design/version-image/") => {
+            let rest = path.trim_start_matches("/api/design/version-image/");
+            let mut parts = rest.splitn(3, '/');
+            let slug = percent_decode(parts.next().unwrap_or_default());
+            let frame_id = percent_decode(parts.next().unwrap_or_default());
+            let version_id = percent_decode(parts.next().unwrap_or_default());
+            match bridge.design_version_image(&slug, &frame_id, &version_id) {
+                Ok((mime, bytes)) => {
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n\
+                         Connection: close\r\nCache-Control: no-store\r\n\
+                         X-Content-Type-Options: nosniff\r\n\
+                         Content-Security-Policy: default-src 'none'; script-src 'none'\r\n\r\n",
+                        bytes.len()
+                    );
+                    stream
+                        .write_all(head.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream.write_all(&bytes).await.map_err(|e| e.to_string())?;
+                    stream.flush().await.map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({"refused": [message]}))).await
+                }
+            }
+        }
         // The token diff between a stored version and the page as it stands.
         ("GET", path) if path.starts_with("/api/design/diff/") => {
             let rest = path.trim_start_matches("/api/design/diff/");
@@ -2533,6 +2565,19 @@ async fn serve_connection(
             match bridge.design_inject(&body) {
                 Ok(document) => write_reply(&mut stream, api(200, document)).await,
                 Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
+            }
+        }
+        // One version's raster capture: the browser lane opens the
+        // version's own preview route and writes the PNG beside the
+        // board; the version record names it from here on.
+        ("POST", "/api/design/version-capture") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.design_version_capture(&body).await {
+                Ok(captured) => write_reply(&mut stream, api(200, captured)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
         ("POST", "/api/design/export") => {

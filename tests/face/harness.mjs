@@ -12001,6 +12001,93 @@ async function thePracticeCardNamesTheGraphsWeakestLink() {
     bare.rows('.lr-start').map((s) => s.textContent).join(' | '));
 }
 
+// The face-rethought plan's P5: the version diff as two versions' pixels.
+// Two chosen versions' own rasters sit side by side with a divider and a
+// per-version label; a version whose record carries no image says so by
+// name, and one press asks the lane to capture it.
+async function theVersionDiffComparesTwoVersionsPixels() {
+  const designDoc = {
+    type: 'design', read_at: 'now',
+    projects: [
+      { slug: 'sample-board', name: 'Sample board', frames: 1,
+        updated: '2026-11-01T09:00:00Z', project: '/Users/owner/Projects/harbor' },
+    ],
+    active: {
+      slug: 'sample-board', name: 'Sample board',
+      frames: [{
+        id: 'f-hero', name: 'hero', description: '',
+        gen_meta: null,
+        html: '<!doctype html><html><body><h1>hero</h1></body></html>',
+        html_raw: '<!doctype html><html><body><h1>hero</h1></body></html>',
+        x: 0, y: 0, w: 1280, h: 900,
+        tweak_spec: [], tweak_values: {}, model: 'glm', set: null,
+        review: null,
+        versions: [
+          // The older version carries no capture — the honesty half.
+          { id: 'v-one', name: 'hero', source: 'generate', created: '2026-10-31T09:00:00Z' },
+          { id: 'v-two', name: 'hero', source: 'refine', created: '2026-11-01T09:00:00Z',
+            image: true },
+        ],
+        pins: [],
+      }],
+      brand: null, assets: [], reference: null, sets: [], chat: [],
+    },
+    presets: [],
+    brands: [],
+    models: [{ provider: 'deepseek', model: 'deepseek-flash', available: false }],
+    caps: { max_frame_bytes: 524288, max_versions: 20, viewports: [] },
+    refused: [],
+  };
+  const page = boot({ width: 1440, hash: '#/design',
+    documents: { design: designDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) } });
+  await flush();
+  page.open();
+  await flush(80);
+  const byAct = (parent, act) => parent.find((one) => one.dataset &&
+    one.dataset.act === act)[0];
+  const cards = page.rows('.canvas-frame');
+  byAct(cards[0], 'versions-hero').click();
+  await flush(40);
+  const pane = page.el('dock-object-body');
+  const panes = pane.find((one) => one.className === 'canvas-version-panes')[0];
+  check('PIXEL the compare is a grid with a divider column',
+    !!panes && panes.style.display === 'grid' &&
+      panes.style.gridTemplateColumns === '1fr 1px 1fr' &&
+      pane.find((one) => one.className === 'canvas-version-divider').length === 1,
+    panes ? panes.style.gridTemplateColumns : 'no compare panes');
+  const shots = pane.find((one) => one.className === 'canvas-version-shot');
+  check('PIXEL the captured version paints its own image',
+    shots.length === 1 &&
+      String(shots[0].src).includes('/api/design/version-image/sample-board/f-hero/v-two') &&
+      shots[0].style.imageRendering === 'pixelated',
+    shots.map((one) => String(one.src)).join(' | '));
+  const labels = pane.find((one) => one.className === 'canvas-version-pane')
+    .map((one) => one.textContent);
+  check('PIXEL each pane carries its version label',
+    labels.length === 2 &&
+      labels[0].includes('refine') && labels[0].includes('2026-11-01T09:00:00Z') &&
+      labels[1].includes('generate') && labels[1].includes('2026-10-31T09:00:00Z'),
+    labels.join(' | '));
+  check('PIXEL a version without a capture says so by name',
+    String(pane.textContent).includes('this version carries no image'),
+    String(pane.textContent).slice(0, 200));
+  const capture = pane.find((one) => one.dataset &&
+    one.dataset.act === 'design-version-capture-v-one')[0];
+  if (capture) capture.click();
+  await flush(60);
+  const captures = page.calls.filter((call) =>
+    call.url === '/api/design/version-capture' && call.method === 'POST');
+  check('PIXEL the missing capture is one press away',
+    !!capture &&
+      captures.length === 1 &&
+      String(captures[0].body).includes('"version":"v-one"') &&
+      String(captures[0].body).includes('origin'),
+    JSON.stringify(captures));
+  page.fireOn('dock-object-close', 'click');
+  await flush(20);
+}
+
 async function theMemoryRailCarriesTheQueueAndTheVerbs() {
   const bootMemory = (hash) => boot({
     width: 1440, hash,
@@ -18244,6 +18331,7 @@ const cases = [
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
   ['LEARN the learning rail carries the four sections', theLearningRailCarriesTheFourSections],
   ['PRACT the practice card names the graph\u2019s weakest link', thePracticeCardNamesTheGraphsWeakestLink],
+  ['PIXEL the version diff compares two versions\u2019 pixels', theVersionDiffComparesTwoVersionsPixels],
   ['WORKSPACE the workspace rail carries the projects and the pane', theWorkspaceRailCarriesTheProjectsAndThePane],
   ['CAL the calibration rail carries the gate and the day', theCalibrationRailCarriesTheGateAndTheDay],
   ['CAL the lens surfaces the gained ops and their facts', theCalibrationLensSurfacesTheGainedOps],
