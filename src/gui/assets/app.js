@@ -5611,25 +5611,36 @@ import { node, svg, clip } from './core/dom.js';
       paintInbox();
     });
     act.appendChild(decline);
+    // The decline's draft lives per row (the review's note 4): a reason
+    // typed for one hold must not be waiting on another's field, and the
+    // confirm waits for words — an empty reason posts nothing.
+    var drafts = face.inboxDeclineDrafts = face.inboxDeclineDrafts || {};
     if (face.inboxDecline === row.key) {
       var reason = node('input', 'ib-reason');
       reason.type = 'text';
-      reason.value = face.inboxDeclineReason || '';
+      reason.value = drafts[row.key] || '';
       reason.placeholder = 'why this is declined';
       reason.setAttribute('aria-label', 'the reason the delivery is declined');
-      reason.addEventListener('input', function () { face.inboxDeclineReason = reason.value; });
+      var confirm = node('button', 'danger', 'decline with reason');
+      confirm.type = 'button';
+      confirm.disabled = !reason.value.trim();
+      var decide = function () {
+        var words = reason.value.trim();
+        if (!words) return;
+        inboxDecide(row, 'decline', { reason: words });
+      };
+      reason.addEventListener('input', function () {
+        drafts[row.key] = reason.value;
+        confirm.disabled = !reason.value.trim();
+      });
       reason.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') {
           event.preventDefault();
-          inboxDecide(row, 'decline', { reason: reason.value.trim() });
+          decide();
         }
       });
       act.appendChild(reason);
-      var confirm = node('button', 'danger', 'decline with reason');
-      confirm.type = 'button';
-      confirm.addEventListener('click', function () {
-        inboxDecide(row, 'decline', { reason: reason.value.trim() });
-      });
+      confirm.addEventListener('click', decide);
       act.appendChild(confirm);
     }
     r.appendChild(what);

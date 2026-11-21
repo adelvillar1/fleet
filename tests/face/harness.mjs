@@ -5619,6 +5619,60 @@ async function aDeclinedHoldNamesItsReason() {
     JSON.stringify(posts.map((c) => c.body)));
 }
 
+// The decline's draft (the review's note 4): one decline draft per row —
+// typing a reason on row one must not be waiting on row two's field — and
+// the confirm waits for words: an empty reason posts nothing.
+async function aDeclineDraftStaysWithItsRowAndTheConfirmWaitsForWords() {
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: inboxDoc({
+      held: [heldRow('h0001', 'one'), heldRow('h0002', 'two')],
+      total: 2,
+    }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const heldOf = (key) =>
+    page.rows('.ib-held').find((r) => r.dataset.key === key);
+  // Open row one's decline and type its reason.
+  [...heldOf('held:h0001').querySelectorAll('button')]
+    .find((b) => b.textContent === 'decline').click();
+  await flush(40);
+  const oneReason = heldOf('held:h0001').querySelector('.ib-reason');
+  oneReason.value = 'no for one';
+  oneReason.fire('input', {});
+  // Switch to row two's decline: its field must be its own, and its
+  // confirm must wait for words.
+  [...heldOf('held:h0002').querySelectorAll('button')]
+    .find((b) => b.textContent === 'decline').click();
+  await flush(40);
+  const two = heldOf('held:h0002');
+  const twoReason = two.querySelector('.ib-reason');
+  check('IBC the decline draft stays with its row', twoReason.value === '',
+    JSON.stringify(twoReason.value));
+  const twoConfirm = [...two.querySelectorAll('button')]
+    .find((b) => b.textContent === 'decline with reason');
+  check('IBC the confirm waits for words', Boolean(twoConfirm) &&
+    twoConfirm.disabled === true,
+    String(twoConfirm ? twoConfirm.disabled : 'no confirm'));
+  // Typed, it enables and posts its own reason.
+  twoReason.value = 'not today';
+  twoReason.fire('input', {});
+  check('IBC the confirm enables once the reason has words',
+    twoConfirm.disabled === false, String(twoConfirm.disabled));
+  twoConfirm.click();
+  await flush(80);
+  const posts = page.calls.filter((c) => c.url === '/api/inbox');
+  check('IBC the decline posts its op, key and reason',
+    posts.length === 1 && String(posts[0].body).includes('"op":"decline"') &&
+      String(posts[0].body).includes('"key":"held:h0002"') &&
+      String(posts[0].body).includes('"reason":"not today"'),
+    JSON.stringify(posts.map((c) => c.body)));
+}
+
 async function heldTurnsIntoAListAtThree() {
   const two = inboxDoc({
     held: [heldRow('h0001', 'one'), heldRow('h0002', 'two')],
@@ -17934,6 +17988,8 @@ const cases = [
   ['IBC a held delivery is one card with two verbs, and the accept posts',
     aHeldDeliveryIsOneCardWithTwoVerbsAndTheAcceptPosts],
   ['IBC a declined hold names its reason', aDeclinedHoldNamesItsReason],
+  ['IBC the decline draft stays with its row and the confirm waits for words',
+    aDeclineDraftStaysWithItsRowAndTheConfirmWaitsForWords],
   ['IBC holds turn into a list at three', heldTurnsIntoAListAtThree],
   ['IBC a corrupt held store is surfaced, not an empty queue',
     aCorruptHeldStoreIsSurfacedNotAnEmptyQueue],
