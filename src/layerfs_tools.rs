@@ -2914,28 +2914,6 @@ mod tests {
     use super::*;
     use std::io::Write as _;
 
-    struct EnvGuard {
-        name: &'static str,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(name: &'static str, value: impl AsRef<std::ffi::OsStr>) -> EnvGuard {
-            let previous = std::env::var_os(name);
-            std::env::set_var(name, value);
-            EnvGuard { name, previous }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(self.name, value),
-                None => std::env::remove_var(self.name),
-            }
-        }
-    }
-
     /// A stub `layerfs`: a POSIX sh script that logs its argv and
     /// answers from the case table in `body`. The double pattern the
     /// plan's verification names — no Docker, no Store, no daemon.
@@ -3008,11 +2986,9 @@ esac
 
     #[test]
     fn the_driver_composes_the_clis_own_grammar_and_parses_the_answer() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub("grammar", HAPPY);
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let gate = Gate::resolve().expect("the stub answers 1.1.0");
         let mount = gate
             .mount("shop", "3", "fleet/abc")
@@ -3030,9 +3006,7 @@ esac
 
     #[test]
     fn a_conflict_is_an_answer_not_an_error() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub(
             "conflict",
             r#"case "$*" in
@@ -3043,7 +3017,7 @@ esac
 esac
 "#,
         );
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let gate = Gate::resolve().expect("the stub answers 1.1.0");
         let outcome = gate
             .merge("shop", "main", "fleet/abc", "fleet-merge-fleet/abc", "m")
@@ -3058,9 +3032,7 @@ esac
 
     #[test]
     fn a_refusal_carries_its_own_code_and_message() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub(
             "refusal",
             r#"case "$*" in
@@ -3071,7 +3043,7 @@ esac
 esac
 "#,
         );
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let gate = Gate::resolve().expect("the stub answers 1.1.0");
         let error = gate.sandbox_create("shop").expect_err("the refusal");
         assert!(
@@ -3083,11 +3055,9 @@ esac
 
     #[test]
     fn a_wire_that_is_not_ours_is_refused_by_name() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub("wire", "echo 'layerfs 1.0.0'\n");
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let error = Gate::resolve().expect_err("1.0.0 is not driven");
         assert!(
             error.contains("1.0.0") && error.contains(SUPPORTED_WIRE),
@@ -3169,9 +3139,7 @@ esac
     /// wired.
     #[test]
     fn the_real_version_read_spends_its_attempts_not_a_literal() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub(
             "wiredretry",
             r#"case "$*" in
@@ -3216,9 +3184,7 @@ esac
 
     #[test]
     fn stdout_that_is_not_json_is_a_decode_with_the_body_bounded() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub(
             "decode",
             r#"case "$*" in
@@ -3227,7 +3193,7 @@ esac
 esac
 "#,
         );
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let gate = Gate::resolve().expect("the stub answers 1.1.0");
         let error = gate
             .commit("shop", "3:/workspaces/1", "m")
@@ -3237,9 +3203,7 @@ esac
 
     #[test]
     fn a_budget_that_expires_is_one_attempt_named() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub(
             "timeout",
             r#"case "$*" in
@@ -3248,7 +3212,7 @@ esac
 esac
 "#,
         );
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let _gate = Gate::resolve().expect("the stub answers 1.1.0");
         let started = std::time::Instant::now();
         // The public method carries the control budget; the timeout's
@@ -3273,11 +3237,9 @@ esac
 
     #[test]
     fn a_missing_cli_is_the_named_absence() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub("absent", "exit 127\n");
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         // exit 127 with no refusal: the driver reads the CLI's own
         // failure, never a fallback.
         let error = Gate::resolve().expect_err("no version answers");
@@ -3292,9 +3254,7 @@ esac
     /// section, with every missing fact named by what provisions it.
     #[test]
     fn the_machine_facts_compose_the_clis_environment() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let home = std::env::temp_dir().join(format!(
             "fleet-layerfs-machine-{}-{}",
             std::process::id(),
@@ -3335,7 +3295,7 @@ esac
         )
         .unwrap();
 
-        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+        let _home_env = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         let facts = read_machine().expect("the facts parse");
         assert_eq!(facts.home, layerfs_home);
         assert_eq!(facts.bundle, bundle);
@@ -3468,9 +3428,7 @@ esac
     /// the folder cost nothing.
     #[test]
     fn a_registration_lands_in_the_config_and_reads_back() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let home = std::env::temp_dir().join(format!(
             "fleet-layerfs-reg-home-{}-{}",
             std::process::id(),
@@ -3484,7 +3442,7 @@ esac
         let folder = home.join("repo");
         std::fs::create_dir_all(&folder).unwrap();
         let folder = folder.canonicalize().unwrap();
-        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+        let _home_env = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
         record_registration(
             &folder,
             &Registration {
@@ -3511,9 +3469,7 @@ esac
     /// pre-check, the name, the script's argv, the config's record.
     #[test]
     fn register_runs_the_script_and_records_the_folder() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let home = std::env::temp_dir().join(format!(
             "fleet-layerfs-reg-{}-{}",
             std::process::id(),
@@ -3545,8 +3501,8 @@ console.log(JSON.stringify({
         )
         .unwrap();
 
-        let _home_env = EnvGuard::set("FLEET_HOME", &home);
-        let _log = EnvGuard::set("FLEET_STUB_REGISTER_LOG", &argv_log);
+        let _home_env = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
+        let _log = crate::testsupport::EnvVar::set_os("FLEET_STUB_REGISTER_LOG", &argv_log);
         let machine = Machine {
             home: layerfs_home,
             bundle,
@@ -3650,9 +3606,7 @@ console.log(JSON.stringify({
     /// keyed on the real folder, never on the scratch.
     #[test]
     fn the_register_stages_what_git_declares() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let home = std::env::temp_dir().join(format!(
             "fleet-layerfs-declared-{}-{}",
             std::process::id(),
@@ -3692,8 +3646,8 @@ console.log(JSON.stringify({
         )
         .unwrap();
 
-        let _home_env = EnvGuard::set("FLEET_HOME", &home);
-        let _log = EnvGuard::set("FLEET_STUB_REGISTER_LOG", &argv_log);
+        let _home_env = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
+        let _log = crate::testsupport::EnvVar::set_os("FLEET_STUB_REGISTER_LOG", &argv_log);
         let machine = Machine {
             home: layerfs_home.clone(),
             bundle,
@@ -3753,9 +3707,7 @@ console.log(JSON.stringify({
     /// plain-folder shape), and nothing tracked is the named fallback.
     #[test]
     fn the_bound_counts_what_git_declares_and_nothing_else() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-declbound-{}-{}",
             std::process::id(),
@@ -3827,9 +3779,7 @@ console.log(JSON.stringify({
     /// to bring home).
     #[test]
     fn the_settle_classifies_the_home_apply_from_the_spawn_hashes() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-home-{}-{}",
             std::process::id(),
@@ -3898,7 +3848,7 @@ console.log(JSON.stringify({
 esac
 "#,
         );
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let handle = WorkspaceHandle {
             project: "shop".to_string(),
             branch: "fleet-child-20261026t010000z-abc123".to_string(),
@@ -3937,9 +3887,7 @@ esac
     /// the host would route around the very conflict the merge named.
     #[test]
     fn a_conflicted_merge_applies_nothing_home() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-homeconf-{}-{}",
             std::process::id(),
@@ -3986,7 +3934,7 @@ esac
 esac
 "#,
         );
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let handle = WorkspaceHandle {
             project: "shop".to_string(),
             branch: "fleet-child-20261026t010000z-abc123".to_string(),
@@ -4021,9 +3969,7 @@ esac
     /// home apply is withheld for the same reason a Conflict's is.
     #[test]
     fn a_refused_publish_is_carried_as_its_own_outcome_and_applies_nothing_home() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-unpub-{}-{}",
             std::process::id(),
@@ -4074,7 +4020,7 @@ esac
 esac
 "#,
         );
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let handle = WorkspaceHandle {
             project: "shop".to_string(),
             branch: "fleet-child-20261026t010000z-abc123".to_string(),
@@ -4132,9 +4078,7 @@ esac
     /// there) and a DIFFERENT version for the main-newer path.
     #[test]
     fn the_spawn_sync_carries_the_hosts_newer_paths() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-sync-{}-{}",
             std::process::id(),
@@ -4202,7 +4146,7 @@ esac
 esac
 "#,
         );
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let gate = Gate::resolve().expect("the stub answers 1.1.0");
 
         // The plan: the host's three delta paths classify — modified
@@ -4251,9 +4195,7 @@ esac
     /// fs write for the host's content and fs rm for the deletion.
     #[test]
     fn the_fork_executes_the_sync_before_the_child_runs() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-syncfork-{}-{}",
             std::process::id(),
@@ -4307,7 +4249,7 @@ esac
 esac
 "#,
         );
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let plan = SyncPlan {
             to_child: vec![
                 ("changed.txt".to_string(), 'M'),
@@ -4368,9 +4310,7 @@ esac
     /// the live run caught it as eleven red install tests.
     #[test]
     fn the_machine_facts_merge_into_the_config_beside_what_is_there() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let home = std::env::temp_dir().join(format!(
             "fleet-layerfs-machine-{}-{}",
             std::process::id(),
@@ -4384,7 +4324,7 @@ esac
         let bundle = home.join("bundle");
         std::fs::create_dir_all(&layerfs_home).unwrap();
         std::fs::create_dir_all(&bundle).unwrap();
-        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+        let _home_env = crate::testsupport::EnvVar::set_os("FLEET_HOME", &home);
 
         // The world as the install leaves it: the scaffold it just
         // wrote, and one registration C2 recorded.
@@ -4479,11 +4419,9 @@ esac
     /// an illegal branch names itself and the stub records no fork.
     #[test]
     fn open_refuses_an_illegal_branch_before_it_spawns() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub("illegal-branch", HAPPY);
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let error = WorkspaceSession::open("shop", "fleet/bad")
             .expect_err("the slash is not the wire's grammar");
         match &error {
@@ -4505,11 +4443,9 @@ esac
     /// the outcome the arm renders.
     #[test]
     fn run_command_walks_the_cadence_in_order() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub("cadence", HAPPY);
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let gate = Gate::resolve().expect("the stub answers 1.1.0");
         let ctx = WorkspaceHandle {
             project: "shop".to_string(),
@@ -4559,12 +4495,10 @@ esac
     /// main), and the exit rides the answer.
     #[test]
     fn a_failing_command_still_checkpoints() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub("execfail", HAPPY);
-        let _env = EnvGuard::set(CLI_ENV, &script);
-        let _mode = EnvGuard::set("FLEET_STUB_MODE", "execfail");
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
+        let _mode = crate::testsupport::EnvVar::set_os("FLEET_STUB_MODE", "execfail");
         let gate = Gate::resolve().expect("the stub answers 1.1.0");
         let ctx = WorkspaceHandle {
             project: "shop".to_string(),
@@ -4591,12 +4525,10 @@ esac
     /// nowhere else), and the typed timeout is what returns.
     #[test]
     fn a_hung_command_is_discarded_at_its_budget() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub("execsleep", HAPPY);
-        let _env = EnvGuard::set(CLI_ENV, &script);
-        let _mode = EnvGuard::set("FLEET_STUB_MODE", "execsleep");
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
+        let _mode = crate::testsupport::EnvVar::set_os("FLEET_STUB_MODE", "execsleep");
         let gate = Gate::resolve().expect("the stub answers 1.1.0");
         let ctx = WorkspaceHandle {
             project: "shop".to_string(),
@@ -4635,13 +4567,12 @@ esac
     /// its body on stdin exactly.
     #[test]
     fn the_fs_verbs_speak_the_clis_grammar_and_write_rides_stdin() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let script = stub("fs-verbs", HAPPY);
-        let _env = EnvGuard::set(CLI_ENV, &script);
+        let _env = crate::testsupport::EnvVar::set_os(CLI_ENV, &script);
         let stdin_cap = script.parent().unwrap().join("stdin.bin");
-        let _stdin_env = EnvGuard::set("FLEET_STUB_STDIN", stdin_cap.to_str().unwrap());
+        let _stdin_env =
+            crate::testsupport::EnvVar::set_os("FLEET_STUB_STDIN", stdin_cap.to_str().unwrap());
         let gate = Gate::resolve().expect("the stub answers 1.1.0");
 
         gate.fs_read("shop", "fleet-child-a", "/src/main.rs", Some((1, 40)))
@@ -4709,24 +4640,23 @@ esac
 
     #[test]
     fn the_knob_reads_unset_valid_and_invalid_by_name() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _env = EnvGuard::set(PROJECT_ENV, std::path::Path::new(""));
+        let _lock = crate::testsupport::env_lock();
+        let mut env = crate::testsupport::EnvVar::swapping(PROJECT_ENV);
+        env.to("");
         assert_eq!(project_name().unwrap(), None, "empty is unset");
-        std::env::set_var(PROJECT_ENV, "shop-floor-2");
+        env.to("shop-floor-2");
         assert_eq!(project_name().unwrap(), Some("shop-floor-2".to_string()));
-        std::env::set_var(PROJECT_ENV, "Shop");
+        env.to("Shop");
         let error = project_name().expect_err("uppercase is not a project name");
         assert!(
             error.contains(PROJECT_ENV) && error.contains("Shop"),
             "{error}"
         );
-        std::env::set_var(PROJECT_ENV, "-leading");
+        env.to("-leading");
         assert!(project_name().is_err(), "a leading dash is refused");
         let long = "a".repeat(64);
-        std::env::set_var(PROJECT_ENV, &long);
+        env.to(&long);
         assert!(project_name().is_err(), "64 characters is past the grammar");
-        std::env::remove_var(PROJECT_ENV);
+        env.clear();
     }
 }

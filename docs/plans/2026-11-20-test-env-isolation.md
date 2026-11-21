@@ -98,7 +98,30 @@ nothing inside the future takes the same lock), not module-wide. The full lib
 suite runs clean in 63s, so the lock does not deadlock under the real
 scheduler — which is the only evidence that matters for that lint.
 
-Remaining: the bulk. Surveyed properly before starting it, and the split is
+Pass 3, second half: **the two locks are now one.** `layerfs_tools` had its own
+`EnvGuard` *and* a crate-level `TEST_ENV_LOCK`; `layerfs_view` and `subagents`
+took the latter too — so two per-module locks and one shared meant env windows
+could still overlap across the two. All 40 sites now take
+`testsupport::env_lock()`, the `TEST_ENV_LOCK` static is deleted from `lib.rs`,
+and `layerfs_tools`' 27 tests each got the lock they never took.
+
+Two primitives came out of it, because the migration needed them:
+
+- `EnvVar::set_os(name, value)` — the path-shaped value that made a module keep
+  its own guard in the first place.
+- `EnvVar::swapping(name)` with `.to(..)` / `.clear()` — one guard a test can
+  move several times. Five `set` guards in a row restore five *intermediate*
+  values, so the last drop puts back the second-to-last rather than the
+  original; `a_swapping_guard_moves_the_value_and_restores_the_original` pins
+  that.
+
+A duplicate-lock pass was needed: inserting `env_lock()` into tests that already
+took `TEST_ENV_LOCK` and then rewriting the latter would have made one test take
+the same non-reentrant mutex twice — a deadlock, not a flake. Twelve duplicate
+guards were collapsed; the full lib suite runs clean in 58s.
+
+Remaining: `footprint_history` 5, `armada/join` 4, `judge` 3, `gui/mod` 3,
+`identity` 2, and the rest of the tail. Surveyed properly before starting it, and the split is
 not what the first count suggested — whole-file test modules (`delegate/tests`,
 `judge/tests`, `testsupport`) carry no `#[cfg(test)]` marker inside them, so a
 naive scan reads them as production:

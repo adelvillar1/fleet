@@ -55,6 +55,21 @@ impl EnvVar {
         }
     }
 
+    /// Set `name` from anything path- or string-shaped.
+    ///
+    /// The tests that set a *path* held their own guard because this module's
+    /// `set` takes `&str`; offering the `OsStr` shape here is what lets those
+    /// guards go. Same contract: the caller holds [`env_lock`].
+    pub(crate) fn set_os(name: &str, value: impl AsRef<std::ffi::OsStr>) -> EnvVar {
+        let previous = std::env::var_os(name);
+        // SAFETY: the caller holds `env_lock()` for this guard's lifetime.
+        unsafe { std::env::set_var(name, value) };
+        EnvVar {
+            name: name.to_string(),
+            previous,
+        }
+    }
+
     /// Remove `name` until the guard drops, restoring it afterwards.
     pub(crate) fn unset(name: &str) -> EnvVar {
         let previous = std::env::var_os(name);
@@ -64,6 +79,34 @@ impl EnvVar {
             name: name.to_string(),
             previous,
         }
+    }
+
+    /// Hold one variable for a test that rewrites it several times.
+    ///
+    /// `EnvVar::set` captures the value it replaces, so a test that calls it
+    /// five times in a row collects five guards whose drops restore five
+    /// *intermediate* values — the last drop puts back the fourth value, not
+    /// the original. This captures the original once and moves the value under
+    /// it, so the sequence cannot leak anything back into the process.
+    pub(crate) fn swapping(name: &str) -> EnvVar {
+        EnvVar {
+            name: name.to_string(),
+            previous: std::env::var_os(name),
+        }
+    }
+
+    /// Move `self`'s variable to `value`.
+    pub(crate) fn to(&mut self, value: &str) -> &mut Self {
+        // SAFETY: the caller holds `env_lock()` for this guard's lifetime.
+        unsafe { std::env::set_var(&self.name, value) };
+        self
+    }
+
+    /// Move `self`'s variable to absent.
+    pub(crate) fn clear(&mut self) -> &mut Self {
+        // SAFETY: as above.
+        unsafe { std::env::remove_var(&self.name) };
+        self
     }
 }
 
@@ -133,6 +176,39 @@ mod tests {
         assert_eq!(
             std::env::var("FLEET_TESTSUPPORT_UNSET").as_deref(),
             Ok("seeded")
+        );
+    }
+
+    /// A swapping guard can move its variable any number of times and still
+    /// put the *original* back — the case five `set` guards in a row get
+    /// wrong, where the last drop restores the second-to-last value.
+    #[test]
+    fn a_swapping_guard_moves_the_value_and_restores_the_original() {
+        let _lock = env_lock();
+        assert!(
+            std::env::var_os("FLEET_TESTSUPPORT_SWAP").is_none(),
+            "the fixture name is fresh"
+        );
+        {
+            let mut held = EnvVar::swapping("FLEET_TESTSUPPORT_SWAP");
+            held.to("");
+            assert_eq!(std::env::var("FLEET_TESTSUPPORT_SWAP").as_deref(), Ok(""));
+            held.to("shop-floor-2");
+            assert_eq!(
+                std::env::var("FLEET_TESTSUPPORT_SWAP").as_deref(),
+                Ok("shop-floor-2")
+            );
+            held.clear();
+            assert!(std::env::var_os("FLEET_TESTSUPPORT_SWAP").is_none());
+            held.to("last");
+            assert_eq!(
+                std::env::var("FLEET_TESTSUPPORT_SWAP").as_deref(),
+                Ok("last")
+            );
+        }
+        assert!(
+            std::env::var_os("FLEET_TESTSUPPORT_SWAP").is_none(),
+            "the original absence comes back, not the value this test last set"
         );
     }
 }

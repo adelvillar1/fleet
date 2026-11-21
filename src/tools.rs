@@ -4587,7 +4587,7 @@ mod tests {
 
     #[test]
     fn the_source_mode_is_refused_by_name_when_the_setting_is_off() {
-        let _lock = crate::TEST_ENV_LOCK.lock();
+        let _lock = crate::testsupport::env_lock();
         let home = std::env::temp_dir().join(format!("fleet-deck-off-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
@@ -4668,7 +4668,7 @@ mod tests {
     /// the number.
     #[test]
     fn the_hybrid_search_tool_answers_over_a_fixture_store() {
-        let _lock = crate::TEST_ENV_LOCK.lock();
+        let _lock = crate::testsupport::env_lock();
         let base = std::env::temp_dir().join(format!("fleet-hybrid-tool-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let workspace = base.join("fixture");

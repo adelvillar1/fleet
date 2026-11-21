@@ -1632,9 +1632,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
 
     #[test]
     fn a_dead_worker_is_named_before_the_history_script_runs() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-dead-worker-{}-{}",
             std::process::id(),
@@ -1763,9 +1761,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
     /// (65 branches, 2 layers, 1 commit) is the fixture.
     #[test]
     fn the_history_read_is_one_backend_call_parsed_whole() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-view-{}-{}",
             std::process::id(),
@@ -1876,9 +1872,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
     /// unchanged answer carries only the version token.
     #[test]
     fn the_since_version_rides_the_call() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-since-{}",
             std::time::SystemTime::now()
@@ -1908,9 +1902,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
     /// per-branch commit cut each say so in the truncation word.
     #[test]
     fn the_cut_is_named_in_words() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-cut-{}",
             std::time::SystemTime::now()
@@ -1965,9 +1957,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
     /// refusal, with nothing drawn as an empty tree.
     #[test]
     fn a_dead_read_is_named() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-dead-{}",
             std::time::SystemTime::now()
@@ -1994,9 +1984,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
     /// form) marks the child merged; a head nobody merged is open.
     #[test]
     fn the_merge_state_reads_the_layer_that_names_the_branch() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-state-{}",
             std::time::SystemTime::now()
@@ -2133,9 +2121,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
     /// held until its newline, a second poll answering only what moved.
     #[test]
     fn the_tail_answers_complete_lines_once() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-tail-{}",
             std::time::SystemTime::now()
@@ -2238,9 +2224,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
     /// over rather than answering from a stale offset.
     #[test]
     fn the_tail_resets_when_a_file_shrinks() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-tail-shrink-{}",
             std::time::SystemTime::now()
@@ -2294,9 +2278,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
     /// keeps everything at or after the named start.
     #[test]
     fn the_tail_filters_by_project_and_since() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-tail-filter-{}",
             std::time::SystemTime::now()
@@ -2386,9 +2368,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
     /// named.
     #[test]
     fn the_tail_caps_at_200_and_names_the_drop() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-tail-cap-{}",
             std::time::SystemTime::now()
@@ -2482,9 +2462,7 @@ esac
     /// layer refused by name.
     #[test]
     fn the_files_instrument_reads_four_modes_with_named_caps() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-files-{}",
             std::time::SystemTime::now()
@@ -2628,9 +2606,7 @@ if (process.argv[4] === "--comparable") {
     /// "no activity".
     #[test]
     fn an_empty_traces_dir_names_the_absence() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-tail-empty-{}",
             std::time::SystemTime::now()
@@ -2665,9 +2641,7 @@ if (process.argv[4] === "--comparable") {
     /// environment carries, so one config holds all four cases.
     #[test]
     fn the_rail_document_filters_to_the_six_week_window() {
-        let _lock = crate::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::testsupport::env_lock();
         let root = std::env::temp_dir().join(format!(
             "fleet-layerfs-rail-{}-{}",
             std::process::id(),
