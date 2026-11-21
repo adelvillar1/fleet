@@ -21950,7 +21950,75 @@ import { node, svg, clip } from './core/dom.js';
       row.appendChild(acts);
       serviceCard.appendChild(row);
     });
+    // The proof of life: the machine sends itself a message. The press
+    // names its cost — the answer is a real model call, not a canned
+    // line — and the card below renders whatever the feed derives, so a
+    // press that got no answer can never read as a round trip.
+    var rehearseRow = node('div', 'bots-row');
+    var rehearseMain = node('div', 'bots-row-main');
+    rehearseMain.appendChild(node('span', 'bots-row-name', 'send myself a message'));
+    rehearseMain.appendChild(node('span', 'bots-row-meta',
+      'the proof of life: the fleet delivers its own task through the same door every peer ' +
+      'uses \u2014 the answer costs a real model call'));
+    rehearseRow.appendChild(rehearseMain);
+    var rehearseActs = node('div', 'bots-acts');
+    rehearseActs.appendChild(botsButton('rehearse', 'send it', function () {
+      writeBots('/api/channels/rehearse', { channel: 'webhook' }, function (doc) {
+        // The press's reply carries provenance — channel, peer, session.
+        // The verdict comes from the feed's own derivation on the next
+        // read, never from the transport having answered.
+        face.bots.rehearsal = doc;
+        paintBots();
+      });
+    }));
+    rehearseRow.appendChild(rehearseActs);
+    serviceCard.appendChild(rehearseRow);
     board.appendChild(serviceCard);
+
+    // The proof of life's own card, derived from the feed the door
+    // already shows: delivered is the newest delivery line for the
+    // rehearsal peer, answered a later reply line. The read's derived
+    // fact wins; the press's reply fills in until the read catches up —
+    // and a press with no answer yet is the honest sentence, never a
+    // green card.
+    var derived = read.rehearsal || null;
+    var pressed = face.bots.rehearsal || null;
+    var proof = (derived && pressed && derived.session === pressed.session)
+      ? derived
+      : (pressed || derived || null);
+    if (proof) {
+      var proofDelivered = proof.delivered !== false;
+      var proofAnswered = proof.answered === true;
+      var proofCard = boardCard(12, 'proof of life',
+        proofDelivered && proofAnswered ? 'delivered \u00b7 answered'
+          : proofDelivered ? 'delivered \u00b7 unanswered' : 'not delivered',
+        'The machine sent itself a message on the ' + (proof.channel || 'webhook') +
+        ' channel' + (proof.at ? ' at ' + proof.at : '') +
+        '. The verdict is the feed\u2019s, not the transport\u2019s.');
+      if (proofDelivered && proofAnswered) {
+        proofCard.appendChild(node('p', 'board-empty',
+          'The round trip is complete: the delivery and the fleet\u2019s answer are both in the ' +
+          'feed below, and each row opens the conversation they landed in.'));
+      } else if (proofDelivered) {
+        proofCard.appendChild(node('p', 'board-empty',
+          'The door heard you; no answer came back. The run was dispatched and failed before ' +
+          'any reply line existed \u2014 the feed\u2019s delivery row is there, the reply never was.'));
+      } else {
+        proofCard.appendChild(node('p', 'board-empty',
+          'The rehearsal did not land as a delivery; the feed is the verdict.'));
+      }
+      if (proof.session) {
+        var proofOpen = node('button', 'replay-button', 'open the conversation');
+        proofOpen.type = 'button';
+        proofOpen.dataset.act = 'open-rehearsal';
+        proofOpen.addEventListener('click', function () {
+          usageRecord('actions', 'bots:open-rehearsal', 'uses');
+          window.location.hash = '#/sessions/' + encodeURIComponent(proof.session);
+        });
+        proofCard.appendChild(proofOpen);
+      }
+      board.appendChild(proofCard);
+    }
     board.appendChild(devicesCard());
 
     // Waiting at the door: a refusal recorded the peer, so it can be let

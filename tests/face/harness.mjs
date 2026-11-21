@@ -864,6 +864,27 @@ function boot(options) {
         json: () => Promise.resolve(documents.channels || emptyChannels()),
       });
     }
+    if (pathOnly === '/api/channels/rehearse' && method === 'POST') {
+      // P3's proof of life: a case scripts the reply; unscripted, the
+      // endpoint's own shape answers — the session the delivery landed
+      // in, and nothing about delivered/answered (that is the feed's
+      // own derivation, never the transport's claim).
+      const scripted = documents.rehearse;
+      if (scripted) {
+        return Promise.resolve({
+          status: scripted.status || 200,
+          ok: (scripted.status || 200) === 200,
+          json: () => Promise.resolve(scripted.body || {}),
+        });
+      }
+      return Promise.resolve({
+        status: 200, ok: true,
+        json: () => Promise.resolve({
+          type: 'rehearsal', channel: 'webhook', peer: 'e5f6',
+          session: 's-proof', at: '2026-11-20T14:00:00Z',
+        }),
+      });
+    }
     if (pathOnly === '/api/memory') {
       return Promise.resolve({
         status: 200,
@@ -11322,6 +11343,202 @@ async function theBotsDoorRendersPassportsAndTheFeedKeepsTheLastTen() {
     refusal ? refusal.textContent.slice(0, 200) : 'no refusal row');
 }
 
+// P3's proof of life: the bots door's own channels document with the
+// rehearsal peer (`myself`, matched by name because a webhook peer's id
+// is a minted digest) and whatever the feed says about the round trip.
+// `rehearsal` is the read's derived fact — {at, session, delivered,
+// answered} — never a stored stamp.
+const rehearsalDoc = (rehearsal, extraLines) => {
+  const doc = botsDoorChannels();
+  doc.channels[0].peers.push({
+    channel: 'webhook', id: 'e5f6', name: 'myself',
+    device_class: 'webhook client', capability: 'acts',
+    paired: '2026-11-20T13:30:00Z',
+    last_heard: '2026-11-20T14:00:00Z', last_asked: '2026-11-20T15:00:00Z',
+    callback: null,
+  });
+  (extraLines || []).forEach((line) => doc.activity.push(line));
+  if (rehearsal) doc.rehearsal = rehearsal;
+  return doc;
+};
+const rehearsalDelivery = (session, answered) => {
+  const lines = [{
+    at: '2026-11-20T14:00:00Z', kind: 'delivery', channel: 'webhook',
+    peer: 'myself', peer_id: 'e5f6', session,
+    task: 'send myself a message \u2014 the proof of life rehearsal',
+  }];
+  if (answered) {
+    lines.push({
+      at: '2026-11-20T15:00:00Z', kind: 'reply', channel: 'webhook',
+      peer: 'myself', peer_id: 'e5f6', session,
+      detail: 'nowhere \u00b7 message received',
+    });
+  }
+  return lines;
+};
+
+// The round trip is named by the feed's own lines: the delivery row and
+// the later reply row, each linked to the conversation they landed in,
+// and the proof-of-life card saying so. The press and the card are
+// P3's face half; today's service card is the 0-of-0 instrument, with
+// no press at all — the red this case was written against.
+async function theProofOfLifeNamesTheRoundTripInTheFeed() {
+  const page = boot({
+    width: 1440, hash: '#/bots/channels',
+    documents: {
+      channels: rehearsalDoc(
+        { at: '2026-11-20T14:00:00Z', session: 's-proof', delivered: true, answered: true },
+        rehearsalDelivery('s-proof', true)),
+      state: (asked) => emptyState(asked),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+
+  // The feed names the round trip.
+  const feed = page.rows('.bots-activity');
+  const delivered = feed.filter((row) =>
+    row.dataset.kind === 'delivery' && row.textContent.includes('myself'));
+  const answered = feed.filter((row) =>
+    row.dataset.kind === 'reply' && row.textContent.includes('myself'));
+  check('PROOF the feed names the rehearsal delivery',
+    delivered.length === 1 &&
+      delivered[0].textContent.includes('the proof of life rehearsal'),
+    delivered.map((row) => row.textContent).join(' | ') || 'none');
+  check('PROOF the feed names the rehearsal answer',
+    answered.length === 1, answered.map((row) => row.textContent).join(' | ') || 'none');
+  check('PROOF both feed rows are linked to the conversation',
+    delivered.length === 1 && answered.length === 1 &&
+      !!delivered[0].querySelector('.bots-session') &&
+      !!answered[0].querySelector('.bots-session') &&
+      delivered[0].querySelector('.bots-session').textContent === 's-proof',
+    delivered.length + ' delivered / ' + answered.length + ' answered');
+
+  // The proof-of-life card: the round trip, with both halves named.
+  const card = page.rows('.board-card')
+    .find((one) => String(one.textContent).includes('The machine sent itself a message'));
+  check('PROOF the proof-of-life card renders',
+    !!card, card ? String(card.textContent).slice(0, 160) : 'no card');
+  check('PROOF the card names the round trip complete',
+    !!card && card.textContent.includes('The round trip is complete'),
+    card ? String(card.textContent).slice(0, 200) : 'no card');
+  check('PROOF the card never paints an unanswered rehearsal green',
+    !!card && !card.textContent.includes('no answer came back'),
+    card ? String(card.textContent).slice(0, 200) : 'no card');
+  const go = card && [...card.querySelectorAll('button')]
+    .find((button) => String(button.textContent).includes('open the conversation'));
+  check('PROOF the card opens the rehearsal conversation', !!go, String(!!go));
+  if (go) {
+    go.click();
+    await flush(60);
+    check('PROOF the card lands in the rehearsal session',
+      page.window.location.hash === '#/sessions/s-proof',
+      page.window.location.hash);
+  }
+
+  // The press: the cost is named where the press lives.
+  const board = page.text('bots-board');
+  check('PROOF the press names its cost — a real model call',
+    board.includes('send myself a message') && board.includes('model call'),
+    board.slice(0, 120));
+}
+
+// The press spends a real model call and posts the rehearsal: one POST
+// to /api/channels/rehearse, the endpoint's own shape back, and the
+// card rendering from the read's derivation — never from the transport.
+async function theProofPressPostsTheRehearsal() {
+  const page = boot({
+    width: 1440, hash: '#/bots/channels',
+    documents: {
+      channels: rehearsalDoc(null, []),
+      state: (asked) => emptyState(asked),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+  // No rehearsal has run: no card yet, and the instrument is the 0-of-0
+  // shape this press exists to red-proof against.
+  check('PROOF no card renders before a rehearsal',
+    !page.rows('.board-card')
+      .some((one) => String(one.textContent).includes('The machine sent itself a message')),
+    'a card rendered from nothing');
+  const press = page.rows('button')
+    .find((button) => String(button.textContent).trim() === 'send it');
+  check('PROOF the service card carries the send press', !!press,
+    press ? 'yes' : page.rows('.bots-act').map((b) => b.textContent).join(','));
+  const before = page.calls.length;
+  if (press) press.click();
+  await flush(160);
+  const posted = page.calls.slice(before).filter((call) =>
+    call.url === '/api/channels/rehearse' && call.method === 'POST');
+  check('PROOF the press posts the rehearsal',
+    posted.length === 1 &&
+      JSON.parse(posted[0].body).channel === 'webhook',
+    JSON.stringify(page.calls.slice(before).map((c) => c.method + ' ' + c.url)));
+  const card = page.rows('.board-card')
+    .find((one) => String(one.textContent).includes('The machine sent itself a message'));
+  check('PROOF the card renders after the press', !!card,
+    card ? String(card.textContent).slice(0, 120) : 'no card');
+}
+
+// The honest failure: the door heard the rehearsal and no answer came
+// back — the run was dispatched and failed before any reply line
+// existed. The card says so, in the feed's own words, and never paints
+// an unanswered rehearsal green, before or after a press.
+async function theUnansweredRehearsalIsNamedHonestly() {
+  const page = boot({
+    width: 1440, hash: '#/bots/channels',
+    documents: {
+      channels: rehearsalDoc(
+        { at: '2026-11-20T14:00:00Z', session: 's-proof', delivered: true, answered: false },
+        rehearsalDelivery('s-proof', false)),
+      state: (asked) => emptyState(asked),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+  const card = page.rows('.board-card')
+    .find((one) => String(one.textContent).includes('The machine sent itself a message'));
+  check('PROOF the unanswered rehearsal gets its card', !!card,
+    card ? String(card.textContent).slice(0, 160) : 'no card');
+  check('PROOF the card says the door heard and no answer came back',
+    !!card && card.textContent.includes('The door heard you; no answer came back'),
+    card ? String(card.textContent).slice(0, 240) : 'no card');
+  check('PROOF the card never claims the round trip completed',
+    !!card && !card.textContent.includes('The round trip is complete'),
+    card ? String(card.textContent).slice(0, 240) : 'no card');
+  // The delivery row is in the feed; the reply row never was.
+  const feed = page.rows('.bots-activity');
+  check('PROOF the unanswered feed names the delivery and no answer',
+    feed.filter((row) =>
+      row.dataset.kind === 'delivery' && row.textContent.includes('myself')).length === 1 &&
+      feed.filter((row) =>
+        row.dataset.kind === 'reply' && row.textContent.includes('myself')).length === 0,
+    String(feed.length));
+  // And a press cannot dress it up either: the endpoint's reply is not
+  // the feed's verdict.
+  const press = page.rows('button')
+    .find((button) => String(button.textContent).trim() === 'send it');
+  if (press) {
+    const before = page.calls.length;
+    press.click();
+    await flush(160);
+    check('PROOF the press still answers honestly when the feed has no reply',
+      posted_rehearsal(page, before) &&
+        !card_after(page).textContent.includes('The round trip is complete'),
+      card_after(page) ? String(card_after(page).textContent).slice(0, 200) : 'no card');
+  }
+}
+const posted_rehearsal = (page, before) =>
+  page.calls.slice(before).some((call) =>
+    call.url === '/api/channels/rehearse' && call.method === 'POST');
+const card_after = (page) =>
+  page.rows('.board-card')
+    .find((one) => String(one.textContent).includes('The machine sent itself a message'));
+
 // The skills surface's document, in the bridge's own shape: three
 // categories, one skip, one proposal, one retired name, and a building
 // section heavy enough to prove the row budget.
@@ -17735,6 +17952,12 @@ const cases = [
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
   ['BOTS the door renders passports and the feed keeps the last ten',
     theBotsDoorRendersPassportsAndTheFeedKeepsTheLastTen],
+  ['PROOF the proof of life names the round trip in the feed',
+    theProofOfLifeNamesTheRoundTripInTheFeed],
+  ['PROOF the press posts the rehearsal',
+    theProofPressPostsTheRehearsal],
+  ['PROOF the unanswered rehearsal is named honestly',
+    theUnansweredRehearsalIsNamedHonestly],
   ['READ the morning read leads the bots door', theMorningReadLeadsTheBotsDoor],
   ['READ the morning read says the true empties', theMorningReadSaysTheTrueEmpties],
   ['READ the morning read renders refusals, not zeros',
