@@ -9011,6 +9011,13 @@ body[data-work="collapsed"] .work-list { display: none; }
   white-space: nowrap;
 }
 .room-line b { font-weight: 600; color: var(--dsw-alias-ink); margin-right: 4px; }
+/* The speaker now (the face rethink's P3): while a run holds the floor
+   the row's line is disc + name + verb, never a snippet. */
+.room-speaking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .room-meta {
   display: flex;
   align-items: center;

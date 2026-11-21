@@ -14157,7 +14157,22 @@ import { node, svg, clip } from './core/dom.js';
     top.appendChild(node('span', 'room-when', age));
     body.appendChild(top);
     var line = node('span', 'room-line');
-    if (row.preview) {
+    if (tone.tone === 'working') {
+      // The speaker now (the face rethink's P3): while a run is in the
+      // room the row names the speaking member and never a snippet — the
+      // transcript tells what was said; the rail says who holds the floor.
+      // The open room's live speaker outranks the read's last author.
+      var speaking = (face.running && face.session === row.id && face.roomSpeaker) ||
+        row.from || '';
+      if (speaking) {
+        line.className = 'room-line room-speaking';
+        line.appendChild(huddleMark(speaking, 'sm', row.avatars && row.avatars[speaking]));
+        line.appendChild(node('b', null, speaking));
+        line.appendChild(document.createTextNode(' is writing'));
+      } else {
+        line.appendChild(document.createTextNode(row.goal || 'a room with its bots'));
+      }
+    } else if (row.preview) {
       if (row.from) line.appendChild(node('b', null, row.from));
       line.appendChild(document.createTextNode(row.preview));
     } else {

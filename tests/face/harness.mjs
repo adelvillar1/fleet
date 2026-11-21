@@ -7506,14 +7506,25 @@ async function theStrategyStepShowsItsPreview() {
     if (rows.length !== 3) return;
     const first = rows[0];
     const text = String(first.textContent);
+    // The speaker now (the face rethink's P3): a room with a run in
+    // flight names its speaker and never a snippet — the AC supersedes
+    // the row's old "last line and author" read, and the speaker's disc
+    // joins the members' stack, so the row carries one more mark.
+    const speakerDiscs = first.find((one) =>
+      String(one.className || '').split(/\s+/).includes('pmark')).length;
     check('HUDDLES the row names its members and its room',
-      first.find((one) => String(one.className || '').split(/\s+/).includes('pmark')).length === 3 &&
+      speakerDiscs === 4 &&
         text.indexOf('the-q3-board') !== -1,
-      text.slice(0, 90));
-    check('HUDDLES the row carries its last line and its author',
+      'discs=' + speakerDiscs + ' ' + text.slice(0, 90));
+    check('HUDDLES a running row names its speaker and carries no snippet',
       text.indexOf('designer') !== -1 &&
-        text.indexOf('the hero copy is tightened') !== -1,
+        text.indexOf('is writing') !== -1 &&
+        text.indexOf('the hero copy is tightened') === -1,
       text.slice(0, 120));
+    check('HUDDLES a parked row keeps its snippet and its author',
+      String(rows[2].textContent).indexOf('auditor') !== -1 &&
+        String(rows[2].textContent).indexOf('the ledger is reconciled') !== -1,
+      String(rows[2].textContent).slice(0, 120));
     check('HUDDLES the row says what it is doing and what it produced',
       text.indexOf('working') !== -1 && text.indexOf('2 files') !== -1 &&
         text.indexOf('3 facts') !== -1,
