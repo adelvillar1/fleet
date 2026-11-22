@@ -9218,6 +9218,12 @@ import { node, svg, clip } from './core/dom.js';
     row.type = 'button';
     row.dataset.item = 'fact:' + fact.name;
     row.dataset.kind = 'fact';
+    // The basis ladder rides the row's left border (the gated mockup):
+    // confirmed-by and validated are the corpus's strongest bases (ok),
+    // inferred is the session-produced middle (warn), and anything else
+    // reads as down. The basis chip still names the word — the colour is
+    // never the only signal (U4).
+    row.dataset.basis = fact.basis || 'inferred';
     row.setAttribute('aria-label',
       fact.name + (fact.description ? ', ' + fact.description : ''));
     var main = node('span', 'cfg-item-main');

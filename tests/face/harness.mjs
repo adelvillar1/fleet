@@ -13043,6 +13043,35 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
       page.rows('.section-body')[0].dataset.section === 'today',
     page.rows('.section-body').map((b) => b.dataset.section).join(','));
 
+  // Pass 3 (the gated mockup): the basis ladder rides the fact row's left
+  // border — confirmed-by and validated the strongest, inferred the
+  // session-produced middle — and the basis chip still names the word,
+  // because the colour is never the only signal (U4). The stylesheet's
+  // rule is pinned beside the DOM contract so one cannot drift from the
+  // other. The fact rows render at their section addresses.
+  const feedbackPage = bootMemory('#/memory/feedback');
+  await flush();
+  feedbackPage.open();
+  await flush(120);
+  const feedbackRow = feedbackPage.rows('.cfg-item[data-basis="confirmed-by"]')
+    .find((one) => one.textContent.includes('owners-ruling'));
+  check('MEM the confirmed-by fact carries the ladder\u2019s top rung',
+    !!feedbackRow, 'confirmed=' + !!feedbackRow);
+  const projectPage = bootMemory('#/memory/project');
+  await flush();
+  projectPage.open();
+  await flush(120);
+  const ladderInferred = projectPage.rows('.cfg-item[data-basis="inferred"]')[0];
+  const ladderValidated = projectPage.rows('.cfg-item[data-basis="validated"]')[0];
+  check('MEM the inferred and validated rows carry their rungs',
+    !!ladderInferred && !!ladderValidated,
+    'inferred=' + !!ladderInferred + ' validated=' + !!ladderValidated);
+  check('MEM the stylesheet maps every basis to its tone',
+    flat(CSS).includes('.cfg-item[data-basis="confirmed-by"]') &&
+      flat(CSS).includes('.cfg-item[data-basis="inferred"]') &&
+      flat(CSS).includes('var(--ok)') && flat(CSS).includes('var(--warn)'),
+    'css');
+
   // The needs-you section names the four sets and offers the pass. It is
   // addressed — the recall section leads the rail now — so its queue is
   // read at its own address, never the default one.

@@ -12425,3 +12425,12 @@ section.board-card > .board-head {
 }
 .dk-gate .g-mark { color: var(--down); flex: 0 0 auto; }
 .dk-gate .g-text { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+
+/* --- the basis ladder on the fact rows (the gated mockup): the left
+   border carries the corpus's basis at one glance - confirmed-by and
+   validated the strongest, inferred the session-produced middle. The
+   basis chip still names the word; the colour is never the only signal. */
+.cfg-item[data-basis="confirmed-by"] { border-left: 3px solid var(--ok); }
+.cfg-item[data-basis="validated"] { border-left: 3px solid var(--ok); }
+.cfg-item[data-basis="inferred"] { border-left: 3px solid var(--warn); }
+.cfg-item[data-basis="guessed"] { border-left: 3px solid var(--down); }
