@@ -12271,3 +12271,29 @@ section.board-card > .board-head {
   }
 }
 
+
+/* --- the drawer's read modes (G11): the segmented control under the
+   read tab — document · code · preview · web. One hairline row, the
+   active mode in the accent wash; a control whose press never lands is
+   the same lie as a tablist that does. */
+.read-modes {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+  background: var(--dsw-alias-surface);
+}
+.read-mode {
+  font: 500 12px/1 var(--font-text);
+  color: var(--dsw-alias-ink-secondary);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+.read-mode:hover { color: var(--dsw-alias-ink); }
+.read-mode.on {
+  color: var(--on-flat);
+  background: var(--dsw-alias-accent);
+}

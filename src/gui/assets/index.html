@@ -1126,41 +1126,36 @@
          aria-label="resize the pane" aria-valuemin="300" aria-valuemax="720"
          aria-valuenow="440" tabindex="0" title="drag to resize · double-click resets · arrow keys too"></div>
     <header class="pane-head">
+      <!-- The drawer's four canonical tabs (G11, the harness redesign's
+           D2): read · act · connections · made here. One grammar on every
+           surface — the bodies behind them stay per-focus. The read tab
+           hosts the focus's document in one of four modes (document · code ·
+           preview · web), chosen by the focus and switchable here; act is
+           the live run's watch and its verbs; connections is what this
+           conversation delegated (the delegates_to edges, U51); made here
+           is what the conversation generated. -->
       <div class="pane-tabs" role="tablist" aria-label="pane view">
-        <!-- The surface's own context: the desk's deliverable, learning's
-             lesson. It leads the tabs where a surface has one, because it
-             is what the surface is about. -->
-        <button class="pane-tab" id="tab-context" type="button" role="tab"
-                aria-controls="pane-context" aria-selected="false" hidden>the work</button>
-        <!-- The drawer IS the pane's main component (the owner's
-             2026-11-18 ruling: "the collapsible pane should be part of the
-             drawer and it should be main component of it, otherwise the
-             drawer serves no real purpose"). Every object the face can
-             inspect lands here — a task, a row, a message — and the tab
-             appears only while one is open. -->
-        <button class="pane-tab" id="tab-detail" type="button" role="tab"
-                aria-controls="pane-detail" aria-selected="false" hidden>detail</button>
-        <button class="pane-tab active" id="tab-run" type="button" role="tab"
-                aria-controls="pane-run" aria-selected="true">run</button>
-        <button class="pane-tab" id="tab-receipts" type="button" role="tab"
-                aria-controls="pane-receipts" aria-selected="false">made here</button>
-        <button class="pane-tab" id="tab-files" type="button" role="tab"
-                aria-controls="pane-files" aria-selected="false">files</button>
-        <button class="pane-tab" id="tab-preview" type="button" role="tab"
-                aria-controls="pane-preview" aria-selected="false">preview</button>
-        <!-- What this conversation delegated, as a tree (the owner's
-             2026-11-18 ruling, D1/D2/D3): session-bound, the current work
-             only, plain rows rather than a plot. It appears only while
-             something is delegating. -->
-        <button class="pane-tab" id="tab-work" type="button" role="tab"
-                aria-controls="pane-work" aria-selected="false" hidden>work</button>
-        <button class="pane-tab" id="tab-web" type="button" role="tab"
-                aria-controls="pane-web" aria-selected="false">web</button>
+        <button class="pane-tab active" id="tab-read" type="button" role="tab"
+                aria-controls="pane-read" aria-selected="true">read</button>
+        <button class="pane-tab" id="tab-act" type="button" role="tab"
+                aria-controls="pane-act" aria-selected="false">act</button>
+        <button class="pane-tab" id="tab-connections" type="button" role="tab"
+                aria-controls="pane-connections" aria-selected="false" hidden>connections</button>
+        <button class="pane-tab" id="tab-made" type="button" role="tab"
+                aria-controls="pane-made" aria-selected="false">made here</button>
       </div>
       <button class="pane-close" id="pane-close" type="button" aria-label="close the pane">
         <span aria-hidden="true">›</span>
       </button>
     </header>
+    <!-- The read tab's mode switch: which document the focus is serving.
+         Hidden unless read is the active tab. -->
+    <div class="read-modes" id="read-modes" role="tablist" aria-label="read mode" hidden>
+      <button class="read-mode on" id="read-mode-document" type="button">document</button>
+      <button class="read-mode" id="read-mode-code" type="button">code</button>
+      <button class="read-mode" id="read-mode-preview" type="button">preview</button>
+      <button class="read-mode" id="read-mode-web" type="button">web</button>
+    </div>
 
 <!-- The pane: the working directory, beside the surface rather than in
      it. The tree explores, the viewer reads the actual code, and the

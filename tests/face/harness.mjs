@@ -2474,9 +2474,12 @@ async function theDockIsClosedAndTheWorkColumnTakesItsPlace() {
     !HTML.includes('aside-toggle') && HTML.includes('id="pane-open"') &&
       !HTML.includes('class="dock rail"'),
     'html');
-  check('C7 the pane carries the four tabs, run first',
-    HTML.includes('id="tab-run"') && HTML.includes('id="pane-run"') &&
-      HTML.indexOf('tab-run') < HTML.indexOf('tab-files') &&
+  check('C7 the pane carries the four canonical tabs, read first',
+    HTML.includes('id="tab-read"') && HTML.includes('id="tab-act"') &&
+      HTML.includes('id="tab-connections"') && HTML.includes('id="tab-made"') &&
+      HTML.indexOf('tab-read') < HTML.indexOf('tab-act') &&
+      HTML.indexOf('tab-act') < HTML.indexOf('tab-connections') &&
+      HTML.indexOf('tab-connections') < HTML.indexOf('tab-made') &&
       HTML.includes('id="process-card"') === true &&
       HTML.indexOf('id="process-card"') > HTML.indexOf('id="pane-run"'),
     'tabs');
@@ -2961,8 +2964,8 @@ async function aGoalThatStartsAWorkOpensThePaneOnTheRun() {
   check('GP the started reply opens the pane',
     started.body.dataset.pane === 'open', String(started.body.dataset.pane));
   check('GP the pane opens on the run tab',
-    started.IDS['tab-run'].getAttribute('aria-selected') === 'true',
-    started.IDS['tab-run'].getAttribute('aria-selected'));
+    started.IDS['tab-act'].getAttribute('aria-selected') === 'true',
+    started.IDS['tab-act'].getAttribute('aria-selected'));
   // The owner's close still obeys: the auto-open is a hand, not a trap.
   started.fireOn('pane-close', 'click');
   check('GP the owner can close it again',
@@ -5849,7 +5852,7 @@ async function thePaneReturnsWithTheReload() {
   };
   const open = boot({
     width: 1440, hash: '#/chat', documents: doc,
-    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'files' },
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'read', 'fleet-pane-read': 'code' },
   });
   await flush();
   open.open();
@@ -5857,8 +5860,10 @@ async function thePaneReturnsWithTheReload() {
   check('RE the pane returns open', open.body.dataset.pane === 'open',
     String(open.body.dataset.pane));
   check('RE the pane returns at its tab',
-    open.IDS['tab-files'].getAttribute('aria-selected') === 'true',
-    open.IDS['tab-files'].getAttribute('aria-selected'));
+    open.IDS['tab-read'].getAttribute('aria-selected') === 'true' &&
+      open.IDS['read-mode-code'].classList.contains('on'),
+    'read=' + open.IDS['tab-read'].getAttribute('aria-selected') +
+      ' code=' + open.IDS['read-mode-code'].classList.contains('on'));
   const closed = boot({
     width: 1440, hash: '#/chat', documents: doc,
     storage: { 'fleet-pane': 'closed' },
@@ -7391,10 +7396,10 @@ async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
   // The run tab: the pane opens on it, and the process card paints in it.
   page.rows('#pane-open')[0].click();
   await flush(40);
-  check('P the pane opens on the run tab',
+  check('P the pane opens on the act tab',
     page.body.dataset.pane === 'open' &&
       page.IDS['pane-run'].hidden === false &&
-      page.IDS['tab-run'].getAttribute('aria-selected') === 'true',
+      page.IDS['tab-act'].getAttribute('aria-selected') === 'true',
     page.body.dataset.pane + ' / ' + page.IDS['pane-run'].hidden);
   check('P the process card lives in the pane and painted',
     HTML.indexOf('id="pane-run"') < HTML.indexOf('id="process-card"') &&
@@ -7416,29 +7421,27 @@ async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
   // The drawer IS the pane's main component (the owner's 2026-11-18
   // ruling): an object opens the pane ON its detail tab, showing while the
   // run's own view stands down — not stacked above it as a second card.
-  check('P the object opens the pane on its detail tab',
+  check('P the object opens the pane on its document',
     page.body.dataset.pane === 'open' &&
       page.IDS['pane-detail'].hidden === false &&
-      page.IDS['tab-detail'].hidden === false &&
-      page.IDS['tab-detail'].getAttribute('aria-selected') === 'true' &&
+      page.IDS['tab-read'].getAttribute('aria-selected') === 'true' &&
+      page.IDS['read-mode-document'].classList.contains('on') &&
       page.IDS['pane-run'].hidden === true &&
       page.text('dock-object-title').length > 0,
     'pane=' + page.body.dataset.pane +
       ' detail=' + page.IDS['pane-detail'].hidden +
-      ' selected=' + page.IDS['tab-detail'].getAttribute('aria-selected') +
+      ' selected=' + page.IDS['tab-read'].getAttribute('aria-selected') +
       ' title=' + page.text('dock-object-title'));
   page.fireOn('dock-object-close', 'click');
   await flush(20);
   // Closing an object retires the detail TAB (the drawer is a pane tab now,
   // not a card stacked above them): the panel hides with it and the pane
   // falls back to the run.
-  check('P closing the object returns the run tab',
+  check('P closing the object returns the act tab',
     page.IDS['pane-detail'].hidden === true &&
-      page.IDS['tab-detail'].hidden === true &&
-      page.IDS['tab-run'].getAttribute('aria-selected') === 'true',
+      page.IDS['tab-act'].getAttribute('aria-selected') === 'true',
     'detail hidden=' + page.IDS['pane-detail'].hidden +
-      ' tab hidden=' + page.IDS['tab-detail'].hidden +
-      ' run=' + page.IDS['tab-run'].getAttribute('aria-selected'));
+      ' act=' + page.IDS['tab-act'].getAttribute('aria-selected'));
 
   // The grip: drag left widens to the cap, the choice persists, the
   // double-click resets, and the separator takes the keyboard. The cap is
@@ -7470,7 +7473,8 @@ async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
   // The web tab: a refusing address names the site's own words and
   // offers the reader door; a framable address renders live in the
   // sandboxed frame; back walks the tab's own history.
-  page.IDS['tab-web'].click();
+  page.IDS['tab-read'].click();
+  page.IDS['read-mode-web'].click();
   await flush(20);
   page.IDS['pane-address-box'].value = 'example.com/x';
   page.fireOn('pane-address', 'submit', {});
@@ -7497,7 +7501,8 @@ async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
   await flush();
   page2.open();
   await flush(40);
-  page2.IDS['tab-web'].click();
+  page2.IDS['tab-read'].click();
+  page2.IDS['read-mode-web'].click();
   await flush(20);
   page2.IDS['pane-address-box'].value = 'a.example';
   page2.fireOn('pane-address', 'submit', {});
@@ -7553,14 +7558,15 @@ async function thePreviewRendersTheCommonFormats() {
   await flush(40);
   page.rows('#pane-open')[0].click();
   await flush(20);
-  page.IDS['tab-files'].click();
+  page.IDS['tab-read'].click();
+  page.IDS['read-mode-code'].click();
   await flush(20);
   const open = async (name) => {
     const row = page.rows('.pane-row').find((one) => one.textContent.includes(name));
     if (!row) throw new Error(name + ' has no tree row');
     row.click();
     await flush(40);
-    page.IDS['tab-preview'].click();
+    page.IDS['read-mode-preview'].click();
     await flush(40);
   };
 
@@ -14460,7 +14466,7 @@ async function theDeskListsEveryArtifactTheLogNames() {
         events: log.events,
       }),
     },
-    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'receipts' },
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'made' },
   });
   await flush();
   page.open();
@@ -16723,7 +16729,7 @@ async function theDelegationGraphIsNamedAndListed() {
       },
     },
     hash: '#/sessions/goal-1',
-    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'receipts' },
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'made' },
   });
   await flush();
   page.open();
@@ -16749,7 +16755,7 @@ async function theDelegationGraphIsNamedAndListed() {
 
 async function theThreadPaneCarriesTheReceipts() {  const page = boot({
     documents: { state: receiptState }, hash: '#/chat',
-    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'receipts' },
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'made' },
   });
   page.open();
   await flush(80);
@@ -16763,10 +16769,10 @@ async function theThreadPaneCarriesTheReceipts() {  const page = boot({
       count: page.IDS['thread-pane-count'] === undefined,
     }));
   check('THREAD the made-here tab answers its selection',
-    page.IDS['tab-receipts'].getAttribute('aria-selected') === 'true' &&
+    page.IDS['tab-made'].getAttribute('aria-selected') === 'true' &&
       page.IDS['pane-receipts'].hidden === false &&
       page.IDS['pane-run'].hidden === true,
-    'selected=' + page.IDS['tab-receipts'].getAttribute('aria-selected') +
+    'selected=' + page.IDS['tab-made'].getAttribute('aria-selected') +
       ' body=' + page.IDS['pane-receipts'].hidden);
   const rows = page.IDS['thread-pane-list'].querySelectorAll('.thread-row');
   check('THREAD the tab lists every generated object',
@@ -16798,29 +16804,29 @@ async function theThreadPaneCollapsesAndPersists() {
   // trade one body for the other.
   const page = boot({
     documents: { state: receiptState }, hash: '#/chat',
-    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'run' },
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'act' },
   });
   page.open();
   await flush(80);
   check('THREAD the drawer opens at the run tab',
-    page.IDS['tab-run'].getAttribute('aria-selected') === 'true' &&
+    page.IDS['tab-act'].getAttribute('aria-selected') === 'true' &&
       page.IDS['pane-run'].hidden === false &&
       page.IDS['pane-receipts'].hidden === true,
-    'run=' + page.IDS['tab-run'].getAttribute('aria-selected'));
-  page.fireOn('tab-receipts', 'click', {});
+    'act=' + page.IDS['tab-act'].getAttribute('aria-selected'));
+  page.fireOn('tab-made', 'click', {});
   await flush(40);
   check('THREAD the made-here tab swaps the body',
-    page.IDS['tab-receipts'].getAttribute('aria-selected') === 'true' &&
+    page.IDS['tab-made'].getAttribute('aria-selected') === 'true' &&
       page.IDS['pane-receipts'].hidden === false &&
       page.IDS['pane-run'].hidden === true,
-    'receipts=' + page.IDS['tab-receipts'].getAttribute('aria-selected'));
-  page.fireOn('tab-run', 'click', {});
+    'made=' + page.IDS['tab-made'].getAttribute('aria-selected'));
+  page.fireOn('tab-act', 'click', {});
   await flush(40);
   check('THREAD the run tab swaps back',
-    page.IDS['tab-run'].getAttribute('aria-selected') === 'true' &&
+    page.IDS['tab-act'].getAttribute('aria-selected') === 'true' &&
       page.IDS['pane-run'].hidden === false &&
       page.IDS['pane-receipts'].hidden === true,
-    'run=' + page.IDS['tab-run'].getAttribute('aria-selected'));
+    'act=' + page.IDS['tab-act'].getAttribute('aria-selected'));
   // The phantom tracks are gone: no rule reserves a pane-width column
   // beside the stage, at any rail or tissue state (U13).
   check('U13 no grid track carries the pane in the icons rail',
@@ -17591,7 +17597,8 @@ async function thePaneIsRootedAtTheConversationsProject() {
   await flush(200);
   page.IDS['pane-open'].click();
   await flush(200);
-  page.IDS['tab-files'].click();
+  page.IDS['tab-read'].click();
+  page.IDS['read-mode-code'].click();
   await flush(200);
 
   // The tree read names the conversation, so the bridge can root it at that
@@ -17664,7 +17671,7 @@ async function thePaneCarriesTheDelegationTree() {
   check('TREE the pane asks the delegation read for this conversation',
     asks.some((c) => String(c.url).includes('session=this-one')),
     JSON.stringify(asks.map((c) => c.url)));
-  const tab = page.IDS['tab-work'];
+  const tab = page.IDS['tab-connections'];
   check('TREE the pane carries a work tab when delegations exist',
     tab && tab.hidden === false, 'hidden=' + (tab && tab.hidden));
   if (tab) tab.click();
@@ -17791,21 +17798,27 @@ async function thePaneIconOpensTheContextualView() {
   check('ICON a board task is on the board', !!task, 'rows=' + page.rows('.board-task').length);
   if (task) task.click();
   await flush(200);
-  check('ICON inspecting a task opens the pane on its detail',
+
+  check('ICON inspecting a task opens the pane on its document',
     page.body.dataset.pane === 'open' &&
-      page.IDS['tab-detail'].getAttribute('aria-selected') === 'true',
+      page.IDS['tab-read'].getAttribute('aria-selected') === 'true' &&
+      page.IDS['read-mode-document'].classList.contains('on'),
     'pane=' + page.body.dataset.pane +
-      ' detail=' + page.IDS['tab-detail'].getAttribute('aria-selected'));
+      ' read=' + page.IDS['tab-read'].getAttribute('aria-selected') +
+      ' debug=' + page.IDS['pane'].getAttribute('data-drawer-debug') +
+      ' rs=' + page.IDS['dock-object-body'].getAttribute('data-rs-debug') +
+      ' rsErr=' + page.IDS['dock-object-body'].getAttribute('data-rs-error'));
 
   // The discriminating sequence: the object stays open, the owner browses
   // the files tab (so `face.paneTab` is `files`, the last one used), the
   // pane closes, and the icon is pressed. The remembered tab and the
   // contextual tab now disagree — which is the whole point of the ruling.
-  page.IDS['tab-files'].click();
+  page.IDS['read-mode-code'].click();
   await flush(120);
   check('ICON the owner can browse files beside the open object',
-    page.IDS['tab-files'].getAttribute('aria-selected') === 'true',
-    page.IDS['tab-files'].getAttribute('aria-selected'));
+    page.IDS['read-mode-code'].classList.contains('on') &&
+      page.IDS['tab-read'].getAttribute('aria-selected') === 'true',
+    'code=' + page.IDS['read-mode-code'].classList.contains('on'));
   page.IDS['pane-close'].click();
   await flush(80);
   check('ICON the pane closes', page.body.dataset.pane !== 'open', page.body.dataset.pane);
@@ -17813,11 +17826,11 @@ async function thePaneIconOpensTheContextualView() {
   await flush(140);
   check('ICON the icon opens the pane', page.body.dataset.pane === 'open',
     page.body.dataset.pane);
-  check('ICON the icon shows the contextual view, not the last-used tab',
-    page.IDS['tab-detail'].getAttribute('aria-selected') === 'true' &&
-      page.IDS['tab-files'].getAttribute('aria-selected') !== 'true',
-    'detail=' + page.IDS['tab-detail'].getAttribute('aria-selected') +
-      ' files=' + page.IDS['tab-files'].getAttribute('aria-selected'));
+  check('ICON the icon shows the contextual view, not the last-used mode',
+    page.IDS['read-mode-document'].classList.contains('on') &&
+      page.IDS['read-mode-code'].classList.contains('on') === false,
+    'document=' + page.IDS['read-mode-document'].classList.contains('on') +
+      ' code=' + page.IDS['read-mode-code'].classList.contains('on'));
 }
 
 // The owner's 2026-11-18 request: "I need to be able to paste one or more

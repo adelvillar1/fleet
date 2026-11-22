@@ -543,7 +543,7 @@ import { node, svg, clip } from './core/dom.js';
               // and open the pane on the run tab so the owner watches
               // the tasks it declares.
               openPane();
-              showPaneTab('run');
+              showPaneTab('act');
               notice('the goal is set — and it is running',
                 'the session is working on it now \u00b7 the chip names it');
             } else if (clearing) {
@@ -1058,14 +1058,21 @@ import { node, svg, clip } from './core/dom.js';
     pane: document.getElementById('pane'),
     paneScrim: document.getElementById('pane-scrim'),
     paneOpen: document.getElementById('pane-open'),
-    tabContext: document.getElementById('tab-context'),
+    tabRead: document.getElementById('tab-read'),
+    tabAct: document.getElementById('tab-act'),
+    tabConnections: document.getElementById('tab-connections'),
+    tabMade: document.getElementById('tab-made'),
+    readModes: document.getElementById('read-modes'),
+    readModeDocument: document.getElementById('read-mode-document'),
+    readModeCode: document.getElementById('read-mode-code'),
+    readModePreview: document.getElementById('read-mode-preview'),
+    readModeWeb: document.getElementById('read-mode-web'),
     paneContext: document.getElementById('pane-context'),
     commands: document.getElementById('commands'),
     paneClose: document.getElementById('pane-close'),
     paneTree: document.getElementById('pane-tree'),
     paneFile: document.getElementById('pane-file'),
     panePreview: document.getElementById('pane-preview-body'),
-    tabRun: document.getElementById('tab-run'),
     paneRun: document.getElementById('pane-run'),
     gpCard: document.getElementById('gp-card'),
     gpCount: document.getElementById('gp-count'),
@@ -1073,9 +1080,6 @@ import { node, svg, clip } from './core/dom.js';
     gpGoalText: document.getElementById('gp-goal-text'),
     gpTasks: document.getElementById('gp-tasks'),
     gpNote: document.getElementById('gp-note'),
-    tabFiles: document.getElementById('tab-files'),
-    tabPreview: document.getElementById('tab-preview'),
-    tabWeb: document.getElementById('tab-web'),
     paneGrip: document.getElementById('pane-grip'),
     paneWebBack: document.getElementById('pane-web-back'),
     paneWebOut: document.getElementById('pane-web-out'),
@@ -1099,7 +1103,6 @@ import { node, svg, clip } from './core/dom.js';
     tissueEmpty: document.getElementById('tissue-empty'),
     threadPaneList: document.getElementById('thread-pane-list'),
     threadPaneEmpty: document.getElementById('thread-pane-empty'),
-    tabReceipts: document.getElementById('tab-receipts'),
     paneReceipts: document.getElementById('pane-receipts'),
     actions: document.getElementById('actions'),
     panelChat: document.getElementById('panel-chat'),
@@ -1322,9 +1325,7 @@ import { node, svg, clip } from './core/dom.js';
     ruleCount: document.getElementById('rule-count'),
     scrim: document.getElementById('scrim'),
     drawer: document.getElementById('drawer'),
-    tabDetail: document.getElementById('tab-detail'),
     paneProject: document.getElementById('pane-project'),
-    tabWork: document.getElementById('tab-work'),
     paneWork: document.getElementById('pane-work'),
     paneWorkList: document.getElementById('pane-work-list'),
     paneDetail: document.getElementById('pane-detail'),
@@ -5126,7 +5127,7 @@ import { node, svg, clip } from './core/dom.js';
     // The run lives in the pane now, at every width: the pane overlay
     // below 1180 carries it the way the drawer did.
     openPane();
-    showPaneTab('run');
+    showPaneTab('act');
   }
 
   function openProcessDrawer() {
@@ -10022,7 +10023,7 @@ import { node, svg, clip } from './core/dom.js';
     // the route asks for the tab, the paint takes it when it can.
     if (face.wantContext && paneContextAvailable() && !el.pane.hidden) {
       face.wantContext = false;
-      showPaneTab('context');
+      showPaneTab('read');
     }
     // The lesson always carries the one composer, pinned at the bottom.
     paintSurfaceDock('learning');
@@ -11590,9 +11591,10 @@ import { node, svg, clip } from './core/dom.js';
       el.dockObjectTitle.textContent = title;
       el.dockObjectBody.textContent = '';
       renderSections(el.dockObjectBody, sections);
-      // An object is open, so its tab exists and is the one showing.
-      if (el.tabDetail) el.tabDetail.hidden = false;
-      showPaneTab('detail');
+      // An object is open, so the read tab's document mode is the one
+      // showing — the object IS the focus's document (G11).
+      face.readMode = 'document';
+      showPaneTab('read');
       return;
     }
     el.drawerTitle.textContent = title;
@@ -11603,11 +11605,11 @@ import { node, svg, clip } from './core/dom.js';
     el.scrim.hidden = false;
   }
 
-  /// Whether an object is open in the pane: the detail tab's own state, so
-  /// the tab and the content cannot disagree.
+  /// Whether an object is open in the pane: the face's own field is the
+  /// record — `openDrawer` sets it, `closeDrawer` clears it, and counting
+  /// the body's nodes would be a proxy that drifts from both.
   function objectOpen() {
-    return !!(el.paneDetail && face.paneTab === 'detail' && el.dockObjectBody &&
-      el.dockObjectBody.childNodes.length);
+    return !!(el.paneDetail && face.objectTitle);
   }
 
   /// Close the open object. The detail tab goes with it — a tab that leads
@@ -11627,17 +11629,15 @@ import { node, svg, clip } from './core/dom.js';
       el.faceCard.hidden = false;
       el.trustCard.hidden = false;
       document.body.dataset.objectCard = '';
-      if (el.tabDetail) {
-        el.tabDetail.hidden = true;
-        el.tabDetail.classList.remove('active');
-        el.tabDetail.setAttribute('aria-selected', 'false');
-      }
-      if (el.paneDetail) el.paneDetail.hidden = true;
-      // Back to the pane's default view ONLY if the detail tab was the one
-      // showing: `closeDrawer` runs on every route change, and a version
-      // that always jumped to the run tab reset the owner's restored tab on
-      // each arrival (the reload-reattach preference is theirs, not ours).
-      if (face.paneTab === 'detail') showPaneTab('run', false);
+      // The document mode re-evaluates: with the object gone it either
+      // shows the surface's own focus or hides its button (G11).
+      if (face.paneTab === 'read') showReadMode(face.readMode || 'document', false);
+      // Back to the pane's default view ONLY if the object's document was
+      // the one showing: `closeDrawer` runs on every route change, and a
+      // version that always jumped to the act tab reset the owner's
+      // restored tab on each arrival (the reload-reattach preference is
+      // theirs, not ours).
+      if (face.paneTab === 'read' && face.readMode === 'document') showPaneTab('act', false);
       Array.prototype.forEach.call(
         document.querySelectorAll('.cfg-item[aria-current="true"]'),
         function (one) { one.removeAttribute('aria-current'); });
@@ -11655,7 +11655,7 @@ import { node, svg, clip } from './core/dom.js';
     face.file = null;
     face.deck = event;
     syncDeckCard();
-    showPaneTab('preview');
+    face.readMode = 'preview'; showPaneTab('read');
     openPane();
     paintPreview();
   }
@@ -12565,7 +12565,7 @@ import { node, svg, clip } from './core/dom.js';
         // does not grab the surface.
         if (reply.body.started) {
           openPane();
-          showPaneTab('run');
+          showPaneTab('act');
         }
         if (onDone) onDone();
         return;
@@ -14035,18 +14035,19 @@ import { node, svg, clip } from './core/dom.js';
     into.appendChild(paneCard('the sections', null, function (card) { card.appendChild(chips); }));
   }
 
-  /// Keep the context tab honest across routes: a surface without one
-  /// hides it, and a pane showing it on a route that has none falls back
-  /// to the run tab.
+  /// Keep the read tab's document mode honest across routes: a surface
+  /// without a focus hides the mode, and a pane showing it on a route that
+  /// has none falls back to the act tab.
   function syncPaneContext() {
-    if (!el.tabContext) return;
     var available = paneContextAvailable();
-    el.tabContext.hidden = !available;
-    if (!available && face.paneTab === 'context') {
-      showPaneTab('run');
+    if (!available && face.paneTab === 'read' && face.readMode === 'document') {
+      showReadMode('code');
       return;
     }
-    if (available && !el.pane.hidden && face.paneTab === 'context') paintPaneContext();
+    if (available && !el.pane.hidden && face.paneTab === 'read' && face.readMode === 'document') {
+      paintPaneContext();
+    }
+    if (el.readModeDocument) el.readModeDocument.hidden = !available && !objectOpen();
   }
 
   function readProjects(force) {
@@ -14243,7 +14244,7 @@ import { node, svg, clip } from './core/dom.js';
         face.surfaceRefusal = '';
         paintDesk();
         if (el.pane && el.pane.hidden) openPane();
-        showPaneTab('context');
+        showPaneTab('read');
         if (face.deskNameField && face.deskNameField.focus) face.deskNameField.focus();
         return;
       }
@@ -14394,7 +14395,7 @@ import { node, svg, clip } from './core/dom.js';
     }
     if (face.wantContext && paneContextAvailable() && !el.pane.hidden) {
       face.wantContext = false;
-      showPaneTab('context');
+      showPaneTab('read');
     }
     paintSurfaceDock('desk');
     placeComposer(el.deskDock);
@@ -15951,7 +15952,7 @@ import { node, svg, clip } from './core/dom.js';
       card.appendChild(node('span', 'artifact-open', 'open'));
       card.addEventListener('click', function () {
         openPane();
-        showPaneTab('preview');
+        face.readMode = 'preview'; showPaneTab('read');
         openFile(file.path);
       });
       el.roomShelfRail.appendChild(card);
@@ -31710,7 +31711,7 @@ import { node, svg, clip } from './core/dom.js';
       });
       el.panelLater.hidden = true;
       openPane();
-      showPaneTab('preview');
+      face.readMode = 'preview'; showPaneTab('read');
       openFile(focusId);
       return;
     }
@@ -32167,7 +32168,7 @@ import { node, svg, clip } from './core/dom.js';
     return paneGet('/api/web/frame?url=' + encodeURIComponent(url))
       .then(function (doc) {
         face.webFrame = doc;
-        if (face.paneTab === 'web') paintWeb();
+        if (face.paneTab === 'read' && face.readMode === 'web') paintWeb();
       })
       .catch(function () { });
   }
@@ -33270,16 +33271,16 @@ import { node, svg, clip } from './core/dom.js';
     // the data arrives.
     var wanted = face.wantContext && paneContextAvailable();
     if (wanted) face.wantContext = false;
-    showPaneTab(wanted ? 'context' : (face.paneTab || 'run'));
+    showPaneTab(wanted ? 'read' : (face.paneTab || 'act'));
     if (!face.tree) readTree('', true);
   }
 
   /// The tab that answers "what am I looking at" for the surface the owner
-  /// is on, most specific first: an inspected object, then the surface's own
-  /// context (a desk deliverable, a lesson), else nothing contextual.
+  /// is on, most specific first: an inspected object or the surface's own
+  /// context (a desk deliverable, a lesson) — both are the read tab's
+  /// document mode — else nothing contextual.
   function contextualPaneTab() {
-    if (face.objectTitle && el.tabDetail && !el.tabDetail.hidden) return 'detail';
-    if (paneContextAvailable()) return 'context';
+    if (objectOpen() || paneContextAvailable()) return 'read';
     return '';
   }
 
@@ -33290,11 +33291,19 @@ import { node, svg, clip } from './core/dom.js';
   /// The icon is the owner asking "show me what I am looking at", so it must
   /// not land on whichever tab they last used — that is the remembered-view
   /// behaviour `openPane` keeps for a reload. When nothing contextual is
-  /// open the run is the honest answer, and the head says so.
+  /// open the act tab is the honest answer, and the head says so.
   function openContextualPane() {
     openPane();
     var contextual = contextualPaneTab();
-    if (contextual) showPaneTab(contextual, false);
+    // The icon's answer is the focus's document — not whichever read mode
+    // the owner last used: an object or a surface focus switches the mode
+    // to document; nothing contextual lands on act, the live view.
+    if (contextual) {
+      face.readMode = 'document';
+      showPaneTab('read', false);
+    } else {
+      showPaneTab('act', false);
+    }
     return contextual;
   }
 
@@ -33320,9 +33329,9 @@ import { node, svg, clip } from './core/dom.js';
   /// appears when a conversation has delegations and not before.
   function repaintPaneTabs() {
     if (!el.pane || el.pane.hidden) return;
-    if (el.tabWork) el.tabWork.hidden = !workTabAvailable();
-    if (face.paneTab === 'work' && !workTabAvailable()) showPaneTab('run', false);
-    else if (face.paneTab === 'work') paintPaneWork();
+    if (el.tabConnections) el.tabConnections.hidden = !workTabAvailable();
+    if (face.paneTab === 'connections' && !workTabAvailable()) showPaneTab('act', false);
+    else if (face.paneTab === 'connections') paintPaneWork();
   }
 
   function closePane() {
@@ -33337,69 +33346,96 @@ import { node, svg, clip } from './core/dom.js';
   /// preference is the OWNER's last choice: the pane must return at `files`
   /// after a reload even though closing a card happened to pass through
   /// `run` first.
-  function showPaneTab(which, remember) {
-    face.paneTab = which;
-    if (remember !== false) {
-      try { window.localStorage.setItem('fleet-pane-tab', which); } catch (error) { }
+  // The drawer's four canonical tabs (G11): read · act · connections ·
+  // made here. One grammar on every surface; the bodies behind them stay
+  // per-focus. `face.paneTab` holds the canonical value, `face.readMode`
+  // the read tab's document (document · code · preview · web) — the focus
+  // chooses it and the owner can switch. Legacy persisted tab values map
+  // onto the canonical tab plus the mode they served, so a saved hash
+  // from the old grammar still lands where it meant to.
+  var READ_MODES = ['document', 'code', 'preview', 'web'];
+  try { face.readMode = window.localStorage.getItem('fleet-pane-read') || 'document'; } catch (error) { }
+  var LEGACY_TABS = {
+    context: 'read', detail: 'read', files: 'read', preview: 'read', web: 'read',
+    run: 'act', work: 'connections', receipts: 'made'
+  };
+
+  function showReadMode(mode, remember) {
+    if (READ_MODES.indexOf(mode) < 0) mode = 'document';
+    face.readMode = mode;
+    var documentAvailable = paneContextAvailable() || objectOpen();
+    if (mode === 'document' && !documentAvailable) mode = 'code';
+    if (el.readModeDocument) {
+      el.readModeDocument.hidden = !documentAvailable;
+      el.readModeDocument.classList.toggle('on', mode === 'document');
     }
-    var context = which === 'context';
-    var detail = which === 'detail';
-    var work = which === 'work';
-    var run = which === 'run';
-    var receipts = which === 'receipts';
-    var files = which === 'files';
-    var preview = which === 'preview';
-    var web = which === 'web';
-    if (context && !paneContextAvailable()) { context = false; run = true; }
-    // The detail tab exists only while an object is open: a tab that leads
-    // nowhere is a door to a blank. Asking for it with nothing open falls
-    // back to the run, the pane's default view.
-    if (detail && !(el.tabDetail && !el.tabDetail.hidden)) { detail = false; run = true; }
-    // The work tab exists only while this conversation has delegations —
-    // the same rule as the detail tab: a tab that leads to a blank is a
-    // door to nothing (the owner's D2: the current work only).
-    if (work && !workTabAvailable()) { work = false; run = true; }
-    if (el.tabWork) {
-      el.tabWork.hidden = !workTabAvailable();
-      el.tabWork.classList.toggle('active', work);
-      el.tabWork.setAttribute('aria-selected', work ? 'true' : 'false');
-    }
-    if (el.paneWork) el.paneWork.hidden = !work;
-    if (el.tabDetail) {
-      el.tabDetail.classList.toggle('active', detail);
-      el.tabDetail.setAttribute('aria-selected', detail ? 'true' : 'false');
-    }
-    if (el.paneDetail) el.paneDetail.hidden = !detail;
-    if (el.tabContext) {
-      el.tabContext.hidden = !paneContextAvailable();
-      el.tabContext.classList.toggle('active', context);
-      el.tabContext.setAttribute('aria-selected', context ? 'true' : 'false');
-    }
-    if (el.paneContext) el.paneContext.hidden = !context;
-    if (el.tabReceipts) {
-      el.tabReceipts.classList.toggle('active', receipts);
-      el.tabReceipts.setAttribute('aria-selected', receipts ? 'true' : 'false');
-    }
-    el.tabRun.classList.toggle('active', run);
-    el.tabFiles.classList.toggle('active', files);
-    el.tabPreview.classList.toggle('active', preview);
-    el.tabWeb.classList.toggle('active', web);
-    el.tabRun.setAttribute('aria-selected', run ? 'true' : 'false');
-    el.tabFiles.setAttribute('aria-selected', files ? 'true' : 'false');
-    el.tabPreview.setAttribute('aria-selected', preview ? 'true' : 'false');
-    el.tabWeb.setAttribute('aria-selected', web ? 'true' : 'false');
-    el.paneRun.hidden = !run;
-    if (el.paneReceipts) el.paneReceipts.hidden = !receipts;
-    el.paneFiles.hidden = !files;
-    el.panePreviewPanel.hidden = !preview;
-    el.paneWeb.hidden = !web;
-    if (context) paintPaneContext();
-    if (work) paintPaneWork();
-    else if (run) paintProcess();
-    else if (receipts) paintThreadPane();
-    else if (files) paintTree();
-    else if (preview) paintPreview();
+    if (el.readModeCode) el.readModeCode.classList.toggle('on', mode === 'code');
+    if (el.readModePreview) el.readModePreview.classList.toggle('on', mode === 'preview');
+    if (el.readModeWeb) el.readModeWeb.classList.toggle('on', mode === 'web');
+    el.paneContext.hidden = !(mode === 'document' && paneContextAvailable());
+    if (el.paneDetail) el.paneDetail.hidden = !(mode === 'document' && objectOpen());
+    el.paneFiles.hidden = mode !== 'code';
+    el.panePreviewPanel.hidden = mode !== 'preview';
+    el.paneWeb.hidden = mode !== 'web';
+    if (mode === 'document') paintPaneContext();
+    else if (mode === 'code') paintTree();
+    else if (mode === 'preview') paintPreview();
     else paintWeb();
+    if (remember !== false && face.paneTab === 'read') {
+      try { window.localStorage.setItem('fleet-pane-read', mode); } catch (error) { }
+    }
+  }
+
+  function showPaneTab(which, remember) {
+    var canonical = LEGACY_TABS[which] || which;
+    if (canonical !== 'read' && canonical !== 'act' && canonical !== 'connections' && canonical !== 'made') {
+      canonical = 'act';
+    }
+    // The connections tab exists only while this conversation has
+    // delegations — a tab that leads to a blank is a door to nothing
+    // (the owner's D2: the current work only). Asking for it with nothing
+    // delegating falls back to act, the pane's live view.
+    var connections = canonical === 'connections' && workTabAvailable();
+    if (canonical === 'connections' && !connections) canonical = 'act';
+    face.paneTab = canonical;
+    if (remember !== false) {
+      try { window.localStorage.setItem('fleet-pane-tab', canonical); } catch (error) { }
+    }
+    var read = canonical === 'read';
+    var act = canonical === 'act';
+    var made = canonical === 'made';
+    if (el.tabConnections) {
+      el.tabConnections.hidden = !workTabAvailable();
+      el.tabConnections.classList.toggle('active', canonical === 'connections');
+      el.tabConnections.setAttribute('aria-selected', canonical === 'connections' ? 'true' : 'false');
+    }
+    if (el.paneWork) el.paneWork.hidden = canonical !== 'connections';
+    if (el.tabRead) {
+      el.tabRead.classList.toggle('active', read);
+      el.tabRead.setAttribute('aria-selected', read ? 'true' : 'false');
+    }
+    if (el.readModes) el.readModes.hidden = !read;
+    if (el.tabAct) {
+      el.tabAct.classList.toggle('active', act);
+      el.tabAct.setAttribute('aria-selected', act ? 'true' : 'false');
+    }
+    if (el.tabMade) {
+      el.tabMade.classList.toggle('active', made);
+      el.tabMade.setAttribute('aria-selected', made ? 'true' : 'false');
+    }
+    el.paneRun.hidden = !act;
+    if (el.paneReceipts) el.paneReceipts.hidden = !made;
+    if (read) showReadMode(face.readMode || 'document', remember);
+    else {
+      el.paneContext.hidden = true;
+      if (el.paneDetail) el.paneDetail.hidden = true;
+      el.paneFiles.hidden = true;
+      el.panePreviewPanel.hidden = true;
+      el.paneWeb.hidden = true;
+    }
+    if (canonical === 'connections') paintPaneWork();
+    else if (act) paintProcess();
+    else if (made) paintThreadPane();
   }
 
   el.paneAddress.addEventListener('submit', function (event) {
@@ -34957,25 +34993,34 @@ import { node, svg, clip } from './core/dom.js';
   })();
 
   el.paneClose.addEventListener('click', closePane);
-  // Every tab answers its own click — the run, the work and made-here
+  // Every tab answers its own click — the act, connections and made-here
   // tabs were born unwired once; a drawer whose tablist lies is worse
-  // than no drawer.
-  if (el.tabContext) {
-    el.tabContext.addEventListener('click', function () { showPaneTab('context'); });
+  // than no drawer. The read modes answer too: a mode switch that does
+  // nothing is the same lie.
+  if (el.tabRead) {
+    el.tabRead.addEventListener('click', function () { showPaneTab('read'); });
   }
-  if (el.tabDetail) {
-    el.tabDetail.addEventListener('click', function () { showPaneTab('detail'); });
+  if (el.tabAct) {
+    el.tabAct.addEventListener('click', function () { showPaneTab('act'); });
   }
-  if (el.tabWork) {
-    el.tabWork.addEventListener('click', function () { showPaneTab('work'); });
+  if (el.tabConnections) {
+    el.tabConnections.addEventListener('click', function () { showPaneTab('connections'); });
   }
-  el.tabRun.addEventListener('click', function () { showPaneTab('run'); });
-  if (el.tabReceipts) {
-    el.tabReceipts.addEventListener('click', function () { showPaneTab('receipts'); });
+  if (el.tabMade) {
+    el.tabMade.addEventListener('click', function () { showPaneTab('made'); });
   }
-  el.tabFiles.addEventListener('click', function () { showPaneTab('files'); });
-  el.tabPreview.addEventListener('click', function () { showPaneTab('preview'); });
-  el.tabWeb.addEventListener('click', function () { showPaneTab('web'); });
+  if (el.readModeDocument) {
+    el.readModeDocument.addEventListener('click', function () { showReadMode('document'); });
+  }
+  if (el.readModeCode) {
+    el.readModeCode.addEventListener('click', function () { showReadMode('code'); });
+  }
+  if (el.readModePreview) {
+    el.readModePreview.addEventListener('click', function () { showReadMode('preview'); });
+  }
+  if (el.readModeWeb) {
+    el.readModeWeb.addEventListener('click', function () { showReadMode('web'); });
+  }
 
   buildRail();
   setRail(railCollapsed() ? 'icons' : 'full');
@@ -35060,7 +35105,14 @@ import { node, svg, clip } from './core/dom.js';
   // the first paint so the tasks card is where they left it.
   try {
     var storedTab = window.localStorage.getItem('fleet-pane-tab');
-    if (storedTab) face.paneTab = storedTab;
+    // A saved value from the old grammar maps onto the canonical tab plus
+    // the read mode it served (G11) — a reload lands where it meant to.
+    if (storedTab) {
+      face.paneTab = LEGACY_TABS[storedTab] || storedTab;
+      if (LEGACY_TABS[storedTab] === 'read' && READ_MODES.indexOf(storedTab) >= 0) {
+        face.readMode = storedTab;
+      }
+    }
   } catch (error) { }
   try {
     if (window.localStorage.getItem('fleet-pane') === 'open') openPane();
