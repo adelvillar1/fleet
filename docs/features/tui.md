@@ -37,6 +37,22 @@ a fresh home has no store yet, and says so*
 *plan mode: `Ctrl-T` holds the write-class tools; the plan is the final
 answer*
 
+![delegation](../images/tui-delegation.png)
+
+*delegation: the declared graph with the day's rows joined onto it — the
+divergence column, the graph's counts, and why-this-child on the
+selected node*
+
+![the board](../images/tui-board.png)
+
+*board: the three derived columns as card stacks — queued, in process,
+done, each with its own count*
+
+![the second brain](../images/tui-second-brain.png)
+
+*second-brain: the morning read's five sentences and the six derived
+state sections — a section that did not land names its file*
+
 ## The shape
 
 At 120 columns the frame is the conversation on the left and a tabbed
@@ -113,7 +129,7 @@ slot has not landed or refused.
 | Checkpoints | the turn table; Enter arms a rewind, `d` opens the diff |
 | Diff | files and hunks; `r` rejects the hunk, `R` the file |
 | Confirm | `y` lands the armed rewind/reject; any other key walks away |
-| Panel | memory, skills, calibration, or delegation, list + detail |
+| Panel | memory, skills, calibration, delegation, bots, board, or second-brain — list + detail, or the surface's own cards |
 | Approval | the tool call's yes/no/always prompt |
 | Lanes | the vendored lanes' health |
 | Settings | the scalar knobs (including the spend guard and the spend/runtime env knobs) and both lists, cards not a bare table |
@@ -173,10 +189,10 @@ back; there is no unconfirmed destructive key.
 
 ## The knowledge panels
 
-The palette opens memory, skills, calibration, delegation, and bots. Each
-is an on-demand read on its own thread — the library scan and the archive
-replay are too heavy for the 30-second board cadence — and each renders
-a list on the left and a detail column on the right (stacked below 100
+The palette opens memory, skills, calibration, delegation, bots, board, and
+second-brain. Each is an on-demand read on its own thread — the library scan
+and the archive replay are too heavy for the 30-second board cadence — and each
+renders a list on the left and a detail column on the right (stacked below 100
 columns). `f` cycles the panel's own filter:
 
 - memory: all / live / protected / retired
@@ -184,6 +200,7 @@ columns). `f` cycles the panel's own filter:
 - calibration: all / fit / informing
 - delegation: all / live / history
 - bots: service / peers / pending / activity
+- board and second-brain: one view (their surfaces are the document itself)
 
 The rows are the substrate's own reads (`boards::read_memory`,
 `read_skills`, `read_delegation`, `calib::read_day` + `calibration`),
@@ -198,6 +215,70 @@ The bots panel does not start or stop a channel, and says so in its
 service view: a port belongs to the process that holds it, and the TUI
 is not that process. Start and stop live where the service is hosted —
 `fleet gui --channels`, or `channels.enabled` in the settings.
+
+### Delegation, the graph half
+
+The delegation panel draws the live tree and the archive it always drew, and
+now the face's declared graph beside them. The graph rows come from the same
+document `bridge::delegation_read` serves: `boards::read_delegation` for the
+graph, then the day's `OP_DELEGATION` rows joined onto its nodes by
+`boards::delegation_overlay`, plus `boards::declared_workload` for the plan's
+own verdict — the same two functions the face calls, so the terminal cannot
+say a node ran twice when the face says it ran once.
+
+Each graph row's third column is the overlay's divergence word (`never
+spawned`, `ran twice ×N`), clipped through `cards::clip` at the column's
+width budget — elided, never dropped. The selected node's detail card carries
+why-this-child: the plan's declared workload, the brief's shape, the
+provider, and the outcome, each omitted when the row did not record it. A
+node no row named says so (`no row named this child — the plan declares
+…`) rather than passing the declaration off as a run. The list's tile carries
+the graph-level divergences and their evidence basis (`the day's delegation
+rows`). The divergence column exists only when the document joined: with the
+graph half absent the column is absent by name, and the tree half still
+draws.
+
+### The board
+
+The board panel is the face's work board at a keyboard's density. It reads
+`boards::read_work_board` — the one derivation both faces consume: every
+approved plan's graph (a draft never contributes work) plus the owner's
+ad-hoc tasks, with the bridge's own `queued` / `in-process` / `done` words.
+The panel derives three columns from that one read and draws each as a card
+stack in the 72-cell frame: the column's heading and its own count, a
+`cards::rule` line, then one card per plan carrying the plan's name, how many
+of its tasks stand in this column, and the plan's state word. The count strip
+at the top is those same columns' counts — never a second derivation.
+
+A column with no cards is not drawn; the strip still carries its zero because
+a count is a count. An empty board names itself (`no plan carries work right
+now`) and prints the read's refusal (`… holds no approved plan — a plan
+contributes work once it is approved`). A zero dressed as a column is the
+defect the face already fixed, and the terminal does not reintroduce it.
+
+### The second brain
+
+The second-brain panel is named for what it reads: the face's
+`#/second-brain` document, through the same home resolution
+(`SECOND_BRAIN_HOME`, then `~/.second-brain`) and the same six-file
+`boards::read_brain`. It is not the memory panel and does not merge with it —
+the corpus and the derived state stay apart, as they do in the face.
+
+The morning read leads the card stack: five sentences derived from that one
+document, with the face's own rules — the attention queue's total and its
+four counts; the queue's first row in its own words; the reports file's
+in-flight / awaiting-verification / conflict counts; the harness log's newest
+event; and the loops' newest finding, or the review they owe, or the quiet.
+A section that did not land prints that section's own refusal sentence
+(`harness_state.json does not exist`) where its counts would stand — never a
+zero. Below the morning read, each of the six sections prints its count line
+and its own rows (gates and their graded progress, harness runs and
+convergences, loops and pending reviews, reports and the feed, maturity
+weeks and series, the tower's projects).
+
+Both new surfaces draw through `cards.rs` (`CARD_WIDTH = 72`, escape-aware
+`fit`, `clip`, `rule`), so a long plan name or refusal wraps or elides
+visibly rather than silently dropping its tail.
 
 ## Widgets and the contract
 

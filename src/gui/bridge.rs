@@ -11046,23 +11046,64 @@ fn install_kiri() -> Result<(), String> {
 /// it runs under (C3). An absent verdict leaves it empty rather than
 /// inventing an owner.
 fn board_read(home: &std::path::Path, root: &std::path::Path) -> Value {
-    let plans = plans_read(root);
-    let tasks = ad_hoc_tasks(home);
+    let read = crate::boards::read_work_board(home, root);
     let count = |column: &str| -> usize {
-        plans
+        read.plans
             .iter()
-            .flat_map(|plan| plan["tasks"].as_array().cloned().unwrap_or_default())
-            .filter(|task| task["column"] == column)
+            .flat_map(|plan| plan.tasks.iter())
+            .filter(|task| task.column == column)
             .count()
-            + tasks.iter().filter(|task| task["column"] == column).count()
+            + read
+                .tasks
+                .iter()
+                .filter(|task| task.column == column)
+                .count()
     };
-    let mut refused: Vec<String> = Vec::new();
-    if plans.is_empty() {
-        refused.push(format!(
-            "{} holds no approved plan \u{2014} a plan contributes work once it is approved",
-            root.join("docs").join("plans").display()
-        ));
-    }
+    let plans: Vec<Value> = read
+        .plans
+        .iter()
+        .map(|plan| {
+            json!({
+                "id": &plan.id,
+                "plan": &plan.plan,
+                "status": &plan.status,
+                "updated": &plan.updated,
+                "workload": &plan.workload,
+                "queued": plan.queued,
+                "tasks": plan.tasks.iter().map(|task| json!({
+                    "id": &task.id,
+                    "title": &task.title,
+                    "column": task.column,
+                    "state": &task.state,
+                    "status": &task.status,
+                    "cost": task.cost,
+                    "assignee": &task.assignee,
+                    "approach": &task.approach,
+                    "serves": &task.serves,
+                    "capabilities": &task.capabilities,
+                    "paths": &task.paths,
+                    "depends_on": task.depends_on.iter().map(|(id, state)| json!({
+                        "id": id, "state": state,
+                    })).collect::<Vec<_>>(),
+                    "waiting_on": &task.waiting_on,
+                    "reason": &task.reason,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let tasks: Vec<Value> = read
+        .tasks
+        .iter()
+        .map(|task| {
+            json!({
+                "id": &task.id,
+                "title": &task.title,
+                "column": task.column,
+                "assignee": &task.assignee,
+                "binding": &task.binding,
+            })
+        })
+        .collect();
     json!({
         "type": "board",
         "read_at": crate::boards::now_stamp(),
@@ -11070,164 +11111,12 @@ fn board_read(home: &std::path::Path, root: &std::path::Path) -> Value {
             "queued": count("queued"),
             "in-process": count("in-process"),
             "done": count("done"),
-            "plans": plans.len(),
+            "plans": read.plans.len(),
         },
         "plans": plans,
         "tasks": tasks,
-        "refused": refused,
+        "refused": read.refused,
     })
-}
-
-/// One card per approved plan, each carrying its atomic tasks.
-///
-/// `plan_graph` already enumerates the documents, reads the frontmatter, and
-/// loads-or-generates each graph — so this walks its registry rather than
-/// repeating the scan. A draft never reaches here: `generates_a_graph` is
-/// false for it, which is the same rule that makes a card's existence its
-/// provenance.
-fn plans_read(root: &std::path::Path) -> Vec<Value> {
-    let dir = root.join("docs").join("plans");
-    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
-                .collect()
-        })
-        .unwrap_or_default();
-    // Name order, so the board does not reshuffle between reads: a board
-    // that moves cannot be read at a glance.
-    paths.sort();
-
-    let mut cards: Vec<Value> = Vec::new();
-    for path in paths {
-        let Ok(meta) = crate::plan_graph::read_meta(&path) else {
-            continue;
-        };
-        if !meta.status.generates_a_graph() {
-            continue;
-        }
-        let declared = match crate::plan_graph::PlanGraph::generate(&path) {
-            Ok(plan) => plan,
-            Err(_) => continue,
-        };
-        // The runtime state when one has landed, the declaration otherwise:
-        // an approved plan that has never run is legitimately all queued.
-        let live = crate::plan_graph::PlanGraph::load(&path).ok();
-        let graph = live
-            .as_ref()
-            .map(|one| &one.graph)
-            .unwrap_or(&declared.graph);
-        // The plan's own workload, when its frontmatter named a verdict:
-        // the fallback every unassigned node inherits (C3).
-        let workload = meta.execution.map(|verdict| verdict.as_str().to_string());
-
-        let mut tasks: Vec<Value> = Vec::new();
-        for node in graph.nodes() {
-            let unlock = graph.unlock(&node.id).unwrap_or_default();
-            let column = match node.status {
-                crate::graph::Status::Verified => "done",
-                crate::graph::Status::Running => "in-process",
-                // Pending and failed are both unfinished: the owner needs
-                // them on the board, and a failed node is the one they
-                // most need to see.
-                _ => "queued",
-            };
-            let assignee = if !node.assignee.trim().is_empty() {
-                Some(node.assignee.clone())
-            } else {
-                workload.clone()
-            };
-            // The dependencies grouped by the state each is in — the three
-            // the owner named — read off the graph so the drawer cannot
-            // disagree with the columns.
-            let depends_on: Vec<Value> = node
-                .prereqs
-                .iter()
-                .map(|prereq| {
-                    let state = graph
-                        .nodes()
-                        .iter()
-                        .find(|other| &other.id == prereq)
-                        .map(|other| match other.status {
-                            crate::graph::Status::Verified => "done",
-                            crate::graph::Status::Running => "in-process",
-                            _ => "queued",
-                        })
-                        .unwrap_or("queued");
-                    json!({ "id": prereq, "state": state })
-                })
-                .collect();
-            tasks.push(json!({
-                "id": node.id,
-                // The card's line: the node's declared approach, which is
-                // what the task IS. The id is the fallback because a node
-                // that declared no approach is still delegatable work.
-                "title": if node.approach.trim().is_empty() {
-                    node.id.clone()
-                } else {
-                    node.approach.clone()
-                },
-                "column": column,
-                "state": crate::graph::state_word(node, &unlock),
-                "status": node.status.as_str(),
-                "cost": node.cost,
-                "assignee": assignee,
-                // The drawer's context: everything a person needs to judge
-                // one task without opening the plan (C4).
-                "approach": node.approach,
-                "serves": declared.serves.get(&node.id).cloned(),
-                "capabilities": node.capabilities.phrase(),
-                "paths": node.paths,
-                "depends_on": depends_on,
-                "waiting_on": unlock.waiting,
-                "reason": unlock.reason(),
-            }));
-        }
-        let queued = tasks
-            .iter()
-            .filter(|task| task["column"] == "queued")
-            .count();
-        cards.push(json!({
-            "id": meta.slug,
-            "plan": path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default(),
-            "status": meta.status.as_str(),
-            "updated": meta.updated,
-            "workload": workload,
-            "queued": queued,
-            "tasks": tasks,
-        }));
-    }
-    cards
-}
-
-/// The owner's own ad-hoc tasks: the workspace graph, whose only writer is a
-/// run the owner started. They ride beside the plans rather than merged into
-/// them, because a plan's node and a standalone task are different objects
-/// with different lifecycles.
-fn ad_hoc_tasks(home: &std::path::Path) -> Vec<Value> {
-    let graph = crate::workspace::read(home);
-    graph
-        .tasks
-        .values()
-        .map(|task| {
-            json!({
-                "id": task.id,
-                "title": task.title,
-                "column": match task.status {
-                    crate::workspace::Status::Done => "done",
-                    crate::workspace::Status::Working => "in-process",
-                    crate::workspace::Status::Blocked => "queued",
-                },
-                "assignee": task.assignee.as_str(),
-                "binding": task.binding,
-            })
-        })
-        .collect()
 }
 
 fn doctor_read(home: &std::path::Path) -> Value {

@@ -560,6 +560,15 @@ pub enum PanelKind {
     /// they have done. It reads the same document the browser's Bots
     /// surface reads, so the two cannot disagree.
     Bots,
+    /// The work board: the three derived columns (queued / in process /
+    /// done) over the same work-state read the browser's board surface
+    /// reads, so the two cannot disagree about the owner's work.
+    Board,
+    /// The second brain: the face's `#/second-brain` document — the
+    /// morning read's five sentences and the six derived state sections.
+    /// Separate from [`PanelKind::Memory`]: the face keeps the corpus and
+    /// the derived state apart, and so does the terminal.
+    SecondBrain,
 }
 
 impl PanelKind {
@@ -570,6 +579,8 @@ impl PanelKind {
             PanelKind::Calibration => "calibration",
             PanelKind::Delegation => "delegation",
             PanelKind::Bots => "bots",
+            PanelKind::Board => "board",
+            PanelKind::SecondBrain => "second-brain",
         }
     }
 }
@@ -636,8 +647,99 @@ pub enum PanelData {
     Memory(crate::boards::MemorySnapshot),
     Skills(crate::boards::SkillsSnapshot),
     Calibration(CalibrationData),
-    Delegation(crate::boards::DelegationSnapshot),
+    Delegation(Box<DelegationPanel>),
     Bots(BotsSnapshot),
+    Board(WorkBoard),
+    SecondBrain(Box<SecondBrainPanel>),
+}
+
+/// The delegation panel's document: the trees the panel already drew,
+/// plus the face's graph half. It is the join `bridge::delegation_read`
+/// performs, through the same `boards` functions — the day's
+/// `OP_DELEGATION` rows over the declared graph, and the plan's own
+/// declared workload — so the two surfaces cannot disagree about what
+/// was declared and what actually ran.
+#[derive(Debug, Clone)]
+pub struct DelegationPanel {
+    pub snapshot: crate::boards::DelegationSnapshot,
+    /// `None` when the graph file could not be read; the snapshot's
+    /// `refused` names why. The trees still draw.
+    pub graph: Option<DelegationGraph>,
+}
+
+/// The graph half of the delegation document: the declared graph, one
+/// overlay per non-summary node, the two divergence counts, and the
+/// plan's declared workload — the why-this-child every node inherits.
+#[derive(Debug, Clone)]
+pub struct DelegationGraph {
+    pub snapshot: crate::boards::GraphSnapshot,
+    pub overlays: std::collections::HashMap<String, crate::boards::NodeOverlay>,
+    pub divergences: crate::boards::Divergences,
+    pub declared_workload: Option<String>,
+}
+
+/// The work board's document: the three columns derived from one read of
+/// the approved plans' graphs and the owner's ad-hoc tasks. A column
+/// carries the cards that stand in it, and the strip is their own counts
+/// — never a second derivation.
+#[derive(Debug, Clone, Default)]
+pub struct WorkBoard {
+    pub read_at: String,
+    pub columns: Vec<WorkColumn>,
+    /// The read's own refusals, named. An empty board with a refusal is
+    /// not an empty board.
+    pub refused: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkColumn {
+    /// `queued`, `in-process`, or `done` — the bridge's own word.
+    pub key: &'static str,
+    /// The column's heading word: `queued`, `in process`, `done`.
+    pub label: &'static str,
+    pub cards: Vec<WorkCard>,
+}
+
+impl WorkColumn {
+    /// The column's count: its cards' own counts, summed. The strip
+    /// reads this, so it cannot disagree with what is drawn.
+    pub fn count(&self) -> usize {
+        self.cards.iter().map(|card| card.count).sum()
+    }
+}
+
+/// One plan's card in one column: the plan's name, how many of its tasks
+/// stand in this column, and the plan's state word.
+#[derive(Debug, Clone)]
+pub struct WorkCard {
+    pub plan: String,
+    pub count: usize,
+    pub state: String,
+}
+
+/// The second brain's document, unpacked for the panel: the morning
+/// read's five sentences and the six derived state sections, each
+/// landed or named. A section that did not land prints its own refusal;
+/// a zero is never dressed as a read.
+#[derive(Debug, Clone, Default)]
+pub struct SecondBrainPanel {
+    pub home: String,
+    pub read_at: String,
+    pub morning: Vec<String>,
+    pub sections: Vec<BrainSectionRow>,
+    pub refused: Vec<String>,
+}
+
+/// One derived state section on the second-brain panel: its name, its
+/// count line, and its own rows — or its refusal, by name.
+#[derive(Debug, Clone)]
+pub struct BrainSectionRow {
+    pub name: &'static str,
+    /// `Some` when the section landed: its count line. `None` when it
+    /// did not, and then `refused` carries the read's own sentence.
+    pub landed: Option<String>,
+    pub refused: Option<String>,
+    pub rows: Vec<String>,
 }
 
 /// One selectable row in a knowledge panel. The list is generic so the
@@ -645,6 +747,9 @@ pub enum PanelData {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PanelRow {
     pub label: String,
+    /// The delegation panel's third column: the divergence word, when
+    /// the graph document joined. `None` on every other panel.
+    pub state: Option<String>,
     pub meta: String,
     pub detail: String,
 }
@@ -1931,6 +2036,8 @@ impl App {
             PanelKind::Calibration => &["all", "fit", "informing"],
             PanelKind::Delegation => &["all", "live", "history"],
             PanelKind::Bots => &["service", "peers", "pending", "activity"],
+            PanelKind::Board => &["all"],
+            PanelKind::SecondBrain => &["all"],
         };
         words[self.panel_filter.min(words.len() - 1)]
     }
@@ -1944,6 +2051,8 @@ impl App {
             PanelKind::Calibration => 3,
             PanelKind::Delegation => 3,
             PanelKind::Bots => 4,
+            PanelKind::Board => 1,
+            PanelKind::SecondBrain => 1,
         };
         self.panel_filter = (self.panel_filter + 1) % len;
         self.selected = 0;
@@ -1962,6 +2071,7 @@ impl App {
                     _ => true,
                 })
                 .map(|fact| PanelRow {
+                    state: None,
                     label: fact.name.clone(),
                     meta: format!("{} \u{b7} {} recall(s)", fact.fact_type, fact.recall_count),
                     detail: format!("{}\n\n{}\n\n{}", fact.description, fact.body, fact.path),
@@ -1972,6 +2082,7 @@ impl App {
                     .proposals
                     .iter()
                     .map(|proposal| PanelRow {
+                        state: None,
                         label: proposal.name.clone(),
                         meta: proposal.kind.clone(),
                         detail: format!(
@@ -1984,6 +2095,7 @@ impl App {
                     .skips
                     .iter()
                     .map(|skip| PanelRow {
+                        state: None,
                         label: skip.name.clone(),
                         meta: "skipped".to_string(),
                         detail: skip.reason.clone(),
@@ -1998,6 +2110,7 @@ impl App {
                         _ => true,
                     })
                     .map(|skill| PanelRow {
+                        state: None,
                         label: skill.name.clone(),
                         meta: format!(
                             "{} use{}",
@@ -2017,6 +2130,7 @@ impl App {
                     _ => true,
                 })
                 .map(|cell| PanelRow {
+                    state: None,
                     label: cell.provider.clone(),
                     meta: format!(
                         "{} \u{b7} {}",
@@ -2047,21 +2161,34 @@ impl App {
                     ),
                 })
                 .collect(),
-            Some(PanelData::Delegation(snapshot)) => {
+            Some(PanelData::Delegation(panel)) => {
                 let mut rows = Vec::new();
                 if self.panel_filter != 2 {
-                    if let Some(live) = &snapshot.live {
+                    if let Some(live) = &panel.snapshot.live {
                         push_node(&mut rows, live, 0);
                     }
                 }
                 if self.panel_filter != 1 {
-                    for root in &snapshot.history {
+                    for root in &panel.snapshot.history {
                         push_node(&mut rows, root, 0);
+                    }
+                }
+                // The graph half joins only under `all`: the declared graph
+                // is neither the live run nor the archive, and drawing it
+                // under either filter would say it is.
+                if self.panel_filter == 0 {
+                    if let Some(graph) = &panel.graph {
+                        for node in &graph.snapshot.nodes {
+                            rows.push(graph_row(node, graph));
+                        }
                     }
                 }
                 rows
             }
+            // The board and the second brain draw as card stacks, not as
+            // list rows; their renderers branch before the table.
             Some(PanelData::Bots(snapshot)) => self.bots_rows(snapshot),
+            Some(PanelData::Board(_)) | Some(PanelData::SecondBrain(_)) => Vec::new(),
             None => Vec::new(),
         }
     }
@@ -2082,6 +2209,7 @@ impl App {
                 .iter()
                 .flat_map(|channel| {
                     channel.peers.iter().map(|peer| PanelRow {
+                        state: None,
                         label: if peer.name.is_empty() {
                             peer.id.clone()
                         } else {
@@ -2120,6 +2248,7 @@ impl App {
                 .iter()
                 .flat_map(|channel| {
                     channel.pending.iter().map(|peer| PanelRow {
+                        state: None,
                         label: if peer.name.is_empty() {
                             peer.id.clone()
                         } else {
@@ -2143,6 +2272,7 @@ impl App {
                 .iter()
                 .rev()
                 .map(|line| PanelRow {
+                    state: None,
                     label: format!(
                         "{} {}",
                         line.at,
@@ -2166,6 +2296,7 @@ impl App {
                     Some(status) => {
                         for report in &status.channels {
                             rows.push(PanelRow {
+                                state: None,
                                 label: report.name.clone(),
                                 meta: format!(
                                     "{}{}",
@@ -2197,6 +2328,7 @@ impl App {
                         }
                         if status.channels.is_empty() {
                             rows.push(PanelRow {
+                                state: None,
                                 label: "no channels".to_string(),
                                 meta: status.pid.to_string(),
                                 detail: "The service is running but hosts no channel in this build.".to_string(),
@@ -2204,6 +2336,7 @@ impl App {
                         }
                     }
                     None => rows.push(PanelRow {
+                        state: None,
                         label: "no service".to_string(),
                         meta: String::new(),
                         detail: "No channel service has run in this home. `channels.enabled` in the settings, or `fleet gui --channels`, turns it on.".to_string(),
@@ -2653,6 +2786,16 @@ impl App {
                 action: Action::OpenPanel(PanelKind::Bots),
             },
             PaletteItem {
+                label: "board",
+                detail: "the work board — queued, in process, done",
+                action: Action::OpenPanel(PanelKind::Board),
+            },
+            PaletteItem {
+                label: "second-brain",
+                detail: "the morning read and the derived state",
+                action: Action::OpenPanel(PanelKind::SecondBrain),
+            },
+            PaletteItem {
                 label: "sessions",
                 detail: "the archive; enter resumes",
                 action: Action::OpenSessions,
@@ -3080,6 +3223,7 @@ fn push_node(rows: &mut Vec<PanelRow>, node: &crate::boards::DelegationNode, dep
         .unwrap_or_default();
     rows.push(PanelRow {
         label: format!("{indent}{}", short_session_id(&node.id)),
+        state: None,
         meta: node.status.clone(),
         detail: format!(
             "{}{}\n\nmodel {}\nstop {}{}",
@@ -3092,6 +3236,90 @@ fn push_node(rows: &mut Vec<PanelRow>, node: &crate::boards::DelegationNode, dep
     });
     for child in &node.children {
         push_node(rows, child, depth + 1);
+    }
+}
+
+/// One declared graph node as the delegation list's row. The state
+/// column is the overlay's divergence word — the one thing the trees
+/// cannot say — and the detail carries why-this-child for the node the
+/// caret rests on: the declared workload, the brief's shape, the
+/// provider, and the outcome, each omitted when no row said it.
+fn graph_row(node: &crate::boards::GraphNode, graph: &DelegationGraph) -> PanelRow {
+    let overlay = graph.overlays.get(&node.id);
+    let state = if node.summary {
+        Some("summary".to_string())
+    } else {
+        overlay.and_then(|overlay| overlay.divergence.clone())
+    };
+    if node.summary {
+        return PanelRow {
+            label: node.id.clone(),
+            state,
+            meta: format!("graph \u{b7} {}", node.state),
+            detail: format!(
+                "{}\n\na summary node \u{2014} children, no work of its own; the overlay never counts it",
+                node.approach.as_deref().unwrap_or(&node.id)
+            ),
+        };
+    }
+    let spawns = overlay.map(|overlay| overlay.spawn_count).unwrap_or(0);
+    let spawned = overlay
+        .map(|overlay| overlay.spawned_sessions.join(", "))
+        .filter(|ids| !ids.is_empty())
+        .unwrap_or_else(|| "no delegation row named this node".to_string());
+    PanelRow {
+        label: node.id.clone(),
+        state,
+        meta: format!("graph \u{b7} {} \u{b7} {spawns} spawn(s)", node.state),
+        detail: format!(
+            "{}\n\nstate {} \u{b7} cost {} \u{b7} score {} \u{b7} longest chain {}\nspawned {}\nwhy this child  {}",
+            node.approach.as_deref().unwrap_or(&node.id),
+            node.state,
+            node.cost,
+            node.score,
+            node.longest_chain,
+            spawned,
+            why_this_child(graph, overlay),
+        ),
+    }
+}
+
+/// Why this child: the plan's declared workload, then the latest row's
+/// own judged shape — brief, provider, outcome. A node no row named
+/// says so rather than borrowing the declaration for a run that never
+/// happened.
+fn why_this_child(graph: &DelegationGraph, overlay: Option<&crate::boards::NodeOverlay>) -> String {
+    // A node no row named has no child to explain: the declaration is
+    // all the document holds, and the line says exactly that rather than
+    // borrowing the plan's verdict as though a run had happened.
+    let named = overlay
+        .map(|overlay| overlay.spawn_count > 0)
+        .unwrap_or(false);
+    if !named {
+        return match &graph.declared_workload {
+            Some(workload) => {
+                format!("no row named this child \u{2014} the plan declares {workload}")
+            }
+            None => "no row named this child \u{2014} the graph's declaration is all there is"
+                .to_string(),
+        };
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(workload) = &graph.declared_workload {
+        parts.push(workload.clone());
+    }
+    if let Some(overlay) = overlay {
+        for part in [&overlay.brief_shape, &overlay.provider, &overlay.outcome] {
+            if !part.trim().is_empty() {
+                parts.push(part.trim().to_string());
+            }
+        }
+    }
+    if parts.is_empty() {
+        "the row named this child but recorded no shape \u{2014} the plan's declaration is all there is"
+            .to_string()
+    } else {
+        parts.join(" \u{b7} ")
     }
 }
 

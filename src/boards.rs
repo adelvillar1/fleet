@@ -4275,6 +4275,231 @@ pub fn trim_to(text: &str, width: usize) -> String {
     format!("{kept}\u{2026}")
 }
 
+/// One approved plan on the work board, as both faces read it.
+#[derive(Debug, Clone)]
+pub struct WorkPlanRead {
+    pub id: String,
+    /// The plan's file name — what the board's card subtitle names.
+    pub plan: String,
+    pub status: String,
+    pub updated: String,
+    /// The plan's own declared workload, when its frontmatter named a
+    /// verdict: the fallback every unassigned node inherits (C3).
+    pub workload: Option<String>,
+    /// How many of its tasks stand in the queued column.
+    pub queued: usize,
+    pub tasks: Vec<WorkTaskRead>,
+}
+
+/// One atomic task on the board: a plan node or an ad-hoc task.
+#[derive(Debug, Clone)]
+pub struct WorkTaskRead {
+    pub id: String,
+    /// The card's line: the node's declared approach, or its id when it
+    /// declared none.
+    pub title: String,
+    /// `queued`, `in-process`, or `done` — the bridge's own word.
+    pub column: &'static str,
+    /// The graph's readiness word for the node.
+    pub state: String,
+    pub status: String,
+    pub cost: u64,
+    pub assignee: Option<String>,
+    pub approach: String,
+    /// Which criterion the node serves, when the plan's table names one.
+    pub serves: Option<String>,
+    pub capabilities: String,
+    pub paths: Vec<String>,
+    /// `(prerequisite id, its column)`, read off the same graph.
+    pub depends_on: Vec<(String, &'static str)>,
+    pub waiting_on: Vec<String>,
+    pub reason: Option<String>,
+}
+
+/// The owner's own ad-hoc task: the workspace graph, whose only writer
+/// is a run the owner started.
+#[derive(Debug, Clone)]
+pub struct WorkLooseRead {
+    pub id: String,
+    pub title: String,
+    pub column: &'static str,
+    pub assignee: String,
+    pub binding: Option<String>,
+}
+
+/// The work board's one read: every approved plan with its tasks, the
+/// owner's ad-hoc tasks beside them, and the read's own refusals. The
+/// browser's board document and the terminal's board panel both consume
+/// this, so the two cannot disagree about the owner's work.
+#[derive(Debug, Clone, Default)]
+pub struct WorkBoardRead {
+    pub plans: Vec<WorkPlanRead>,
+    pub tasks: Vec<WorkLooseRead>,
+    pub refused: Vec<String>,
+}
+
+/// Read the work board. One derivation for both faces: an approved plan
+/// generates a graph and contributes work; a draft never reaches a
+/// card, which is the provenance rule.
+pub fn read_work_board(home: &Path, root: &Path) -> WorkBoardRead {
+    let plans = work_plans(root);
+    let tasks = work_loose_tasks(home);
+    let mut refused: Vec<String> = Vec::new();
+    if plans.is_empty() {
+        refused.push(format!(
+            "{} holds no approved plan \u{2014} a plan contributes work once it is approved",
+            root.join("docs").join("plans").display()
+        ));
+    }
+    WorkBoardRead {
+        plans,
+        tasks,
+        refused,
+    }
+}
+
+/// One card per approved plan, each carrying its atomic tasks.
+///
+/// `plan_graph` already enumerates the documents, reads the frontmatter,
+/// and loads-or-generates each graph — so this walks its registry rather
+/// than repeating the scan. A draft never reaches here:
+/// `generates_a_graph` is false for it, which is the same rule that
+/// makes a card's existence its provenance.
+fn work_plans(root: &Path) -> Vec<WorkPlanRead> {
+    let dir = root.join("docs").join("plans");
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+                .collect()
+        })
+        .unwrap_or_default();
+    // Name order, so the board does not reshuffle between reads: a board
+    // that moves cannot be read at a glance.
+    paths.sort();
+
+    let mut cards: Vec<WorkPlanRead> = Vec::new();
+    for path in paths {
+        let Ok(meta) = crate::plan_graph::read_meta(&path) else {
+            continue;
+        };
+        if !meta.status.generates_a_graph() {
+            continue;
+        }
+        let declared = match crate::plan_graph::PlanGraph::generate(&path) {
+            Ok(plan) => plan,
+            Err(_) => continue,
+        };
+        // The runtime state when one has landed, the declaration
+        // otherwise: an approved plan that has never run is legitimately
+        // all queued.
+        let live = crate::plan_graph::PlanGraph::load(&path).ok();
+        let graph = live
+            .as_ref()
+            .map(|one| &one.graph)
+            .unwrap_or(&declared.graph);
+        let workload = meta.execution.map(|verdict| verdict.as_str().to_string());
+
+        let mut tasks: Vec<WorkTaskRead> = Vec::new();
+        for node in graph.nodes() {
+            let unlock = graph.unlock(&node.id).unwrap_or_default();
+            let column = column_of(node.status);
+            let assignee = if !node.assignee.trim().is_empty() {
+                Some(node.assignee.clone())
+            } else {
+                workload.clone()
+            };
+            // The dependencies grouped by the state each is in — the
+            // three the owner named — read off the graph so the drawer
+            // cannot disagree with the columns.
+            let depends_on: Vec<(String, &'static str)> = node
+                .prereqs
+                .iter()
+                .map(|prereq| {
+                    let state = graph
+                        .nodes()
+                        .iter()
+                        .find(|other| &other.id == prereq)
+                        .map(|other| column_of(other.status))
+                        .unwrap_or("queued");
+                    (prereq.clone(), state)
+                })
+                .collect();
+            tasks.push(WorkTaskRead {
+                id: node.id.clone(),
+                title: if node.approach.trim().is_empty() {
+                    node.id.clone()
+                } else {
+                    node.approach.clone()
+                },
+                column,
+                state: crate::graph::state_word(node, &unlock).to_string(),
+                status: node.status.as_str().to_string(),
+                cost: node.cost,
+                assignee,
+                approach: node.approach.clone(),
+                serves: declared.serves.get(&node.id).cloned(),
+                capabilities: node.capabilities.phrase(),
+                paths: node.paths.clone(),
+                depends_on,
+                waiting_on: unlock.waiting.clone(),
+                reason: unlock.reason(),
+            });
+        }
+        let queued = tasks.iter().filter(|task| task.column == "queued").count();
+        cards.push(WorkPlanRead {
+            id: meta.slug,
+            plan: path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_string(),
+            status: meta.status.as_str().to_string(),
+            updated: meta.updated,
+            workload,
+            queued,
+            tasks,
+        });
+    }
+    cards
+}
+
+/// The owner's own ad-hoc tasks: the workspace graph, whose only writer
+/// is a run the owner started. They ride beside the plans rather than
+/// merged into them, because a plan's node and a standalone task are
+/// different objects with different lifecycles.
+fn work_loose_tasks(home: &Path) -> Vec<WorkLooseRead> {
+    let graph = crate::workspace::read(home);
+    graph
+        .tasks
+        .values()
+        .map(|task| WorkLooseRead {
+            id: task.id.clone(),
+            title: task.title.clone(),
+            column: match task.status {
+                crate::workspace::Status::Done => "done",
+                crate::workspace::Status::Working => "in-process",
+                crate::workspace::Status::Blocked => "queued",
+            },
+            assignee: task.assignee.as_str().to_string(),
+            binding: task.binding.clone(),
+        })
+        .collect()
+}
+
+/// The three columns a task stands in, in the order work moves through
+/// them. Pending and failed are both unfinished: the owner needs them on
+/// the board, and a failed node is the one they most need to see.
+fn column_of(status: crate::graph::Status) -> &'static str {
+    match status {
+        crate::graph::Status::Verified => "done",
+        crate::graph::Status::Running => "in-process",
+        _ => "queued",
+    }
+}
+
 /// Pad `text` to exactly `width` cells, trimming it when it is longer.
 pub fn cell(text: &str, width: usize) -> String {
     let mut out = trim_to(text, width);

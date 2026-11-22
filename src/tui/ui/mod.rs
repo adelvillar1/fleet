@@ -5103,4 +5103,360 @@ mod tests {
             "{drawn}"
         );
     }
+
+    /// One declared graph node, with the overlay's divergence carried
+    /// beside it by the panel's document — never derived by the renderer.
+    fn graph_node(id: &str, state: &str, approach: &str) -> crate::boards::GraphNode {
+        crate::boards::GraphNode {
+            id: id.to_string(),
+            cost: 2,
+            score: 3,
+            longest_chain: 1,
+            peak: 3,
+            status: "pending".to_string(),
+            state: state.to_string(),
+            approach: Some(approach.to_string()),
+            paths: vec!["src/tui".to_string()],
+            capabilities: "read, write".to_string(),
+            prereqs: Vec::new(),
+            unlock: crate::boards::UnlockShape {
+                score_zero: false,
+                resource_free: true,
+                deps_verified: true,
+                unlocked: true,
+                waiting: Vec::new(),
+                failed: Vec::new(),
+                unresolved: Vec::new(),
+                held: Vec::new(),
+            },
+            reason: None,
+            delta: None,
+            summary: false,
+        }
+    }
+
+    fn overlay(spawns: &[&str], divergence: Option<&str>) -> crate::boards::NodeOverlay {
+        crate::boards::NodeOverlay {
+            spawned_sessions: spawns.iter().map(|id| id.to_string()).collect(),
+            spawn_count: spawns.len(),
+            divergence: divergence.map(str::to_string),
+            brief_shape: "investigate".to_string(),
+            provider: "deepseek".to_string(),
+            outcome: "completed".to_string(),
+        }
+    }
+
+    /// The delegation document the face reads: the declared graph with
+    /// the day's rows joined onto it. `twice` is a node the rows say ran
+    /// twice, `quiet` a node no row named.
+    fn delegation_panel(joined: bool) -> crate::tui::app::DelegationPanel {
+        let nodes = vec![
+            graph_node("twice", "waiting", "the node that ran twice"),
+            graph_node("quiet", "ready", "the node no row named"),
+        ];
+        let mut overlays = std::collections::HashMap::new();
+        overlays.insert(
+            "twice".to_string(),
+            overlay(&["child-a", "child-b"], Some("ran twice \u{d7}2")),
+        );
+        overlays.insert(
+            "quiet".to_string(),
+            crate::boards::NodeOverlay {
+                spawned_sessions: Vec::new(),
+                spawn_count: 0,
+                divergence: Some("never spawned".to_string()),
+                brief_shape: String::new(),
+                provider: String::new(),
+                outcome: String::new(),
+            },
+        );
+        crate::tui::app::DelegationPanel {
+            snapshot: crate::boards::DelegationSnapshot {
+                read_at: "2026-11-21T09:00:00Z".to_string(),
+                depth_cap: 2,
+                live: None,
+                history: Vec::new(),
+                graph: Some(crate::boards::GraphSnapshot {
+                    nodes: nodes.clone(),
+                    edges: Vec::new(),
+                    critical_path: Vec::new(),
+                    blocks_most_work: None,
+                    revisions: 0,
+                    diff_score: 0,
+                    replan: false,
+                }),
+                refused: Vec::new(),
+            },
+            graph: joined.then(|| crate::tui::app::DelegationGraph {
+                snapshot: crate::boards::GraphSnapshot {
+                    nodes,
+                    edges: Vec::new(),
+                    critical_path: Vec::new(),
+                    blocks_most_work: None,
+                    revisions: 0,
+                    diff_score: 0,
+                    replan: false,
+                },
+                overlays,
+                divergences: crate::boards::Divergences {
+                    never_spawned: 1,
+                    ran_twice: 1,
+                },
+                declared_workload: Some("mixture".to_string()),
+            }),
+        }
+    }
+
+    #[test]
+    fn the_delegation_panel_draws_the_divergence_word_and_why_this_child() {
+        let mut app = fresh();
+        let generation = app.open_panel(crate::tui::app::PanelKind::Delegation);
+        app.apply_panel(
+            generation,
+            crate::tui::app::PanelKind::Delegation,
+            Ok(crate::tui::app::PanelData::Delegation(Box::new(
+                delegation_panel(true),
+            ))),
+        );
+        let drawn = draw(&app, 120, 40);
+        let flat = words(&drawn);
+        // The twice-ran node shows the word, and the tile carries the
+        // graph's own counts and the plan's declared workload.
+        assert!(flat.contains("ran twice 2"), "{drawn}");
+        assert!(flat.contains("never spawned 1"), "{drawn}");
+        assert!(flat.contains("declared workload mixture"), "{drawn}");
+        // The selected node's card carries why-this-child: the declared
+        // workload, the brief's shape, the provider, the outcome.
+        assert!(
+            flat.contains("why this child mixture investigate deepseek completed"),
+            "{drawn}"
+        );
+        // The quiet node says no row named it rather than borrowing the
+        // declaration for a run that never happened.
+        app.selected = 1;
+        let quiet = words(&draw(&app, 120, 40));
+        assert!(quiet.contains("no row named this child"), "{quiet}");
+    }
+
+    /// Red-proof for the join: with the document not joined, the
+    /// divergence column does not exist — by name. The trees still draw;
+    /// what vanishes is the column the overlay owns.
+    #[test]
+    fn the_divergence_column_vanishes_when_the_graph_document_is_not_joined() {
+        let mut app = fresh();
+        let generation = app.open_panel(crate::tui::app::PanelKind::Delegation);
+        app.apply_panel(
+            generation,
+            crate::tui::app::PanelKind::Delegation,
+            Ok(crate::tui::app::PanelData::Delegation(Box::new(
+                delegation_panel(false),
+            ))),
+        );
+        let drawn = draw(&app, 120, 40);
+        let flat = words(&drawn);
+        assert!(!flat.contains("divergence"), "{drawn}");
+        assert!(!flat.contains("ran twice"), "{drawn}");
+        assert!(!flat.contains("why this child"), "{drawn}");
+        // The tree half is still the panel's, so the panel is not blank:
+        // it simply has no graph half to draw.
+        assert!(flat.contains("nothing matches this filter"), "{drawn}");
+    }
+
+    fn board_card(plan: &str, count: usize, state: &str) -> crate::tui::app::WorkCard {
+        crate::tui::app::WorkCard {
+            plan: plan.to_string(),
+            count,
+            state: state.to_string(),
+        }
+    }
+
+    fn work_board() -> crate::tui::app::WorkBoard {
+        crate::tui::app::WorkBoard {
+            read_at: "2026-11-21T09:00:00Z".to_string(),
+            columns: vec![
+                crate::tui::app::WorkColumn {
+                    key: "queued",
+                    label: "queued",
+                    cards: vec![board_card("the-run", 2, "approved")],
+                },
+                crate::tui::app::WorkColumn {
+                    key: "in-process",
+                    label: "in process",
+                    cards: vec![board_card("the-sweep", 1, "executing")],
+                },
+                crate::tui::app::WorkColumn {
+                    key: "done",
+                    label: "done",
+                    cards: vec![board_card("the-run", 1, "approved")],
+                },
+            ],
+            refused: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_board_panel_draws_three_columns_and_their_own_counts() {
+        let mut app = fresh();
+        let generation = app.open_panel(crate::tui::app::PanelKind::Board);
+        app.apply_panel(
+            generation,
+            crate::tui::app::PanelKind::Board,
+            Ok(crate::tui::app::PanelData::Board(work_board())),
+        );
+        let drawn = draw(&app, 120, 40);
+        let flat = words(&drawn);
+        // One document, three columns, and the strip is their own counts.
+        assert!(
+            flat.contains("work board queued 2 in process 1 done 1"),
+            "{drawn}"
+        );
+        assert!(flat.contains("the run"), "{drawn}");
+        assert!(flat.contains("the sweep"), "{drawn}");
+        assert!(flat.contains("approved"), "{drawn}");
+        assert!(flat.contains("executing"), "{drawn}");
+        // Each column says its own count over its stack.
+        assert!(flat.contains("queued 2 task s"), "{drawn}");
+        assert!(flat.contains("in process 1 task s"), "{drawn}");
+        assert!(flat.contains("done 1 task s"), "{drawn}");
+    }
+
+    /// Red-proof for the board: an empty document names itself, and no
+    /// column is dressed around a zero. The refusal is the read's own.
+    #[test]
+    fn the_board_empty_state_names_itself_and_draws_no_zero_column() {
+        let mut app = fresh();
+        let generation = app.open_panel(crate::tui::app::PanelKind::Board);
+        app.apply_panel(
+            generation,
+            crate::tui::app::PanelKind::Board,
+            Ok(crate::tui::app::PanelData::Board(
+                crate::tui::app::WorkBoard {
+                    read_at: "2026-11-21T09:00:00Z".to_string(),
+                    columns: vec![
+                        crate::tui::app::WorkColumn {
+                            key: "queued",
+                            label: "queued",
+                            cards: Vec::new(),
+                        },
+                        crate::tui::app::WorkColumn {
+                            key: "in-process",
+                            label: "in process",
+                            cards: Vec::new(),
+                        },
+                        crate::tui::app::WorkColumn {
+                            key: "done",
+                            label: "done",
+                            cards: Vec::new(),
+                        },
+                    ],
+                    refused: vec!["/work/docs/plans holds no approved plan".to_string()],
+                },
+            )),
+        );
+        let drawn = draw(&app, 120, 40);
+        let flat = words(&drawn);
+        assert!(flat.contains("no plan carries work right now"), "{drawn}");
+        assert!(flat.contains("holds no approved plan"), "{drawn}");
+        // No zero-dressed column: neither header is drawn.
+        assert!(!flat.contains("in process 0"), "{drawn}");
+        assert!(!flat.contains("0 task s"), "{drawn}");
+    }
+
+    fn brain_panel() -> crate::tui::app::SecondBrainPanel {
+        crate::tui::app::SecondBrainPanel {
+            home: "/Users/owner/.second-brain".to_string(),
+            read_at: "2026-11-21T09:00:00Z".to_string(),
+            morning: vec![
+                "2 things need you \u{2014} 1 drift \u{b7} 0 stale \u{b7} 1 handoffs \u{b7} 0 conflicts"
+                    .to_string(),
+                "fleet \u{b7} the plan ledger is behind the repo \u{b7} 8d behind".to_string(),
+                "1 in flight \u{b7} 0 awaiting verification \u{b7} 1 conflicts open".to_string(),
+                "2026-11-21T08:00:00Z loop: the sweep \u{2014} ok".to_string(),
+                "the loops are quiet".to_string(),
+            ],
+            sections: vec![
+                crate::tui::app::BrainSectionRow {
+                    name: "gates",
+                    landed: Some("12 verdicts \u{b7} 4 dispositions".to_string()),
+                    refused: None,
+                    rows: vec!["review \u{b7} 12v \u{b7} 2/20".to_string()],
+                },
+                crate::tui::app::BrainSectionRow {
+                    name: "harness",
+                    landed: None,
+                    refused: Some(
+                        "harness_state.json does not exist".to_string(),
+                    ),
+                    rows: Vec::new(),
+                },
+            ],
+            refused: vec!["harness_state.json does not exist".to_string()],
+        }
+    }
+
+    #[test]
+    fn the_second_brain_panel_draws_the_morning_read_and_section_rows() {
+        let mut app = fresh();
+        let generation = app.open_panel(crate::tui::app::PanelKind::SecondBrain);
+        app.apply_panel(
+            generation,
+            crate::tui::app::PanelKind::SecondBrain,
+            Ok(crate::tui::app::PanelData::SecondBrain(Box::new(
+                brain_panel(),
+            ))),
+        );
+        let drawn = draw(&app, 120, 40);
+        let flat = words(&drawn);
+        assert!(drawn.contains("second-brain"), "{drawn}");
+        assert!(flat.contains("morning read"), "{drawn}");
+        // All five sentences, each derived from the same document.
+        assert!(
+            flat.contains("2 things need you 1 drift 0 stale 1 handoffs 0 conflicts"),
+            "{drawn}"
+        );
+        assert!(
+            flat.contains("the plan ledger is behind the repo"),
+            "{drawn}"
+        );
+        assert!(
+            flat.contains("1 in flight 0 awaiting verification 1 conflicts open"),
+            "{drawn}"
+        );
+        assert!(flat.contains("the sweep ok"), "{drawn}");
+        assert!(flat.contains("the loops are quiet"), "{drawn}");
+        // The section rows: the landed count and row, and the refusal by
+        // name for the section that did not land.
+        assert!(flat.contains("gates 12 verdicts 4 dispositions"), "{drawn}");
+        assert!(flat.contains("review 12v 2 20"), "{drawn}");
+        assert!(flat.contains("harness did not land"), "{drawn}");
+        assert!(
+            flat.contains("harness state json does not exist"),
+            "{drawn}"
+        );
+    }
+
+    /// Red-proof for the second brain: a section that did not land prints
+    /// that section's own refusal, never a zero standing in for a read.
+    #[test]
+    fn a_section_that_did_not_land_prints_its_refusal_not_a_zero() {
+        let mut app = fresh();
+        let generation = app.open_panel(crate::tui::app::PanelKind::SecondBrain);
+        app.apply_panel(
+            generation,
+            crate::tui::app::PanelKind::SecondBrain,
+            Ok(crate::tui::app::PanelData::SecondBrain(Box::new(
+                brain_panel(),
+            ))),
+        );
+        let drawn = draw(&app, 120, 40);
+        let flat = words(&drawn);
+        // The harness section's own sentence is what stands where its
+        // counts would be; no "0 runs" is dressed as a landed read.
+        assert!(
+            flat.contains("harness state json does not exist"),
+            "{drawn}"
+        );
+        assert!(!flat.contains("0 runs"), "{drawn}");
+        assert!(!flat.contains("0 converged"), "{drawn}");
+    }
 }

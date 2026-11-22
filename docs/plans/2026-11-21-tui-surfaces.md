@@ -83,20 +83,20 @@ document the browser's Bots surface reads, so the two cannot disagree."*
 
 ## Acceptance criteria
 
-- [ ] The delegation panel's document is the face's `delegation_read` shape
+- [x] The delegation panel's document is the face's `delegation_read` shape
       (graph + overlay + divergences + declared_workload), and a fixture with
       a twice-ran node shows the word in the TUI; red-proof: revert the join,
       the column vanishes by name.
-- [ ] The kanban panel exists with a case asserting the three columns and
+- [x] The kanban panel exists with a case asserting the three columns and
       their counts from one fixture document, and the empty state names
       itself; red-proof: zero columns drawn where a refusal belongs.
-- [ ] The second-brain panel reads the face's document, asserts the five
+- [x] The second-brain panel reads the face's document, asserts the five
       morning-read sentences and the section rows from one fixture; red-proof:
       a section that did not land prints that section's own refusal, never a
       zero.
-- [ ] `cargo test` green; no panel reads a store the face's route for the
+- [x] `cargo test` green; no panel reads a store the face's route for the
       same surface does not.
-- [ ] The TUI screenshots note: `tui-conversation.png` in README gains the
+- [x] The TUI screenshots note: `tui-conversation.png` in README gains the
       three surfaces' companions shot from the built binary (the gallery rig's
       discipline, terminal edition: the binary's own output, not a mock).
 
@@ -106,7 +106,7 @@ document the browser's Bots surface reads, so the two cannot disagree."*
   plumbing follows the Bots panel's shape.
 - `src/tui/panels.rs` — the three read joins (the bridge/boards documents the
   face reads).
-- `src/tui/knowledge.rs` / `ui/mod.rs` — the renderers through `cards.rs`.
+- `src/tui/ui/knowledge.rs` / `ui/mod.rs` — the renderers through `cards.rs`.
 - `src/gui/bridge.rs` — only if a read shape is missing (extend the read;
   document the extension on the read, not in the TUI).
 - `docs/features/` — the terminal half of the feature docs the surfaces

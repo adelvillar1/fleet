@@ -243,6 +243,8 @@ turn's row carries its cache half.*
 |---|---|
 | ![the landing](docs/images/surface-landing.png) *the landing: one question over the composer — the onboard door when the home needs setup, the lenses in the rail* | ![the desk with the drawer](docs/images/surface-desk-drawer.jpg) *the desk, the inspector as a drawer over the work: the run, the receipts of what the conversation made, the files, the preview* |
 | ![a huddle](docs/images/surface-huddles.jpg) *a room: you and your bots, a deliverable on the shelf, a capability gap named* | ![the terminal](docs/images/tui-conversation.png) *the terminal face: the same core at a keyboard's density* |
+| ![the terminal's delegation](docs/images/tui-delegation.png) *delegation: the declared graph with the day's rows joined — divergence column and why-this-child* | ![the terminal's board](docs/images/tui-board.png) *the board: queued, in process, done — three derived columns, each with its own count* |
+| ![the terminal's second brain](docs/images/tui-second-brain.png) *the second brain: the morning read's five sentences and the derived state's sections* | *the terminal's intelligence surfaces read the same documents the browser face reads — one join, two faces* |
 
 ## Install
 
