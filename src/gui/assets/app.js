@@ -8148,6 +8148,21 @@ import { node, svg, clip } from './core/dom.js';
           (d.count === 1 ? ' conversation' : ' conversations');
       }
     },
+    // The kanzo board answers about the ROUND TRIP: what the personas
+    // offered, what the owner accepted, what a claim turned into. Every
+    // row comes from the lane's own ledger — a row with no receipt says
+    // "no receipt yet" rather than standing a zero in for a board nobody
+    // read, and an empty ledger names the press that fills it.
+    kanzo: {
+      empty: 'No offer has crossed the board yet \u2014 press `fleet kanzo pass` and the personas read the column the owner set.',
+      loading: 'Still loading. This comes from the kanzo lane\u2019s own ledger, which every pass writes.',
+      refused: function (said) { return said.join(' \u00b7 '); },
+      selected: function (d) {
+        return 'showing the kanzo board \u00b7 ' + d.offers + ' offer' +
+          (d.offers === 1 ? '' : 's') + ' \u00b7 ' + d.helped + ' helped' +
+          ' \u2014 the board is the audit trail, and the ledger is ours';
+      }
+    },
     router: {
       empty: 'No route rows today. The day\u2019s calls land here as they are made.',
       loading: 'Still loading. The live decision below comes straight from the run and does not wait for it.',
@@ -21870,6 +21885,10 @@ import { node, svg, clip } from './core/dom.js';
     }));
     rows.push({ id: 'channels', icon: 'bots', name: 'channels',
       badge: 0 });
+    // The board Fleet answers: the owner's intent backlog, and what the
+    // personas offered on it. It sits beside the channels because both are
+    // ways work arrives from outside a conversation.
+    rows.push({ id: 'kanzo', icon: 'bots', name: 'kanzo board', badge: 0 });
     return rows;
   }
 
@@ -23079,6 +23098,58 @@ import { node, svg, clip } from './core/dom.js';
       });
   }
 
+  /// The kanzo board's card: the five receipts the lane's ledger carries,
+  /// the last probe's facts, and the press. A row is the plan's own words
+  /// and the newest receipt behind it — the board task's name, the
+  /// persona, and the task's URL — never a count with nothing under it.
+  /// The face renders the same document the CLI's `fleet kanzo card` does.
+  function kanzoCard(doc) {
+    var card = boardCard(12, 'kanzo board',
+      doc && doc.version ? 'v' + doc.version : null,
+      'The owner\u2019s intent backlog, and what the personas offered on it. Every row below ' +
+      'comes from the lane\u2019s own ledger \u2014 the board is the audit trail.');
+    if (!doc) {
+      card.appendChild(node('p', 'board-empty', sentence('kanzo', 'loading')));
+      return card;
+    }
+    if (!doc.installed) {
+      card.appendChild(node('p', 'board-empty', sentence('kanzo', 'refused', [
+        'kanzo is not installed \u2014 press install (the signed installer), or name the ' +
+        'binary with FLEET_KANZO_BIN'
+      ])));
+      return card;
+    }
+    var facts = node('p', 'board-note',
+      'MCP ' + (doc.mcp ? 'answers' : 'did not answer') + ' \u00b7 board ' +
+      (doc.board ? 'answers' : 'not running') + ' \u00b7 ' +
+      (doc.probed_at ? 'probed ' + doc.probed_at : 'the probe has not run \u2014 `fleet kanzo probe`'));
+    card.appendChild(facts);
+    var rows = doc.rows || [];
+    var any = rows.some(function (row) { return Number(row.count) > 0; });
+    if (!any) card.appendChild(node('p', 'board-empty', sentence('kanzo', 'empty')));
+    rows.forEach(function (row) {
+      var count = Number(row.count) || 0;
+      var said = row.label + ' \u2014 ' + count;
+      if (count > 0 && row.task) {
+        said += ' \u00b7 ' + row.task;
+        if (row.persona) said += ' \u00b7 ' + row.persona;
+        if (row.url) said += ' \u00b7 ' + row.url;
+      } else if (count === 0) {
+        said += ' \u2014 no receipt yet';
+      }
+      var line = node('p', 'kanzo-row', said);
+      line.dataset.event = row.event || '';
+      card.appendChild(line);
+    });
+    (doc.refused || []).forEach(function (refusal) {
+      card.appendChild(node('p', 'kanzo-refusal',
+        'refused ' + (refusal.task || 'the board') + ': ' + refusal.reason));
+    });
+    card.appendChild(node('p', 'board-note',
+      'press ' + (doc.press || 'fleet kanzo pass') + ' \u2014 a pass is on demand, never a cron'));
+    return card;
+  }
+
   function paintBots() {
     var read = face.bots;
     el.botsBoard.textContent = '';
@@ -23160,13 +23231,27 @@ import { node, svg, clip } from './core/dom.js';
     // P7's selected sentence: which section the rail picked and how many
     // conversations of that persona this home holds. The rail's highlight
     // is not a sentence, so the page says it in words.
-    if (chosen !== 'channels' && chosen !== 'morning-read') {
+    if (chosen !== 'channels' && chosen !== 'morning-read' && chosen !== 'kanzo') {
       var picked = (conv.personas || []).filter(function (one) {
         return one.name === chosen;
       })[0];
       board.appendChild(selectedLine('bots', {
         section: chosen,
         count: picked ? (picked.sessions || []).length : 0
+      }));
+    }
+    if (chosen === 'kanzo') {
+      // The kanzo card's selected sentence counts the round trip: the
+      // offers the personas made and the tasks that were helped — the two
+      // numbers the card is about.
+      var krows = (read.kanzo && read.kanzo.rows) || [];
+      var byEvent = function (event) {
+        var row = krows.filter(function (one) { return one.event === event; })[0];
+        return row ? Number(row.count) || 0 : 0;
+      };
+      board.appendChild(selectedLine('kanzo', {
+        offers: byEvent('offer'),
+        helped: byEvent('helped')
       }));
     }
     if (chosen === 'morning-read') {
@@ -23183,6 +23268,18 @@ import { node, svg, clip } from './core/dom.js';
       });
       morningBody.appendChild(morningCard);
       board.appendChild(morningBody);
+      return;
+    }
+    if (chosen === 'kanzo') {
+      // The kanzo board (the kanzo plan's card): one card, five receipt
+      // rows from the lane's own ledger. The rows are the plan's own
+      // words — offers made, accepted, claimed, helped, refused — and a
+      // row with no receipt says so instead of standing a zero in for a
+      // board nobody read.
+      var kanzoBody = node('div', 'section-body');
+      kanzoBody.dataset.section = 'kanzo';
+      kanzoBody.appendChild(kanzoCard(read.kanzo));
+      board.appendChild(kanzoBody);
       return;
     }
     if (chosen !== 'channels') {

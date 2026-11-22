@@ -61,6 +61,10 @@ pub enum Command {
     },
     /// Probe the four vendored lanes' health.
     Lanes,
+    /// The kanzo lane: `probe` reports kanzo present / version / MCP /
+    /// board, `pass` runs one board pass (the owner's press — a pass is on
+    /// demand, never a cron), and `card` prints the bots-surface read.
+    Kanzo(KanzoAction),
     /// List the routing roster in declared chain order with per-provider state.
     Providers,
     /// Show this install's identity: the install-id, the principal every
@@ -295,6 +299,16 @@ pub struct DemandOptions {
     /// file a shape proposal for each cluster at or over the filing
     /// threshold.
     pub cluster: bool,
+}
+
+/// The kanzo lane's three presses. `Probe` is the health read, `Pass` the
+/// owner's on-demand board pass, `Card` the bots-surface read the face
+/// renders — one verb per question the owner has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KanzoAction {
+    Probe,
+    Pass,
+    Card,
 }
 
 /// Options for `fleet dictate`: the microphone, transcribed locally by
@@ -1280,6 +1294,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "workspace" => no_flags(rest, Command::Workspace),
         "settings" => parse_settings(rest),
         "lanes" => no_flags(rest, Command::Lanes),
+        "kanzo" => parse_kanzo(rest),
         "mcp" => parse_mcp(rest),
         "providers" => no_flags(rest, Command::Providers),
         "identity" => no_flags(rest, Command::Identity),
@@ -3877,6 +3892,26 @@ fn no_flags(args: &[String], command: Command) -> Result<Command, String> {
     match args.first() {
         None => Ok(command),
         Some(arg) => Err(format!("`{arg}` takes no options here")),
+    }
+}
+
+/// `fleet kanzo [probe|pass|card]`: one action, no flags. The bare verb is
+/// the probe — the question an owner asks first is whether the lane
+/// answers at all.
+fn parse_kanzo(args: &[String]) -> Result<Command, String> {
+    let action = match args.first().map(String::as_str) {
+        None | Some("probe") => KanzoAction::Probe,
+        Some("pass") => KanzoAction::Pass,
+        Some("card") => KanzoAction::Card,
+        Some(other) => {
+            return Err(format!(
+                "`kanzo` takes `probe`, `pass` or `card` — got `{other}`"
+            ))
+        }
+    };
+    match args.get(1) {
+        None => Ok(Command::Kanzo(action)),
+        Some(arg) => Err(format!("`kanzo {action:?}` takes no options — got `{arg}`")),
     }
 }
 

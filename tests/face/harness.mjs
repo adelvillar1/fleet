@@ -8062,7 +8062,13 @@ async function theStrategyStepShowsItsPreview() {
       discs.length === 1 && String(discs[0].textContent) === 'd',
       'discs=' + discs.length + ' text=' + (discs[0] ? String(discs[0].textContent) : '-'));
     check('ICONS the channels row keeps the robot, not a disc',
-      rows.length === 3 && discs.length === 1, 'rows=' + rows.length);
+      rows.length === 4 && discs.length === 1, 'rows=' + rows.length);
+    // The kanzo board's row wears the robot too: it is a way work arrives
+    // from outside a conversation, like the channels, and not a persona.
+    const kanzoRow = rows.filter((one) => one.dataset.section === 'kanzo')[0];
+    check('ICONS the kanzo row keeps the robot, not a disc',
+      !!kanzoRow && String(kanzoRow.textContent).includes('kanzo board'),
+      kanzoRow ? String(kanzoRow.textContent) : 'none');
     // The morning read (P5's AC) leads the rail with the robot too — the
     // two mark kinds stay apart there as well.
     const morning = rows[0];
@@ -20079,6 +20085,155 @@ async function p6ArmadaNamesItsFourSentences() {
     /showing sid-a \u00b7 live \u00b7 dispatchable/.test(said), said.slice(0, 200));
 }
 
+// The kanzo board's card (the kanzo plan's bots-surface AC): five
+// receipt rows from the lane's own ledger, each with the board task's
+// name, the persona and the task's URL — and a row with no receipt says
+// so instead of standing a zero in for a board nobody read.
+const KANZO_RECEIPT = (label, event, count) => ({
+  label: label, event: event, count: count,
+  task: count ? 'probe#1' : '', persona: count ? 'planner' : '',
+  url: count ? 'https://github.com/acme/probe/pull/1' : '',
+  at: count ? '2026-11-22 04:40' : '', detail: '',
+});
+
+function kanzoBoardFixture(over) {
+  return Object.assign({
+    installed: true, version: '0.4.2', mcp: true, board: true,
+    probed_at: '2026-11-22 04:40', press: 'fleet kanzo pass',
+    rows: [
+      KANZO_RECEIPT('offers made', 'offer', 1),
+      KANZO_RECEIPT('accepted', 'accept', 1),
+      KANZO_RECEIPT('claimed', 'claim', 1),
+      KANZO_RECEIPT('helped', 'helped', 1),
+      KANZO_RECEIPT('refused', 'refused', 0),
+    ],
+    offers: [], refused: [], entries: 9, torn: 0,
+    ledger: '/home/x/kanzo/ledger.jsonl',
+  }, over || {});
+}
+
+function kanzoBotsPage(kanzo) {
+  const channels = {
+    type: 'channels', read_at: 'now', service: {},
+    channels: [], activity: [], activity_bound: 0, waiting_seats: 0,
+    conversations: { type: 'conversations', bound: 50, needs: 0, count: 0, personas: [] },
+  };
+  if (kanzo !== undefined) channels.kanzo = kanzo;
+  return boot({
+    width: 1440, hash: '#/bots/kanzo',
+    documents: { channels: channels, state: (asked) => emptyState(asked) },
+  });
+}
+
+async function kanzoCardCarriesTheFiveReceipts() {
+  const page = kanzoBotsPage(kanzoBoardFixture());
+  await flush();
+  page.open();
+  await flush(160);
+  const rows = page.rows('#bots-board .kanzo-row');
+  check('KANZO the card carries the five receipts the ledger counts',
+    rows.length === 5, String(rows.length));
+  const said = rows.map((one) => String(one.textContent));
+  check('KANZO a row names its count, the task, the persona and the URL',
+    said[0] === 'offers made \u2014 1 \u00b7 probe#1 \u00b7 planner \u00b7 ' +
+      'https://github.com/acme/probe/pull/1', said[0]);
+  check('KANZO a row with no receipt says so, never a bare zero',
+    said[4] === 'refused \u2014 0 \u2014 no receipt yet', said[4]);
+  check('KANZO the card names the lane\u2019s probe facts',
+    /MCP answers \u00b7 board answers \u00b7 probed 2026-11-22 04:40/.test(
+      page.text('bots-board')), page.text('bots-board').slice(0, 200));
+  const selected = page.rows('[data-state="selected"]')
+    .map((one) => one.textContent).join(' | ');
+  check('KANZO the selected sentence counts the round trip',
+    /showing the kanzo board \u00b7 1 offer \u00b7 1 helped/.test(selected),
+    selected.slice(0, 200));
+}
+
+async function kanzoCardSaysTheTrueEmpties() {
+  const zero = kanzoBoardFixture({
+    rows: [
+      KANZO_RECEIPT('offers made', 'offer', 0),
+      KANZO_RECEIPT('accepted', 'accept', 0),
+      KANZO_RECEIPT('claimed', 'claim', 0),
+      KANZO_RECEIPT('helped', 'helped', 0),
+      KANZO_RECEIPT('refused', 'refused', 0),
+    ],
+  });
+  const page = kanzoBotsPage(zero);
+  await flush();
+  page.open();
+  await flush(160);
+  const rows = page.rows('#bots-board .kanzo-row');
+  check('KANZO an empty ledger keeps all five rows, each named empty',
+    rows.length === 5 && rows.every((one) =>
+      String(one.textContent).endsWith('no receipt yet')),
+    rows.map((one) => one.textContent).join(' | '));
+  check('KANZO an empty ledger names the press that fills it',
+    /No offer has crossed the board yet/.test(page.text('bots-board')),
+    page.text('bots-board').slice(0, 240));
+}
+
+async function kanzoRefusalIsNamedOnTheCard() {
+  const page = kanzoBotsPage(kanzoBoardFixture({
+    rows: [KANZO_RECEIPT('offers made', 'offer', 0),
+      KANZO_RECEIPT('accepted', 'accept', 0),
+      KANZO_RECEIPT('claimed', 'claim', 0),
+      KANZO_RECEIPT('helped', 'helped', 0),
+      KANZO_RECEIPT('refused', 'refused', 1)],
+    refused: [{
+      task: 'probe#3', persona: '',
+      reason: 'probe#3 is marked human \u2014 for the user, not for agents; never offered to',
+      at: '2026-11-22 04:40',
+    }],
+  }));
+  await flush();
+  page.open();
+  await flush(160);
+  const refusals = page.rows('#bots-board .kanzo-refusal')
+    .map((one) => String(one.textContent));
+  check('KANZO a refusal is named with its task and the board\u2019s own sentence',
+    refusals.length === 1 &&
+      refusals[0].indexOf('probe#3') !== -1 &&
+      refusals[0].indexOf('for the user, not for agents') !== -1,
+    refusals.join(' | '));
+}
+
+async function kanzoNamesItsFourSentences() {
+  // Loading: the card paints before the ledger read lands.
+  const loading = kanzoBotsPage(undefined);
+  await flush();
+  loading.open();
+  await flush(120);
+  check('KANZO loading names the ledger it reads',
+    /Still loading\. This comes from the kanzo lane\u2019s own ledger/.test(
+      loading.text('bots-board')), loading.text('bots-board').slice(0, 200));
+
+  // Refused: kanzo is not installed, and the sentence names the press.
+  const refused = kanzoBotsPage(kanzoBoardFixture({
+    installed: false, version: null, mcp: false, board: false,
+    rows: [], probed_at: null,
+  }));
+  await flush();
+  refused.open();
+  await flush(160);
+  check('KANZO refused names the install press',
+    /kanzo is not installed \u2014 press install/.test(refused.text('bots-board')),
+    refused.text('bots-board').slice(0, 200));
+
+  // Empty and selected are pinned by the two cases above; this case pins
+  // the two that only a state can reach, so a deleted sentence reds its
+  // own check by name.
+  const selected = kanzoBotsPage(kanzoBoardFixture());
+  await flush();
+  selected.open();
+  await flush(160);
+  const said = selected.rows('[data-state="selected"]')
+    .map((one) => one.textContent).join(' | ');
+  check('KANZO selected names the board as the audit trail',
+    /the board is the audit trail, and the ledger is ours/.test(said),
+    said.slice(0, 200));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -20375,6 +20530,11 @@ const cases = [
   ['P6 armada names its four sentences', p6ArmadaNamesItsFourSentences],
   ['P6 an empty replay window is named', p6CalibrationCounterfactualRefusesAnEmptyWindow],
   ['P6 calibration names its four sentences', p6CalibrationNamesItsFourSentences],
+  ['KANZO the card carries the five receipts the ledger counts',
+    kanzoCardCarriesTheFiveReceipts],
+  ['KANZO an empty ledger says the true empty, row by row', kanzoCardSaysTheTrueEmpties],
+  ['KANZO a refusal is named on the card', kanzoRefusalIsNamedOnTheCard],
+  ['KANZO kanzo names its four sentences', kanzoNamesItsFourSentences],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

@@ -59,6 +59,7 @@ pub mod improve;
 pub mod install;
 pub mod journal;
 pub mod judge;
+pub mod kanzo;
 pub mod keepalive;
 pub mod lane_client;
 pub mod lanes;

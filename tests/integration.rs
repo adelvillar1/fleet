@@ -4198,10 +4198,14 @@ fn the_lanes_command_reports_every_real_lane() {
     for name in ["sys1", "sdm1", "sem1", "gen1", "browser", "blend1"] {
         assert!(stdout.contains(name), "{stdout}");
     }
-    // Cards, not a table.
+    // Cards, not a table: the six house lanes, and the consumed lane the
+    // card carries beside them (kanzo answers as its own row, installed
+    // or not — a lane the owner has not installed is named, not hidden).
     assert!(stdout.contains("┌─"), "{stdout}");
-    assert_eq!(stdout.matches('┌').count(), 6, "{stdout}");
-    assert!(stdout.contains("6 lanes"), "{stdout}");
+    assert_eq!(stdout.matches('┌').count(), 7, "{stdout}");
+    assert!(stdout.contains("7 lanes"), "{stdout}");
+    assert!(stdout.contains("consumed"), "{stdout}");
+    assert!(stdout.contains("kanzo"), "{stdout}");
 }
 
 /// A wrong services root degrades loudly: every lane unavailable, one
@@ -4216,7 +4220,7 @@ fn the_lanes_command_reports_unavailable_when_the_root_is_wrong() {
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("unavailable"), "{stdout}");
-    assert!(stdout.contains("6 lanes"), "{stdout}");
+    assert!(stdout.contains("7 lanes"), "{stdout}");
     assert!(stdout.contains("┌─"), "{stdout}");
 }
 
@@ -4257,9 +4261,9 @@ fn a_relative_lane_home_fails_with_a_named_reason() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("relative"), "{stdout}");
     assert!(stdout.contains("FLEET_LANE_SEM1_HOME"), "{stdout}");
-    // Only the lane whose home was overridden is affected; the other four
+    // Only the lane whose home was overridden is affected; the other five
     // still boot from the bundled copy.
-    assert!(stdout.contains("6 lanes"), "{stdout}");
+    assert!(stdout.contains("7 lanes"), "{stdout}");
     assert!(stdout.contains("○ unavailable"), "{stdout}");
 }
 

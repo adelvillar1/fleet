@@ -9727,6 +9727,11 @@ fn channels_read(home: &std::path::Path) -> Value {
             "present": telegram_present,
             "source": telegram_source,
         },
+        // The kanzo lane's own card read: the ledger's five receipts, the
+        // last probe's facts, and the press. One bounded read of the
+        // lane's action log — no child spawned, no board polled, so the
+        // face's four-second refresh costs nothing.
+        "kanzo": crate::kanzo::card(home),
     })
 }
 

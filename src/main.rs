@@ -78,6 +78,9 @@ fn main() -> ExitCode {
             | Ok(Command::Gui(_))
             | Ok(Command::Compact { .. })
             | Ok(Command::Lanes)
+            // Kanzo's three presses: the probe spawns `kanzo mcp` and the
+            // pass drives it, so the verb awaits like every lane's.
+            | Ok(Command::Kanzo(_))
             // Onboard awaits (`--verify` probes the lanes), and its arm
             // was missing from this list — HH5's find: every `fleet
             // onboard` fell through to the sync dispatch's internal
@@ -122,6 +125,7 @@ async fn dispatch(args: &[String]) -> ExitCode {
         Ok(Command::Gui(options)) => gui_command(&options).await,
         Ok(Command::Compact { session, force }) => compact_command(session.as_deref(), force).await,
         Ok(Command::Lanes) => lanes_command().await,
+        Ok(Command::Kanzo(action)) => kanzo_command(action).await,
         Ok(Command::Onboard(options)) => onboard_command(&options).await,
         Ok(Command::Mcp(options)) => mcp_command(&options).await,
         Ok(Command::Tools(options)) => tools_command(&options).await,
@@ -4120,7 +4124,12 @@ fn settings_command(set: Option<(&str, &str)>, unset: Option<&str>) -> ExitCode 
 /// code is the doctor's convention: success only when every lane is ok.
 async fn lanes_command() -> ExitCode {
     let health = fleet::lanes::health_all().await;
-    print!("{}", fleet::lanes::render(&health));
+    // The consumed lane rides the card, not the exit code: kanzo is a
+    // binary the owner installs, and an install that has not made that
+    // choice is not a broken house lane. The card says which it is, by
+    // name, and `fleet kanzo probe` is the verb that answers for it.
+    let consumed = vec![fleet::lanes::kanzo_probe().await];
+    print!("{}", fleet::lanes::render_with_consumed(&health, &consumed));
     if health
         .iter()
         .all(|lane| lane.state == fleet::lanes::LaneState::Ok)
@@ -4128,6 +4137,94 @@ async fn lanes_command() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// `fleet kanzo [probe|pass|card]`: the kanzo lane's three presses.
+///
+/// `probe` reports the four facts the plan names — installed, version,
+/// MCP, board — and records them in the lane's ledger so the face's card
+/// answers from the lane's own action log instead of spawning a process
+/// per poll. `pass` is the owner's on-demand board pass: it reads the
+/// column, posts the personas' perspectives and the convener's synthesis,
+/// then reads the owner's accepts and claims them; a pass is a press, not
+/// a cron. `card` prints the bots-surface read the face renders.
+async fn kanzo_command(action: fleet::cli::KanzoAction) -> ExitCode {
+    use fleet::cli::KanzoAction;
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    match action {
+        KanzoAction::Card => {
+            let card = fleet::kanzo::card(&home);
+            print!("{}", fleet::kanzo::render_card(&card));
+            ExitCode::SUCCESS
+        }
+        KanzoAction::Probe => {
+            let health = fleet::kanzo::probe().await;
+            print!("{}", fleet::kanzo::render_health(&health));
+            if let Err(reason) = fleet::kanzo::record_probe(&home, &health) {
+                eprintln!("fleet: the probe's receipt did not record: {reason}");
+            }
+            if health.usable() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        KanzoAction::Pass => {
+            let health = fleet::kanzo::probe().await;
+            if !health.usable() {
+                eprintln!("fleet: the kanzo lane cannot pass — {}", health.detail);
+                print!("{}", fleet::kanzo::render_health(&health));
+                return ExitCode::FAILURE;
+            }
+            let _ = fleet::kanzo::record_probe(&home, &health);
+            let settings = match fleet::kanzo::settings(&home) {
+                Ok(settings) => settings,
+                Err(reason) => {
+                    eprintln!("fleet: the kanzo settings could not be read: {reason}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let board = match fleet::kanzo::Board::open().await {
+                Ok(board) => board,
+                Err(reason) => {
+                    eprintln!("fleet: {reason}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let voices = fleet::kanzo::ModelVoice { home: &home };
+            let mut report = match fleet::kanzo::pass(&home, &board, &voices, &settings).await {
+                Ok(report) => report,
+                Err(reason) => {
+                    board.close().await;
+                    eprintln!("fleet: the kanzo pass did not complete: {reason}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            // The report half: a claim whose session has finished is
+            // commented and moved; a session still running is left alone.
+            match fleet::kanzo::Ledger::load(&home) {
+                Ok(mut ledger) => {
+                    match fleet::kanzo::report_finished(&home, &board, &settings, &mut ledger).await
+                    {
+                        Ok(reported) => report.reported = reported,
+                        Err(reason) => {
+                            eprintln!("fleet: the report half did not complete: {reason}")
+                        }
+                    }
+                }
+                Err(reason) => eprintln!("fleet: the ledger could not be read: {reason}"),
+            }
+            board.close().await;
+            print!("{}", fleet::kanzo::render_pass(&report));
+            ExitCode::SUCCESS
+        }
     }
 }
 

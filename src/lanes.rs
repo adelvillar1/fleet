@@ -256,6 +256,106 @@ pub const LANES: &[Lane] = &[
 /// `settings.rs`; this module only reads it at launch.
 pub const LANES_FILE: &str = "lanes.json";
 
+/// A lane Fleet **consumes** rather than vendors: a binary the owner
+/// installs that speaks MCP itself, so there is no `service/mcp_server.py`
+/// to launch and no `<SVC>_PYTHONPATH` to wire. Kanzo is the first —
+/// `kanzo mcp` is its server, `~/kanzo` is its store, and Fleet is a
+/// client of it. It is registered here because `fleet lanes` is the one
+/// place a lane's health is read, and a lane whose health is read
+/// somewhere else is a lane nobody can see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConsumedLane {
+    pub name: &'static str,
+    pub role: &'static str,
+    /// The variable naming the binary, when PATH is not enough.
+    pub bin_env: &'static str,
+    /// The variable naming the lane's data folder.
+    pub home_env: &'static str,
+}
+
+/// The consumed lanes, in the order `fleet lanes` renders them.
+pub const CONSUMED: &[ConsumedLane] = &[ConsumedLane {
+    name: "kanzo",
+    role: "board",
+    bin_env: crate::kanzo::BIN_ENV,
+    home_env: crate::kanzo::HOME_ENV,
+}];
+
+/// The kanzo lane's health, in the house lanes' own row shape. The four
+/// facts the plan names ride `doctor` as four named rows — installed,
+/// version, MCP, board — so a lane that answers MCP while its board is
+/// down is visible as exactly that (KI-030's rule, one lane over: the
+/// handshake says the lane answers, not that what it serves is there).
+pub async fn kanzo_probe() -> LaneHealth {
+    let health = crate::kanzo::probe().await;
+    let lane = CONSUMED[0];
+    let state = if health.usable() {
+        LaneState::Ok
+    } else if health.present {
+        LaneState::Error
+    } else {
+        LaneState::Unavailable
+    };
+    let row = |name: &str, available: bool, reason: String| LaneAvailability {
+        lane: name.to_string(),
+        available,
+        reason,
+        provider: lane.name.to_string(),
+    };
+    LaneHealth {
+        name: lane.name.to_string(),
+        role: lane.role.to_string(),
+        home: None,
+        source: None,
+        state,
+        server_version: health.version.clone(),
+        tools: health.tools.clone(),
+        doctor: vec![
+            row(
+                "installed",
+                health.present,
+                health
+                    .binary
+                    .as_ref()
+                    .map(|bin| bin.display().to_string())
+                    .unwrap_or_else(|| format!("no binary — set {}", lane.bin_env)),
+            ),
+            row(
+                "version",
+                health.version.is_some(),
+                health
+                    .version
+                    .clone()
+                    .unwrap_or_else(|| "unknown — the binary did not report one".to_string()),
+            ),
+            row(
+                "MCP",
+                health.mcp && health.missing_tools.is_empty(),
+                if health.mcp {
+                    format!("{} tools · {}", health.tools.len(), health.detail)
+                } else {
+                    health.detail.clone()
+                },
+            ),
+            row(
+                "board",
+                health.board,
+                if health.board {
+                    format!("http://127.0.0.1:{} answers", crate::kanzo::PORT)
+                } else {
+                    format!(
+                        "not running — start it with `kanzo`; the board answers at \
+                         http://127.0.0.1:{}",
+                        crate::kanzo::PORT
+                    )
+                },
+            ),
+        ],
+        detail: health.detail,
+        elapsed_ms: health.elapsed_ms,
+    }
+}
+
 /// The path the lane configuration lives at.
 pub fn lanes_path(home: &Path) -> PathBuf {
     home.join(LANES_FILE)
@@ -1441,6 +1541,15 @@ use crate::cards::CARD_WIDTH;
 /// also renders its per-lane availability, one dot-and-reason line per
 /// sub-lane, inside its card.
 pub fn render(health: &[LaneHealth]) -> String {
+    render_with_consumed(health, &[])
+}
+
+/// The lanes card with the consumed lanes beside the house ones: the six
+/// vendored cores, then the lanes Fleet drives as a client of a binary
+/// the owner installed. The two groups are headed separately because
+/// they are launched differently and their homes are different things —
+/// a consumed lane's "home" is a data folder, not a service tree.
+pub fn render_with_consumed(health: &[LaneHealth], consumed: &[LaneHealth]) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "{BOLD}fleet lanes{RESET} {DIM}— the {} house lanes, probed live{RESET}\n\n",
@@ -1449,14 +1558,24 @@ pub fn render(health: &[LaneHealth]) -> String {
     for lane in health {
         out.push_str(&render_card(lane));
     }
+    if !consumed.is_empty() {
+        out.push_str(&format!(
+            "\n{BOLD}consumed{RESET} {DIM}— the lanes Fleet drives as a client of a binary the \
+             owner installed{RESET}\n\n"
+        ));
+        for lane in consumed {
+            out.push_str(&render_card(lane));
+        }
+    }
     let ok = health
         .iter()
+        .chain(consumed.iter())
         .filter(|lane| lane.state == LaneState::Ok)
         .count();
+    let total = health.len() + consumed.len();
     out.push_str(&format!(
-        "\n{DIM}{} lanes · {ok} ok · {} not ok{RESET}\n",
-        health.len(),
-        health.len() - ok
+        "\n{DIM}{total} lanes · {ok} ok · {} not ok{RESET}\n",
+        total - ok
     ));
     out
 }
@@ -1628,6 +1747,58 @@ mod tests {
         // per-lane home override beside it.
         assert_eq!(lane("blend1").python_path_env, "BLEND1_PYTHONPATH");
         assert_eq!(lane("blend1").home_env, "FLEET_LANE_BLEND1_HOME");
+    }
+
+    /// The consumed registry: kanzo is a lane Fleet drives as a client of
+    /// the owner's own binary, so it is registered beside the six house
+    /// lanes and not inside them — a vendored core's home is a service
+    /// tree, kanzo's is a data folder, and the two launch differently.
+    #[test]
+    fn the_consumed_registry_names_kanzo_and_keeps_the_house_six_whole() {
+        let kanzo = CONSUMED
+            .iter()
+            .find(|lane| lane.name == "kanzo")
+            .expect("kanzo is a consumed lane");
+        assert_eq!(kanzo.role, "board");
+        assert_eq!(kanzo.bin_env, "FLEET_KANZO_BIN");
+        assert_eq!(kanzo.home_env, "KANZO_HOME");
+        assert!(
+            LANES.iter().all(|lane| lane.name != "kanzo"),
+            "a consumed lane is not a vendored core"
+        );
+    }
+
+    /// The card the CLI renders: the house six, then the consumed lane,
+    /// and one summary that counts both.
+    #[test]
+    fn a_consumed_lane_renders_beside_the_house_ones() {
+        let house = unavailable_all("no probe in this test");
+        let consumed = vec![LaneHealth {
+            name: "kanzo".to_string(),
+            role: "board".to_string(),
+            home: None,
+            source: None,
+            state: LaneState::Ok,
+            server_version: Some("0.4.2".to_string()),
+            tools: vec!["list_tasks".to_string()],
+            doctor: Vec::new(),
+            detail: "kanzo mcp".to_string(),
+            elapsed_ms: 1,
+        }];
+        let rendered = render_with_consumed(&house, &consumed);
+        assert!(rendered.contains("the 6 house lanes"), "{rendered}");
+        assert!(rendered.contains("consumed"), "{rendered}");
+        assert!(
+            rendered.contains("7 lanes \u{00b7} 1 ok \u{00b7} 6 not ok"),
+            "{rendered}"
+        );
+        // The six-lane card alone is exactly what it always was.
+        let alone = render(&house);
+        assert!(
+            alone.contains("6 lanes \u{00b7} 0 ok \u{00b7} 6 not ok"),
+            "{alone}"
+        );
+        assert!(!alone.contains("consumed"), "{alone}");
     }
 
     /// KI-030: every lane that exposes a provider-level health tool names
