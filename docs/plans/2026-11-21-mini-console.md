@@ -1,10 +1,21 @@
 ---
-status: active
+status: completed
 created: 2026-11-21
+updated: 2026-11-22
 plan: mini-console
+resolution: |
+  Both phases landed. The face (phase 1) and the relayed route with its
+  pairing gate, the five reads, the worker with the KI-587 clock set and the
+  build's asset list (phase 2). Measured through the paired listener at
+  390x844, 1.5 Mbps / 150 ms RTT, cleared cache: painted 436 ms, 19,726 B on
+  the wire; the shell is 57,612 B uncompressed / 18,974 B gzip over
+  html+js+css against 61,440 / 20,480.
 ---
 
 # The mini console — the TUI's economy, relayed to a phone
+
+Status: completed 2026-11-22 — the face, the relayed route, the five reads and
+the worker all landed and measured; every criterion below carries its number.
 
 The owner's question: *"is there a way to do a TUI-like experience on a PWA
 through the fleet relay? A full PWA app may not be the best experience on a
@@ -47,13 +58,21 @@ command that answers "not on this surface yet — the console says so by name."
 
 ## Acceptance criteria
 
-- [ ] The shell numbers above, measured on the real phone link profile the
+- [x] The shell numbers above, measured on the real phone link profile the
       compression plan measured (1.5 Mbps / 150 ms RTT), from a cleared cache,
       through the relay.
-      *Phase 1 measures the budget half only, and pins it: **52,452 B
-      uncompressed / 16,868 B gzip** over the three files (console.html
-      1,369 / console.js 42,675 / console.css 8,408) against 61,440 /
-      20,480 B. The cold load through the relay is phase 2, with the route.*
+      *Phase 1 pinned the budget half: 52,452 B uncompressed / 16,868 B gzip
+      over the three files. Phase 2 (the route) closed the cold load: the
+      the shell is now **57,612 B uncompressed / 18,974 B gzip** (console.html
+            3,940 / 1,863, console.js 45,264 / 14,132, console.css 8,408 / 2,979)
+      against 61,440 / 20,480 — the growth is the page's boot clock and the
+      installability block. Measured 2026-11-22 through the paired listener
+      (`fleet gui --remote`, the release binary, a paired device cookie) at
+      390x844, `Network.emulateNetworkConditions` 150 ms latency /
+      187,500 B/s, worker unregistered and every cache cleared: **painted in
+      436 ms**, **19,726 B on the wire** (page 2,092 / stylesheet 3,256 /
+      script 14,378, all gzip). Warm mount from the worker's cache: 10 ms,
+      0 bytes.*
 - [x] The three TUI documents render with one text path each; a divergence
       word and a refusal appear by name in the panels' tests.
       *Measured 2026-11-21: `/board`, `/delegation` and `/second-brain` each
@@ -65,34 +84,79 @@ command that answers "not on this surface yet — the console says so by name."
       pinned on the node that carries them, every panel's refusal is pinned
       by name, and each panel's empty state is asserted as a sentence rather
       than a zero: 37 cases in `tests/console/harness.mjs`.*
-- [ ] The KI-587 clocks present in the new worker (deadline + evaluate-time
+- [x] The KI-587 clocks present in the new worker (deadline + evaluate-time
       watchdog + one-generation sweep) — red-proofed by the freeze coming
       back when a clock is removed.
-      *Phase 2: the worker is not in this phase's file set, so the shell
-      registers none — a page that registered a worker the server does not
-      serve would fail in the console and say nothing.*
-- [ ] Relay pairing gates the route; an unpaired client is refused by name
+      *Landed: `src/gui/assets/console-sw.js` (cache `fleet-console-<build>`,
+      `fetchWithin` at 6,000 ms assets / 8,000 ms navigation, `anyVersion`
+      fallback, a born stamp, and an activate that claims before it sweeps
+      one generation LATE), registered from the page at the build's `?v=`
+      with scope `/console/`, plus two boot clocks: the page's (armed at
+      script evaluation in the head, 15 s, the named card) and the program's.
+      The page's clock and the registration are in the HEAD because the
+      failure they exist for is the one that stops the body: measured before
+      the fix, a bumped coordinate with the new script silent left the page on
+      its noscript line for 47 s with nothing said, and a body-level
+      registration was never reached (a stalled deferred script stops the
+      parse before it) — so the worker that had the previous generation
+      cached never installed and the freeze came back on every load.
+      *Cells, re-measured 2026-11-22 on the mini console behind the fault
+      proxy (every byte from the release server): warm mount from the
+      worker's cache **10 ms / 0 B**; a stalled update answered from the
+      previous generation's cache **6,032 ms, no card, 0 B** (the new
+      generation's cache holds only the born stamp — its prefetch was bounded
+      by the 6 s deadline — and the old cache is still there, which is what
+      answered); the load that ships the bump names the failure at
+      **15,046 ms** rather than freezing; a refused navigation gets the
+      worker's own page at **55 ms**; after install the cache holds the two
+      assets and the born stamp.*
+      *Red-proofs: `anyVersion` removed → `the worker carries the KI-587
+      clock set, in its own cache` red; the one-generation sweep made to
+      delete every older cache → same case red; the asset deadline replaced
+      by a bare `fetch` → same case red; the page's clock removed → `the boot
+      watchdog is armed at script evaluation and stands down on paint` red.
+      All restored, 42 checks green.*
+- [x] Relay pairing gates the route; an unpaired client is refused by name
       before the face is reached.
-      *Phase 2 (the listener route). The face already speaks the inherited
-      relay: the fragment secret, the handshake, the sealed frame, and an
-      inert path on loopback.*
+      *Landed in `src/remote/listener.rs`: `/console/`, `/console/console.css`,
+      `/console/console.js` and `/console/console-sw.js` on the Console face
+      (the bot's scoped mount, mirrored), `/console/` in `is_page` so an
+      unpaired browser gets the pairing form, and the five reads in
+      `ALLOWED_GET_API` — `/api/board`, `/api/delegation`,
+      `/api/second-brain`, with `/api/sessions` and `/api/session` already
+      there. Pinned by
+      `the_mini_console_rides_the_paired_listener_with_its_own_mount`
+      (`tests/integration.rs`): unpaired `/console/console.js` and
+      `/api/board` are the gate's own 401 ("serves paired devices only"), the
+      paired page carries the build's coordinate on both asset links and the
+      worker's registration, the gzip twins decode to the files' own bytes,
+      the worker is served stamped with `Service-Worker-Allowed: /console/`,
+      all five reads answer a document, and `/api/settings` is refused by
+      name — on the socket AND through a relay frame.
+      *Red-proof: `/api/board` removed from `ALLOWED_GET_API` →
+      `panicked at tests/integration.rs: /api/board is a paired read:
+      http/1.1 403 forbidden`; restored, green.*
 - [x] The bot PWA stays untouched in behaviour (its own tests still pass);
       the mini console is a sibling file set, not a bot.js fork.
       *Measured 2026-11-21: no `bot.*`, `app.*` or `sw.js` file is touched
       by this work — the console carries its own palette block, its own
       wrapping law and its own renderers, and imports nothing. The face
-      harness passes unchanged: `node tests/face/harness.mjs` → 1,823
-      checks across 268 cases; `cargo test --test face` exits 0.*
+      harness passes unchanged (re-measured 2026-11-22 after phase 2:
+      `node tests/face/harness.mjs` → 1,839 checks across 271 cases, exit 0).*
 
 ## Files
 
 - `src/gui/assets/console.html` + `console.js` + `console.css` — the new face
   (sibling set, bot-PWA-shaped). **Landed in phase 1.**
-- `src/remote/listener.rs` — the route + the pairing gate (measure how /bot/
-  was added; mirror it). *Phase 2.*
-- `src/gui/server.rs` — the shell serving + the SW variant with the clocks.
-  *Phase 2 — with `build.rs`'s asset list, which is where the three files
-  enter the build stamp and get their gzip twins.*
+- `src/gui/assets/console-sw.js` — the worker, `fleet-console-<build>`, the
+  shell worker's clocks restated for this face's two assets. **Phase 2.**
+- `src/remote/listener.rs` — the route + the pairing gate (mirrors `/bot/`).
+  **Phase 2.**
+- `src/gui/server.rs` — `CONSOLE_*` assets, `console_page()`/`console_worker()`
+  and the four `GZIP_ASSETS` entries; `build.rs`'s `ASSETS` gains the four
+  files (page and worker `Stamp::Marker`, the two assets `Stamp::None` — the
+  bot's own accounting) so they enter the build stamp and get gzip twins.
+  **Phase 2.**
 - tests: the listener/pairing tests per the bot scope's pattern; the face's
   four-sentence pins in a console-specific suite (the face harness stays
   untouched). **The console suite landed in phase 1**

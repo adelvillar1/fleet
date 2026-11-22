@@ -30,6 +30,31 @@
 const MIN_COLS = 24;
 const MAX_COLS = 96;
 
+// ----------------------------------------------------------- the watchdog
+//
+// KI-587's page clock, armed HERE at script evaluation and not on
+// DOMContentLoaded: the failure this card exists for is a script that never
+// answers, and a pending script blocks that event, so a DCL-gated arm could
+// not fire for the case it was written for. `boot()` disarms it on its
+// first paint; a boot that throws leaves it armed and says what happened
+// rather than leaving a blank column.
+const BOOT_GRACE_MS = 15000;
+let booted = false;
+const bootClock = (() => {
+  if (typeof document === 'undefined' || typeof setTimeout !== 'function') return null;
+  return setTimeout(() => {
+    if (booted || !document.getElementById || document.getElementById('console-late')) return;
+    const app = document.getElementById('app');
+    if (!app) return;
+    const card = document.createElement('p');
+    card.id = 'console-late';
+    card.setAttribute('data-kind', 'refusal');
+    card.textContent = 'the console did not start within 15 seconds — the read is still ' +
+      'pending; reload when the path answers.';
+    app.appendChild(card);
+  }, BOOT_GRACE_MS);
+})();
+
 /// Fill `text` into lines no wider than `cols`, with a prefix chosen per
 /// line. One implementation, so a paragraph and an indented row wrap by
 /// the same law.
@@ -667,8 +692,33 @@ function armRelay() {
 /// One read. A refusal keeps its own words: the status, or the message the
 /// bridge put in the body, so a panel can print what refused instead of
 /// going quiet.
+///
+/// KI-587's read clock: a path that goes quiet neither resolves nor
+/// rejects, and a `fetch` held open holds the command line with it — the
+/// face then looks frozen while nothing is running. The deadline measures
+/// SILENCE, not the body (it is cleared when the reply arrives), and the
+/// read is dropped by name rather than left pending.
+const READ_DEADLINE_MS = 9000;
+
+async function within(send, ms) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer = null;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      if (controller) controller.abort();
+      reject(new Error(`no answer within ${Math.round(ms / 1000)} s — the path went quiet, ` +
+        'so the read was dropped'));
+    }, ms);
+  });
+  try {
+    return await Promise.race([send(controller ? controller.signal : undefined), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function api(path) {
-  const reply = await fetch(path, { cache: 'no-store' });
+  const reply = await within((signal) => fetch(path, { cache: 'no-store', signal }), READ_DEADLINE_MS);
   const body = await reply.json().catch(() => ({}));
   if (!reply.ok && reply.status !== 409) {
     throw new Error(`${path} answered ${reply.status}` +
@@ -971,6 +1021,13 @@ function boot() {
     const asked = location.hash.replace(/^#\/?/, '');
     if (asked) run('/' + asked);
   }
+  // The first paint is the clock's answer: the watchdog was armed before
+  // this program had a document, and it stands down here. Two clocks share
+  // the answer: the page's (console.html) covers a script that never
+  // arrived, this one covers a script that arrived and failed to boot.
+  booted = true;
+  if (bootClock) clearTimeout(bootClock);
+  window.__consoleBooted = true;
   return { run, state, view, columns };
 }
 
@@ -981,7 +1038,8 @@ function boot() {
 // and nothing touches a page. In the browser the shell is the only entry.
 const CORE = { SENTENCES, sentence, fill, wrap, hang, wrapLine, clip, many, L,
   boardLines, delegationLines, secondBrainLines, morningLines, sessionsLines,
-  transcriptLines, COMMANDS, HELP, MIN_COLS, MAX_COLS };
+  transcriptLines, COMMANDS, HELP, MIN_COLS, MAX_COLS, within, api,
+  READ_DEADLINE_MS, BOOT_GRACE_MS };
 
 if (typeof document === 'undefined') {
   globalThis.__console = CORE;

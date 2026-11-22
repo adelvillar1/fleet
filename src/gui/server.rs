@@ -95,6 +95,13 @@ pub(crate) const BOT_STYLES: &str = include_str!("assets/bot.css");
 pub(crate) const BOT_SCRIPT: &str = include_str!("assets/bot.js");
 pub(crate) const BOT_MANIFEST: &str = include_str!("assets/bot.webmanifest");
 pub(crate) const BOT_WORKER: &str = include_str!("assets/bot-sw.js");
+// The mini console (the 2026-11-21 plan): a third face, a sibling file set
+// rather than a bot.js fork. Its page and its worker are stamped like the
+// bot's, so one build stamp moves every face's coordinates together.
+pub(crate) const CONSOLE_SHELL: &str = include_str!("assets/console.html");
+pub(crate) const CONSOLE_STYLES: &str = include_str!("assets/console.css");
+pub(crate) const CONSOLE_SCRIPT: &str = include_str!("assets/console.js");
+pub(crate) const CONSOLE_WORKER: &str = include_str!("assets/console-sw.js");
 const BOT_ICON_192: &[u8] = include_bytes!("assets/bot-icon-192.png");
 const BOT_ICON_512: &[u8] = include_bytes!("assets/bot-icon-512.png");
 const ICON_192: &[u8] = include_bytes!("assets/icon-192.png");
@@ -155,6 +162,18 @@ pub(crate) const BOT_WORKER_STAMPED: &str =
     include_str!(concat!(env!("OUT_DIR"), "/bot-sw.js.stamped"));
 pub(crate) const BOT_WORKER_GZ: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/bot-sw.js.stamped.gz"));
+pub(crate) const CONSOLE_STYLES_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/console.css.gz"));
+pub(crate) const CONSOLE_SCRIPT_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/console.js.gz"));
+pub(crate) const CONSOLE_SHELL_STAMPED: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/console.html.stamped"));
+pub(crate) const CONSOLE_SHELL_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/console.html.stamped.gz"));
+pub(crate) const CONSOLE_WORKER_STAMPED: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/console-sw.js.stamped"));
+pub(crate) const CONSOLE_WORKER_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/console-sw.js.stamped.gz"));
 
 /// Every served text asset with a precompressed twin: the path a request
 /// names, the exact bytes the server answers with, and the gzip stream
@@ -195,6 +214,16 @@ pub(crate) const GZIP_ASSETS: &[(&str, &str, &[u8])] = &[
     ("/bot/bot.css", BOT_STYLES, BOT_STYLES_GZ),
     ("/bot/bot.js", BOT_SCRIPT, BOT_SCRIPT_GZ),
     ("/bot/bot-sw.js", BOT_WORKER_STAMPED, BOT_WORKER_GZ),
+    // The mini console's third face, at its own mount. The page and the
+    // worker carry the build stamp; the two assets are compressed twins.
+    ("/console/", CONSOLE_SHELL_STAMPED, CONSOLE_SHELL_GZ),
+    ("/console/console.css", CONSOLE_STYLES, CONSOLE_STYLES_GZ),
+    ("/console/console.js", CONSOLE_SCRIPT, CONSOLE_SCRIPT_GZ),
+    (
+        "/console/console-sw.js",
+        CONSOLE_WORKER_STAMPED,
+        CONSOLE_WORKER_GZ,
+    ),
 ];
 
 /// The build stamp `build.rs` computed over every served asset. The page
@@ -3971,6 +4000,37 @@ pub(crate) fn bot_worker(allowed: &'static str) -> Reply {
     }
 }
 
+/// The mini console's page and worker: the bot's cache grammar at the
+/// third face's mount. `?v=` on its two asset links and on the worker's
+/// registration is the build's, substituted here the way `bot_page` does
+/// it, and the worker's scope header is `/console/` — the face's own
+/// prefix, so a worker registered at `/console/console-sw.js` can never
+/// claim the console's root or the bot's.
+pub(crate) fn console_page() -> Reply {
+    Reply {
+        status: "200 OK",
+        content_type: "text/html; charset=utf-8",
+        extra: cache_control("no-cache"),
+        body: CONSOLE_SHELL.replace("__FLEET_ASSET_HASH__", ASSET_HASH),
+    }
+}
+
+pub(crate) fn console_worker() -> Reply {
+    Reply {
+        status: "200 OK",
+        content_type: "text/javascript; charset=utf-8",
+        extra: vec![
+            ("Cache-Control".to_string(), "no-cache".to_string()),
+            (
+                "Service-Worker-Allowed".to_string(),
+                "/console/".to_string(),
+            ),
+            ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
+        ],
+        body: CONSOLE_WORKER.replace("__FLEET_ASSET_HASH__", ASSET_HASH),
+    }
+}
+
 /// The console face's icons — the work PWA's install surface, restored
 /// beside the bot's when the owner split the faces (2026-10-28).
 pub(crate) fn console_icon_for(path: &str) -> Option<&'static [u8]> {
@@ -6697,6 +6757,19 @@ mod tests {
             bot_worker("/").body,
             BOT_WORKER_STAMPED,
             "the bot worker's stamping drifted"
+        );
+        // The mini console's page and worker: the same stamp, at the third
+        // face's mount. A drift here is a console whose `?v=` is not the
+        // coordinate its body was compressed under.
+        assert_eq!(
+            console_page().body,
+            CONSOLE_SHELL_STAMPED,
+            "the console shell's stamping drifted"
+        );
+        assert_eq!(
+            console_worker().body,
+            CONSOLE_WORKER_STAMPED,
+            "the console worker's stamping drifted"
         );
         // The console worker is a self-unregistering stub in a dev build
         // (the face reads its assets from disk there), so only the

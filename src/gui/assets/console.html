@@ -12,6 +12,51 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="fleet">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>
+  // Two duties, both at script evaluation, both in the head — because the
+  // failure both exist for is the one that keeps the body from finishing.
+  //
+  // 1. The boot clock (KI-587's rule, the shell's own): `console.js` never
+  //    answering leaves the page on its noscript line, and a pending
+  //    deferred script blocks `load`, so a load-gated arm could not fire
+  //    for the case it was written for. Measured on this console before the
+  //    clock: 47 s of nothing said. console.js stands it down
+  //    (`window.__consoleBooted`) on its first paint; its own clock covers
+  //    the other half — a script that arrived and failed to boot.
+  //
+  // 2. Installability. Registered here rather than on `load` (the one
+  //    deliberate difference from the bot's page, measured): the console's
+  //    whole program is one deferred script, so a `load`-gated registration
+  //    waits on the very fetch a stalled update withholds, and the worker
+  //    holding the previous generation is never installed. In the body the
+  //    registration was never reached at all — a stalled deferred script
+  //    stopped the parse before it — so it lives here, ahead of the
+  //    stylesheet and the script, where nothing can pre-empt it. A new
+  //    build's worker is a new URL; its activate sweeps one generation
+  //    late, which is the cache the next load is answered from.
+  (function () {
+    if ('serviceWorker' in navigator && window.isSecureContext &&
+        window.location.pathname.indexOf('/s/') !== 0) {
+      navigator.serviceWorker
+        .register('/console/console-sw.js?v=__FLEET_ASSET_HASH__', { scope: '/console/' })
+        .catch(function () {});
+    }
+    window.__consoleBooted = false;
+    window.setTimeout(function () {
+      var app = document.getElementById('app');
+      if (window.__consoleBooted || !app) return;
+      app.innerHTML = '<div id="console-late" style="padding:18px;font:13px/1.6 ' +
+        'ui-monospace,SFMono-Regular,Menlo,monospace;color:rgb(206,211,220)">' +
+        '<p style="margin:0 0 10px;font-weight:600;color:rgb(240,242,246)">' +
+        'the console did not start within 15 seconds</p>' +
+        '<p style="margin:0 0 14px;color:rgb(158,166,178)">' +
+        'the script has not answered. the run continues on the machine, and nothing was ' +
+        'lost: this page keeps no state of its own.</p><a href="" style="color:' +
+        'rgb(126,168,255);text-decoration:none;border-bottom:1px solid currentColor">' +
+        'try again</a></div>';
+    }, 15000);
+  })();
+</script>
 <link rel="stylesheet" href="/console/console.css?v=__FLEET_ASSET_HASH__">
 </head>
 <body>

@@ -14278,3 +14278,258 @@ async fn the_kanzo_board_rides_the_paired_listener_with_one_shared_state() {
     board.close().await;
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// The mini console's relay leg (the 2026-11-21 plan, phase 2): the third
+/// face at `/console/` on the paired listener, its two gzip twins and its
+/// worker at the build's own address, and its five reads admitted beside
+/// the face's. The pairing gate runs BEFORE the face — the kanzo test's
+/// refusal leg, mirrored — and default deny still holds around the mount.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_mini_console_rides_the_paired_listener_with_its_own_mount() {
+    use fleet::remote::relay::Handler;
+    use fleet::remote::{AddressKind, RemoteAddress};
+    use std::io::{Read, Write};
+
+    let home = temp_home("console-relay");
+    let mut store = fleet::remote::pairing::DeviceStore::load(&home).expect("a device store");
+    let token = fleet::remote::pairing::mint_token().expect("a token");
+    store.add("the phone", &token, "2026-11-21 00:00");
+    store.save(&home).expect("the devices save");
+
+    let (bridge, _sources) = fleet::gui::bridge::Bridge::detached(
+        home.clone(),
+        "deepseek-flash".to_string(),
+        Some("console-relay".to_string()),
+    );
+    let address = RemoteAddress {
+        address: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        kind: AddressKind::Named,
+    };
+    let (listener, port) = fleet::remote::listener::Listener::bind(
+        &address,
+        0,
+        fleet::remote::listener::RemoteFace::Console,
+        home.clone(),
+        Arc::new(bridge),
+    )
+    .await
+    .expect("the listener binds");
+    tokio::spawn(async move {
+        let _ = listener.serve().await;
+    });
+
+    // One request on its own socket, answered to EOF: the head lowercased
+    // (a header lookup is one `contains`) and the body as the bytes the
+    // wire carried, because a gzip stream is bytes and not text.
+    fn raw(port: u16, head: &str) -> (String, Vec<u8>) {
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("a connection");
+        stream.write_all(head.as_bytes()).expect("the request");
+        let mut all = Vec::new();
+        stream.read_to_end(&mut all).expect("the reply");
+        let at = all
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("a head");
+        (
+            String::from_utf8_lossy(&all[..at]).to_lowercase(),
+            all[at + 4..].to_vec(),
+        )
+    }
+    let ask = |path: &str, paired: bool, gzip: bool| {
+        format!(
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{}Accept-Encoding: {}\r\n\
+             Connection: close\r\n\r\n",
+            if paired {
+                format!("x-fleet-token: {token}\r\n")
+            } else {
+                String::new()
+            },
+            if gzip { "gzip" } else { "identity" },
+        )
+    };
+
+    // 1. Unpaired: the gate refuses before the face is reached. The page
+    //    root is a browser that has not paired, so it gets the pairing
+    //    form; an asset it asks for anyway is the gate's own 401, by name.
+    let (head, body) = raw(port, &ask("/console/", false, false));
+    assert!(head.starts_with("http/1.1 200"), "{head}");
+    let page = String::from_utf8_lossy(&body);
+    assert!(
+        page.contains("pair this device"),
+        "the pairing page: {page}"
+    );
+    let (head, body) = raw(port, &ask("/console/console.js", false, false));
+    assert!(
+        head.starts_with("http/1.1 401"),
+        "an unpaired asset: {head}"
+    );
+    assert!(
+        String::from_utf8_lossy(&body).contains("serves paired devices only"),
+        "the gate's words"
+    );
+    let (head, _) = raw(port, &ask("/api/board", false, false));
+    assert!(head.starts_with("http/1.1 401"), "an unpaired read: {head}");
+
+    // 2. Paired: the page, at the build's own coordinate. Both asset links
+    //    and the worker's registration name `?v=<stamp>`, so a returning
+    //    browser can keep them forever and still never serve yesterday's
+    //    script.
+    let (head, body) = raw(port, &ask("/console/", true, false));
+    assert!(head.starts_with("http/1.1 200"), "{head}");
+    assert!(head.contains("cache-control: no-cache"), "{head}");
+    let page = String::from_utf8_lossy(&body).into_owned();
+    let stamp_at = page
+        .find("/console/console.css?v=")
+        .map(|at| at + "/console/console.css?v=".len())
+        .expect("the stylesheet's coordinate");
+    let stamp: String = page[stamp_at..].chars().take(16).collect();
+    assert_eq!(stamp.len(), 16, "the stamp is the build's 16 hex: {stamp}");
+    assert!(stamp.chars().all(|c| c.is_ascii_hexdigit()), "{stamp}");
+    assert!(
+        page.contains(&format!("/console/console.js?v={stamp}")),
+        "the script's coordinate"
+    );
+    assert!(
+        page.contains(&format!("/console/console-sw.js?v={stamp}")),
+        "the worker's registration"
+    );
+    assert!(page.contains("scope: '/console/'"), "the worker's scope");
+
+    // 3. The two assets: identity is the file's own bytes, the gzip twin
+    //    decodes to it exactly, and only the build's coordinate is
+    //    immutable. The console's budget is measured over these same bytes
+    //    (tests/console/harness.mjs), so the wire is what the budget names.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gui/assets");
+    let styles = std::fs::read(dir.join("console.css")).expect("the stylesheet");
+    let script = std::fs::read(dir.join("console.js")).expect("the script");
+    let (head, plain) = raw(port, &ask("/console/console.css", true, false));
+    assert_eq!(plain, styles, "the stylesheet is the file's bytes");
+    assert!(
+        head.contains("no-cache"),
+        "an unversioned asset revalidates: {head}"
+    );
+    let (head, zipped) = raw(
+        port,
+        &ask(&format!("/console/console.css?v={stamp}"), true, true),
+    );
+    assert!(head.contains("content-encoding: gzip"), "{head}");
+    assert!(
+        head.contains("cache-control: public, max-age=31536000, immutable"),
+        "{head}"
+    );
+    let mut decoded = Vec::new();
+    flate2::read::GzDecoder::new(&zipped[..])
+        .read_to_end(&mut decoded)
+        .expect("the twin decodes");
+    assert_eq!(decoded, styles, "the twin decodes to the stylesheet");
+    assert!(
+        zipped.len() < plain.len(),
+        "the twin is smaller than the identity"
+    );
+    let (_, zipped) = raw(
+        port,
+        &ask(&format!("/console/console.js?v={stamp}"), true, true),
+    );
+    let mut decoded = Vec::new();
+    flate2::read::GzDecoder::new(&zipped[..])
+        .read_to_end(&mut decoded)
+        .expect("the twin decodes");
+    assert_eq!(decoded, script, "the twin decodes to the script");
+
+    // 4. The worker: served stamped, at the face's own scope, so its cache
+    //    name rolls with the build and it can never claim `/`.
+    let (head, body) = raw(port, &ask("/console/console-sw.js", true, false));
+    assert!(head.starts_with("http/1.1 200"), "{head}");
+    assert!(head.contains("service-worker-allowed: /console/"), "{head}");
+    let worker = String::from_utf8_lossy(&body);
+    assert!(
+        worker.contains(&format!("var VERSION = '{stamp}';")),
+        "the worker's cache name is the build's: {worker:.300}"
+    );
+    assert!(
+        worker.contains("'fleet-console-' + VERSION"),
+        "its own cache namespace"
+    );
+    assert!(
+        !worker.contains("__FLEET_ASSET_HASH__"),
+        "the worker is served stamped"
+    );
+
+    // 5. The five reads, through the same gate: admitted, and answered
+    //    with the bridge's own document rather than a refusal.
+    for path in [
+        "/api/board",
+        "/api/delegation",
+        "/api/second-brain",
+        "/api/sessions?q=&kind=",
+        "/api/session?id=",
+    ] {
+        let (head, body) = raw(port, &ask(path, true, false));
+        assert!(
+            head.starts_with("http/1.1 200"),
+            "{path} is a paired read: {head}"
+        );
+        assert!(
+            body.first() == Some(&b'{'),
+            "{path} answers a document, not a refusal"
+        );
+    }
+    // And default deny still holds around the mount: a paired device that
+    // asks for a route nobody admitted is refused BY NAME.
+    let (head, body) = raw(port, &ask("/api/settings", true, false));
+    assert!(head.starts_with("http/1.1 403"), "{head}");
+    assert!(
+        String::from_utf8_lossy(&body).contains("GET /api/settings"),
+        "the refusal names the route"
+    );
+
+    // 6. The relay leg: the same face through a frame. The relay's own
+    //    handler answers the console's page and its five reads, and its
+    //    allowlist refuses by name on this transport too — one boundary,
+    //    not one per transport.
+    let keys = Arc::new(std::sync::Mutex::new(
+        fleet::remote::relay::RelayKeys::mint("console-relay"),
+    ));
+    let handler = fleet::remote::listener::RelayHandler::new(
+        {
+            let (bridge, _sources) = fleet::gui::bridge::Bridge::detached(
+                home.clone(),
+                "deepseek-flash".to_string(),
+                Some("console-relay".to_string()),
+            );
+            Arc::new(bridge)
+        },
+        "a relayed phone".to_string(),
+        fleet::remote::listener::RemoteFace::Console,
+        home.clone(),
+        keys,
+        "console-relay-secret".to_string(),
+    );
+    let frame = |path: &str| fleet::remote::relay::Frame {
+        id: "f1".to_string(),
+        method: "GET".to_string(),
+        path: path.to_string(),
+        headers: Vec::new(),
+        body: String::new(),
+        enc: None,
+    };
+    let answer = handler.answer(&frame("/console/")).await;
+    assert_eq!(answer.status, 200, "the page rides a frame");
+    assert!(
+        answer
+            .body
+            .contains(&format!("/console/console.js?v={stamp}")),
+        "the relayed page carries the build's coordinate"
+    );
+    let answer = handler.answer(&frame("/api/board")).await;
+    assert_eq!(answer.status, 200, "the board rides a frame");
+    assert!(answer.body.trim_start().starts_with('{'), "a document");
+    let answer = handler.answer(&frame("/api/settings")).await;
+    assert_eq!(answer.status, 403, "default deny on the relay path");
+    assert!(
+        answer.body.contains("GET /api/settings"),
+        "the relayed refusal names the route"
+    );
+
+    let _ = std::fs::remove_dir_all(&home);
+}

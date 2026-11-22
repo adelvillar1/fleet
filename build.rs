@@ -159,6 +159,25 @@ const ASSETS: &[Asset] = &[
         path: "src/gui/assets/bot-icon-512.png",
         stamp: Stamp::Binary,
     },
+    // The mini console (the 2026-11-21 plan, phase 2): a third face over
+    // the same bridge, its page and its worker carrying the same stamp, so
+    // its `?v=` coordinate and its cache name move with every build.
+    Asset {
+        path: "src/gui/assets/console.html",
+        stamp: Stamp::Marker,
+    },
+    Asset {
+        path: "src/gui/assets/console.css",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/console.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/console-sw.js",
+        stamp: Stamp::Marker,
+    },
 ];
 
 /// The stamp's own arithmetic: FNV-1a over every byte fed to it.

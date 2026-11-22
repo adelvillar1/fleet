@@ -51,4 +51,19 @@ fn the_mini_console_holds_its_contract() {
         stdout.contains("the shell fits its budget"),
         "the harness did not check the size budget:\n{stdout}"
     );
+    // The clocks are the phase-2 contract (KI-587): a worker whose deadline,
+    // fallback or sweep was removed must red a case by name, and the page's
+    // watchdog and read deadline are the same gate.
+    assert!(
+        stdout.contains("the worker carries the KI-587 clock set"),
+        "the harness did not check the worker's clocks:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("a read that goes quiet is dropped by name"),
+        "the harness did not check the page's read deadline:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("the boot watchdog is armed at script evaluation"),
+        "the harness did not check the boot watchdog:\n{stdout}"
+    );
 }

@@ -34,7 +34,10 @@ const BUDGET_GZIP = 20 * 1024;
 // ------------------------------------------------------------- the core
 
 function loadCore() {
-  const sandbox = { console };
+  // Timers are the clocks' own dependency: the deadline and the watchdog
+  // are timers, and a sandbox without them would test a face no browser
+  // has. `document` is deliberately absent — that is the core seam.
+  const sandbox = { console, setTimeout, clearTimeout };
   vm.createContext(sandbox);
   vm.runInContext(SOURCE, sandbox, { filename: 'console.js' });
   if (!sandbox.__console) throw new Error('console.js handed back no core');
@@ -608,6 +611,116 @@ check('the shell fits its budget: under 60 KB uncompressed, under 20 KB gzip', (
   if (gz > BUDGET_GZIP) {
     throw new Error(`the three files gzip to ${gz} bytes, ` +
       `${gz - BUDGET_GZIP} past the ${BUDGET_GZIP}-byte budget (20 KB gzip)`);
+  }
+});
+
+// ------------------------------------------------------------- the clocks
+//
+// KI-587's clock set is a contract, so it is asserted by name: the worker
+// carries the deadlines, the any-version fallback, the birth stamp and the
+// one-generation-late sweep, and the page carries the watchdog armed at
+// script evaluation plus the read deadline. Removing any one of them reds a
+// case here — the red-proof is a gate, not a story in a commit body.
+const WORKER = fs.readFileSync(path.join(ROOT, 'src/gui/assets/console-sw.js'), 'utf8');
+const SHELL = fs.readFileSync(path.join(ROOT, 'src/gui/assets/console.html'), 'utf8');
+
+check('the worker carries the KI-587 clock set, in its own cache', () => {
+  // Its own cache name, so the console's `fleet-shell-` and the bot's
+  // `fleet-bot-` are never swept by it and it is never swept by them.
+  contains(WORKER, "var CACHE = 'fleet-console-' + VERSION;", 'the cache name');
+  contains(WORKER, "'__FLEET_ASSET_HASH__'", 'the build stamp');
+  // The deadline that measures silence, and its two lengths.
+  contains(WORKER, 'async function fetchWithin(request, ms)', 'fetchWithin');
+  contains(WORKER, 'var ASSET_DEADLINE_MS = 6000;', 'the asset deadline');
+  contains(WORKER, 'var NAV_DEADLINE_MS = 8000;', 'the navigation deadline');
+  contains(WORKER, 'fetchWithin(request, ASSET_DEADLINE_MS)', 'the asset read carries it');
+  contains(WORKER, 'fetchWithin(request, NAV_DEADLINE_MS)', 'the navigation carries it');
+  // The any-version fallback: a new coordinate that goes quiet answers
+  // with the build the device already has.
+  contains(WORKER, 'async function anyVersion(request)', 'anyVersion');
+  contains(WORKER, 'ignoreSearch: true', 'the generation-blind match');
+  contains(WORKER, 'await anyVersion(request)', 'the fallback is reached');
+  // The birth stamp and the sweep that keeps exactly one previous
+  // generation — deleting it in the same activation is what emptied the
+  // only answer a stalled update had.
+  contains(WORKER, "var BORN = '/__fleet-console-born';", 'the birth stamp');
+  contains(WORKER, 'caches.delete(older[j].name)', 'the sweep');
+  contains(WORKER, 'if (j === 0 || older[j].born === 0) continue;', 'one generation kept');
+  contains(WORKER, 'await self.clients.claim();', 'claim before sweep');
+  // And its boundary: the two console assets, by exact URL, and no claim
+  // on the full face's own two.
+  contains(WORKER, "url.pathname !== '/console/console.js'", 'the console script');
+  contains(WORKER, "url.pathname !== '/console/console.css'", 'the console styles');
+  lacks(WORKER, "'/app.js'", 'the full face’s script');
+});
+
+check('the shell registers the worker at its own scope, at the build’s address', () => {
+  contains(SHELL, '/console/console-sw.js?v=__FLEET_ASSET_HASH__', 'the registration');
+  contains(SHELL, "scope: '/console/'", 'the scope');
+  contains(SHELL, 'window.isSecureContext', 'the secure-context guard');
+  // Registered at script evaluation, not on `load`: the console's program is
+  // one deferred script, and a `load`-gated registration waits on the fetch a
+  // stalled update withholds — measured on this face, the freeze came back.
+  lacks(SHELL, "addEventListener('load'", 'a load-gated registration');
+});
+
+check('a read that goes quiet is dropped by name, not left pending', async () => {
+  const silent = () => new Promise(() => {});
+  let said = null;
+  try {
+    await C.within(silent, 25);
+  } catch (error) {
+    said = error && error.message ? error.message : String(error);
+  }
+  contains(said, 'the path went quiet', 'the deadline’s words');
+  contains(said, 'the read was dropped', 'what happened to the read');
+  // A read that answers inside the deadline is untouched: the clock
+  // measures silence, not the body.
+  equal(await C.within(async () => 'the document', 1000), 'the document', 'a read that answers');
+  equal(C.READ_DEADLINE_MS, 9000, 'the page’s read deadline');
+});
+
+check('the boot watchdog is armed at script evaluation and stands down on paint', () => {
+  // Two clocks, because the span has two halves and one clock cannot cover
+  // both: the page's covers a script that never ARRIVED (a pending deferred
+  // script blocks `load`, so the arm cannot be gated on it — KI-587), and
+  // the program's covers a script that arrived and failed to boot.
+  const pageClock = SHELL.indexOf('window.__consoleBooted = false;');
+  const script = SHELL.indexOf('console.js?v=__FLEET_ASSET_HASH__');
+  if (pageClock < 0 || script < 0 || pageClock > script) {
+    throw new Error('the page clock is not armed before console.js is fetched');
+  }
+  contains(SHELL, '}, 15000);', 'the page clock’s 15 s grace');
+  contains(SHELL, 'window.__consoleBooted = false;', 'the page clock’s flag');
+  contains(SHELL, "if (window.__consoleBooted || !app) return;", 'the page clock’s stand-down');
+  contains(SHELL, 'the console did not start within 15 seconds', 'the page card’s words');
+  equal(C.BOOT_GRACE_MS, 15000, 'the program’s grace');
+  const armed = SOURCE.indexOf('const bootClock = (() =>');
+  const shell = SOURCE.indexOf('function boot(');
+  if (armed < 0 || shell < 0 || armed > shell) {
+    throw new Error('the watchdog is not armed at script evaluation, before boot()');
+  }
+  contains(SOURCE, 'if (booted || !document.getElementById', 'the stand-down check');
+  contains(SOURCE, 'the console did not start within 15 seconds', 'the card’s words');
+  // The stand-down the page's clock reads: a booted console sets it, so a
+  // page that painted never shows the late card.
+  contains(SOURCE, 'window.__consoleBooted = true;', 'the stand-down the page reads');
+  const page = bootConsole({});
+  const late = page.dom.app.children.find((child) => child.id === 'console-late');
+  equal(late, undefined, 'a booted page carries no late card');
+});
+
+check('the worker rides outside the shell budget, and stays small', () => {
+  // The budget is the shell (html+js+css); the worker is the install
+  // surface, accounted the way the bot's is — printed, and bounded on its
+  // own. It is served from the listener's stamped route, not from a
+  // console.<ext> file, so it never enters that sum.
+  const bytes = fs.readFileSync(path.join(ROOT, 'src/gui/assets/console-sw.js'));
+  const gz = gzipSync(bytes, { level: 9 }).length;
+  console.log(`     console-sw.js ${String(bytes.length).padStart(6)} B  ` +
+    `${String(gz).padStart(5)} B gz   (stamped, outside the shell budget)`);
+  if (bytes.length > 16 * 1024) {
+    throw new Error(`console-sw.js is ${bytes.length} bytes, past its 16 KB bound`);
   }
 });
 

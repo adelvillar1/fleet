@@ -82,6 +82,14 @@ const ALLOWED_GET_API: &[&str] = &[
     "/api/session",
     "/api/checkpoints",
     "/api/diff",
+    // The mini console's three document reads (the 2026-11-21 plan,
+    // phase 2): the same bridge documents the TUI panels consume, so a
+    // paired console prints the board, the delegation overlay and the
+    // second brain rather than three refusals. `/api/sessions` and
+    // `/api/session` above are its other two reads.
+    "/api/board",
+    "/api/delegation",
+    "/api/second-brain",
 ];
 
 // The shell each face serves: the face's own page and assets, and the
@@ -95,6 +103,14 @@ const ALLOWED_GET_CONSOLE: &[&str] = &[
     "/icon-192.png",
     "/icon-512.png",
     "/apple-touch-icon.png",
+    // The mini console (the 2026-11-21 plan, phase 2): the third face at
+    // its own mount. Its page, its two assets and its worker — no data in
+    // any of them, and the worker's scope is `/console/`, so its cache can
+    // never hold the console's own shell.
+    "/console/",
+    "/console/console.css",
+    "/console/console.js",
+    "/console/console-sw.js",
 ];
 const ALLOWED_GET_BOT: &[&str] = &[
     "/",
@@ -797,9 +813,13 @@ fn presented_tokens(request: &Request) -> Vec<String> {
 /// Whether a GET path is the page or one of its assets, which is what a
 /// browser asks for when it has not paired yet.
 fn is_page(path: &str) -> bool {
+    // The page and the bot's scoped root, not the assets: a browser that
+    // has not paired yet asks for a page, and an asset it asks for anyway
+    // is a 401 it can act on. The mini console's root is here for the same
+    // reason the bot's is.
     matches!(
         path,
-        "/" | "/app.css" | "/app.js" | "/bot.css" | "/bot.js" | "/bot/"
+        "/" | "/app.css" | "/app.js" | "/bot.css" | "/bot.js" | "/bot/" | "/console/"
     )
 }
 
@@ -986,6 +1006,24 @@ async fn route_with(
             crate::gui::server::BOT_SCRIPT,
             request,
         ),
+        // The mini console's third face (the 2026-11-21 plan, phase 2): the
+        // page, its two assets and its worker, at its own mount. Its worker
+        // carries `/console/` as `Service-Worker-Allowed`, so its cache
+        // scope is the face's prefix and never the console's root.
+        ("GET", "/console/") if face == RemoteFace::Console => crate::gui::server::console_page(),
+        ("GET", "/console/console.css") if face == RemoteFace::Console => versioned_or_plain(
+            "text/css; charset=utf-8",
+            crate::gui::server::CONSOLE_STYLES,
+            request,
+        ),
+        ("GET", "/console/console.js") if face == RemoteFace::Console => versioned_or_plain(
+            "text/javascript; charset=utf-8",
+            crate::gui::server::CONSOLE_SCRIPT,
+            request,
+        ),
+        ("GET", "/console/console-sw.js") if face == RemoteFace::Console => {
+            crate::gui::server::console_worker()
+        }
         ("GET", "/events") => {
             // The stream is written straight to the socket rather than
             // assembled as a reply, so it answers its own head and then
@@ -1033,6 +1071,17 @@ async fn route_with(
             let session = asked_session(bridge, request);
             api(200, bridge.diff(&session, turn).await)
         }
+        // The mini console's three document reads (the 2026-11-21 plan,
+        // phase 2): the same bridge documents the TUI panels consume —
+        // `boards::read_work_board`, the delegation overlay, and
+        // `boards::read_brain` — so a paired console prints the panels'
+        // own reads rather than a second derivation of them.
+        ("GET", "/api/board") => api(200, bridge.board().await),
+        ("GET", "/api/delegation") => {
+            let session = asked_session(bridge, request);
+            api(200, bridge.delegation(&session).await)
+        }
+        ("GET", "/api/second-brain") => api(200, bridge.brain().await),
         ("POST", "/api/run") => {
             let body = match read_body(stream, request, rest).await {
                 Ok(body) => body,
