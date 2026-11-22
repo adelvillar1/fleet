@@ -793,13 +793,12 @@
     <div class="board" id="plugins-board"></div>
   </main>
 
-  <!-- The about pane: this build's version, how it was installed, and
-       the update card. The apply button lives here because the CLI
-       channel cannot replace the shell — the running process is the
-       bundle the tauri updater swaps. -->
-  <main class="stage stage-board" id="panel-about" hidden>
-    <div class="board" id="about-board"></div>
-  </main>
+  <!-- P6: the About pane is gone. The build receipt — this build's
+       version, how it was installed, the release feed's answer and the
+       apply press — lives in Settings -> system (#panel-settings), and
+       `#/about` folds to that address. The apply press still has to live
+       in the face: the CLI channel cannot replace the shell, whose
+       running process is the bundle the tauri updater swaps. -->
 
   <!-- A bundle's own page. The bridge serves a bundle on a CSP that refuses
        framing, so the face cannot point a frame at it: it reads the page's

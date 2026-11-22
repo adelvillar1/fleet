@@ -14552,24 +14552,23 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
     // U44's seven lenses plus the archive door (the owner's 2026-11-14
     // ruling: the archive is a destination), the Health lens (the
-    // project-centered workspace plan), the Settings door — and About
-    // (KI-568): the build's receipt, and the only door to the update
-    // apply, which used to sit three presses deep in a section the rail
-    // never named.
-    // TEN, not eleven: `threads` and `archive` were two rows over one
-    // list, and the owner's 2026-11-17 consolidation made them one
-    // destination with a live/archived/all filter (the difference between
-    // the two surfaces was a filter, never a place). The count is the
-    // assertion the consolidation changes, so it is the one that should
-    // be read — not a subtraction nobody re-derives.
-    check('ICONS the rail lists the destinations', links.length === 10,
+    // project-centered workspace plan) and the Settings door.
+    // NINE, not ten: P6 folded About into Settings -> system. About was a
+    // section of the settings surface wearing a rail row (KI-568 gave it
+    // one so a waiting release was findable), and the row now points at a
+    // place the rail already names — a second door to the gear. The
+    // waiting release's badge moved onto the gear rather than off the
+    // rail, so nothing findable was lost with the row. TEN was the
+    // threads/archive consolidation (the owner's 2026-11-17 ruling); this
+    // is the next subtraction, and the count is re-derived, not guessed.
+    check('ICONS the rail lists the destinations', links.length === 9,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 10,
+      shapes.every(Boolean) && new Set(shapes).size === 9,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
 
     // The owner's own report, on the rendered rail rather than in the
@@ -15390,9 +15389,13 @@ function theDoorScrollsItsOwnForm() {
 // the press read as silence in 0.6.0.
 async function theUpdateRefusalAnswersWhereThePressStands() {
   const page = boot({
+    // P6: `#/about` folds to Settings -> system, so the surface the press
+    // stands on is the settings board — and it needs the settings read the
+    // bridge serves, or the receipt has no surface to stand on.
     hash: '#/about',
     documents: {
       state: (asked) => emptyState(asked),
+      settings: aboutSettings(),
       updateCheck: () => ({
         type: 'settings',
         update: {
@@ -15440,6 +15443,9 @@ async function theAboutPaneReadsTheFeedOnArrival() {
     hash: '#/about',
     documents: {
       state: (asked) => emptyState(asked),
+      // P6: the receipt lives on the settings board; the read is what the
+      // board paints from, and the check answers into it.
+      settings: aboutSettings(),
       updateCheck: () => {
         checks += 1;
         return {
@@ -17679,8 +17685,10 @@ async function theExpertSwitchRevealsTheSubsystemNames() {
   check('EXP the switch turns the expert register on',
     page.body.dataset.expert === 'on', page.body.dataset.expert);
   const census = railed();
+  // `about` is absent by design (P6): the receipt is Settings -> system,
+  // and a census row for it would name a section as if it were a surface.
   const censusMissing = ['router', 'delegation', 'bots', 'vault', 'plugins',
-    'design', 'workspace-history', 'about'].filter((a) => !census.includes(a));
+    'design', 'workspace-history'].filter((a) => !census.includes(a));
   check('EXP ON lists the folded surfaces beside their groups',
     censusMissing.length === 0, 'missing: ' + censusMissing.join(','));
   const annotations = page.rows('.surfaces-expert');
@@ -18043,21 +18051,22 @@ async function noPressDoesItsWorkInSilence() {
 // So the assertion is not "a call was made" (that was always true) but "a
 // sentence the owner can read appeared on the surface they are on".
 // The owner's report after the 0.8.12 cut: "we lost the about option on the
-// rail, there is no easy way to update the app now."
+// rail, there is no easy way to update the app now." KI-568 gave About a rail
+// row so a waiting release was findable.
 //
-// About is not a lens — it is the build's receipt, and it holds the ONLY
-// door to the update apply. It had been folded into Settings' advanced
-// section, so taking an update meant Settings, then advanced, then About,
-// through a rail that never named it. Worse, the Settings update card
-// announced "0.8.13 is available", offered one button that only re-checked
-// the feed, and its own comment claimed a link to About that the code never
-// built — a card that tells you an update exists and gives you no way to
-// take it.
+// P6 folds About back out — but not the way 0.8.12 lost it. About is not a
+// lens: it is the build's receipt, and the receipt is what this build IS, so
+// it lives as Settings' `system` section. Three things are pinned here, and
+// they are the three the 0.8.12 cut broke: the old address still resolves (a
+// saved `#/about` link walks to the receipt rather than 404ing), the rail
+// stops naming a surface that is now a section (and the waiting release's
+// badge moves onto the gear rather than off the rail), and the receipt still
+// carries the only door to the update apply.
 //
-// Three things are pinned here: About is a rail destination, a waiting
-// release says so on that rail entry from the first paint, and the update
-// card can reach the apply.
-async function aboutIsOnTheRailAndAWaitingReleaseIsVisible() {
+// The redirect is the load-bearing half: a fold that leaves the address on
+// `#/about` is the fold that loses the update — which is exactly how it was
+// lost the first time.
+async function aboutFoldsIntoTheBuildReceipt() {
   const settingsDoc = (candidate) => ({
     type: 'settings', read_at: 'now',
     scalars: [], lists: [], rules: [], env: [], cron: [],
@@ -18072,87 +18081,92 @@ async function aboutIsOnTheRailAndAWaitingReleaseIsVisible() {
     update: { current: '0.8.12', candidate, installed_via: 'dmg',
       last_check: '2026-11-17' },
   });
-  const bootWith = (candidate) => boot({
-    width: 1440, hash: '#/chat',
+  const checkDoc = (candidate) => () => ({
+    type: 'settings',
+    update: { current: '0.8.12', installed_via: 'dmg', candidate,
+      notes: 'the release notes', pub_date: '2026-11-17T00:00:00Z' },
+  });
+  const bootWith = (hash, candidate) => boot({
+    width: 1440, hash,
     documents: { settings: settingsDoc(candidate), state: (asked) => emptyState(asked),
-      onboard: onboardDoc({ door: false }) },
+      onboard: onboardDoc({ door: false }), updateCheck: checkDoc(candidate) },
   });
 
-  // 1. About is a rail destination, and it lands.
-  const page = bootWith('');
+  // 1. The rail no longer names About — the row is the gear's job now.
+  const page = bootWith('#/chat', '');
   await flush(60);
   page.open();
   await flush(300);
   const rail = page.rows('.surfaces-link');
   const about = rail.find((one) => String(one.dataset.address || '') === 'about');
-  check('ABOUT the rail names About', !!about,
+  check('P6 the rail no longer names About', !about,
     rail.map((one) => one.dataset.address).join(','));
-  if (about) {
-    about.click();
-    await flush(200);
-    check('ABOUT the rail press lands on the About pane',
-      page.window.location.hash === '#/about' && page.IDS['panel-about'].hidden === false,
-      'hash=' + page.window.location.hash +
-        ' hidden=' + (page.IDS['panel-about'] ? page.IDS['panel-about'].hidden : 'no panel'));
-  }
-  // With nothing newer the entry says nothing: an empty counter is
+  // With nothing newer the gear badges nothing: an empty counter is
   // decoration, the rail's own rule.
-  const quiet = about && about.querySelectorAll('.surfaces-count')[0];
-  check('ABOUT a build that is current badges nothing',
+  const gear = rail.find((one) => String(one.dataset.address || '') === 'settings');
+  const quiet = gear && gear.querySelectorAll('.surfaces-count')[0];
+  check('P6 a build that is current badges nothing on the gear',
     !!quiet && quiet.hidden === true, quiet ? String(quiet.textContent) : 'no badge');
 
-  // 2. A waiting release says so on the rail, from the first paint — the
-  //    owner must not have to walk into Settings to learn a build is behind.
-  const behind = bootWith('0.8.13');
+  // 2. `#/about` still resolves, and it resolves INTO the receipt.
+  const folded = bootWith('#/about', '0.8.13');
+  await flush(60);
+  folded.open();
+  await flush(300);
+  check('P6 #/about folds to the receipt\u2019s address',
+    folded.window.location.hash === '#/settings/system',
+    'hash=' + folded.window.location.hash);
+  check('P6 the folded address shows the settings panel',
+    folded.IDS['panel-settings'] && folded.IDS['panel-settings'].hidden === false,
+    'hidden=' + (folded.IDS['panel-settings'] ? folded.IDS['panel-settings'].hidden : 'no panel'));
+  const body = folded.rows('.section-body')[0];
+  check('P6 the folded address paints the receipt section',
+    !!body && body.dataset.section === 'system' &&
+      !!folded.rows('.build-receipt')[0],
+    body ? 'section=' + body.dataset.section : 'no .section-body');
+  // The receipt owes the feed's answer where the press stands: the check
+  // is asked on arrival, and the answer names the candidate.
+  const answer = folded.rows('.feed-answer')[0];
+  check('P6 the receipt answers the feed where the press stands',
+    !!answer && answer.textContent.includes('the feed names 0.8.13'),
+    answer ? answer.textContent : 'no .feed-answer in the receipt');
+  const apply = folded.rows('.replay-button')
+    .find((b) => /^update to/.test(String(b.textContent || '').trim()));
+  check('P6 the receipt carries the apply press', Boolean(apply),
+    folded.rows('.replay-button').map((b) => String(b.textContent).trim()).join(' | '));
+
+  // 3. The waiting release says so on the gear, from the first paint — the
+  //    badge moved with the door rather than leaving the rail.
+  const behind = bootWith('#/chat', '0.8.13');
   await flush(60);
   behind.open();
   await flush(300);
-  const behindAbout = behind.rows('.surfaces-link')
-    .find((one) => String(one.dataset.address || '') === 'about');
-  const badge = behindAbout && behindAbout.querySelectorAll('.surfaces-count')[0];
-  check('ABOUT a waiting release badges the rail entry',
+  const behindGear = behind.rows('.surfaces-link')
+    .find((one) => String(one.dataset.address || '') === 'settings');
+  const badge = behindGear && behindGear.querySelectorAll('.surfaces-count')[0];
+  check('P6 a waiting release badges the gear',
     !!badge && badge.hidden === false && String(badge.textContent) === 'new',
     badge ? String(badge.textContent) + ' hidden=' + badge.hidden : 'no badge');
-  check('ABOUT the badge names the version and the way to take it',
+  check('P6 the badge names the version and the way to take it',
     !!badge && String(badge.title).includes('0.8.13') &&
-      /open About to update/.test(String(badge.title)),
+      /open Settings .* system to update/.test(String(badge.title)),
     badge ? String(badge.title) : 'no badge');
 
-  // 3. The Settings update card reaches the apply instead of dead-ending.
-  const settings = bootWith('0.8.13');
+  // 4. The saved section address folds too: `#/settings/update` was the
+  //    old door, and it must not land on `models` now that `system` holds
+  //    the receipt.
+  const saved = bootWith('#/settings/update', '0.8.13');
   await flush(60);
-  settings.hash('#/settings');
+  saved.open();
   await flush(300);
-  const updateSection = settings.rows('.section-rail-row')
-    .find((one) => String(one.textContent || '').includes('update'));
-  check('ABOUT the settings rail carries the update section', !!updateSection,
-    settings.rows('.section-rail-row').map((one) => one.textContent).join(','));
-  if (updateSection) {
-    updateSection.click();
-    await flush(200);
-    const row = settings.rows('.cfg-item')
-      .find((one) => String(one.textContent || '').includes('is available'));
-    check('ABOUT the update card says a candidate is available', !!row,
-      settings.rows('.cfg-item').map((one) => one.textContent).join(' | '));
-    if (row) {
-      row.click();
-      await flush(200);
-      const pane = settings.el('dock-object-body');
-      const verbs = pane ? pane.querySelectorAll('button')
-        .map((one) => String(one.textContent || '').trim()) : [];
-      check('ABOUT the update card offers a door to the apply, not just a re-check',
-        verbs.some((label) => /open About/i.test(label)), verbs.join(' | '));
-      const door = pane && pane.querySelectorAll('button')
-        .find((one) => /open About/i.test(String(one.textContent || '')));
-      if (door) {
-        door.click();
-        await flush(200);
-        check('ABOUT that door lands on the About pane',
-          settings.window.location.hash === '#/about',
-          'hash=' + settings.window.location.hash);
-      }
-    }
-  }
+  const savedBody = saved.rows('.section-body')[0];
+  check('P6 #/settings/update lands on the receipt section',
+    !!savedBody && savedBody.dataset.section === 'system',
+    savedBody ? 'section=' + savedBody.dataset.section : 'no .section-body');
+  const sectionRow = saved.rows('.section-rail-row')
+    .find((one) => String(one.textContent || '').includes('system'));
+  check('P6 the settings rail carries the system section', !!sectionRow,
+    saved.rows('.section-rail-row').map((one) => one.textContent).join(','));
 }
 
 async function theSilentSurfaceActsNowAnswerWhereTheOwnerIsLooking() {
@@ -19941,8 +19955,8 @@ const cases = [
   ['FORM pressing a submit button submits its form', pressingASubmitButtonSubmitsItsForm],
   ['ASK every button on an owner-action surface does something',
     everyButtonOnAnOwnerActionSurfaceDoesSomething],
-  ['ABOUT the rail names About, and a waiting release says so',
-    aboutIsOnTheRailAndAWaitingReleaseIsVisible],
+  ['P6 About folds into the build receipt, and a waiting release says so',
+    aboutFoldsIntoTheBuildReceipt],
   ['SILENT a surface act answers where the owner is looking',
     theSilentSurfaceActsNowAnswerWhereTheOwnerIsLooking],
   ['SILENT no press does its work in silence', noPressDoesItsWorkInSilence],

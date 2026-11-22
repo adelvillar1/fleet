@@ -264,12 +264,10 @@ import { node, svg, clip } from './core/dom.js';
     // composer, and the corpus view — one board, read from /api/armada.
     ['armada', 'armada'],
     ['bots', 'bots'],
-    ['plugins', 'plugins'],
-    // The update work's own pane (2026-11-08): this build's version,
-    // how it was installed, and the release feed's answer. The About
-    // pane is the shell's — the apply button lives there because the
-    // CLI channel cannot replace the shell's bundle.
-    ['about', 'about']
+    ['plugins', 'plugins']
+    // About is not here (P6): it folded into Settings -> system, where the
+    // build receipt lives. `#/about` folds to it in `showRoute`, so a
+    // saved address still arrives.
   ];
 
   // The same surfaces, grouped by what the owner came to do rather
@@ -332,14 +330,11 @@ import { node, svg, clip } from './core/dom.js';
     // this section rather than the lenses: installed surfaces are
     // advanced, and the rail's first section is the product.
     ['advanced', 'settings', [
-      ['settings', 'settings'],
-      // KI-568: About is not "everything else" — it is the build's own
-      // receipt, and it holds the only door to the update apply. It was
-      // reachable only through Settings then the advanced section then
-      // the About row, three presses into a place the rail never named,
-      // so a waiting release had no findable way to be taken. A build's
-      // version belongs under the gear, beside settings, one press away.
-      ['about', 'about']
+      ['settings', 'settings']
+      // KI-568's About row is gone (P6): the receipt folded into
+      // Settings -> system, so the rail's one door to it is the gear —
+      // and the waiting release's badge moved onto that row rather than
+      // off the rail entirely.
     ]]
   ];
 
@@ -356,8 +351,9 @@ import { node, svg, clip } from './core/dom.js';
     ['workspace-history', 'Versions', 'every version of the work'],
     ['vault', 'Secrets', 'the keys this home holds'],
     ['plugins', 'Plugins', 'surfaces installed on top of fleet'],
-    ['design', 'Design', 'the canvas'],
-    ['about', 'About', 'the build and the update']
+    ['design', 'Design', 'the canvas']
+    // 'about' is absent (P6): the receipt is Settings -> system now, and a
+    // row here would be a door to a section rather than to a surface.
   ];
 
   var FOLDED = {
@@ -376,7 +372,6 @@ import { node, svg, clip } from './core/dom.js';
     bots: ['settings', 'advanced'],
     vault: ['settings', 'advanced'],
     plugins: ['settings', 'advanced'],
-    about: ['settings', 'advanced'],
     skills: ['workspace', 'intelligence']
   };
 
@@ -1022,8 +1017,6 @@ import { node, svg, clip } from './core/dom.js';
 
   var el = {
     panelDesk: document.getElementById('panel-desk'),
-    panelAbout: document.getElementById('panel-about'),
-    aboutBoard: document.getElementById('about-board'),
     deskBoard: document.getElementById('desk-board'),
     deskDock: document.getElementById('desk-dock'),
     deskBar: document.getElementById('desk-bar'),
@@ -23997,7 +23990,12 @@ import { node, svg, clip } from './core/dom.js';
   /// The section the hash names, or the remembered one, or `models`.
   function settingsSectionId() {
     var parts = parseAddress().parts;
-    if (parts[0] === 'settings' && parts[1]) return decodeURIComponent(parts[1]);
+    if (parts[0] === 'settings' && parts[1]) {
+      var asked = decodeURIComponent(parts[1]);
+      // P6: the update section became the build receipt. A saved address
+      // walks to the section that replaced it rather than to `models`.
+      return asked === 'update' ? 'system' : asked;
+    }
     try {
       var stored = window.localStorage.getItem('fleet-settings-section');
       if (stored) return stored;
@@ -24572,25 +24570,17 @@ import { node, svg, clip } from './core/dom.js';
           ];
         }
       },
-      // The update card (the update work, 2026-11-08): one row whose
-      // card is the check-and-apply flow. The About pane hosts the
-      // apply button itself; this card carries the state and the
-      // check, so the settings board answers "what do I run" and the
-      // About pane answers "what am I running".
+      // The build receipt (P6): About folded in here. The section is
+      // `system` — what this build IS — and its card carries the version,
+      // the install mode, the release feed's answer and the apply press,
+      // which is the same press the About pane carried. `#/about` folds
+      // to this section's address.
       {
-        id: 'update', icon: 'update', name: 'update',
+        id: 'system', icon: 'update', name: 'system',
         badge: 0,
         changed: !!(read.update && read.update.candidate),
         paint: function () {
-          return [cfgList('the update', 'what this build is, and what the release feed names',
-            [cfgItem({
-              id: 'update', kind: 'update', name: 'the update card',
-              value: read.update && read.update.candidate
-                ? read.update.candidate + ' is available'
-                : (read.update && read.update.last_check ? 'checked at ' +
-                  read.update.last_check : 'not checked yet'),
-              card: function () { return updateSections(read.update || {}); }
-            })])];
+          return [buildReceiptCard(read)];
         }
       },
       {
@@ -29483,30 +29473,21 @@ import { node, svg, clip } from './core/dom.js';
   // The vault's own surface. The Settings page keeps its section card;
   // this is the first-class destination, so onboarding is one click from
   // the rail rather than a scroll through the settings page.
-  // The about pane (the update work, 2026-11-08). One receipt card:
-  // this build's version and install mode from the read at hand, then
-  // the release feed's answer — current, candidate, or the named
-  // refusal. The apply button lives here because the CLI channel
-  // cannot replace the shell's bundle; the press rides the tauri
-  // updater when the shell carries it, and names the channel it did
-  // not find otherwise (a browser face's apply is the CLI's `fleet
-  // update`, never a pretend swap).
-  function paintAbout() {
-    var read = face.settings;
-    el.aboutBoard.textContent = '';
-    el.aboutBoard.appendChild(surfaceHead('System', 'About',
-      'This build, and whether the release feed names a newer one. The press ' +
-      'applies what the feed carries \u2014 the shell through the updater, the CLI ' +
-      'face through its own binary swap.', null));
-    if (!read) {
-      var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'Still loading. This comes from this build\u2019s own declarations ' +
-        'and, on the about check, the release feed.'));
-      el.aboutBoard.appendChild(waiting);
-      return;
-    }
-    var update = read.update || {};
+  // ------------------------------------------- the build receipt (P6)
+  //
+  // About used to be its own pane and its own rail row (KI-568 gave it
+  // one so a waiting release was findable). P6 folds it into Settings →
+  // system: the receipt is what the build IS, which is a setting-shaped
+  // fact, and `#/about` still resolves — it walks to the receipt rather
+  // than 404ing — while the rail stops naming a surface that is now a
+  // section.
+  //
+  // The one sentence the receipt may not say is "nothing newer" from a
+  // read that never asked (deep dive D3 / KI-488), so the feed's answer
+  // is painted in three states: not asked yet this visit, asked and
+  // answered, asked and refused.
+  function buildReceiptCard(read) {
+    var update = Object.assign({}, (read && read.update) || {}, face.feedUpdate || {});
     var via = update.installed_via || 'source';
     var viaTitle = via === 'dmg' ? 'the installed app'
       : (via === 'dev-build' ? 'a dev build \u2014 it does not update the checkout'
@@ -29515,10 +29496,10 @@ import { node, svg, clip } from './core/dom.js';
     // built as) and applied (what the binary on disk now is); a fresh
     // check carries current directly.
     var running = update.current || update.serving || '';
-    var card = boardCard(12, 'this build',
-      running || 'an unknown version',
+    var card = boardCard(12, 'the build receipt', running || 'an unknown version',
       'The version this build was compiled with, and how it was installed. The ' +
       'applied version takes over at the next restart.');
+    card.classList.add('build-receipt');
     var rows = node('div', 'cfg-form');
     rows.appendChild(node('p', 'knob-summary', 'version ' + (running || 'unknown') +
       ' \u00b7 installed ' + viaTitle));
@@ -29536,9 +29517,7 @@ import { node, svg, clip } from './core/dom.js';
 
     // The feed's answer, from the check at hand: pending, same, candidate,
     // or the named refusal. Nothing is claimed about the feed before it
-    // has answered this visit — "nothing newer" without a read is the one
-    // sentence the honesty clause forbids (deep dive D3 / KI-488).
-    var feedCard = boardCard(12, 'the release feed', null, null);
+    // has answered this visit.
     var answer = node('div', 'cfg-form feed-answer');
     if (face.aboutPending) {
       answer.appendChild(node('p', 'knob-summary',
@@ -29573,31 +29552,56 @@ import { node, svg, clip } from './core/dom.js';
         'the feed names ' + (update.current || 'this build') +
         ' \u2014 nothing newer. The check stamp rides the feed\u2019s own answer.'));
     }
-    feedCard.appendChild(answer);
+    card.appendChild(answer);
     var refresh = node('button', 'replay-button', 'check the feed again');
     refresh.type = 'button';
     refresh.addEventListener('click', function () {
       refresh.disabled = true;
-      face.aboutFailed = null;
-      fetch('/api/update/check', { headers: { accept: 'application/json' } })
-        .then(function (reply) {
-          if (reply.status !== 200) throw new Error(String(reply.status));
-          return reply.json();
-        })
-        .then(function (document) {
-          face.settings = document;
-          face.aboutPending = false;
-          paintAbout();
-        })
-        .catch(function () {
-          face.aboutPending = false;
-          face.aboutFailed = 'the check request did not answer';
-          paintAbout();
-        });
+      askFeed();
     });
-    feedCard.appendChild(refresh);
-    el.aboutBoard.appendChild(card);
-    el.aboutBoard.appendChild(feedCard);
+    card.appendChild(refresh);
+    return card;
+  }
+
+  /// Ask the feed once, and paint the answer where the press stands. The
+  /// settings board is the receipt's home now, so every outcome repaints
+  /// it rather than a pane of its own.
+  ///
+  /// The check answers the settings document merged with the update field,
+  /// so a full document replaces the read. A document that carries only
+  /// the answer must not: assigning it wholesale would blank the surface
+  /// the receipt stands on (the settings board guards on `scalars`, and a
+  /// scalars-less answer painted the loading card over the receipt — the
+  /// boot red that made `#/about` arrive with no answer at all).
+  function askFeed() {
+    face.aboutPending = true;
+    face.aboutFailed = null;
+    // The answer is this visit's: a prior visit's word must not stand in
+    // for a check that has not answered yet.
+    face.feedUpdate = null;
+    if (face.panel === 'settings') paintSettings();
+    fetch('/api/update/check', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status !== 200) throw new Error(String(reply.status));
+        return reply.json();
+      })
+      .then(function (document) {
+        face.aboutPending = false;
+        if (document && document.scalars) {
+          face.settings = document;
+        } else if (document && document.update) {
+          // The answer alone: fold it into the read at hand, so the
+          // receipt paints the feed's word without losing the surface.
+          face.feedUpdate = document.update;
+          if (face.settings) face.settings.update = document.update;
+        }
+        if (face.panel === 'settings') paintSettings();
+      })
+      .catch(function () {
+        face.aboutPending = false;
+        face.aboutFailed = 'the check request did not answer';
+        if (face.panel === 'settings') paintSettings();
+      });
   }
 
   /// The apply button's press. The shell is the only place the tauri
@@ -29641,8 +29645,8 @@ import { node, svg, clip } from './core/dom.js';
         var reason = (reply.body && (reply.body.error ||
           (reply.body.refused && reply.body.refused.reason))) || 'no reason given';
         notice('the update did not land', reason);
-        var answer = el.aboutBoard.querySelector
-          ? el.aboutBoard.querySelector('.feed-answer')
+        var answer = el.settingsBoard.querySelector
+          ? el.settingsBoard.querySelector('.feed-answer')
           : null;
         if (answer) {
           answer.textContent = '';
@@ -29655,7 +29659,7 @@ import { node, svg, clip } from './core/dom.js';
         return;
       }
       face.settings = reply.body;
-      paintAbout();
+      paintSettings();
     }).catch(function () {
       notice('the updates surface is unreachable',
         'the apply never left this page \u2014 check the face is still running');
@@ -29744,11 +29748,11 @@ import { node, svg, clip } from './core/dom.js';
     // a dead end — the apply lives in the About pane, so the card that
     // announces the release must be able to reach it.
     var toAbout = node('button', 'replay-button replay-resume',
-      update.candidate ? 'open About to update' : 'open About');
+      update.candidate ? 'open Settings → system to update' : 'open the build receipt');
     toAbout.type = 'button';
     toAbout.addEventListener('click', function () {
       closeDrawer();
-      window.location.hash = '#/about';
+      window.location.hash = '#/settings/system';
     });
     sections.push(['the apply', toAbout]);
     if (update.installed_via === 'dev-build') {
@@ -30847,6 +30851,22 @@ import { node, svg, clip } from './core/dom.js';
       focusId = focusId || 'skills';
       try { window.history.replaceState(null, '', '#/memory/' + focusId); } catch (error) { }
     }
+    // P6: About folded into Settings -> system. The old address still
+    // resolves — it walks to the receipt rather than 404ing — and the
+    // rail no longer names it, so `#/about` is the one door a saved link
+    // keeps. The address follows the fold: a reload lands on the receipt.
+    if (which === 'about') {
+      which = 'settings';
+      focusId = 'system';
+      // The section is remembered as well as addressed: `replaceState`
+      // updates the hash in a browser, but a boot that stubs it would
+      // otherwise paint the remembered section while the address says
+      // otherwise — and the receipt would be the one section the fold
+      // could not reach.
+      rememberSection('system');
+      try { window.history.replaceState(null, '', '#/settings/system'); } catch (error) { }
+      parts = parseAddress().parts;
+    }
     // The threads/archive consolidation (the owner's 2026-11-17 ruling):
     // one destination for the conversations, so `#/chat` — a saved hash, a
     // link in an old receipt, a door that still says chat — folds to the
@@ -31084,38 +31104,22 @@ import { node, svg, clip } from './core/dom.js';
         // read lands first, then the section paints and the row is
         // pressed, so a pasted link behaves like the filter's own match.
         var item = parts[2] ? decodeURIComponent(parts[2]) : '';
-        paintSettings();
+        // P6: the system section is the build receipt, and the receipt
+        // owes the feed's answer — the same /api/update/check the About
+        // pane asked, asked from where the receipt now lives. The ask is
+        // the paint: it marks the answer pending before anything is
+        // drawn, so the receipt never claims "nothing newer" from a read
+        // that has not asked (D3 / KI-488).
+        if (settingsSectionId() === 'system' || focusId === 'system') {
+          askFeed();
+        } else {
+          paintSettings();
+        }
         readSettings(true).then(function () {
           paintSettings();
           if (item) openSettingsRow(item);
         });
       },
-      about: function () {
-        // The about pane (the update work, 2026-11-08): the build's own
-        // receipt and the release feed's answer ride one GET, the same
-        // /api/update/check the settings board's update card rides. The
-        // paint before the answer says the feed has not been asked — a
-        // pane that claims "nothing newer" from a read that never asked
-        // is the honesty clause's one forbidden sentence (D3 / KI-488).
-        face.aboutPending = true;
-        face.aboutFailed = null;
-        paintAbout();
-        fetch('/api/update/check', { headers: { accept: 'application/json' } })
-          .then(function (reply) {
-            if (reply.status !== 200) throw new Error(String(reply.status));
-            return reply.json();
-          })
-          .then(function (document) {
-            face.settings = document;
-            face.aboutPending = false;
-            if (panelEl('about') && !panelEl('about').hidden) paintAbout();
-          })
-          .catch(function () {
-            face.aboutPending = false;
-            face.aboutFailed = 'the check request did not answer';
-            if (panelEl('about') && !panelEl('about').hidden) paintAbout();
-          });
-      }
     };
     if (arrive[address]) arrive[address]();
     syncPaneContext();
@@ -32780,7 +32784,7 @@ import { node, svg, clip } from './core/dom.js';
   // (tower). The harness pins it against the rail's own addresses.
   var BUILT = ['chat', 'board', 'inbox', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
     'sessions', 'calibration', 'second-brain', 'workspace-history', 'armada', 'bots', 'vault',
-    'settings', 'plugins', 'learning', 'about'];
+    'settings', 'plugins', 'learning'];
 
   // The rail's badge: the surface that has something waiting says so,
   // and says nothing when it does not — an empty counter is decoration.
@@ -32799,6 +32803,18 @@ import { node, svg, clip } from './core/dom.js';
     var drafts = (face.pluginProposals || []).length;
     Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-count'), function (span) {
       if (span.dataset.count === 'settings') {
+        // P6: the About row is gone, so the waiting release rides this
+        // row — the same `candidate` the receipt reads, named with the
+        // door it opens. A release outranks drafts: it is the one thing
+        // on the rail that expires.
+        var release = (face.settings && face.settings.update) || {};
+        var behind = release.candidate || '';
+        if (behind) {
+          span.hidden = false;
+          span.textContent = 'new';
+          span.title = behind + ' is available \u2014 open Settings \u2192 system to update';
+          return;
+        }
         span.hidden = !drafts;
         span.textContent = drafts ? String(drafts) : '';
         span.title = drafts ? drafts + (drafts === 1 ? ' draft awaits review' : ' drafts await review') : '';
@@ -32811,18 +32827,6 @@ import { node, svg, clip } from './core/dom.js';
         span.title = ibWaiting
           ? ibWaiting + (ibWaiting === 1 ? ' thing needs you' : ' things need you')
           : '';
-        return;
-      }
-      // KI-568: a waiting release says so on the rail, so taking an update
-      // is one press rather than a hunt. The flag is the same `changed`
-      // the settings section computes from the update check — the rail and
-      // the settings rail cannot disagree about whether a build is behind.
-      if (span.dataset.count === 'about') {
-        var release = (face.settings && face.settings.update || {});
-        var behind = release.candidate || '';
-        span.hidden = !behind;
-        span.textContent = behind ? 'new' : '';
-        span.title = behind ? behind + ' is available \u2014 open About to update' : '';
         return;
       }
       if (span.dataset.count !== 'sessions') return;
