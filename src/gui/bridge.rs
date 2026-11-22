@@ -10645,6 +10645,279 @@ fn desk_brief(desk: &crate::desk::DeskProject) -> String {
     )
 }
 
+/// The needs-you document (the relevance pass, 2026-11-22): the ONE
+/// derivation every surface reads — the landing's first block, the rail's
+/// state groups, the sessions ordering, the door's own order.
+///
+/// The owner's contract: a surface leads with what needs a decision.
+/// Three kinds are needs, in this order, and the order is the point —
+/// a door is someone waiting outside, an approval is a run stopped
+/// mid-flight, an offer is a persona asking for the card:
+///
+/// 1. `door` — a delivery held for the owner's answer (the hold store the
+///    sink files them in: the same read the door renders).
+/// 2. `approval` — an owner session whose run stopped for approval, or is
+///    paused: the archive's own state word, never a second machine.
+/// 3. `offer` — a kanzo card a persona offered on and no accept has
+///    answered yet (the lane's own ledger).
+///
+/// Nothing here is rederived client-side: each row is read from the store
+/// that owns it, carries the press that answers it (`link`) and the words
+/// that say why, so a surface renders the decision rather than describing
+/// it. Within a kind the oldest is first — the longest wait leads. A read
+/// that cannot land says so in `refused`: an unreadable hold store is not
+/// "nothing is held" (the door's own review, FIX 2, kept here).
+///
+/// `working` rides the same document because the rail's second state group
+/// is the same question one step later: what is moving. `surfaces` is the
+/// union, in reading order, so the rail files a surface under its state
+/// without asking a second question.
+fn needs_you_document(home: &std::path::Path, sessions: &[Value]) -> Value {
+    let mut refused: Vec<String> = Vec::new();
+    let mut doors: Vec<Value> = Vec::new();
+    match crate::channels::HoldStore::load(home) {
+        Ok(store) => {
+            for hold in &store.holds {
+                let first = hold
+                    .task
+                    .lines()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or("a delivery");
+                let said: String = first.trim().chars().take(72).collect();
+                doors.push(json!({
+                    "kind": "door",
+                    "surface": "inbox",
+                    "id": format!("held:{}", hold.id),
+                    "session": hold.session,
+                    "label": format!("{} \u{b7} {}", hold.peer, said),
+                    "why": "a delivery is held for your answer",
+                    "at": hold.at,
+                    "link": "#/inbox",
+                    "press": "answer",
+                }));
+            }
+        }
+        Err(error) => refused.push(format!("the holds could not be read: {error}")),
+    }
+    doors.sort_by(|left, right| {
+        left.get("at")
+            .and_then(Value::as_str)
+            .cmp(&right.get("at").and_then(Value::as_str))
+    });
+    let mut approvals: Vec<Value> = Vec::new();
+    for row in sessions {
+        if row.get("class").and_then(Value::as_str) != Some("yours") {
+            continue;
+        }
+        let why = match row.get("state").and_then(Value::as_str) {
+            Some("needs-approval") => "a run is stopped for your approval",
+            Some("paused") => "a run is paused, waiting on you",
+            _ => continue,
+        };
+        let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
+        approvals.push(json!({
+            "kind": "approval",
+            "surface": "sessions",
+            "id": id,
+            "session": id,
+            "label": row.get("title").and_then(Value::as_str).unwrap_or("a conversation"),
+            "why": why,
+            "at": row.get("last_write").cloned().unwrap_or(Value::Null),
+            "link": format!("#/sessions/{id}"),
+            "press": "open",
+        }));
+    }
+    approvals.sort_by(|left, right| {
+        left.get("at")
+            .and_then(Value::as_u64)
+            .cmp(&right.get("at").and_then(Value::as_u64))
+    });
+    let mut offers: Vec<Value> = Vec::new();
+    match crate::kanzo::Ledger::load(home) {
+        Ok(ledger) => {
+            for task in ledger.offered_tasks() {
+                // An offer the owner has accepted is no longer a need: the
+                // ledger's own accept line is the answer, and the card
+                // stays on the board where the work lives.
+                if ledger.saw(&task, crate::kanzo::EVENT_ACCEPT, None) {
+                    continue;
+                }
+                let newest = ledger.newest(&task, crate::kanzo::EVENT_OFFER);
+                offers.push(json!({
+                    "kind": "offer",
+                    "surface": "board",
+                    "id": task,
+                    "session": Value::Null,
+                    "label": task,
+                    "why": "a persona offered to take this card",
+                    "at": newest.map(|entry| entry.at.clone()),
+                    "link": "#/board",
+                    "press": "accept",
+                }));
+            }
+        }
+        Err(error) => refused.push(format!("the kanzo ledger could not be read: {error}")),
+    }
+    offers.sort_by(|left, right| {
+        left.get("at")
+            .and_then(Value::as_str)
+            .cmp(&right.get("at").and_then(Value::as_str))
+    });
+    let mut working: Vec<Value> = Vec::new();
+    for row in sessions {
+        if row.get("state").and_then(Value::as_str) != Some("working") {
+            continue;
+        }
+        let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
+        working.push(json!({
+            "surface": "sessions",
+            "id": id,
+            "session": id,
+            "label": row.get("title").and_then(Value::as_str).unwrap_or("a conversation"),
+            "at": row.get("last_write").cloned().unwrap_or(Value::Null),
+            "link": format!("#/sessions/{id}"),
+        }));
+    }
+    let doors_count = doors.len();
+    let approvals_count = approvals.len();
+    let offers_count = offers.len();
+    let working_count = working.len();
+    // The order is the document's, not a renderer's: doors, then
+    // approvals, then offers — the owner reads the outside first.
+    let mut rows: Vec<Value> = Vec::with_capacity(doors_count + approvals_count + offers_count);
+    rows.extend(doors);
+    rows.extend(approvals);
+    rows.extend(offers);
+    // The surfaces the rail files under a state, in the rows' own order and
+    // then the working ones: a surface appears once, under the strongest
+    // state it carries.
+    let mut surfaces: Vec<String> = Vec::new();
+    for row in rows.iter().chain(working.iter()) {
+        let surface = row
+            .get("surface")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if !surface.is_empty() && !surfaces.contains(&surface) {
+            surfaces.push(surface);
+        }
+    }
+    json!({
+        "type": "needs_you",
+        "read_at": crate::boards::now_stamp(),
+        "order": ["door", "approval", "offer"],
+        "counts": {
+            "doors": doors_count,
+            "approvals": approvals_count,
+            "offers": offers_count,
+            "working": working_count,
+            "total": rows.len(),
+        },
+        "surfaces": surfaces,
+        "rows": rows,
+        "working": working,
+        "refused": refused,
+    })
+}
+
+/// The changed-since block: the newest events across the owner's tracked
+/// conversations, newest first, each naming its session.
+///
+/// An "event" is the newest record a session's log carries, read from the
+/// tail the archive already opens — so the block answers "what moved" with
+/// the log's own line rather than a summary anyone wrote. The clock is the
+/// log's write time (`last_write`), the one liveness signal a session log
+/// carries: its records do not stamp themselves.
+///
+/// The bound is declared on the document so a page can say "the newest six"
+/// instead of implying it read everything — and so the read stays bounded
+/// at six tail reads rather than one per owner session.
+const CHANGED_BOUND: usize = 6;
+
+fn changed_since(home: &std::path::Path, sessions: &[Value]) -> Value {
+    let mut newest: Vec<(u64, String, Value)> = Vec::new();
+    for row in sessions {
+        if row.get("class").and_then(Value::as_str) != Some("yours") {
+            continue;
+        }
+        // An archived conversation is the owner's put-away: it changed
+        // nothing they are waiting to see.
+        if row.get("state").and_then(Value::as_str) == Some("archived") {
+            continue;
+        }
+        let at = row.get("last_write").and_then(Value::as_u64).unwrap_or(0);
+        if at == 0 {
+            continue;
+        }
+        let id = row
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        newest.push((at, id, row.clone()));
+    }
+    // Newest first, then the bound — so only the bound's own logs are read.
+    newest.sort_by_key(|left| std::cmp::Reverse(left.0));
+    newest.truncate(CHANGED_BOUND);
+    let rows: Vec<Value> = newest
+        .into_iter()
+        .map(|(at, id, row)| {
+            let path = home.join("sessions").join(format!("{id}.jsonl"));
+            let tail = session::tail_lines(&path, TAIL_BYTES);
+            let (kind, line) = last_event(&tail);
+            json!({
+                "session": id,
+                "name": row.get("title").and_then(Value::as_str).unwrap_or("a conversation"),
+                "at": at,
+                "state": row.get("state").cloned().unwrap_or(Value::Null),
+                "kind": kind,
+                "line": line,
+                "link": format!("#/sessions/{id}"),
+            })
+        })
+        .collect();
+    json!({
+        "type": "changed",
+        "read_at": epoch_millis(),
+        "bound": CHANGED_BOUND,
+        "rows": rows,
+    })
+}
+
+/// The newest record in a log's tail, as the word it spoke and one line of
+/// it — the record's own kind and the text a row shows, clipped. Absent
+/// when the tail holds nothing readable, which the block says rather than
+/// inventing a line.
+fn last_event(tail: &[String]) -> (Option<String>, Option<String>) {
+    for line in tail.iter().rev() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let kind = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let said = value
+            .get("content")
+            .and_then(Value::as_str)
+            .or_else(|| value.get("text").and_then(Value::as_str))
+            .or_else(|| value.get("stop_reason").and_then(Value::as_str))
+            .unwrap_or_default()
+            .trim();
+        let clipped: String = said.chars().take(160).collect();
+        return (
+            if kind.is_empty() { None } else { Some(kind) },
+            if clipped.is_empty() {
+                None
+            } else {
+                Some(clipped)
+            },
+        );
+    }
+    (None, None)
+}
+
 fn sessions_read(
     home: &std::path::Path,
     current: &str,
@@ -10893,6 +11166,13 @@ fn sessions_read(
     // app's background work is counted separately so the document keeps
     // the archive's whole truth even though the rail renders none of it.
     let yours = needs + working + earlier;
+    // The relevance pass's two leading blocks, derived here once so every
+    // surface reads one answer: the landing's first block, the rail's state
+    // groups, the sessions ordering and the door's own order all read these
+    // — a head that rederived them would be a second opinion about what
+    // needs the owner (KI-300's rule, extended to the decisions).
+    let needs_you = needs_you_document(home, &sessions);
+    let changed = changed_since(home, &sessions);
     json!({
         "type": "sessions",
         "read_at": crate::boards::now_stamp(),
@@ -10919,6 +11199,10 @@ fn sessions_read(
             "yours": yours,
             "total": total,
         },
+        // The relevance pass (2026-11-22): what needs a decision, then what
+        // changed — the two blocks every surface leads with.
+        "needs_you": needs_you,
+        "changed": changed,
         "sessions": sessions,
     })
 }
@@ -23090,6 +23374,105 @@ slug: the-draft
                 .count(),
             2
         );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The relevance pass's first block, red-proved at the derivation: a
+    /// held door, an approval awaited and an offered card all exist, and
+    /// the document orders them doors -> approvals -> offers. The red
+    /// proof is the harness's (drop the door rows and its case names the
+    /// door that vanished); this pins the order the harness reads.
+    #[tokio::test]
+    async fn the_needs_you_document_orders_doors_approvals_offers() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-needs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        // 1. A delivery held for an answer — the older of the two needs.
+        let mut holds = crate::channels::HoldStore::default();
+        holds.file(
+            &crate::channels::Inbound {
+                peer: crate::channels::Peer::new("webhook", "ci-1", "the CI box"),
+                session: None,
+                task: "run the tests on the release branch".to_string(),
+                reply: crate::channels::Reply::None,
+            },
+            "2026-11-21 09:00",
+        );
+        holds.save(&home).expect("the hold store");
+        // 2. The owner's run stopped for approval.
+        let mut mine = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        mine.record(&crate::session::Record::User {
+            content: "ship the migration".into(),
+        })
+        .unwrap();
+        let mine_id = mine.id().to_string();
+        // 3. A persona's offer on a kanzo card, with no accept answering it.
+        let ledger = crate::kanzo::Ledger::path_for(&home);
+        std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+        std::fs::write(
+            &ledger,
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "at": "2026-11-21 10:00",
+                    "task": "card-17",
+                    "url": "https://example.invalid/card-17",
+                    "event": crate::kanzo::EVENT_OFFER,
+                    "persona": "the reviewer",
+                    "detail": "I will take it",
+                    "n": 1,
+                })
+            ),
+        )
+        .unwrap();
+
+        let live = LiveFace {
+            driving: None,
+            seats: [mine_id.clone()].into_iter().collect(),
+        };
+        let document = sessions_read(&home, "", &live, "", None);
+        let needs = &document["needs_you"];
+        let kinds: Vec<&str> = needs["rows"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .map(|row| row["kind"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["door", "approval", "offer"],
+            "the order is doors -> approvals -> offers: {document}"
+        );
+        assert_eq!(needs["order"][0], "door");
+        assert_eq!(needs["counts"]["doors"], 1, "{document}");
+        assert_eq!(needs["counts"]["approvals"], 1);
+        assert_eq!(needs["counts"]["offers"], 1);
+        assert_eq!(needs["counts"]["total"], 3);
+        // Every row answers one press away: the link names the surface it
+        // opens, and the row names the session it belongs to when it has
+        // one — a need with no door out is a notice, not a decision.
+        assert_eq!(needs["rows"][0]["link"], "#/inbox");
+        assert!(needs["rows"][0]["label"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("the CI box"));
+        assert_eq!(needs["rows"][1]["session"], mine_id.as_str());
+        assert_eq!(needs["rows"][1]["link"], format!("#/sessions/{mine_id}"));
+        assert_eq!(needs["rows"][2]["label"], "card-17");
+        assert_eq!(needs["rows"][2]["link"], "#/board");
+        // The surfaces the rail files under a state, in reading order.
+        let surfaces: Vec<&str> = needs["surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|surface| surface.as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(surfaces, vec!["inbox", "sessions", "board"]);
+        // The changed block names the owner's session with its newest line.
+        let changed = document["changed"]["rows"].as_array().expect("changed");
+        assert_eq!(changed.len(), 1, "{document}");
+        assert_eq!(changed[0]["session"], mine_id.as_str());
+        assert_eq!(changed[0]["line"], "ship the migration");
         std::fs::remove_dir_all(&home).ok();
     }
 
