@@ -8222,6 +8222,18 @@ import { node, svg, clip } from './core/dom.js';
         return 'showing ' + d.name + ' \u00b7 ' + d.tier + ' \u2014 ' + d.asked + ' of ' +
           d.declared + ' declared quer' + (d.declared === 1 ? 'y' : 'ies') + ' asked';
       }
+    },
+    // Calibration answers about the DAY: what was graded, what the graded
+    // beats' precision was, and what the same rows would have done at
+    // another floor. An empty day says so rather than showing zeros.
+    calibration: {
+      empty: 'No calibration row today \u2014 the day\u2019s decisions land here as they are graded.',
+      loading: 'Still loading. This comes from today\u2019s calibration rows, which this machine\u2019s own runs wrote.',
+      refused: function (said) { return 'The stream could not be read: ' + said.join('; '); },
+      selected: function (d) {
+        return 'showing ' + d.section + ' \u00b7 ' + d.rows + ' of ' + d.total +
+          ' row' + (d.total === 1 ? '' : 's') + ' read from ' + d.day;
+      }
     }
   };
 
@@ -17257,7 +17269,12 @@ import { node, svg, clip } from './core/dom.js';
     var sections = [{
       id: 'the-gate', name: 'the gate', icon: 'gate',
       badge: (read.cells || []).length, badgeTitle: (read.cells || []).length + ' fit cells',
-      paint: function () { return [calibrationGate(read)]; }
+      // P6: the day's gate, then the two questions the gate cannot answer
+      // on its own — how precise the graded beats were, and what a
+      // different floor would have done to the same decisions.
+      paint: function () {
+        return [calibrationGate(read), graderScorecard(read), counterfactualCard(read)];
+      }
     }];
     // Routing lives in Reviews too (the project-centered workspace plan):
     // the live decision and the tier chains, beside the graded stream —
@@ -17333,7 +17350,15 @@ import { node, svg, clip } from './core/dom.js';
       || sections[0];
     var body = node('div', 'section-body');
     body.dataset.section = chosen.id;
-    chosen.paint().forEach(function (card) { body.appendChild(card); });
+    var cards = chosen.paint();
+    var sectionRows = cards.reduce(function (sum, card) {
+      return sum + (card.querySelectorAll ? card.querySelectorAll('.cfg-item, .list-row').length : 0);
+    }, 0);
+    body.appendChild(selectedLine('calibration', {
+      section: chosen.name, rows: sectionRows,
+      total: read.rows_read, day: read.day
+    }));
+    cards.forEach(function (card) { body.appendChild(card); });
     el.calibrationBoard.appendChild(body);
   }
 
@@ -17346,14 +17371,22 @@ import { node, svg, clip } from './core/dom.js';
         'Every decision, graded against what actually happened \u2014 and your word on each.',
         null));
       var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'Still loading. This comes from today\u2019s calibration rows, which ' +
-        'this machine\u2019s own runs wrote.'));
+      waiting.appendChild(node('p', 'board-empty', sentence('calibration', 'loading', {})));
       el.calibrationBoard.appendChild(waiting);
       return;
     }
     if (read.refused && read.refused.length) {
       el.calibrationBoard.appendChild(refusedCard(read.refused));
+      el.calibrationBoard.appendChild(node('p', 'derivation',
+        sentence('calibration', 'refused', read.refused)));
+      return;
+    }
+    if (!read.rows_read) {
+      el.calibrationBoard.appendChild(surfaceHead('System', 'Calibration',
+        'The day\u2019s stream, the judged quality of what served, and the gate that decides ' +
+        'whether the failover may learn from it.', null));
+      el.calibrationBoard.appendChild(node('p', 'board-empty',
+        sentence('calibration', 'empty', {})));
       return;
     }
     var cells = read.cells || [];
@@ -17410,6 +17443,242 @@ import { node, svg, clip } from './core/dom.js';
     var section = calibrationSectionId();
     window.location.hash = '#/calibration/' + section + '?day=' + next;
     readCalibration(true);
+  }
+
+  // -------------------------------------- the grader's scorecard (P6)
+  //
+  // Per op: how often the recorded verdict was right. The grading rule is
+  // the server's own (`calib::summarize`), applied here unchanged — an
+  // `agreed` or absent disposition stands on the verdict, a `disagreed`
+  // one inverts it (a disagreed WRONG was not a failure, so it grades
+  // right; every other disagreed word grades wrong), and a `waived` one
+  // grades nothing — so this card cannot disagree with the fit cells
+  // above it.
+  //
+  // Only two ops record a gradeable beat: the judge (`route_judged`'s
+  // verdict) and the delegate (`delegation`'s outcome, whose `max-turns`
+  // and `interrupted` endings are neither right nor wrong). Every other
+  // op in the day is named as ungraded rather than given a precision of
+  // zero, because zero is a measurement and "no verdict" is not.
+  function gradedVerdict(row) {
+    var verdict = String(row.verdict || '');
+    var disposition = String(row.disposition || '');
+    if (disposition === 'waived') return 'waived';
+    if (!verdict) return '';
+    if (disposition === 'disagreed') return verdict === 'right' ? 'wrong' : 'right';
+    return verdict;
+  }
+
+  function graderScorecard(read) {
+    var stream = read.stream || {};
+    var card = boardCard(12, 'the grader\u2019s scorecard',
+      'precision of the beats that carry a verdict');
+    card.classList.add('grader-scorecard');
+
+    var judged = stream.route_judged || [];
+    var counts = { right: 0, wrong: 0, insufficient: 0, waived: 0 };
+    judged.forEach(function (row) {
+      var graded = gradedVerdict(row);
+      if (graded === 'waived') counts.waived += 1;
+      else if (graded === 'wrong') counts.wrong += 1;
+      else if (graded === 'insufficient') counts.insufficient += 1;
+      else if (graded === 'right') counts.right += 1;
+    });
+    var gradedJudge = counts.right + counts.wrong + counts.insufficient;
+
+    var delegated = stream.delegation || [];
+    var done = delegated.filter(function (row) { return row.outcome === 'completed'; }).length;
+    var failed = delegated.filter(function (row) { return row.outcome === 'failed'; }).length;
+    var gradedDelegate = done + failed;
+
+    var beats = [
+      { id: 'judge', name: 'the judge', rows: judged.length,
+        graded: gradedJudge, right: counts.right, wrong: counts.wrong,
+        third: counts.insufficient, thirdName: 'insufficient',
+        waived: counts.waived },
+      { id: 'delegate', name: 'the delegate', rows: delegated.length,
+        graded: gradedDelegate, right: done, wrong: failed,
+        third: 0, thirdName: '', waived: delegated.length - gradedDelegate },
+    ];
+    beats.forEach(function (beat) {
+      var row = node('div', 'list-row grader-beat');
+      row.dataset.beat = beat.id;
+      row.appendChild(node('span', 'list-row-key', beat.name));
+      if (!beat.rows) {
+        row.appendChild(node('span', 'cfg-note',
+          'no row of this beat in the day \u2014 nothing to grade'));
+        card.appendChild(row);
+        return;
+      }
+      if (!beat.graded) {
+        row.appendChild(node('span', 'cfg-note',
+          beat.rows + (beat.rows === 1 ? ' row, ' : ' rows, ') +
+          'none carrying a verdict \u2014 ungraded, not zero'));
+        card.appendChild(row);
+        return;
+      }
+      var precision = Math.round((beat.right / beat.graded) * 100);
+      row.appendChild(node('span', 'cfg-note',
+        beat.graded + ' graded \u00b7 ' + beat.right + ' right \u00b7 ' + beat.wrong + ' wrong' +
+        (beat.third ? ' \u00b7 ' + beat.third + ' ' + beat.thirdName : '') +
+        (beat.waived ? ' \u00b7 ' + beat.waived + ' set aside' : '')));
+      var mark = node('span', 'cfg-item-mark', precision + '% precise');
+      mark.dataset.tone = precision >= 70 ? 'own' : 'down';
+      row.appendChild(mark);
+      card.appendChild(row);
+    });
+
+    // Every other op in the day, named: a stream of turns and screens is
+    // not a graded beat, and saying so is the difference between "no
+    // verdict" and "wrong every time".
+    var ungraded = Object.keys(stream).filter(function (op) {
+      return op !== 'route_judged' && op !== 'delegation' && (stream[op] || []).length;
+    });
+    card.appendChild(node('p', 'derivation grader-ungraded',
+      ungraded.length
+        ? ungraded.length + ' op' + (ungraded.length === 1 ? '' : 's') +
+          ' in this day record' + (ungraded.length === 1 ? 's' : '') +
+          ' no verdict, and ' + (ungraded.length === 1 ? 'is' : 'are') +
+          ' named here rather than scored: ' + ungraded.join(', ')
+        : 'every op in this day carries a verdict \u2014 nothing is left ungraded'));
+    return card;
+  }
+
+  // -------------------------------------- the counterfactual replay (P6)
+  //
+  // "Turn this gate to X and these decisions from the last 7 days would
+  // have flipped, here they are." The claim is only honest if it is
+  // arithmetic on recorded rows: each judged row carries the confidence
+  // the judge reported, the gate's rule is `confidence < floor \u2192 the
+  // default workload`, and the replay may do exactly one thing — compare
+  // the gate's decision at the floor in force with its decision at X.
+  //
+  // So a flip exists iff `(confidence >= floor) !== (confidence >= asked)`
+  // and nothing else. A row with no recorded confidence, or no recorded
+  // workload, is NAMED as unreplayable: it is not a flip, it is not
+  // "no flip" either, and it is never guessed at.
+  function counterfactual(rows, floor, asked, fallback) {
+    var flips = [];
+    var unreplayable = [];
+    var compared = 0;
+    (rows || []).forEach(function (row) {
+      var raw = row ? row.confidence : null;
+      var workload = String((row && row.workload) || '');
+      if (raw == null || raw === '' || !isFinite(Number(raw)) || !workload) {
+        unreplayable.push(row || {});
+        return;
+      }
+      var confidence = Number(raw);
+      compared += 1;
+      var before = confidence >= floor;
+      var after = confidence >= asked;
+      if (before === after) return;
+      flips.push({
+        at: String(row.at || row.ts || ''),
+        workload: workload,
+        confidence: confidence,
+        from: before ? workload : (fallback || 'the default workload'),
+        to: after ? workload : (fallback || 'the default workload')
+      });
+    });
+    return { flips: flips, unreplayable: unreplayable, compared: compared };
+  }
+
+  function counterfactualCard(read) {
+    var replay = read.replay || null;
+    var card = boardCard(12, 'the counterfactual replay',
+      'turn the floor, and see which decisions would have flipped');
+    card.classList.add('counterfactual');
+    if (!replay) {
+      card.appendChild(node('p', 'board-empty',
+        'This read carries no replay \u2014 the last seven days\u2019 judged rows were not ' +
+        'sent, so nothing can be replayed without guessing'));
+      return card;
+    }
+    if (replay.refused && replay.refused.length) {
+      card.appendChild(node('p', 'board-empty', replay.refused.join('; ')));
+      return card;
+    }
+    var rows = replay.rows || [];
+    var floor = Number(replay.floor);
+    if (!isFinite(floor)) floor = 0;
+    if (!rows.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No judged route row in the last seven days \u2014 there is nothing to replay, and ' +
+        'a flip set of zero over no rows would be a claim about nothing'));
+      return card;
+    }
+    var form = node('div', 'cfg-form');
+    form.appendChild(node('p', 'knob-summary',
+      'The floor in force is ' + floor + '. ' + rows.length + ' judged decision' +
+      (rows.length === 1 ? '' : 's') + ' from the last ' + (replay.days || []).length +
+      ' day' + ((replay.days || []).length === 1 ? '' : 's') + ' the stream holds.'));
+    var box = node('input', 'knob-box');
+    box.type = 'number';
+    box.step = '0.05';
+    box.min = '0';
+    box.max = '1';
+    box.setAttribute('aria-label', 'the confidence floor to replay');
+    var asked = face.calibrationReplayFloor;
+    box.value = asked == null ? String(floor) : String(asked);
+    var press = node('button', 'replay-button replay-resume', 'replay it');
+    press.type = 'button';
+    press.addEventListener('click', function () {
+      var value = Number(box.value);
+      if (!isFinite(value) || value < 0 || value > 1) {
+        face.calibrationReplaySaid = 'the floor is a number from 0 to 1 \u2014 ' +
+          '\u201c' + box.value + '\u201d is not one, so nothing was replayed';
+        paintCalibration();
+        return;
+      }
+      face.calibrationReplayFloor = value;
+      face.calibrationReplaySaid = '';
+      paintCalibration();
+    });
+    form.appendChild(cfgField('turn the floor to', box));
+    form.appendChild(press);
+    card.appendChild(form);
+
+    var shown = face.calibrationReplayFloor;
+    if (shown == null) {
+      card.appendChild(node('p', 'derivation',
+        'The replay has not been asked yet this visit \u2014 press it with a floor to see ' +
+        'which decisions would have flipped.'));
+      return card;
+    }
+    if (face.calibrationReplaySaid) {
+      card.appendChild(node('p', 'board-empty', face.calibrationReplaySaid));
+      return card;
+    }
+    var result = counterfactual(rows, floor, shown, replay.default_workload);
+    var line = node('p', 'derivation counterfactual-line');
+    line.dataset.flips = String(result.flips.length);
+    line.textContent = result.flips.length
+      ? 'at ' + shown + ', ' + result.flips.length + ' of ' + result.compared +
+        ' decision' + (result.compared === 1 ? '' : 's') + ' from the last seven days would ' +
+        'have flipped'
+      : 'at ' + shown + ', no decision from the last seven days would have flipped \u2014 ' +
+        result.compared + ' judged decision' + (result.compared === 1 ? '' : 's') +
+        ' stayed on the same side of the floor';
+    card.appendChild(line);
+    result.flips.forEach(function (flip) {
+      var row = node('div', 'list-row counterfactual-flip');
+      row.dataset.from = flip.from;
+      row.dataset.to = flip.to;
+      row.appendChild(node('span', 'list-row-key', flip.at || 'no stamp'));
+      row.appendChild(node('span', 'cfg-note',
+        'confidence ' + flip.confidence + ' \u00b7 ' + flip.from + ' \u2192 ' + flip.to));
+      card.appendChild(row);
+    });
+    if (result.unreplayable.length) {
+      card.appendChild(node('p', 'derivation counterfactual-unreplayable',
+        result.unreplayable.length + ' row' +
+        (result.unreplayable.length === 1 ? '' : 's') + ' carr' +
+        (result.unreplayable.length === 1 ? 'ies' : 'y') +
+        ' no confidence or no workload \u2014 named here as unreplayable, not counted as a ' +
+        'flip and not read as "no flip"'));
+    }
+    return card;
   }
 
   /// The gate section: the failover state, the fit rule, and the cells

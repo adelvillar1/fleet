@@ -19733,6 +19733,208 @@ async function p6PluginsNamesItsFourSentences() {
     said.slice(0, 200));
 }
 
+// Calibration's two P6 cards: the grader's precision per beat, and the
+// counterfactual replay. The fixture is hand-computed — five judged rows
+// with every disposition path, three delegation endings, and a replay
+// window whose flip set is worked out by hand in the case below — so a
+// renderer that invents a flip or a point of precision fails by name.
+function p6CalibrationDoc(extra) {
+  const doc = {
+    type: 'calibration', read_at: '2026-11-21T09:00:00Z', day: '2026-11-21',
+    root: '/tmp/logs', cap: 512, rows_read: 9,
+    gate: { informs_failover: true, name: 'calibration.informs_failover' },
+    fit_rule: { rows: 8, span: 0.3 },
+    cells: [],
+    stream: {
+      route_judged: [
+        { op: 'route_judged', ts: '09:01', workload: 'quick', verdict: 'right',
+          confidence: 0.71, disposition: 'agreed' },
+        { op: 'route_judged', ts: '09:02', workload: 'hard', verdict: 'wrong',
+          confidence: 0.44, disposition: 'agreed' },
+        { op: 'route_judged', ts: '09:03', workload: 'quick', verdict: 'right',
+          confidence: 0.62, disposition: 'disagreed' },
+        { op: 'route_judged', ts: '09:04', workload: 'prose', verdict: 'right',
+          confidence: 0.55, disposition: 'disagreed' },
+        { op: 'route_judged', ts: '09:05', workload: 'quick', verdict: 'insufficient',
+          confidence: 0.66, disposition: 'waived' },
+        { op: 'route_judged', ts: '09:06', workload: 'hard', verdict: 'insufficient',
+          confidence: 0.51, disposition: 'agreed' },
+      ],
+      delegation: [
+        { op: 'delegation', session: 'c1', outcome: 'completed', provider: 'alpha' },
+        { op: 'delegation', session: 'c2', outcome: 'failed', provider: 'alpha' },
+        { op: 'delegation', session: 'c3', outcome: 'max-turns', provider: 'alpha' },
+      ],
+      turn: [
+        { op: 'turn', outcome: 'ok', turns: 3 },
+        { op: 'turn', outcome: 'ok', turns: 4 },
+      ],
+    },
+    replay: {
+      floor: 0.5, default_workload: 'quick', span: 7, per_day: 200,
+      days: ['2026-11-19', '2026-11-21'],
+      rows: [
+        { day: '2026-11-19', at: '2026-11-19T09:00:00Z', workload: 'quick', confidence: 0.71 },
+        { day: '2026-11-19', at: '2026-11-19T09:10:00Z', workload: 'hard', confidence: 0.44 },
+        { day: '2026-11-20', at: '2026-11-20T09:00:00Z', workload: 'quick', confidence: 0.55 },
+        { day: '2026-11-21', at: '2026-11-21T09:00:00Z', workload: 'prose', confidence: 0.69 },
+        { day: '2026-11-21', at: '2026-11-21T09:10:00Z', workload: 'quick', confidence: 0.5 },
+        { day: '2026-11-21', at: '2026-11-21T09:20:00Z', workload: 'hard', confidence: null },
+        { day: '2026-11-21', at: '2026-11-21T09:30:00Z', workload: '', confidence: 0.8 },
+      ],
+      refused: [],
+    },
+  };
+  return Object.assign(doc, extra || {});
+}
+
+async function p6CalibrationScorecardPerOp() {
+  const page = boot({ hash: '#/calibration', documents: {
+    calibration: p6CalibrationDoc(), state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(160);
+
+  const card = page.rows('.grader-scorecard')[0];
+  check('P6 the scorecard is on the gate section', !!card,
+    String(page.rows('.grader-scorecard').length));
+  if (!card) return;
+  const judge = page.rows('.grader-beat[data-beat="judge"]')[0];
+  const delegate = page.rows('.grader-beat[data-beat="delegate"]')[0];
+  // Hand-computed: right(agreed) + wrong(agreed) + two right rows the
+  // owner DISAGREED with (each inverts to wrong) + waived + insufficient
+  // → 5 graded, 1 right, 3 wrong, 1 insufficient, 1 set aside → 20%.
+  check('P6 the judge\u2019s precision is the graded rows\u2019 own',
+    !!judge && /5 graded \u00b7 1 right \u00b7 3 wrong \u00b7 1 insufficient/.test(
+      String(judge.textContent)) &&
+      /20% precise/.test(String(judge.textContent)),
+    judge ? String(judge.textContent) : 'no judge beat');
+  check('P6 a waived row is set aside, not scored',
+    !!judge && /1 set aside/.test(String(judge.textContent)),
+    judge ? String(judge.textContent) : 'no judge beat');
+  // completed + failed grade; max-turns is neither right nor wrong.
+  check('P6 the delegate\u2019s precision counts only its graded endings',
+    !!delegate && /2 graded \u00b7 1 right \u00b7 1 wrong/.test(String(delegate.textContent)) &&
+      /50% precise/.test(String(delegate.textContent)),
+    delegate ? String(delegate.textContent) : 'no delegate beat');
+  check('P6 the ops with no verdict are named, never scored at zero',
+    /records? no verdict/.test(String(card.textContent)) &&
+      /turn/.test(String(card.textContent)) &&
+      !/turn.*0% precise/.test(String(card.textContent)),
+    String(card.textContent).slice(-200));
+}
+
+async function p6CalibrationCounterfactualNamesEveryFlip() {
+  const page = boot({ hash: '#/calibration', documents: {
+    calibration: p6CalibrationDoc(), state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(160);
+
+  const card = page.rows('.counterfactual')[0];
+  check('P6 the replay card is on the gate section', !!card,
+    String(page.rows('.counterfactual').length));
+  if (!card) return;
+  const box = page.rows('.counterfactual .knob-box')[0];
+  const press = [...card.querySelectorAll('button')]
+    .find((one) => one.textContent === 'replay it');
+  check('P6 the replay takes a floor and a press', !!box && !!press,
+    box ? String(box.value) : 'no floor field');
+
+  // At 0.7, the hand-computed flip set is exactly three: 0.55, 0.69 and
+  // 0.50 cross from served to gated; 0.71 and 0.44 do not move; the row
+  // with no confidence and the row with no workload are unreplayable.
+  box.value = '0.7';
+  press.click();
+  await flush(120);
+  const line = page.rows('.counterfactual-line')[0];
+  check('P6 the replay names how many decisions would have flipped',
+    !!line && line.dataset.flips === '3' &&
+      /at 0\.7, 3 of 5 decisions from the last seven days would have flipped/.test(
+        String(line.textContent)),
+    line ? String(line.textContent) : 'no line');
+  const flips = page.rows('.counterfactual-flip');
+  check('P6 the flip set is exactly the rows the rule moves',
+    flips.length === 3 &&
+      flips.map((one) => one.dataset.from + '\u2192' + one.dataset.to).join(',') ===
+        'quick\u2192quick,prose\u2192quick,quick\u2192quick',
+    flips.map((one) => String(one.textContent)).join(' | '));
+  const confidences = flips.map((one) => String(one.textContent)).join(' | ');
+  check('P6 each flip names its confidence and both sides of the gate',
+    /confidence 0\.55/.test(confidences) && /confidence 0\.69/.test(confidences) &&
+      /confidence 0\.5 /.test(confidences),
+    confidences);
+  const repainted = page.rows('.counterfactual')[0];
+  check('P6 a row with no confidence is named unreplayable, not a flip',
+    /2 rows carry no confidence or no workload/.test(String(repainted ? repainted.textContent : '')) &&
+      !flips.some((one) => /09:20|09:30/.test(String(one.textContent))),
+    repainted ? String(repainted.textContent).slice(-220) : 'no card');
+
+  // At 0.3 the same rows move differently — one flip, not three — so the
+  // set is the rule's, not a count of rows below the asked floor.
+  box.value = '0.3';
+  press.click();
+  await flush(120);
+  const again = page.rows('.counterfactual-line')[0];
+  check('P6 a second floor recomputes the set from the same rows',
+    !!again && again.dataset.flips === '1' &&
+      /at 0\.3, 1 of 5 decisions/.test(String(again.textContent)),
+    again ? String(again.textContent) : 'no line');
+}
+
+async function p6CalibrationCounterfactualRefusesAnEmptyWindow() {
+  const doc = p6CalibrationDoc();
+  doc.replay = { floor: 0.5, default_workload: 'quick', span: 7, per_day: 200,
+    days: [], rows: [],
+    refused: ['no judged route row in the seven days ending 2026-11-21 under /tmp/logs'] };
+  const page = boot({ hash: '#/calibration', documents: {
+    calibration: doc, state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(160);
+  const card = page.rows('.counterfactual')[0];
+  check('P6 an empty replay window is named, never a zero',
+    !!card && /no judged route row in the seven days ending 2026-11-21/.test(
+      String(card.textContent)) &&
+      !/0 of 0/.test(String(card.textContent)),
+    card ? String(card.textContent).slice(0, 200) : 'no card');
+}
+
+async function p6CalibrationNamesItsFourSentences() {
+  const loading = boot({ hash: '#/calibration', documents: { calibration: {} } });
+  check('P6 calibration loading names the day\u2019s rows',
+    /Still loading. This comes from today\u2019s calibration rows/.test(
+      loading.text('calibration-board')),
+    loading.text('calibration-board').slice(0, 160));
+
+  const refused = boot({ hash: '#/calibration', documents: {
+    calibration: { type: 'calibration', refused: ['the stream root is not readable'] },
+    state: (asked) => emptyState(asked),
+  } });
+  await flush(); refused.open(); await flush(80);
+  check('P6 calibration refusal names what refused',
+    /The stream could not be read: the stream root is not readable/.test(
+      refused.text('calibration-board')),
+    refused.text('calibration-board').slice(0, 200));
+
+  const empty = boot({ hash: '#/calibration', documents: {
+    calibration: p6CalibrationDoc({ rows_read: 0, stream: {}, cells: [] }),
+    state: (asked) => emptyState(asked),
+  } });
+  await flush(); empty.open(); await flush(80);
+  check('P6 calibration empty says the day holds no rows',
+    /No calibration row today \u2014 the day\u2019s decisions land here as they are graded/.test(
+      empty.text('calibration-board')),
+    empty.text('calibration-board').slice(0, 200));
+
+  const selected = boot({ hash: '#/calibration', documents: {
+    calibration: p6CalibrationDoc(), state: (asked) => emptyState(asked),
+  } });
+  await flush(); selected.open(); await flush(160);
+  const said = selected.rows('[data-state="selected"]')
+    .map((one) => one.textContent).join(' | ');
+  check('P6 calibration selected names the section and how much of the day it read',
+    /showing the gate \u00b7 \d+ of 9 rows read from 2026-11-21/.test(said),
+    said.slice(0, 200));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -20019,6 +20221,11 @@ const cases = [
   ['P6 the manifest diff names all five rows', p6PluginsDiffPerBundle],
   ['P6 the plugins tier table has three rows', p6PluginsTierTable],
   ['P6 plugins names its four sentences', p6PluginsNamesItsFourSentences],
+  ['P6 the grader scorecard counts each beat\u2019s precision', p6CalibrationScorecardPerOp],
+  ['P6 the counterfactual names every flip and invents none',
+    p6CalibrationCounterfactualNamesEveryFlip],
+  ['P6 an empty replay window is named', p6CalibrationCounterfactualRefusesAnEmptyWindow],
+  ['P6 calibration names its four sentences', p6CalibrationNamesItsFourSentences],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

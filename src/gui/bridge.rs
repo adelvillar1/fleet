@@ -11792,6 +11792,12 @@ fn calibration_read_at(home: &std::path::Path, day: Option<&str>) -> Value {
     let rows = crate::calib::read_day(&root, &day, crate::calib::READ_CAP);
     let gate = crate::route::calibration_config(home).informs_failover;
     let cells = crate::calib::calibration(&rows);
+    // The counterfactual's ground (P6): the last seven days of judged
+    // route rows, oldest first, and the floor in force. The arithmetic is
+    // the face's — the claim is "turn the floor to X" and X is the
+    // owner's — so this half ships only what the stream recorded and
+    // never a predicted outcome.
+    let replay = replay_document(&root, &day, home);
     let mut stream: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
     for row in &rows {
         stream
@@ -11816,6 +11822,69 @@ fn calibration_read_at(home: &std::path::Path, day: Option<&str>) -> Value {
         },
         "cells": cells.iter().map(cell_json).collect::<Vec<_>>(),
         "stream": stream,
+        "replay": replay,
+    })
+}
+
+/// How many judged rows one day may contribute to the replay. The window
+/// is seven days, so the replay's ceiling is seven times this — bounded,
+/// and the bound is shipped so the surface can say what it read.
+const REPLAY_PER_DAY: usize = 200;
+
+/// The counterfactual's document: the last seven days of `route_judged`
+/// rows, oldest first, the floor in force, and the workload a gated
+/// verdict falls to.
+///
+/// What ships is only what the stream recorded: each row's confidence,
+/// its judged workload and its stamp. Which decisions WOULD have flipped
+/// is arithmetic the surface does, because the question is "turn the
+/// floor to X" and X belongs to the owner. A day the stream does not hold
+/// is absent from `days` — never invented, and never counted as a day
+/// that made no decisions.
+fn replay_document(root: &std::path::Path, day: &str, home: &std::path::Path) -> Value {
+    let mut rows: Vec<Value> = Vec::new();
+    let mut days: Vec<String> = Vec::new();
+    // Oldest first: the walk starts six days back and ends on the day, so
+    // the surface's list reads in the order the decisions were made.
+    for back in (0..7).rev() {
+        let Some(key) = crate::memory::shift_day(day, -back) else {
+            continue;
+        };
+        let read = crate::calib::read_op_day(root, &key, "route_judged", REPLAY_PER_DAY);
+        if read.is_empty() {
+            continue;
+        }
+        days.push(key.clone());
+        for row in read {
+            rows.push(json!({
+                "day": key,
+                "at": row.ts,
+                "workload": row.workload,
+                "verdict": row.verdict,
+                "confidence": row.confidence,
+                "disposition": row.disposition,
+            }));
+        }
+    }
+    let dotenv = crate::home::read_dotenv_with_process_vault(home);
+    let router = crate::settings::router_config(home, &dotenv);
+    json!({
+        "rows": rows,
+        "days": days,
+        "floor": router.min_confidence,
+        "default_workload": router.default_workload,
+        "span": 7,
+        "per_day": REPLAY_PER_DAY,
+        // An empty window is named, not shown as a flip set of zero: the
+        // two are different facts and only one of them is about the gate.
+        "refused": if rows.is_empty() {
+            vec![format!(
+                "no judged route row in the seven days ending {day} under {}",
+                root.display()
+            )]
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -24071,5 +24140,71 @@ mod approval_seed_tests {
                 "{tag} must read as ask"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::*;
+
+    fn write_day(root: &std::path::Path, day: &str, rows: &[&str]) {
+        let path = crate::calib::day_path(root, day);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, rows.join("\n") + "\n").unwrap();
+    }
+
+    #[test]
+    fn the_replay_ships_the_seven_days_it_holds_oldest_first() {
+        let home = std::env::temp_dir().join(format!("fleet-replay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let root = home.join("logs");
+        write_day(
+            &root,
+            "2026-11-19",
+            &[
+                r#"{"op":"route_judged","ts":"2026-11-19T09:00:00Z","workload":"quick","verdict":"right","confidence":0.71,"disposition":"agreed"}"#,
+            ],
+        );
+        write_day(
+            &root,
+            "2026-11-21",
+            &[
+                r#"{"op":"route_judged","ts":"2026-11-21T09:00:00Z","workload":"hard","verdict":"wrong","confidence":0.44,"disposition":"agreed"}"#,
+            ],
+        );
+        let doc = replay_document(&root, "2026-11-21", &home);
+        let days = doc["days"].as_array().unwrap();
+        assert_eq!(days.len(), 2);
+        assert_eq!(days[0], "2026-11-19");
+        assert_eq!(days[1], "2026-11-21");
+        let rows = doc["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["workload"], "quick");
+        assert!((rows[0]["confidence"].as_f64().unwrap() - 0.71).abs() < 1e-9);
+        assert_eq!(rows[1]["workload"], "hard");
+        assert!((rows[1]["confidence"].as_f64().unwrap() - 0.44).abs() < 1e-9);
+        // The floor and the fallback are the settings registry's own reads
+        // — never a constant invented by the replay.
+        assert!(doc["floor"].is_number());
+        assert!(doc["default_workload"].is_string());
+        assert_eq!(doc["refused"].as_array().unwrap().len(), 0);
+        // A day the stream does not hold is absent, not an empty day.
+        assert!(!days.iter().any(|day| day == "2026-11-20"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_empty_window_is_named_not_a_flip_set_of_zero() {
+        let home = std::env::temp_dir().join(format!("fleet-replay-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let doc = replay_document(&home.join("logs"), "2026-11-21", &home);
+        assert_eq!(doc["rows"].as_array().unwrap().len(), 0);
+        assert_eq!(doc["days"].as_array().unwrap().len(), 0);
+        let refused = doc["refused"].as_array().unwrap();
+        assert_eq!(refused.len(), 1);
+        assert!(refused[0].as_str().unwrap().contains("no judged route row"));
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

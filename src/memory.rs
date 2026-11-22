@@ -1984,7 +1984,7 @@ fn decay_factor(date: &str, today_days: Option<i64>) -> f64 {
 /// age is a whole number of days regardless of the machine's zone.
 /// Howard Hinnant's `days_from_civil`, hand-rolled because the crate
 /// carries no date dependency and needs exactly this one primitive.
-fn parse_day(day: &str) -> Option<i64> {
+pub(crate) fn parse_day(day: &str) -> Option<i64> {
     let year: i64 = day.get(0..4)?.parse().ok()?;
     let month: i64 = day.get(5..7)?.parse().ok()?;
     let day_of_month: i64 = day.get(8..10)?.parse().ok()?;
@@ -5530,7 +5530,7 @@ impl Memory {
 /// Shift a `YYYY-MM-DD` day by `delta` days, or `None` when the day is
 /// unreadable. The calendar arithmetic is the session log's own — one
 /// implementation in the crate, not two.
-fn shift_day(day: &str, delta: i64) -> Option<String> {
+pub(crate) fn shift_day(day: &str, delta: i64) -> Option<String> {
     let days = parse_day(day)? + delta;
     let (year, month, day_of_month) = crate::session::civil_from_days(days);
     Some(format!("{year:04}-{month:02}-{day_of_month:02}"))
