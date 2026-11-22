@@ -992,6 +992,14 @@ import { node, svg, clip } from './core/dom.js';
       ['path', { d: 'M12 3.8a8.2 8.2 0 0 1 0 16.4z', fill: 'currentColor', 'fill-opacity': '0.22' }]
     ],
     chevron: [['path', { d: 'M14.5 5.5L8 12l6.5 6.5' }]],
+    // advanced: the settings group that holds the surfaces which are not
+    // lenses. It wore the state dot — a generic dot for a missing icon is
+    // the anti-pattern the sheet names, and a rail of surfaces is exactly
+    // where it reads as a state. One wrench, the one drawing in this table
+    // that means "the machinery behind the product".
+    advanced: [
+      ['path', { d: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z' }]
+    ],
 
     // states, not concepts
     dot: [['circle', { cx: 12, cy: 12, r: 2.5, fill: 'currentColor', stroke: 'none' }]],
@@ -6959,7 +6967,7 @@ import { node, svg, clip } from './core/dom.js';
   function rowsCard(read) {
     var el0 = boardCard(7, 'today\u2019s route rows', 'the board\u2019s read');
     if (!read.recent || !read.recent.length) {
-      el0.appendChild(node('p', 'board-empty', 'No route rows today.'));
+      el0.appendChild(node('p', 'board-empty', sentence('router', 'empty')));
       return el0;
     }
     var rows = node('div', 'rows');
@@ -7138,12 +7146,12 @@ import { node, svg, clip } from './core/dom.js';
       // as a board that never arrives (KI-422's other half).
       if (face.routerRefused && face.routerRefused.length) {
         var failed = boardCard(12, 'the read did not land', null, null);
-        failed.appendChild(node('p', 'board-empty', face.routerRefused.join(' \u00b7 ')));
+        failed.appendChild(node('p', 'board-empty',
+          sentence('router', 'refused', face.routerRefused)));
         el.routerBoard.appendChild(failed);
       } else {
         var waiting = boardCard(12, 'reading', null, null);
-        waiting.appendChild(node('p', 'board-empty',
-          'Still loading. The live decision below comes straight from the run and does not wait for it.'));
+        waiting.appendChild(node('p', 'board-empty', sentence('router', 'loading')));
         el.routerBoard.appendChild(waiting);
       }
       el.routerBoard.appendChild(decisionCard());
@@ -7154,7 +7162,7 @@ import { node, svg, clip } from './core/dom.js';
       // replace: the numbers on screen are the last good ones.
       var stale = boardCard(12, 'the read did not land', null, null);
       stale.appendChild(node('p', 'board-empty',
-        face.routerRefused.join(' \u00b7 ') +
+        sentence('router', 'refused', face.routerRefused) +
         ' \u2014 the board below is the last read that landed.'));
       el.routerBoard.appendChild(stale);
     }
@@ -7190,6 +7198,9 @@ import { node, svg, clip } from './core/dom.js';
       [totals.total_tokens || 0, 'tokens'],
       [read.judge ? read.judge.lane : '\u2014', 'judge']
     ], read.pin ? 'pinned to ' + read.pin : 'no pin'));
+    // P7's selected sentence: the pin is this surface's selection — the
+    // model the run's calls are sent to, or the judge that picks per call.
+    el.routerBoard.appendChild(selectedLine('router', { pin: read.pin }));
 
     var left = node('div', 'surface-column');
     left.appendChild(decisionCard());
@@ -7782,9 +7793,7 @@ import { node, svg, clip } from './core/dom.js';
       el.delegationBoard.appendChild(surfaceHead('Intelligence', 'Delegation',
         'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.', null));
       var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'Still loading. This comes from the session logs and the graph file, ' +
-        'both of which are this machine\u2019s own.'));
+      waiting.appendChild(node('p', 'board-empty', sentence('delegation', 'loading')));
       el.delegationBoard.appendChild(waiting);
       return;
     }
@@ -7811,6 +7820,12 @@ import { node, svg, clip } from './core/dom.js';
       [graph ? graph.nodes.length : 0, 'graph nodes'],
       [(read.refused || []).length, 'reads refused', (read.refused || []).length ? 'down' : null]
     ], live ? 'a run is in flight' : 'no run in flight'));
+    // P7's selected sentence: what this surface is showing — the run in
+    // flight or the declared graph — and how many nodes it holds.
+    el.delegationBoard.appendChild(selectedLine('delegation', {
+      live: !!live,
+      nodes: live ? countNodes(live) : (graph ? graph.nodes.length : 0)
+    }));
 
     var left = node('div', 'surface-column');
     var wide = cardWide(el.delegationBoard, 8);
@@ -7857,9 +7872,7 @@ import { node, svg, clip } from './core/dom.js';
       el.delegationBoard.appendChild(graphTiles(graph));
     } else {
       var empty = boardCard(12, 'the dependency graph', null, null);
-      empty.appendChild(node('p', 'board-empty',
-        'This home has declared no dependency graph. The graph is a file the plan\u2019s work ' +
-        'writes; nothing here is inferred from what a run did.'));
+      empty.appendChild(node('p', 'board-empty', sentence('delegation', 'empty')));
       el.delegationBoard.appendChild(empty);
     }
   }
@@ -8062,6 +8075,136 @@ import { node, svg, clip } from './core/dom.js';
     cards.forEach(function (card) { rail.appendChild(card); });
     return rail;
   }
+
+  // ---------------------------------------------------------- the sentences
+  //
+  // P7: every surface owes its owner four answers, in the surface's own
+  // voice — what it says when it holds nothing (empty), while its read is
+  // still in flight (loading), when the read refused (refused), and what it
+  // says about the thing it has selected (selected). One table, keyed by
+  // the surface's own address, so a surface cannot grow a sentence its
+  // neighbours lack and `tests/face/harness.mjs` can pin each one by name.
+  //
+  // The rules the table exists to keep: never a skeleton (a skeleton is a
+  // promise the read may not keep), never a spinner standing in for a
+  // sentence (the spinner belongs beside the word, not instead of it), and
+  // never a silent blank. A refusal names what refused; an empty state names
+  // why it is empty and the way forward; a selection says what is selected
+  // and what that means for the rest of the page.
+  //
+  // A value that carries data is a function of that data; the surface's
+  // voice is the wording, and the wording lives here and nowhere else.
+  var SENTENCES = {
+    sessions: {
+      empty: function (d) {
+        if (d.query) {
+          var said = 'Nothing under this home matches \u201c' + d.query + '\u201d';
+          if (d.state !== 'all') said += ' under ' + d.state;
+          // A miss is honest about how far the search could see: the server
+          // reads a bounded window of the newest logs, so "nothing" over 200
+          // logs is a different fact from "nothing" over all of them.
+          if (d.bound) said += '. The newest ' + d.bound + ' conversations were read';
+          return said + '.';
+        }
+        if (d.state === 'archived') return 'No conversation here has been archived yet.';
+        if (d.state === 'all') return 'This home holds no conversations at all.';
+        return 'No conversation here is active. `all` shows every one under this home.';
+      },
+      loading: 'Reading the archive\u2026',
+      refused: function (said) { return 'The archive could not be read: ' + said.join('; '); },
+      selected: function (d) {
+        return 'reading ' + d.name + (d.state ? ' \u00b7 ' + d.state : '') +
+          ' \u2014 the transcript below is the whole of it';
+      }
+    },
+    board: {
+      empty: 'No approved plan carries work right now. Approve a plan and its tasks appear here.',
+      loading: 'Still loading your work.',
+      refused: function (said) { return said.join('; '); },
+      selected: function (d) {
+        return 'showing ' + d.plan + ' \u00b7 ' + d.tasks +
+          (d.tasks === 1 ? ' task' : ' tasks') + ' in it \u2014 every plan is one press away';
+      }
+    },
+    desk: {
+      empty: 'Say what you want made below and the brief opens with it as the claim.',
+      loading: 'Reading the desk\u2019s projects\u2026',
+      refused: function (said) {
+        return 'The desk could not read ' + said.length +
+          (said.length === 1 ? ' project: ' : ' projects: ') + said.join(', ');
+      },
+      selected: function (d) {
+        return 'open: ' + d.name + ' \u00b7 ' + d.stage + ' \u2014 the shelf is behind this page';
+      }
+    },
+    huddles: {
+      empty: 'Start a huddle.',
+      loading: 'Reading your rooms\u2026',
+      refused: function (said) { return 'The rooms could not be read.'; },
+      selected: function (d) {
+        return 'you are in ' + d.name + ' \u00b7 ' + d.members +
+          (d.members === 1 ? ' member' : ' members') + ' \u00b7 ' + d.state;
+      }
+    },
+    bots: {
+      empty: 'Pair a phone, or dispatch a task to this persona.',
+      loading: 'Still loading. This comes from the channel stores and the service\u2019s own status document.',
+      refused: function (said) { return said.join(' \u00b7 '); },
+      selected: function (d) {
+        return 'showing ' + d.section + ' \u00b7 ' + d.count +
+          (d.count === 1 ? ' conversation' : ' conversations');
+      }
+    },
+    router: {
+      empty: 'No route rows today. The day\u2019s calls land here as they are made.',
+      loading: 'Still loading. The live decision below comes straight from the run and does not wait for it.',
+      refused: function (said) { return said.join(' \u00b7 '); },
+      selected: function (d) {
+        return d.pin
+          ? 'pinned to ' + d.pin + ' \u2014 every call this run goes there'
+          : 'no pin \u2014 the judge picks the model for each call';
+      }
+    },
+    delegation: {
+      empty: 'This home has declared no dependency graph. The graph is a file the plan\u2019s work writes; nothing here is inferred from what a run did.',
+      loading: 'Still loading. This comes from the session logs and the graph file, both of which are this machine\u2019s own.',
+      refused: function (said) { return said.join(' \u00b7 '); },
+      selected: function (d) {
+        return (d.live ? 'showing the run in flight' : 'showing the declared graph') +
+          ' \u00b7 ' + d.nodes + (d.nodes === 1 ? ' node' : ' nodes');
+      }
+    },
+    memory: {
+      empty: 'No fact in this section yet.',
+      loading: 'Still loading. This comes from the memories and the day\u2019s calibration stream, both of which are this machine\u2019s own.',
+      refused: function (said) { return said.join(' \u00b7 '); },
+      selected: function (d) {
+        return 'showing ' + d.section + ' \u00b7 ' + d.count + ' of ' + d.total +
+          (d.total === 1 ? ' fact' : ' facts');
+      }
+    }
+  };
+
+  /// One surface's sentence, in its own voice. `data` feeds a value that
+  /// carries a count or a name; a sentence that needs none ignores it.
+  function sentence(surface, kind, data) {
+    var words = SENTENCES[surface] && SENTENCES[surface][kind];
+    if (words == null) return '';
+    return typeof words === 'function' ? words(data || {}) : words;
+  }
+
+  /// The selected state, rendered where the surface reads: a quiet
+  /// derivation line that names what is selected and what it means. One
+  /// node per surface, held on the surface's own element, so a repaint
+  /// updates the sentence instead of stacking a second one.
+  function selectedLine(surface, data) {
+    var line = node('p', 'derivation');
+    line.dataset.state = 'selected';
+    line.dataset.surface = surface;
+    line.textContent = sentence(surface, 'selected', data);
+    return line;
+  }
+
 
   function rowAction(label, title, run, primary) {
     var button = node('button', 'row-action' + (primary ? ' row-action-primary' : ''), label);
@@ -8566,6 +8709,14 @@ import { node, svg, clip } from './core/dom.js';
     var chosen = sections.filter(function (section) { return section.id === id; })[0]
       || sections[0];
     body.dataset.section = chosen.id;
+    // P7's selected sentence: which section the rail picked, and how much
+    // of the corpus it holds. It leads the body, so a section press always
+    // changes a sentence and never silently swaps a list.
+    body.appendChild(selectedLine('memory', {
+      section: chosen.name,
+      count: chosen.badge,
+      total: (read.facts || []).length
+    }));
     chosen.paint().forEach(function (card) { body.appendChild(card); });
     el.memoryBoard.appendChild(body);
   }
@@ -8577,9 +8728,7 @@ import { node, svg, clip } from './core/dom.js';
       el.memoryBoard.appendChild(surfaceHead('Intelligence', 'Intelligence',
         'Everything fleet knows and can do: what it remembers, its skills, its tools, and the chains they compose into.', null));
       var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'Still loading. This comes from the memories and the day\u2019s ' +
-        'calibration stream, both of which are this machine\u2019s own.'));
+      waiting.appendChild(node('p', 'board-empty', sentence('memory', 'loading')));
       el.memoryBoard.appendChild(waiting);
       paintMemoryRail(null);
       return;
@@ -8690,8 +8839,7 @@ import { node, svg, clip } from './core/dom.js';
     card.classList.add('lib-card');
     var items = shown.map(memoryItem);
     if (!items.length) {
-      card.appendChild(node('p', 'board-empty',
-        'No fact in this section yet.'));
+      card.appendChild(node('p', 'board-empty', sentence('memory', 'empty')));
       return card;
     }
     card.appendChild(budgetRows(items, 30, 'facts',
@@ -10071,7 +10219,7 @@ import { node, svg, clip } from './core/dom.js';
       'your work at execution level \u2014 each plan\u2019s tasks in the column they stand in, and who each one is for.', null));
     if (!read) {
       var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty', 'Still loading your work.'));
+      waiting.appendChild(node('p', 'board-empty', sentence('board', 'loading')));
       el.boardBoard.appendChild(waiting);
       readBoard(false);
       return;
@@ -10080,7 +10228,7 @@ import { node, svg, clip } from './core/dom.js';
       // An empty board says WHY it is empty, and names the way forward
       // rather than leaving a blank that reads as a broken read.
       var none = boardCard(12, 'the board', null, null);
-      none.appendChild(node('p', 'board-empty', refusals(read).join('; ')));
+      none.appendChild(node('p', 'board-empty', sentence('board', 'refused', refusals(read))));
       el.boardBoard.appendChild(none);
       return;
     }
@@ -10094,10 +10242,17 @@ import { node, svg, clip } from './core/dom.js';
     var loose = scope === 'all' ? (read.tasks || []) : [];
     if (!plans.length && !loose.length) {
       var empty = boardCard(12, 'the board', null, null);
-      empty.appendChild(node('p', 'board-empty',
-        'No approved plan carries work right now. Approve a plan and its tasks appear here.'));
+      empty.appendChild(node('p', 'board-empty', sentence('board', 'empty')));
       el.boardBoard.appendChild(empty);
       return;
+    }
+    // P7's selected sentence: which plan the rail narrowed to, and how
+    // much of the board it holds. The rail's pick is the board's own
+    // selection, so the sentence names it rather than leaving the scope
+    // to a highlighted row alone.
+    if (scope !== 'all' && plans.length) {
+      var inPlan = plans.reduce(function (sum, plan) { return sum + (plan.tasks || []).length; }, 0);
+      el.boardBoard.appendChild(selectedLine('board', { plan: plans[0].id, tasks: inPlan }));
     }
     plans.forEach(function (plan) { el.boardBoard.appendChild(planCard(plan)); });
     if (loose.length) el.boardBoard.appendChild(looseCard(loose));
@@ -13658,6 +13813,13 @@ import { node, svg, clip } from './core/dom.js';
     var shell = pwShell(board);
     if (face.deskOpenDesk) {
       paintDeskProject(face.deskOpenDesk, shell.center);
+      // P7's selected sentence: which deliverable is open and where it
+      // stands. It leads the centre — the project's own paint clears what
+      // it draws into, and the end band stays the last thing on the page.
+      shell.center.insertBefore(selectedLine('desk', {
+        name: face.deskOpenDesk.name || face.deskOpenDesk.id,
+        stage: deskState(face.deskOpenDesk).word
+      }), shell.center.firstChild);
       var chat = node('div', 'pw-chat');
       shell.center.appendChild(chat);
       paintThreadInto(chat, {
@@ -13705,17 +13867,27 @@ import { node, svg, clip } from './core/dom.js';
   /// words open the brief with the claim already written.
   function paintDeskWelcome(into) {
     var projects = face.desk || [];
+    // P7's four sentences: the welcome is the desk's empty state, and it
+    // says which state it is in — reading, refused, or empty — rather than
+    // showing the same invitation over a read that has not landed.
+    var note = projects.length
+      ? 'Pick a deliverable in the projects rail to iterate on it, or say what you want '
+        + 'made below \u2014 the brief is the thread\u2019s first message.'
+      : (face.desk == null ? sentence('desk', 'loading') : sentence('desk', 'empty'));
     pwWelcome(into, {
       eyebrow: 'fleet \u00b7 the desk',
       title: 'What are we making stand?',
       lede: 'Name the deliverable and the one claim it must carry. The desk reads the sources, '
         + 'shows every claim with the sentence behind it, and refuses to call the work done '
         + 'while something stands.',
-      note: projects.length
-        ? 'Pick a deliverable in the projects rail to iterate on it, or say what you want '
-          + 'made below \u2014 the brief is the thread\u2019s first message.'
-        : 'Say what you want made below and the brief opens with it as the claim.',
+      note: note,
     });
+    if (face.deskUnreadable && face.deskUnreadable.length) {
+      into.appendChild(node('p', 'derivation',
+        sentence('desk', 'refused', face.deskUnreadable.map(function (one) {
+          return one.slug || String(one);
+        }))));
+    }
   }
 
   // P4: the desk with no deliverables yet — the spine's work items as
@@ -15161,6 +15333,23 @@ import { node, svg, clip } from './core/dom.js';
     addMember.addEventListener('click', function () { openInviteDoor(); });
     el.roomMembers.appendChild(addMember);
 
+    // P7's selected sentence: which room is open, how many are in it, and
+    // what it is doing. One node, held on the head, so the room's repaints
+    // update the words rather than stacking a second line.
+    var inRoom = el.roomHead._selected;
+    if (!inRoom) {
+      inRoom = node('p', 'derivation');
+      inRoom.dataset.state = 'selected';
+      inRoom.dataset.surface = 'huddles';
+      el.roomHead._selected = inRoom;
+      el.roomHead.appendChild(inRoom);
+    }
+    inRoom.textContent = sentence('huddles', 'selected', {
+      name: el.roomName.textContent || face.session,
+      members: members.length + 1,
+      state: tone.word
+    });
+
     var phases = face.phases || [];
     el.roomPhases.hidden = !phases.length;
     if (phases.length) {
@@ -15310,7 +15499,7 @@ import { node, svg, clip } from './core/dom.js';
     if (face.huddles && face.huddles.refused && face.huddles.refused.length) {
       var card = node('div', 'room-empty-card');
       card.appendChild(node('p', 'empty-eyebrow', 'work \u00b7 huddles'));
-      card.appendChild(node('h1', 'empty-title', 'The rooms could not be read.'));
+      card.appendChild(node('h1', 'empty-title', sentence('huddles', 'refused')));
       card.appendChild(node('p', 'empty-note', face.huddles.refused[0]));
       el.roomEmpty.appendChild(card);
       return;
@@ -15344,9 +15533,13 @@ import { node, svg, clip } from './core/dom.js';
     }
     // The invitation: the goal, the bots with their voices, one press.
     card2.appendChild(node('p', 'empty-eyebrow', 'huddles'));
-    card2.appendChild(node('h1', 'empty-title', 'Start a huddle.'));
+    card2.appendChild(node('h1', 'empty-title', sentence('huddles', 'empty')));
     card2.appendChild(node('p', 'empty-note',
       'A working session you share with one or more bots. Ask for something and the bot you name takes the turn \u2014 anything it produces lands in the conversation.'));
+    // The loading sentence: while the rooms read is still on the wire the
+    // invitation cannot honestly say no room exists, so it says what it is
+    // doing instead.
+    if (!face.huddles) card2.appendChild(node('p', 'hint', sentence('huddles', 'loading')));
     var goalField = node('div', 'empty-field');
     goalField.appendChild(node('label', 'empty-label', 'what do you want out of it?'));
     var goalInput = node('input', 'empty-input');
@@ -16165,12 +16358,12 @@ import { node, svg, clip } from './core/dom.js';
     el.workHead.appendChild(strip);
 
     if (!read) {
-      el.workList.appendChild(node('p', 'board-empty', 'Reading the archive\u2026'));
+      el.workList.appendChild(node('p', 'board-empty', sentence('sessions', 'loading')));
       return;
     }
     if (read.refused && read.refused.length) {
       el.workList.appendChild(node('p', 'board-empty',
-        'The archive could not be read: ' + read.refused.join('; ')));
+        sentence('sessions', 'refused', read.refused)));
       return;
     }
     var shown = all.filter(railRow).filter(workStatePasses).filter(sessionMatchesQuery);
@@ -16236,30 +16429,12 @@ import { node, svg, clip } from './core/dom.js';
       // The empty line names the actual reason, because "nothing matches"
       // over a filter that is simply set to `archived` reads as an empty
       // home and sends the owner looking for conversations that are there.
+      // The wording is the surface's own sentence (`SENTENCES.sessions`),
+      // so the four states stay one source and the harness pins the words.
       var state = face.sessionsFilter || 'active';
-      var said;
-      if (face.sessionQuery) {
-        said = 'Nothing under this home matches \u201c' + face.sessionQuery + '\u201d';
-        if (state !== 'all') said += ' under ' + state;
-        // A miss has to be honest about how far the search could see: the
-        // server reads a bounded window of the newest logs, so "nothing"
-        // over 200 logs is a different fact from "nothing" over all of
-        // them.
-        var bound = read && read.search && read.search.bound;
-        if (bound) said += '. The newest ' + bound + ' conversations were read';
-        said += '.';
-      } else if (state === 'archived') {
-        said = 'No conversation here has been archived yet.';
-      } else if (state === 'all') {
-        said = 'This home holds no conversations at all.';
-      } else {
-        // Each state names ITSELF, so every press of the filter changes
-        // this sentence. Two states sharing one sentence made two of the
-        // three presses invisible — which the dead-action sweep reported
-        // as dead buttons, correctly.
-        said = 'No conversation here is active. `all` shows every one under this home.';
-      }
-      el.workList.appendChild(node('p', 'board-empty', said));
+      var bound = read && read.search && read.search.bound;
+      el.workList.appendChild(node('p', 'board-empty',
+        sentence('sessions', 'empty', { state: state, query: face.sessionQuery, bound: bound })));
     }
   }
 
@@ -16605,6 +16780,21 @@ import { node, svg, clip } from './core/dom.js';
     } else {
       el.convState.hidden = true;
     }
+    // P7's selected sentence: what this page is reading, in the
+    // conversation's own voice. One node, held on the head, so a repaint
+    // updates the words instead of stacking a second line.
+    var said = el.convHead._selected;
+    if (!said) {
+      said = node('p', 'derivation');
+      said.dataset.state = 'selected';
+      said.dataset.surface = 'sessions';
+      el.convHead._selected = said;
+      el.convHead.appendChild(said);
+    }
+    said.textContent = sentence('sessions', 'selected', {
+      name: (row && row.title) || sessionLabel(face.session),
+      state: row ? workStateWord(row.state) : ''
+    });
     // The orchestrator, named where the conversation's identity is read:
     // the lead persona's role carries the workload its runs walk. An
     // unassigned conversation shows nothing — the walk is `hard`, as it
@@ -21365,7 +21555,7 @@ import { node, svg, clip } from './core/dom.js';
     }
     if (!out.length) {
       out.push(cfgList('nothing yet', 'no conversation of this persona is on this home',
-        [node('p', 'board-empty', 'Pair a phone, or dispatch a task to this persona.')]));
+        [node('p', 'board-empty', sentence('bots', 'empty'))]));
     }
     return out;
   }
@@ -22307,9 +22497,7 @@ import { node, svg, clip } from './core/dom.js';
         'reach them from outside \u2014 a phone, a webhook, another service.',
         null));
       var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'Still loading. This comes from the channel stores and ' +
-        'the service\u2019s own status document.'));
+      waiting.appendChild(node('p', 'board-empty', sentence('bots', 'loading')));
       el.botsBoard.appendChild(waiting);
       return;
     }
@@ -22375,6 +22563,18 @@ import { node, svg, clip } from './core/dom.js';
       }
     });
     var chosen = botsSectionId();
+    // P7's selected sentence: which section the rail picked and how many
+    // conversations of that persona this home holds. The rail's highlight
+    // is not a sentence, so the page says it in words.
+    if (chosen !== 'channels' && chosen !== 'morning-read') {
+      var picked = (conv.personas || []).filter(function (one) {
+        return one.name === chosen;
+      })[0];
+      board.appendChild(selectedLine('bots', {
+        section: chosen,
+        count: picked ? (picked.sessions || []).length : 0
+      }));
+    }
     if (chosen === 'morning-read') {
       // The morning read (P5's AC): one card, exactly five sentence rows,
       // from the second-brain document. The rail painted before the read
@@ -23918,7 +24118,7 @@ import { node, svg, clip } from './core/dom.js';
         }
       },
       {
-        id: 'advanced', icon: 'dot', name: 'advanced',
+        id: 'advanced', icon: 'advanced', name: 'advanced',
         paint: function () {
           var card = boardCard(12, 'the rest of the app',
             'Every surface that is not a lens, one page each.');
@@ -29773,7 +29973,7 @@ import { node, svg, clip } from './core/dom.js';
     // The conversation is live from the log; every board paints now and
     // again when its own read lands.
     var arrive = {
-      board: function () { readBoard(true).then(paintBoard); },
+      board: function () { paintBoard(); readBoard(true).then(paintBoard); },
       router: function () { paintRouter(); readRouter(true).then(paintRouter); },
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
       memory: function () {

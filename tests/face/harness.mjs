@@ -18856,6 +18856,308 @@ async function aFrameCallRendersItsPreviewCard() {
     boxes.length === 5 && shown.length === 4, shown.length + ' of ' + boxes.length);
 }
 
+// ------------------------------------------------- P7: the four sentences
+//
+// Every surface owes its owner four answers in its own voice — empty,
+// loading, refused, selected (SENTENCES in app.js: one table, one
+// wording). Each family below drives the states a real read produces and
+// asserts the WORDS, so a sentence that is deleted fails here by name
+// instead of leaving a surface that quietly renders nothing. The selected
+// sentence carries the surface's own data (a name, a count), which is why
+// the cases assert its content and not just its presence.
+
+async function p7SessionsNamesItsFourSentences() {
+  const only = {
+    id: 's-1', title: 'the ledger writer', state: 'working',
+    created: '2026-11-20T09:00:00Z', personas: [], class: 'owner',
+  };
+  const loading = boot({ hash: '#/sessions', documents: { sessions: emptySessions() } });
+  check('P7 sessions loading names the archive read',
+    /Reading the archive/.test(loading.text('work-list')),
+    loading.text('work-list').slice(0, 100));
+
+  const refused = boot({ hash: '#/sessions',
+    documents: { sessions: { ...emptySessions(), refused: ['the index is locked'] } } });
+  await flush(); refused.open(); await flush(80);
+  check('P7 sessions refusal names what refused',
+    /could not be read: the index is locked/.test(refused.text('work-list')),
+    refused.text('work-list').slice(0, 140));
+
+  const empty = boot({ hash: '#/sessions', documents: { sessions: emptySessions() } });
+  await flush(); empty.open(); await flush(80);
+  check('P7 sessions empty names the filter that is empty',
+    /No conversation here is active/.test(empty.text('work-list')),
+    empty.text('work-list').slice(0, 140));
+
+  const selected = boot({
+    hash: '#/sessions/s-1',
+    documents: {
+      sessions: {
+        ...emptySessions(),
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, yours: 1, total: 1 },
+        sessions: [only],
+      },
+      state: (asked) => emptyState(asked),
+    },
+  });
+  await flush(); selected.open(); await flush(120);
+  const said = selected.rows('[data-state="selected"]').map((one) => one.textContent).join(' | ');
+  check('P7 sessions selected names the conversation it is reading',
+    /reading the ledger writer/.test(said) && /the transcript below is the whole of it/.test(said),
+    said.slice(0, 160));
+}
+
+async function p7BoardNamesItsFourSentences() {
+  const blank = { type: 'board', plans: [], tasks: [], counts: {}, refused: [] };
+  // The board paints its loading sentence before its read lands, like every
+  // other lens — a blank board while the read is on the wire is exactly the
+  // silent state the four sentences exist to end.
+  const loading = boot({ hash: '#/board', documents: { board: blank } });
+  check('P7 board loading names the work read',
+    /Still loading your work/.test(loading.text('board-board')),
+    loading.text('board-board').slice(0, 120));
+
+  const refused = boot({ hash: '#/board', documents: { board: {
+    ...blank, refused: ['the plan directory is not readable'],
+  } } });
+  await flush(); refused.open(); await flush(80);
+  check('P7 board refusal names what refused',
+    /the plan directory is not readable/.test(refused.text('board-board')),
+    refused.text('board-board').slice(0, 140));
+
+  const empty = boot({ hash: '#/board', documents: { board: blank } });
+  await flush(); empty.open(); await flush(80);
+  check('P7 board empty names the way forward',
+    /No approved plan carries work right now/.test(empty.text('board-board')),
+    empty.text('board-board').slice(0, 140));
+
+  const selected = boot({ hash: '#/board/plan-a', documents: { board: {
+    ...blank,
+    plans: [{ id: 'plan-a', status: 'approved', queued: 1, tasks: [
+      { id: 't1', title: 'one', column: 'queued' },
+      { id: 't2', title: 'two', column: 'done' },
+    ] }],
+  } } });
+  await flush(); selected.open(); await flush(120);
+  check('P7 board selected names the plan and how much it holds',
+    /showing plan-a \u00b7 2 tasks in it/.test(selected.text('board-board')),
+    selected.text('board-board').slice(0, 160));
+}
+
+async function p7DeskNamesItsFourSentences() {
+  const loading = boot({ hash: '#/desk', documents: { desk: { projects: [] } } });
+  check('P7 desk loading names the projects read',
+    /Reading the desk\u2019s projects/.test(loading.text('desk-board')),
+    loading.text('desk-board').slice(0, 140));
+
+  const refused = boot({ hash: '#/desk', documents: { desk: {
+    projects: [], unreadable: [{ slug: 'stale-one', error: 'the document is not valid JSON' }],
+  } } });
+  await flush(); refused.open(); await flush(80);
+  check('P7 desk refusal names the project it could not read',
+    /could not read 1 project: stale-one/.test(refused.text('desk-board')),
+    refused.text('desk-board').slice(0, 160));
+
+  const empty = boot({ hash: '#/desk', documents: { desk: { projects: [] } } });
+  await flush(); empty.open(); await flush(80);
+  check('P7 desk empty names the way forward',
+    /Say what you want made below and the brief opens/.test(empty.text('desk-board')),
+    empty.text('desk-board').slice(0, 160));
+
+  const selected = boot({ hash: '#/desk/landing-copy',
+    documents: { desk: { projects: [deskProject()] } } });
+  await flush(); selected.open(); await flush(120);
+  const said = selected.rows('[data-state="selected"]').map((one) => one.textContent).join(' | ');
+  check('P7 desk selected names the deliverable and where it stands',
+    /open: The landing page's copy/.test(said) && /1 refusal stands/.test(said),
+    said.slice(0, 160));
+}
+
+async function p7HuddlesNamesItsFourSentences() {
+  const blank = { type: 'huddles', active: [], inactive: [], ended: [], counts: {} };
+  const loading = boot({ hash: '#/huddles', documents: { huddles: blank } });
+  check('P7 huddles loading names the rooms read',
+    /Reading your rooms/.test(loading.text('room-empty')),
+    loading.text('room-empty').slice(0, 120));
+
+  const refused = boot({ hash: '#/huddles', documents: { huddles: {
+    ...blank, refused: ['the rooms index is not readable'],
+  } } });
+  await flush(); refused.open(); await flush(80);
+  check('P7 huddles refusal names what refused',
+    /The rooms could not be read/.test(refused.text('room-empty')) &&
+      /the rooms index is not readable/.test(refused.text('room-empty')),
+    refused.text('room-empty').slice(0, 160));
+
+  const empty = boot({ hash: '#/huddles', documents: { huddles: blank } });
+  await flush(); empty.open(); await flush(80);
+  check('P7 huddles empty invites a room',
+    /Start a huddle/.test(empty.text('room-empty')),
+    empty.text('room-empty').slice(0, 120));
+
+  const room = {
+    id: 'a1', title: 'the-q3-board', goal: 'ship it', personas: ['designer', 'scholar'],
+    avatars: {}, state: 'working', preview: 'tightened', from: 'designer',
+    last_write: 1793807000, current: false, awaiting_you: false, deliverables: 2,
+    knowledge: { recalled: 0, wrote: 3 }, parent: null, children: [],
+  };
+  const selected = boot({ hash: '#/huddles/a1', documents: { huddles: {
+    ...blank, active: [room], counts: { active: 1, inactive: 0, ended: 0 },
+  }, state: (asked) => ({ ...emptyState(asked), session: asked, members: [
+    { name: 'designer', voice: 'makes pages' },
+    { name: 'scholar', voice: 'grounds every claim' },
+  ] }) } });
+  await flush(); selected.open(); await flush(160);
+  const said = selected.rows('[data-state="selected"]').map((one) => one.textContent).join(' | ');
+  check('P7 huddles selected names the room, its members and its state',
+    /you are in the-q3-board \u00b7 3 members/.test(said) && /working/.test(said),
+    said.slice(0, 160));
+}
+
+async function p7BotsNamesItsFourSentences() {
+  const loading = boot({ hash: '#/bots', documents: { channels: emptyChannels() } });
+  check('P7 bots loading names the channel read',
+    /Still loading. This comes from the channel stores/.test(loading.text('bots-board')),
+    loading.text('bots-board').slice(0, 140));
+
+  const refused = boot({ hash: '#/bots', documents: { channels: {
+    ...emptyChannels(), refused: ['the channel store is locked'],
+  } } });
+  await flush(); refused.open(); await flush(80);
+  check('P7 bots refusal names what refused',
+    /the channel store is locked/.test(refused.text('bots-board')),
+    refused.text('bots-board').slice(0, 160));
+
+  const quiet = {
+    ...emptyChannels(),
+    conversations: { type: 'conversations', bound: 50, count: 0, needs: 0,
+      personas: [{ name: 'tower', needs: 0, turned_back: 0, sessions: [] }] },
+  };
+  const empty = boot({ hash: '#/bots/tower', documents: { channels: quiet } });
+  await flush(); empty.open(); await flush(120);
+  check('P7 bots empty names how a conversation starts',
+    /Pair a phone, or dispatch a task to this persona/.test(empty.text('bots-board')),
+    empty.text('bots-board').slice(0, 160));
+
+  const busy = {
+    ...emptyChannels(),
+    conversations: { type: 'conversations', bound: 50, count: 1, needs: 0,
+      personas: [{ name: 'tower', needs: 0, turned_back: 0, sessions: [
+        { id: 's-done', title: 'an old task', state: 'completed', needs: false,
+          turned_back: false, personas: ['tower'], last: 'done' },
+      ] }] },
+  };
+  const selected = boot({ hash: '#/bots/tower', documents: { channels: busy } });
+  await flush(); selected.open(); await flush(120);
+  check('P7 bots selected names the persona and its conversations',
+    /showing tower \u00b7 1 conversation/.test(selected.text('bots-board')),
+    selected.text('bots-board').slice(0, 160));
+}
+
+async function p7RouterNamesItsFourSentences() {
+  const blank = {
+    type: 'router', read_at: 'now', refused: [],
+    cache: { entries: 0, keyed: false, workloads: [] }, guidance: [],
+    hours: [], judge: { default_workload: 'quick', lane: 'sys1' },
+    judged: { cached: 0, errors: 0, fresh: 0 }, models: [],
+    payg: { allowed: true, providers: [] },
+    pin: null, recent: [], tiers: [], totals: { calls: 0 }, workloads: [],
+  };
+  const loading = boot({ hash: '#/router', documents: { router: blank } });
+  check('P7 router loading names the live decision it does not wait for',
+    /Still loading. The live decision below/.test(loading.text('router-board')),
+    loading.text('router-board').slice(0, 140));
+
+  const refused = boot({ hash: '#/router',
+    documents: { router: { ...blank, refused: ['the ledger is not readable'] } } });
+  await flush(); refused.open(); await flush(80);
+  check('P7 router refusal names what refused',
+    /the ledger is not readable/.test(refused.text('router-board')),
+    refused.text('router-board').slice(0, 160));
+
+  const empty = boot({ hash: '#/router', documents: { router: blank } });
+  await flush(); empty.open(); await flush(80);
+  check('P7 router empty names where the rows will come from',
+    /No route rows today/.test(empty.text('router-board')),
+    empty.text('router-board').slice(0, 160));
+
+  const pinned = boot({ hash: '#/router',
+    documents: { router: { ...blank, pin: 'anthropic/claude' } } });
+  await flush(); pinned.open(); await flush(80);
+  const said = pinned.rows('[data-state="selected"]').map((one) => one.textContent).join(' | ');
+  check('P7 router selected names the pin it is sending calls to',
+    /pinned to anthropic\/claude/.test(said), said.slice(0, 160));
+}
+
+async function p7DelegationNamesItsFourSentences() {
+  const blank = { type: 'delegation', depth_cap: 2, history: [], live: null, graph: null };
+  const loading = boot({ hash: '#/delegation', documents: { delegation: blank } });
+  check('P7 delegation loading names the two reads it waits on',
+    /Still loading. This comes from the session logs and the graph file/.test(
+      loading.text('delegation-board')),
+    loading.text('delegation-board').slice(0, 140));
+
+  const refused = boot({ hash: '#/delegation',
+    documents: { delegation: { ...blank, refused: ['the graph file is not readable'] } } });
+  await flush(); refused.open(); await flush(80);
+  check('P7 delegation refusal names what refused',
+    /the graph file is not readable/.test(refused.text('delegation-board')),
+    refused.text('delegation-board').slice(0, 160));
+
+  const empty = boot({ hash: '#/delegation', documents: { delegation: blank } });
+  await flush(); empty.open(); await flush(80);
+  check('P7 delegation empty names who writes the graph',
+    /declared no dependency graph/.test(empty.text('delegation-board')),
+    empty.text('delegation-board').slice(0, 160));
+
+  const selected = boot({ hash: '#/delegation', documents: { delegation: {
+    ...blank,
+    graph: {
+      nodes: [
+        { id: 'first', state: 'verified', status: 'verified', cost: 1, prereqs: [],
+          score: 1, peak: 1, paths: [], unlock: { score_zero: true, resource_free: true,
+            deps_verified: true, waiting: [], failed: [], unresolved: [], held: [] } },
+        { id: 'second', state: 'waiting', status: 'pending', cost: 2, prereqs: ['first'],
+          score: 0, peak: 2, paths: [], unlock: { score_zero: false, resource_free: true,
+            deps_verified: false, waiting: ['first'], failed: [], unresolved: [], held: [] } },
+      ],
+      edges: [{ from: 0, to: 1 }], critical_path: [], blocks_most_work: null,
+      revisions: 0, diff_score: 0, replan: false,
+    },
+  } } });
+  await flush(); selected.open(); await flush(120);
+  const said = selected.rows('[data-state="selected"]').map((one) => one.textContent).join(' | ');
+  check('P7 delegation selected names the graph and its node count',
+    /showing the declared graph \u00b7 2 nodes/.test(said), said.slice(0, 160));
+}
+
+async function p7MemoryNamesItsFourSentences() {
+  const loading = boot({ hash: '#/memory', documents: { memory: memoryDoc } });
+  check('P7 memory loading names the corpus read',
+    /Still loading. This comes from the memories/.test(loading.text('memory-board')),
+    loading.text('memory-board').slice(0, 140));
+
+  const refused = boot({ hash: '#/memory',
+    documents: { memory: { ...memoryDoc, refused: ['the memory directory is not readable'] } } });
+  await flush(); refused.open(); await flush(120);
+  check('P7 memory refusal names what refused',
+    /the memory directory is not readable/.test(refused.text('memory-board')),
+    refused.text('memory-board').slice(0, 160));
+
+  const noRetired = { ...memoryDoc, facts: memoryDoc.facts.filter((fact) => !fact.retired) };
+  const empty = boot({ hash: '#/memory/retired', documents: { memory: noRetired } });
+  await flush(); empty.open(); await flush(120);
+  check('P7 memory empty names the section that holds nothing',
+    /No fact in this section yet/.test(empty.text('memory-board')),
+    empty.text('memory-board').slice(0, 160));
+
+  const selected = boot({ hash: '#/memory', documents: { memory: memoryDoc } });
+  await flush(); selected.open(); await flush(120);
+  const said = selected.rows('[data-state="selected"]').map((one) => one.textContent).join(' | ');
+  check('P7 memory selected names the section and how much of the corpus it holds',
+    /showing today\u2019s recall \u00b7 2 of 35 facts/.test(said), said.slice(0, 160));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -19119,6 +19421,17 @@ const cases = [
   ['P1 composer one field and three controls at most', theComposerIsOneFieldAndThreeControls],
   ['P1 fork a turn mark forks at its own turn', theTurnMarkForksAtItsOwnTurn],
   ['P1 preview a frame call renders its card', aFrameCallRendersItsPreviewCard],
+  // P7: the four sentences per surface, pinned by content (a deleted
+  // sentence fails by name; a selected sentence that stops naming what it
+  // selected fails too).
+  ['P7 sessions names its four sentences', p7SessionsNamesItsFourSentences],
+  ['P7 board names its four sentences', p7BoardNamesItsFourSentences],
+  ['P7 desk names its four sentences', p7DeskNamesItsFourSentences],
+  ['P7 huddles names its four sentences', p7HuddlesNamesItsFourSentences],
+  ['P7 bots names its four sentences', p7BotsNamesItsFourSentences],
+  ['P7 router names its four sentences', p7RouterNamesItsFourSentences],
+  ['P7 delegation names its four sentences', p7DelegationNamesItsFourSentences],
+  ['P7 memory names its four sentences', p7MemoryNamesItsFourSentences],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));
