@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="fleet bot">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="stylesheet" href="/bot.css?v=__FLEET_ASSET_HASH__">
+<link rel="stylesheet" href="/bot/bot.css?v=__FLEET_ASSET_HASH__">
 <script>
   // The theme is set before the first paint, from the same storage the
   // console writes — the bot speaks the console's three themes.
@@ -26,7 +26,7 @@
 </head>
 <body>
 <div id="app"></div>
-<script src="/bot.js?v=__FLEET_ASSET_HASH__" defer></script>
+<script src="/bot/bot.js?v=__FLEET_ASSET_HASH__" defer></script>
 <script>
   // Installability. Nothing registered the bot worker before this: the
   // install was offered and the installed app had no shell at all
@@ -44,8 +44,13 @@
     // would be someone else's session. No install there.
     if (window.location.pathname.indexOf('/s/') === 0) return;
     window.addEventListener('load', function () {
+      // The bot's own scope (KI-588). The page and its two assets live
+      // under /bot/, so this worker's scope is /bot/ — a client under it
+      // is matched by the longest scope, which means the console's
+      // /sw.js (scope /) can never control the bot app, and the bot's
+      // offline page is always the bot's own.
       navigator.serviceWorker
-        .register('/bot-sw.js?v=__FLEET_ASSET_HASH__', { scope: '/' })
+        .register('/bot/bot-sw.js?v=__FLEET_ASSET_HASH__', { scope: '/bot/' })
         .catch(function () {});
     });
   })();

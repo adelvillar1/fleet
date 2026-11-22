@@ -17,7 +17,10 @@
  */
 const VERSION = '__FLEET_ASSET_HASH__';
 const CACHE = `fleet-bot-${VERSION}`;
-const SHELL = ['/bot.css?v=' + VERSION, '/bot.js?v=' + VERSION];
+// The two assets live under the worker's own scope (/bot/), which is what
+// lets the bot have a scope the console's /sw.js cannot claim: a worker
+// only sees fetches a client inside its scope makes (KI-588).
+const SHELL = ['/bot/bot.css?v=' + VERSION, '/bot/bot.js?v=' + VERSION];
 
 self.addEventListener('install', (event) => {
   // The shell is fetched once, here, so the cache exists and is non-empty
@@ -97,7 +100,7 @@ self.addEventListener('fetch', (event) => {
   // The two versioned assets, by exact URL: cache-first is safe because
   // the URL changes with the build.
   const versioned =
-    url.pathname === '/bot.css' || url.pathname === '/bot.js';
+    url.pathname === '/bot/bot.css' || url.pathname === '/bot/bot.js';
   if (versioned && url.searchParams.get('v') === VERSION) {
     event.respondWith(
       (async () => {

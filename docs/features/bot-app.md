@@ -59,7 +59,7 @@ relay dials). See `remote-access.md` for the origins and the seal.
 | Inbox | persona rail with counts; conversations grouped under each persona, rows led by the persona's mark; a compact strip above holding only what needs the owner (destructive seats, failures); the dispatch box |
 | Conversation | the participant stack and a `+` in the header; the goal as chrome; per-persona bylines; tool rows; the seat, dressed by its class; the working chip with Stop |
 | Dispatch | who takes it, then the goal, then send — the persona is the first choice because it decides tools, skills, and recall |
-| Install | the bot relay origin (`https://fleetbot.opsh.io`) installs **fleet bot** (its own manifest, worker, icons); the worker's offline retry page says what is true |
+| Install | the bot relay origin (`https://fleetbot.opsh.io`) installs **fleet bot** (its own manifest, worker, icons); the app lives at `/bot/`, its worker's scope is `/bot/`, and the worker's offline retry page says what is true |
 
 ## Two windows, one bridge
 
@@ -99,11 +99,37 @@ and why is [`huddles.md`](huddles.md).
 
 The bot face's allowlist admits exactly: the bot shell and its assets
 (`/`, `/bot.css`, `/bot.js`, `/bot.webmanifest`, `/bot-sw.js`,
-`/bot-icon-*.png`), the stream, and the API the app uses — including
-`/api/inbox`, `/api/session/new` (with an optional `{persona, goal}`
-body), `/api/session/join`, `/api/session/leave`, and the four run
-controls. The console's assets are no longer served remotely: the phone
-gets the bot app, the desk keeps the console.
+`/bot-icon-*.png`), the installed app's scoped set (`/bot/`,
+`/bot/bot.css`, `/bot/bot.js`, `/bot/bot-sw.js` — the same four files by
+another path, which is what gives the worker a scope of its own), the
+stream, and the API the app uses — including `/api/inbox`,
+`/api/session/new` (with an optional `{persona, goal}` body),
+`/api/session/join`, `/api/session/leave`, and the four run controls. The
+console's assets are no longer served remotely: the phone gets the bot
+app, the desk keeps the console.
+
+## The install
+
+The installed app is a real PWA, not an installable page. `bot.html`
+registers `/bot/bot-sw.js?v=<build>` at scope `/bot/` (skipped on a
+relayed `/s/<sid>/` page, where the origin is shared and the asset paths
+carry that prefix). The worker's `VERSION` is the server-substituted
+asset hash, so its cache is `fleet-bot-<build>` — never the registration
+URL's query, which used to yield the literal `fleet-bot-` when a page
+registered without one. `install` pre-caches the two versioned assets, so
+the cache exists and is non-empty the moment the worker activates;
+`activate` deletes the previous `fleet-bot-*` and nothing else (the
+console's `fleet-shell-*` is untouched).
+
+The scope is the point: a client under `/bot/` is matched by the longest
+registered scope, so the console's `/sw.js` (scope `/`) can never control
+the bot app, and a phone with both apps installed sees the bot's own
+retry page — *"the run keeps going without you"* — offline, never the
+console's. Measured 2026-11-21 at 390x844 with both workers registered on
+one origin: bot page controlled by `/bot/bot-sw.js?v=<hash>`, caches
+`fleet-bot-<hash>` (2 entries at install); offline, the bot's page is the
+bot's, the console's is the console's; a hash bump reloads clean
+(`fleet-bot-h1` → `fleet-bot-h2`, the console's cache intact).
 
 ## The session facts
 
@@ -118,9 +144,15 @@ console's own seam). Both appear in `sessions_read` rows and in
 The mockups were verified at 430 and 900 px in all three themes (102 page
 loads: no overflow, controls ≥44 px, fields ≥16 px, every text element at
 WCAG AA). The built face is pinned by tests: the shell names the app and
-its versioned assets; the manifest is the manifest type; the worker's
-cache boundary names exactly `/bot.css` and `/bot.js` and bypasses
-`/api/`, `/events`, and `/pair`; the allowlist answers 403 by name for
-settings, vault, channels, and pairing; a persona join lands as a log
-record and folds into the summary's set; the seat names its destructive
-class from the gate.
+its versioned assets under `/bot/`; the manifest's `id`, `start_url` and
+`scope` are `/bot/`; the worker's `Service-Worker-Allowed` is `/bot/`, its
+cache name and precache URLs are the build's, and its cache boundary names
+exactly `/bot/bot.css` and `/bot/bot.js` and bypasses `/api/`, `/events`,
+and `/pair`; the allowlist answers 403 by name for settings, vault,
+channels, pairing, and the bot's scoped set on the console face; a persona
+join lands as a log record and folds into the summary's set; the seat names
+its destructive class from the gate. The conversation's layout is one rule
+(`.conv` is the flex column its children were already written for) and is
+measured at 390x844: `.scroll` scrolls, `.dock` ends at the viewport edge,
+and `elementFromPoint` on the composer answers the composer — removing the
+rule puts the dock at y=4631 in an 844px `#app`.

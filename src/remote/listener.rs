@@ -103,6 +103,14 @@ const ALLOWED_GET_BOT: &[&str] = &[
     "/bot-sw.js",
     "/bot-icon-192.png",
     "/bot-icon-512.png",
+    // The scoped install set (KI-588): the installed app's own addresses,
+    // under `/bot/`, which is the bot worker's scope. Default deny still
+    // holds — these four are the same four files by another path, added
+    // deliberately so the worker has a scope of its own.
+    "/bot/",
+    "/bot/bot.css",
+    "/bot/bot.js",
+    "/bot/bot-sw.js",
 ];
 
 fn allowed_get(face: RemoteFace) -> &'static [&'static str] {
@@ -659,7 +667,21 @@ fn presented_tokens(request: &Request) -> Vec<String> {
 /// Whether a GET path is the page or one of its assets, which is what a
 /// browser asks for when it has not paired yet.
 fn is_page(path: &str) -> bool {
-    matches!(path, "/" | "/app.css" | "/app.js" | "/bot.css" | "/bot.js")
+    matches!(
+        path,
+        "/" | "/app.css" | "/app.js" | "/bot.css" | "/bot.js" | "/bot/"
+    )
+}
+
+/// One asset at the build's own address: immutable when the query is this
+/// build's stamp, revalidating otherwise. The console's two and the bot's
+/// two answer by the same grammar — one copy of it, so they cannot drift.
+fn versioned_or_plain(content_type: &'static str, body: &'static str, request: &Request) -> Reply {
+    if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
+        crate::gui::server::versioned_asset(content_type, body)
+    } else {
+        asset(content_type, body)
+    }
 }
 
 /// The allowlist check, method-aware. A path may be readable and not
@@ -702,53 +724,50 @@ async fn route_with(
             crate::gui::server::manifest()
         }
         ("GET", "/sw.js") if face == RemoteFace::Console => crate::gui::server::worker(),
-        ("GET", "/app.css") if face == RemoteFace::Console => {
-            if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
-                crate::gui::server::versioned_asset(
-                    "text/css; charset=utf-8",
-                    crate::gui::server::STYLES,
-                )
-            } else {
-                asset("text/css; charset=utf-8", crate::gui::server::STYLES)
-            }
-        }
-        ("GET", "/app.js") if face == RemoteFace::Console => {
-            if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
-                crate::gui::server::versioned_asset(
-                    "text/javascript; charset=utf-8",
-                    crate::gui::server::SCRIPT,
-                )
-            } else {
-                asset("text/javascript; charset=utf-8", crate::gui::server::SCRIPT)
-            }
-        }
+        ("GET", "/app.css") if face == RemoteFace::Console => versioned_or_plain(
+            "text/css; charset=utf-8",
+            crate::gui::server::STYLES,
+            request,
+        ),
+        ("GET", "/app.js") if face == RemoteFace::Console => versioned_or_plain(
+            "text/javascript; charset=utf-8",
+            crate::gui::server::SCRIPT,
+            request,
+        ),
         ("GET", "/bot.webmanifest") if face == RemoteFace::Bot => {
             crate::gui::server::bot_manifest()
         }
-        ("GET", "/bot-sw.js") if face == RemoteFace::Bot => crate::gui::server::bot_worker(),
-        ("GET", "/bot.css") if face == RemoteFace::Bot => {
-            if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
-                crate::gui::server::versioned_asset(
-                    "text/css; charset=utf-8",
-                    crate::gui::server::BOT_STYLES,
-                )
-            } else {
-                asset("text/css; charset=utf-8", crate::gui::server::BOT_STYLES)
-            }
+        ("GET", "/bot-sw.js") if face == RemoteFace::Bot => crate::gui::server::bot_worker("/"),
+        // The bot's scoped install set (KI-588): the shell and its two
+        // assets under `/bot/`, so the bot's worker can be registered at
+        // scope `/bot/` and the console's `/sw.js` (scope `/`) can never
+        // claim the bot app — a client under `/bot/` is matched by the
+        // longest scope, and the console's is shorter. The root paths
+        // stay: `/` is the face's pairing entry and its legacy address.
+        ("GET", "/bot/") if face == RemoteFace::Bot => crate::gui::server::bot_page(),
+        ("GET", "/bot/bot-sw.js") if face == RemoteFace::Bot => {
+            crate::gui::server::bot_worker("/bot/")
         }
-        ("GET", "/bot.js") if face == RemoteFace::Bot => {
-            if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
-                crate::gui::server::versioned_asset(
-                    "text/javascript; charset=utf-8",
-                    crate::gui::server::BOT_SCRIPT,
-                )
-            } else {
-                asset(
-                    "text/javascript; charset=utf-8",
-                    crate::gui::server::BOT_SCRIPT,
-                )
-            }
-        }
+        ("GET", "/bot/bot.css") if face == RemoteFace::Bot => versioned_or_plain(
+            "text/css; charset=utf-8",
+            crate::gui::server::BOT_STYLES,
+            request,
+        ),
+        ("GET", "/bot/bot.js") if face == RemoteFace::Bot => versioned_or_plain(
+            "text/javascript; charset=utf-8",
+            crate::gui::server::BOT_SCRIPT,
+            request,
+        ),
+        ("GET", "/bot.css") if face == RemoteFace::Bot => versioned_or_plain(
+            "text/css; charset=utf-8",
+            crate::gui::server::BOT_STYLES,
+            request,
+        ),
+        ("GET", "/bot.js") if face == RemoteFace::Bot => versioned_or_plain(
+            "text/javascript; charset=utf-8",
+            crate::gui::server::BOT_SCRIPT,
+            request,
+        ),
         ("GET", "/events") => {
             // The stream is written straight to the socket rather than
             // assembled as a reply, so it answers its own head and then
@@ -1637,13 +1656,21 @@ mod tests {
         // the build's own asset URLs, and the manifest, worker, and icon
         // are reachable — none of them carries data.
         // The root is the bot shell (D2): it asks for the bot's own
-        // versioned assets, and the bot's install set answers.
+        // versioned assets under the app's scope (/bot/), and the bot's
+        // install set answers.
         let shell = get(port, "/", &token);
         assert!(
-            shell.contains(&format!("/bot.js?v={}", crate::gui::server::ASSET_HASH)),
+            shell.contains(&format!("/bot/bot.js?v={}", crate::gui::server::ASSET_HASH)),
             "{shell}"
         );
         assert!(shell.contains("fleet bot"), "{shell}");
+        assert!(
+            shell.contains(&format!(
+                "/bot/bot-sw.js?v={}",
+                crate::gui::server::ASSET_HASH
+            )) && shell.contains("scope: '/bot/'"),
+            "the page registers the worker in the app's own scope: {shell}"
+        );
         for (path, content_type) in [
             (
                 "/bot.webmanifest",
@@ -1807,7 +1834,16 @@ mod tests {
         }
         // The bot's assets are not on the work face — and the refusal is
         // named (403 by route), the same rule every closed route answers.
-        for path in ["/bot.css", "/bot.js", "/bot.webmanifest"] {
+        // The scoped set is refused by the same rule: the console face has
+        // no /bot/ of its own (KI-588).
+        for path in [
+            "/bot.css",
+            "/bot.js",
+            "/bot.webmanifest",
+            "/bot/",
+            "/bot/bot.css",
+            "/bot/bot-sw.js",
+        ] {
             let reply = get(port, path, &token);
             assert!(reply.starts_with("HTTP/1.1 403"), "{path}: {reply}");
         }
@@ -1822,17 +1858,51 @@ mod tests {
         // assets are immutable; and the console's assets are gone from
         // the face entirely.
         assert!(crate::gui::server::bot_page().body.contains("fleet bot"));
+        assert!(crate::gui::server::bot_page().body.contains(&format!(
+            "/bot/bot.css?v={}",
+            crate::gui::server::ASSET_HASH
+        )));
         assert!(crate::gui::server::bot_page()
             .body
-            .contains(&format!("/bot.css?v={}", crate::gui::server::ASSET_HASH)));
+            .contains(&format!("/bot/bot.js?v={}", crate::gui::server::ASSET_HASH)));
         let manifest = crate::gui::server::bot_manifest();
         assert_eq!(manifest.content_type, "application/manifest+json");
         assert!(manifest.body.contains("\"name\": \"fleet bot\""));
-        let worker = crate::gui::server::bot_worker();
+        // The bot's identity is the app's own scope (KI-588): installed
+        // from /bot/, it is a client the console's /sw.js cannot match.
+        for key in [
+            "\"id\": \"/bot/\"",
+            "\"start_url\": \"/bot/\"",
+            "\"scope\": \"/bot/\"",
+        ] {
+            assert!(
+                manifest.body.contains(key),
+                "{key} missing: {}",
+                manifest.body
+            );
+        }
+        // The scoped route permits exactly that scope, and no more.
+        let worker = crate::gui::server::bot_worker("/bot/");
         assert!(worker
             .extra
             .iter()
-            .any(|(name, value)| name == "Service-Worker-Allowed" && value == "/"));
+            .any(|(name, value)| name == "Service-Worker-Allowed" && value == "/bot/"));
+        assert!(worker
+            .extra
+            .iter()
+            .any(|(name, value)| name == "Cache-Control" && value == "no-cache"));
+        // The build stamp is substituted into the worker's body — the
+        // cache name and the precache URLs are the build's, never the
+        // registration URL's (a registration without ?v= used to yield
+        // the literal `fleet-bot-`).
+        assert!(!worker.body.contains("__FLEET_ASSET_HASH__"));
+        assert!(worker.body.contains(&format!(
+            "const VERSION = '{}'",
+            crate::gui::server::ASSET_HASH
+        )));
+        assert!(worker.body.contains("fleet-bot-${VERSION}"));
+        assert!(!worker.body.contains("self.location.search"));
+        assert!(worker.body.contains("'/bot/bot.css?v=' + VERSION"));
         let versioned = crate::gui::server::versioned_asset("text/css; charset=utf-8", "x");
         assert!(versioned
             .extra
@@ -1841,8 +1911,8 @@ mod tests {
         // The worker's boundary names the bot's own two assets and
         // bypasses the stream and the API — C16, pinned against the
         // worker's own source.
-        assert!(crate::gui::server::BOT_WORKER.contains("'/bot.css'"));
-        assert!(crate::gui::server::BOT_WORKER.contains("'/bot.js'"));
+        assert!(crate::gui::server::BOT_WORKER.contains("'/bot/bot.css'"));
+        assert!(crate::gui::server::BOT_WORKER.contains("'/bot/bot.js'"));
         assert!(crate::gui::server::BOT_WORKER.contains("'/events'"));
         assert!(crate::gui::server::BOT_WORKER.contains("'/api/'"));
         assert!(!crate::gui::server::BOT_WORKER.contains("'/app.css'"));
@@ -1882,6 +1952,12 @@ mod tests {
             "/",
             "/bot.css",
             "/bot.js",
+            // The scoped install set (KI-588): the installed app's own
+            // addresses, which is what the bot worker's /bot/ scope sees.
+            "/bot/",
+            "/bot/bot.css",
+            "/bot/bot.js",
+            "/bot/bot-sw.js",
             "/api/state",
             "/api/sessions",
             "/api/inbox",

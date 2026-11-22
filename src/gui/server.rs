@@ -3720,13 +3720,18 @@ pub(crate) fn bot_manifest() -> Reply {
     }
 }
 
-pub(crate) fn bot_worker() -> Reply {
+/// The bot worker, at whichever path the face serves it from. `allowed`
+/// is the `Service-Worker-Allowed` value: the legacy root route answers
+/// "/" (the registration it has always had), the scoped route answers
+/// "/bot/" — the installed app's own scope, so a worker at
+/// `/bot/bot-sw.js` can never be registered over the console's origin.
+pub(crate) fn bot_worker(allowed: &'static str) -> Reply {
     Reply {
         status: "200 OK",
         content_type: "text/javascript; charset=utf-8",
         extra: vec![
             ("Cache-Control".to_string(), "no-cache".to_string()),
-            ("Service-Worker-Allowed".to_string(), "/".to_string()),
+            ("Service-Worker-Allowed".to_string(), allowed.to_string()),
             ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
         ],
         // The build stamp, the console worker's own rule: the worker's

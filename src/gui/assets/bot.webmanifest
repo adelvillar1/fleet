@@ -1,9 +1,9 @@
 {
   "name": "fleet bot",
   "short_name": "fleet bot",
-  "id": "/",
-  "start_url": "/",
-  "scope": "/",
+  "id": "/bot/",
+  "start_url": "/bot/",
+  "scope": "/bot/",
   "display": "standalone",
   "background_color": "#f6f4ef",
   "theme_color": "#f6f4ef",
