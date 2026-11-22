@@ -19393,6 +19393,204 @@ async function p6SettingsNamesItsFourSentences() {
       .test(said), said.slice(0, 160));
 }
 
+// The vault's map: every sealed name beside what it unlocks, measured
+// from the document's own providers, tiers and servers — and what its
+// absence costs, derived from the same rows. The fixture is the shape a
+// home really answers: one key a provider reads, one nothing reads.
+function p6VaultDoc(extra) {
+  return p6SettingsDoc(Object.assign({
+    vault: { names: ['ALPHA_API_KEY', 'NOBODY_READS_THIS'], exists: true,
+      passphrase: true,
+      plaintext: [{ name: 'ALPHA_API_KEY', sealed: true },
+        { name: 'BETA_TOKEN', sealed: false }] },
+    catalog: {
+      models: [], tools: [], skills: [],
+      providers: [{ id: 'alpha', key_env: 'ALPHA_API_KEY', key_present: true,
+        enabled: true, base_url: 'http://127.0.0.1:9/v1',
+        models_url: 'http://127.0.0.1:9/v1/models', models: ['m-one', 'm-two'],
+        kind: 'http', billing: 'plan', disabled_models: [] }],
+    },
+    router: { pin: '', judged: [], default_workload: 'quick',
+      min_confidence: 0.55, allow_api_models: false, roster: [],
+      tiers: [
+        { workload: 'quick', candidates: ['alpha/m-one'], resolved: 'alpha/m-one' },
+        { workload: 'hard', candidates: ['alpha/m-two', 'beta/x'], resolved: 'alpha/m-two' },
+      ] },
+    servers: { servers: [{ name: 'github', env_names: ['GITHUB_TOKEN'] }] },
+  }, extra || {}));
+}
+
+async function p6VaultMapNamesWhatEachKeyUnlocks() {
+  const page = boot({ hash: '#/vault', documents: {
+    settings: p6VaultDoc(), state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(120);
+
+  const rows = page.rows('.vault-map-row');
+  check('P6 the map lists every sealed name',
+    rows.length === 2 && rows.map((one) => one.dataset.name).join(',') ===
+      'ALPHA_API_KEY,NOBODY_READS_THIS',
+    rows.map((one) => one.dataset.name).join(','));
+
+  const read = rows.find((one) => one.dataset.name === 'ALPHA_API_KEY');
+  const said = read ? String(read.textContent) : '';
+  check('P6 the map names what the key unlocks, measured from the catalog',
+    /unlocks the alpha provider \u2014 2 router candidates/.test(said),
+    said.slice(0, 200));
+  check('P6 the map names what breaks without the key',
+    /without it: alpha leaves every candidate order, and quick falls to the default workload `quick`/
+      .test(said),
+    said.slice(0, 260));
+
+  const unread = rows.find((one) => one.dataset.name === 'NOBODY_READS_THIS');
+  const unreadSaid = unread ? String(unread.textContent) : '';
+  check('P6 a key nothing reads says exactly that',
+    /nothing in this home reads it/.test(unreadSaid), unreadSaid.slice(0, 200));
+  check('P6 an unprobeable key says why it cannot be tested',
+    /no provider reads this key/.test(unreadSaid) &&
+      !unreadSaid.includes('test this key'), unreadSaid.slice(0, 260));
+}
+
+async function p6VaultTestThisKeyPressesTheProbe() {
+  let asked = null;
+  const page = boot({
+    hash: '#/vault',
+    documents: { settings: p6VaultDoc(), state: (asked0) => emptyState(asked0) },
+    settingsReply: (body) => {
+      asked = body;
+      return { status: 200, body: { type: 'settings_write', op: 'provider-discover',
+        wrote: { id: 'alpha', discovery: { ok: true, error: null,
+          models: ['m-one', 'm-two', 'm-three'], settings_written: 3 } } } };
+    },
+  });
+  await flush(); page.open(); await flush(120);
+
+  const row = page.rows('.vault-map-row')
+    .find((one) => one.dataset.name === 'ALPHA_API_KEY');
+  const press = row ? [...row.querySelectorAll('button')]
+    .find((one) => one.textContent === 'test this key') : null;
+  check('P6 the map offers test this key on a readable key', !!press,
+    row ? String(row.textContent).slice(0, 160) : 'no row');
+  if (!press) return;
+  press.click();
+  await flush(160);
+
+  const posted = page.calls.filter((call) => call.method === 'POST' &&
+    call.url === '/api/settings' && String(call.body).includes('provider-discover'));
+  check('P6 the press runs the provider probe the router owns',
+    posted.length === 1 && String(posted[0].body).includes('"id":"alpha"'),
+    JSON.stringify(posted.map((call) => call.body)));
+  const answer = page.rows('.vault-probe').map((one) => String(one.textContent)).join(' | ');
+  check('P6 the probe\u2019s answer names itself in the row',
+    /the key answered \u2014 3 models listed by alpha/.test(answer), answer.slice(0, 200));
+  check('P6 the probe posted no second settings write of its own',
+    page.calls.filter((call) => call.method === 'POST' && call.url === '/api/settings')
+      .length === 1,
+    JSON.stringify(page.calls.filter((call) => call.method === 'POST' &&
+      call.url === '/api/settings').map((call) => call.body)));
+}
+
+async function p6VaultProbeRefusalIsNamed() {
+  const page = boot({
+    hash: '#/vault',
+    documents: { settings: p6VaultDoc(), state: (asked) => emptyState(asked) },
+    settingsReply: () => ({ status: 200, body: { type: 'settings_write',
+      op: 'provider-discover',
+      wrote: { id: 'alpha', discovery: { ok: false,
+        error: '401 from the listing', models: [], settings_written: 0 } } } }),
+  });
+  await flush(); page.open(); await flush(120);
+  const row = page.rows('.vault-map-row')
+    .find((one) => one.dataset.name === 'ALPHA_API_KEY');
+  const press = row ? [...row.querySelectorAll('button')]
+    .find((one) => one.textContent === 'test this key') : null;
+  if (!press) {
+    check('P6 a refused probe names the provider\u2019s own words', false, 'no press');
+    return;
+  }
+  press.click();
+  await flush(160);
+  const answer = page.rows('.vault-probe').map((one) => String(one.textContent)).join(' | ');
+  check('P6 a refused probe names the provider\u2019s own words',
+    /the key did not answer: 401 from the listing/.test(answer), answer.slice(0, 200));
+}
+
+async function p6VaultMigrationNamesTheDeleteStep() {
+  const page = boot({ hash: '#/vault', documents: {
+    settings: p6VaultDoc(), state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(120);
+
+  const card = page.rows('.vault-migration')[0];
+  check('P6 the .env migration is a guided card', !!card,
+    String(page.rows('.vault-migration').length));
+  if (!card) return;
+  const steps = page.rows('.vault-step');
+  const sealed = steps.find((one) => one.dataset.name === 'ALPHA_API_KEY');
+  const open = steps.find((one) => one.dataset.name === 'BETA_TOKEN');
+  check('P6 a sealed name sits on the delete-the-plaintext step',
+    !!sealed && sealed.dataset.step === '3' &&
+      /delete the plaintext `ALPHA_API_KEY` line from \.env/.test(
+        String(sealed.textContent)),
+    sealed ? String(sealed.textContent).slice(0, 240) : 'no sealed step');
+  check('P6 an unsealed line sits on the seal step',
+    !!open && open.dataset.step === '1' &&
+      /step 1 of 3: seal this line into the vault/.test(String(open.textContent)),
+    open ? String(open.textContent).slice(0, 200) : 'no open step');
+
+  const drop = sealed ? [...sealed.querySelectorAll('button')]
+    .find((one) => one.textContent === 'delete the .env line') : null;
+  check('P6 the delete step carries its press', !!drop,
+    sealed ? String(sealed.textContent).slice(0, 160) : 'no sealed step');
+  if (!drop) return;
+  drop.click();
+  await flush(120);
+  const posted = page.calls.filter((call) => call.method === 'POST' &&
+    String(call.body).includes('vault-remove-env'));
+  check('P6 the delete press removes the plaintext line, server-side',
+    posted.length === 1 && String(posted[0].body).includes('"name":"ALPHA_API_KEY"'),
+    JSON.stringify(posted.map((call) => call.body)));
+}
+
+async function p6VaultNamesItsFourSentences() {
+  const loading = boot({ hash: '#/vault', documents: { settings: {} } });
+  check('P6 vault loading names the files it reads',
+    /Still loading. This comes from the vault file and the plaintext \.env/.test(
+      loading.text('vault-board')),
+    loading.text('vault-board').slice(0, 140));
+
+  const refused = boot({ hash: '#/vault', documents: {
+    settings: p6VaultDoc({ refused: ['the vault file is not readable'] }),
+    state: (asked) => emptyState(asked),
+  } });
+  await flush(); refused.open(); await flush(80);
+  check('P6 vault refusal names what refused',
+    /The vault could not be read: the vault file is not readable/.test(
+      refused.text('vault-board')),
+    refused.text('vault-board').slice(0, 200));
+
+  const empty = boot({ hash: '#/vault', documents: {
+    settings: p6VaultDoc({ vault: { names: [], exists: false, passphrase: false,
+      plaintext: [] } }),
+    state: (asked) => emptyState(asked),
+  } });
+  await flush(); empty.open(); await flush(80);
+  check('P6 vault empty says the map fills as keys are sealed',
+    /No credential is sealed yet, and no \.env line waits to be sealed/.test(
+      empty.text('vault-board')),
+    empty.text('vault-board').slice(0, 200));
+
+  const selected = boot({ hash: '#/vault', documents: {
+    settings: p6VaultDoc(), state: (asked) => emptyState(asked),
+  } });
+  await flush(); selected.open(); await flush(120);
+  const said = selected.rows('[data-state="selected"]')
+    .map((one) => one.textContent).join(' | ');
+  check('P6 vault selected names the map and the plaintext left behind',
+    /the map \u00b7 2 sealed names beside what each unlocks/.test(said) &&
+      /1 plaintext line still in \.env/.test(said), said.slice(0, 200));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -19671,6 +19869,11 @@ const cases = [
   ['P6 the postures map both ways', p6SettingsPosturesMapBothWays],
   ['P6 an unmapped knob is named, never dropped', p6SettingsUnclaimedKnobIsNamed],
   ['P6 settings names its four sentences', p6SettingsNamesItsFourSentences],
+  ['P6 the vault map names what each key unlocks', p6VaultMapNamesWhatEachKeyUnlocks],
+  ['P6 test this key runs the provider probe', p6VaultTestThisKeyPressesTheProbe],
+  ['P6 a refused probe names its reason', p6VaultProbeRefusalIsNamed],
+  ['P6 the .env migration names the delete step', p6VaultMigrationNamesTheDeleteStep],
+  ['P6 vault names its four sentences', p6VaultNamesItsFourSentences],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

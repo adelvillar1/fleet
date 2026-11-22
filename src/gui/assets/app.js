@@ -8195,6 +8195,20 @@ import { node, svg, clip } from './core/dom.js';
         return 'showing ' + d.section + ' \u00b7 ' + d.rows +
           (d.rows === 1 ? ' row' : ' rows') + ' \u2014 every write rides the writer the CLI rides';
       }
+    },
+    // The vault's four answers are about the MAP, not the passphrase: what
+    // a sealed name is worth is what reads it, and an empty vault says so
+    // rather than showing a lock with nothing behind it.
+    vault: {
+      empty: 'No credential is sealed yet, and no .env line waits to be sealed \u2014 the map fills as keys are sealed.',
+      loading: 'Still loading. This comes from the vault file and the plaintext .env beside it.',
+      refused: function (said) { return 'The vault could not be read: ' + said.join('; '); },
+      selected: function (d) {
+        return 'the map \u00b7 ' + d.names + (d.names === 1 ? ' sealed name' : ' sealed names') +
+          ' beside what each unlocks' +
+          (d.plaintext ? ' \u00b7 ' + d.plaintext + ' plaintext line' +
+            (d.plaintext === 1 ? '' : 's') + ' still in .env' : '');
+      }
     }
   };
 
@@ -29266,6 +29280,272 @@ import { node, svg, clip } from './core/dom.js';
     return sections;
   }
 
+  // ---------------------------------------------------- the unlock map (P6)
+  //
+  // A sealed name is not a credential; it is a promise that something
+  // downstream will find a key. The map says WHICH thing, measured from
+  // this home's own document — the catalog's providers name their
+  // `key_env`, the router's tiers name the models those providers serve,
+  // the MCP servers name their `env_names`, and the channel names its
+  // token — and then what breaks without it. Nothing here is a
+  // hand-written table of consequences: a key nobody reads says exactly
+  // that, and a key that cannot be probed says why.
+  //
+  // The probe is the one the router already owns: `provider-discover`
+  // reads the key the way a run would (vault over dotenv over the
+  // process) and asks the provider's own listing. "Test this key" is that
+  // press, pointed at the provider the key belongs to — never a second
+  // probe with its own idea of what a key is for.
+  function vaultReaders(read, name) {
+    var providers = (read.catalog && read.catalog.providers) || [];
+    var servers = ((read.servers && read.servers.servers) || read.servers || []);
+    return {
+      providers: providers.filter(function (one) { return one.key_env === name; }),
+      servers: servers.filter(function (one) {
+        return (one.env_names || []).indexOf(name) !== -1;
+      })
+    };
+  }
+
+  /// What one sealed name unlocks, and what its absence costs. Both
+  /// sentences are derived; neither is a lookup table's prose.
+  function vaultReading(read, name) {
+    var readers = vaultReaders(read, name);
+    var tiers = (read.router && read.router.tiers) || [];
+    var fallback = (read.router && read.router.default_workload) || '';
+    var candidates = 0;
+    var stranded = [];
+    readers.providers.forEach(function (provider) {
+      var mine = (provider.models || []).map(function (model) {
+        return provider.id + '/' + model;
+      });
+      tiers.forEach(function (tier) {
+        var all = (tier.candidates || []);
+        var carrying = all.filter(function (candidate) {
+          return mine.indexOf(candidate) !== -1;
+        });
+        candidates += carrying.length;
+        // A tier whose whole order came from this provider has nothing
+        // left to fall back on: it walks to the default workload. Any
+        // other tier simply takes its next candidate.
+        if (carrying.length && carrying.length === all.length) {
+          stranded.push(tier.workload);
+        }
+      });
+    });
+    var channel = name === 'FLEET_TELEGRAM_BOT_TOKEN';
+    var unlocks = [];
+    var without = [];
+    if (readers.providers.length) {
+      var ids = readers.providers.map(function (one) { return one.id; });
+      unlocks.push('the ' + ids.join(' and ') + ' provider' +
+        (ids.length === 1 ? '' : 's') +
+        (candidates
+          ? ' \u2014 ' + candidates + ' router candidate' + (candidates === 1 ? '' : 's')
+          : ' \u2014 no router tier names its models'));
+      without.push('without it: ' + ids.join(' and ') + ' leave' +
+        (ids.length === 1 ? 's' : '') + ' every candidate order' +
+        (stranded.length
+          ? ', and ' + stranded.join(' and ') + ' fall' +
+            (stranded.length === 1 ? 's' : '') + ' to the default workload `' +
+            (fallback || 'the compiled default') + '`'
+          : (candidates ? '; their tiers take the next candidate' : '')));
+    }
+    if (readers.servers.length) {
+      var names = readers.servers.map(function (one) { return one.name; });
+      unlocks.push('the ' + names.join(' and ') + ' MCP server' +
+        (names.length === 1 ? '' : 's'));
+      without.push('without it: ' + names.join(' and ') +
+        ' launch' + (names.length === 1 ? 'es' : '') + ' without that variable');
+    }
+    if (channel) {
+      unlocks.push('the telegram channel');
+      without.push('without it: the telegram channel cannot answer');
+    }
+    if (!unlocks.length) {
+      unlocks.push('nothing in this home reads it');
+      without.push('without it: nothing changes \u2014 no provider, server, or channel names ' +
+        'this key yet, so sealing it is a promise the home has not made');
+    }
+    return { unlocks: unlocks.join(' \u00b7 '), without: without.join(' \u00b7 '),
+      readers: readers };
+  }
+
+  /// Why a key cannot be probed here, or `''` when it can. A key no
+  /// provider reads has no listing to ask; a provider with no listing URL
+  /// has nowhere to ask; a disabled provider would test a door this home
+  /// does not open.
+  function vaultProbeRefusal(read, name) {
+    var readers = vaultReaders(read, name).providers;
+    if (!readers.length) {
+      return 'no provider reads this key \u2014 there is no listing to ask, so it cannot be ' +
+        'tested from here';
+    }
+    var reachable = readers.filter(function (one) {
+      return one.enabled !== false && (one.models_url || one.base_url);
+    });
+    if (!reachable.length) {
+      var off = readers.filter(function (one) { return one.enabled === false; });
+      if (off.length === readers.length) {
+        return 'every provider that reads it is disabled \u2014 the probe would test a door ' +
+          'this home does not open';
+      }
+      return 'the provider that reads it names no listing URL \u2014 the probe has nowhere ' +
+        'to ask';
+    }
+    return '';
+  }
+
+  /// One sealed name's row: the name, what it unlocks, what its absence
+  /// costs, the test press, and — when the press has answered — the
+  /// answer itself, remembered on the surface so a repaint keeps it.
+  function vaultMapRow(read, name) {
+    var row = node('div', 'list-row vault-map-row');
+    row.dataset.role = 'sealed';
+    row.dataset.name = name;
+    var head = node('div', 'vault-map-head');
+    head.appendChild(node('span', 'list-row-key', name));
+    head.appendChild(badge('sealed', 'ok'));
+    row.appendChild(head);
+    var reading = vaultReading(read, name);
+    row.appendChild(node('p', 'derivation vault-unlocks', 'unlocks ' + reading.unlocks));
+    row.appendChild(node('p', 'derivation vault-without', reading.without));
+
+    var refusal = vaultProbeRefusal(read, name);
+    var probe = (face.vaultProbes || {})[name];
+    var acts = node('div', 'replay-actions');
+    if (refusal) {
+      // The honest refusal: an unprobeable key says why, in the row
+      // where the press would have stood.
+      acts.appendChild(node('span', 'cfg-note vault-unprobeable', refusal));
+    } else {
+      var target = reading.readers.providers.filter(function (one) {
+        return one.enabled !== false && (one.models_url || one.base_url);
+      })[0];
+      var test = node('button', 'replay-button', 'test this key');
+      test.type = 'button';
+      test.dataset.role = 'test-key';
+      test.title = 'asks ' + target.id + '\u2019s own listing for its models, reading the key ' +
+        'the way a run would';
+      test.addEventListener('click', function () {
+        test.disabled = true;
+        test.textContent = 'asking ' + target.id + '\u2026';
+        face.vaultProbes = face.vaultProbes || {};
+        face.vaultProbes[name] = { pending: true };
+        paintVault();
+        writeSettings('provider-discover', { id: target.id }, function (reply) {
+          var discovery = (reply && reply.body && reply.body.wrote &&
+            reply.body.wrote.discovery) || null;
+          face.vaultProbes[name] = discovery
+            ? { ok: !!discovery.ok, said: discovery.ok
+              ? 'the key answered \u2014 ' + (discovery.models || []).length + ' model' +
+                ((discovery.models || []).length === 1 ? '' : 's') + ' listed by ' + target.id
+              : 'the key did not answer: ' + (discovery.error || 'the listing refused silently') }
+            : { ok: false, said: 'the write did not answer with a discovery \u2014 nothing ' +
+              'was tested' };
+          paintVault();
+        });
+      });
+      acts.appendChild(test);
+    }
+    var remove = node('button', 'replay-button', 'remove');
+    remove.type = 'button';
+    remove.addEventListener('click', function () {
+      if (!window.confirm('Remove the sealed entry `' + name + '`?')) return;
+      writeSettings('secret-remove', { name: name });
+    });
+    acts.appendChild(remove);
+    row.appendChild(acts);
+    if (probe && probe.pending) {
+      row.appendChild(node('p', 'derivation vault-probe', 'asking \u2026'));
+    } else if (probe) {
+      var said = node('p', 'derivation vault-probe', probe.said);
+      said.dataset.tone = probe.ok ? 'good' : 'bad';
+      said.setAttribute('role', 'alert');
+      row.appendChild(said);
+    }
+    return row;
+  }
+
+  /// The guided migration: a plaintext .env credential is three steps, and
+  /// the card says which one the owner is on. The step that matters most
+  /// is the last one — the sealed name overrides the plaintext line, so
+  /// leaving the line behind leaves the credential in the clear — and it
+  /// is named, not implied.
+  function vaultMigrationCard(read) {
+    var vault = read.vault || {};
+    var plaintext = (vault.plaintext || []);
+    if (!plaintext.length) return null;
+    var card = boardCard(12, 'the .env migration',
+      'seal \u00b7 test \u00b7 delete the plaintext line');
+    card.classList.add('vault-migration');
+    plaintext.forEach(function (entry) {
+      var sealed = vault.names && vault.names.indexOf(entry.name) !== -1;
+      var step = sealed ? 3 : 1;
+      var row = node('div', 'list-row vault-step');
+      row.dataset.name = entry.name;
+      row.dataset.step = String(step);
+      var head = node('div', 'vault-map-head');
+      head.appendChild(node('span', 'list-row-key', entry.name));
+      head.appendChild(badge(sealed ? 'sealed' : 'plaintext', sealed ? 'ok' : 'warn'));
+      head.appendChild(node('span', 'cfg-note', 'step ' + step + ' of 3'));
+      row.appendChild(head);
+      var said = sealed
+        ? 'step 3 of 3: the sealed name answers, so delete the plaintext `' + entry.name +
+          '` line from .env \u2014 while it stays, the credential sits in the clear beside ' +
+          'the copy that is sealed'
+        : 'step 1 of 3: seal this line into the vault (the value never reaches this page); ' +
+          'then test the sealed name, then delete the plaintext line';
+      row.appendChild(node('p', 'derivation', said));
+      var acts = node('div', 'replay-actions');
+      if (sealed) {
+        var drop = node('button', 'replay-button replay-resume', 'delete the .env line');
+        drop.type = 'button';
+        drop.addEventListener('click', function () {
+          if (!window.confirm('Remove the plaintext `' + entry.name + '` line from .env?')) {
+            return;
+          }
+          writeSettings('vault-remove-env', { name: entry.name });
+        });
+        acts.appendChild(drop);
+      } else {
+        var seal = node('button', 'replay-button replay-resume', 'seal it');
+        seal.type = 'button';
+        seal.addEventListener('click', function () {
+          writeSettings('vault-seal-env', { name: entry.name });
+        });
+        acts.appendChild(seal);
+      }
+      row.appendChild(acts);
+      card.appendChild(row);
+    });
+    card.appendChild(node('p', 'cfg-note',
+      'A sealed name overrides its plaintext line, so the seal takes effect the moment it ' +
+      'lands \u2014 and the line left behind is still a credential in the clear.'));
+    return card;
+  }
+
+  function vaultMapCard(read) {
+    var vault = read.vault || {};
+    var names = (vault.names || []).slice();
+    var card = boardCard(12, 'the unlock map',
+      names.length + (names.length === 1 ? ' sealed name' : ' sealed names') +
+      ' \u00b7 what each one unlocks, measured from this home');
+    card.classList.add('vault-map');
+    card.appendChild(selectedLine('vault', {
+      names: names.length,
+      plaintext: (vault.plaintext || []).filter(function (entry) {
+        return !entry.sealed;
+      }).length
+    }));
+    if (!names.length) {
+      card.appendChild(node('p', 'board-empty', sentence('vault', 'empty', {})));
+      return card;
+    }
+    names.forEach(function (name) { card.appendChild(vaultMapRow(read, name)); });
+    return card;
+  }
+
   function paintVault() {
     var read = face.settings;
     el.vaultBoard.textContent = '';
@@ -29273,8 +29553,7 @@ import { node, svg, clip } from './core/dom.js';
       el.vaultBoard.appendChild(surfaceHead('System', 'Vault',
         'The credentials Fleet seals, and the passphrase that keys them.', null));
       var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'Still loading. This comes from the vault and the .env file.'));
+      waiting.appendChild(node('p', 'board-empty', sentence('vault', 'loading', {})));
       el.vaultBoard.appendChild(waiting);
       return;
     }
@@ -29285,8 +29564,16 @@ import { node, svg, clip } from './core/dom.js';
       null);
     el.vaultBoard.appendChild(surfaceHead('System', 'Vault',
       'The credentials Fleet seals, and the passphrase that keys them. A value is never ' +
-      'rendered; onboarding creates the vault and migrates the plaintext .env entries.',
+      'rendered; every sealed name is listed beside what it unlocks, and the plaintext ' +
+      '.env line it replaces is named until it is deleted.',
       instrument));
+    if (read.refused && read.refused.length) {
+      el.vaultBoard.appendChild(node('p', 'derivation',
+        sentence('vault', 'refused', read.refused)));
+    }
+    el.vaultBoard.appendChild(vaultMapCard(read));
+    var migration = vaultMigrationCard(read);
+    if (migration) el.vaultBoard.appendChild(migration);
     el.vaultBoard.appendChild(vaultCard('vault-card'));
   }
 
@@ -29381,16 +29668,8 @@ import { node, svg, clip } from './core/dom.js';
       unlockForm.appendChild(passphrase);
       unlockForm.appendChild(unlock);
       card.appendChild(unlockForm);
-      if (read.names.length) {
-        card.appendChild(node('p', 'cfg-note',
-          'The sealed names are still readable; their values are not.'));
-        read.names.forEach(function (name) {
-          var row = node('div', 'list-row');
-          row.appendChild(node('span', 'list-row-key', name));
-          row.appendChild(badge('sealed', 'ok'));
-          card.appendChild(row);
-        });
-      }
+      // The sealed names are listed by the map above, which is where a
+      // name's worth is stated; this branch only owes the passphrase.
       // The recovery path for a forgotten passphrase.
       var forgot = node('details', 'cfg-details');
       forgot.appendChild(node('summary', 'cfg-summary', 'I do not know the passphrase'));
@@ -29457,58 +29736,9 @@ import { node, svg, clip } from './core/dom.js';
       card.appendChild(create);
     }
 
-    if (read.names.length) {
-      read.names.forEach(function (name) {
-        var row = node('div', 'list-row');
-        row.appendChild(node('span', 'list-row-key', name));
-        row.appendChild(badge('sealed', 'ok'));
-        var remove = node('button', 'replay-button', 'remove');
-        remove.type = 'button';
-        remove.addEventListener('click', function () {
-          if (!window.confirm('Remove the sealed entry `' + name + '`?')) return;
-          writeSettings('secret-remove', { name: name });
-        });
-        row.appendChild(remove);
-        card.appendChild(row);
-      });
-    } else if (read.exists) {
-      card.appendChild(node('p', 'board-empty', 'No entry is sealed yet.'));
-    }
-
-    // The .env side: seal a plaintext credential, then drop the line. Both
-    // actions are server-side, so the value never reaches this page.
-    if ((read.plaintext || []).length) {
-      card.appendChild(node('h3', 'form-section', 'in .env'));
-      card.appendChild(node('p', 'cfg-note',
-        'A sealed name overrides its plaintext line. Seal first, then drop the line.'));
-      read.plaintext.forEach(function (entry) {
-        var row = node('div', 'list-row');
-        row.appendChild(node('span', 'list-row-key', entry.name));
-        row.appendChild(badge(entry.sealed ? 'sealed' : 'plaintext',
-          entry.sealed ? 'ok' : 'warn'));
-        var actions = node('div', 'replay-actions');
-        if (entry.sealed) {
-          var drop = node('button', 'replay-button', 'drop the .env line');
-          drop.type = 'button';
-          drop.addEventListener('click', function () {
-            if (!window.confirm('Remove the plaintext `' + entry.name + '` line from .env?')) {
-              return;
-            }
-            writeSettings('vault-remove-env', { name: entry.name });
-          });
-          actions.appendChild(drop);
-        } else {
-          var seal = node('button', 'replay-button', 'seal it');
-          seal.type = 'button';
-          seal.addEventListener('click', function () {
-            writeSettings('vault-seal-env', { name: entry.name });
-          });
-          actions.appendChild(seal);
-        }
-        row.appendChild(actions);
-        card.appendChild(row);
-      });
-    }
+    // The sealed names and the plaintext .env lines are the map's and the
+    // migration card's above: one list each, beside what each one is
+    // worth. This card owes only the passphrase and the seal form.
 
     var form = node('div', 'cfg-form');
     var name = node('input', 'knob-box');
