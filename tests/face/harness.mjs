@@ -18748,6 +18748,114 @@ async function theTurnMarkForksAtItsOwnTurn() {
     refused.window.location.hash + ' :: ' + notices.map((one) => one.textContent).join(' | ').slice(0, 160));
 }
 
+// P1, artifact preview cards: a call that makes something the desk names
+// carries a card of it on its own row — the frame's own page as a
+// thumbnail, a handed-over file as a chip — and the card opens the pane.
+// Nothing is invented: a call whose record names no frame says so, a
+// refused call names the permission, and a call with no artifact draws no
+// card at all.
+async function aFrameCallRendersItsPreviewCard() {
+  const page = boot({ hash: '#/sessions/art-1', documents: {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('art-1', 'completed', { title: 'a run that made things' })],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked,
+      events: [{ type: 'message', role: 'owner', text: 'make the page' }],
+    }),
+  } });
+  await flush();
+  page.open();
+  await flush(60);
+
+  // A frame: the board and the name from the call's arguments, the id
+  // from the result's own words.
+  page.push({ type: 'turn', turn: 1 });
+  page.push({
+    type: 'tool_call', tool: 'frame',
+    summary: 'a hero page on `hero`',
+    arguments: JSON.stringify({ project: 'hero', name: 'the hero page', html: '<p>hi</p>' }),
+  });
+  await flush(20);
+  page.push({
+    type: 'tool_result', tool: 'frame', approved: true,
+    preview: 'frame added: project `hero`, frame `f-12`. It is on the design page now',
+  });
+  await flush(60);
+  const rows = page.rows('.tool-preview');
+  const frameRow = rows.filter((one) => one.querySelector('.preview-thumb'))[0];
+  check('P1 preview a frame call renders its thumbnail',
+    !!frameRow, rows.length + ' preview boxes');
+  const thumb = frameRow && frameRow.querySelector('.preview-thumb');
+  check('P1 preview the thumbnail is the frame\u2019s own served page',
+    !!thumb && thumb.attrs.src === '/api/design/frame/hero/f-12' &&
+      thumb.attrs.sandbox === 'allow-scripts',
+    thumb ? String(thumb.attrs.src) + ' / ' + thumb.attrs.sandbox : 'no thumb');
+  const chip = frameRow && frameRow.querySelector('.preview-chip');
+  check('P1 preview the chip names the page and its board',
+    !!chip && /the hero page/.test(chip.textContent) && /hero/.test(chip.textContent),
+    chip ? chip.textContent : 'no chip');
+  if (chip) chip.click();
+  await flush(40);
+  check('P1 preview the chip opens the board it names',
+    page.window.location.hash === '#/design/hero', page.window.location.hash);
+
+  // A frame whose record names no id: the card says so rather than
+  // showing an empty frame.
+  page.push({ type: 'tool_call', tool: 'frame', summary: 'a second page',
+    arguments: JSON.stringify({ project: 'hero', name: 'the second page' }) });
+  await flush(20);
+  page.push({ type: 'tool_result', tool: 'frame', approved: true, preview: 'frame added: project `hero`' });
+  await flush(60);
+  const empties = page.rows('.preview-empty').map((one) => String(one.textContent || ''));
+  check('P1 preview a frame with no id says so',
+    empties.some((one) => /no thumbnail/.test(one)), empties.join(' | '));
+  check('P1 preview the honest empty draws no thumbnail for it',
+    page.rows('.preview-thumb').length === 1, String(page.rows('.preview-thumb').length));
+
+  // A refused call names the permission, never a picture of what was not
+  // made.
+  page.push({ type: 'tool_call', tool: 'frame', summary: 'a third page',
+    arguments: JSON.stringify({ project: 'hero', name: 'the third page' }) });
+  await flush(20);
+  page.push({ type: 'tool_result', tool: 'frame', approved: false,
+    resolution: 'refused \u00b7 the write class needs a seat' });
+  await flush(60);
+  const refused = page.rows('.preview-empty').map((one) => String(one.textContent || ''));
+  check('P1 preview a refused call names the permission',
+    refused.some((one) => /not run/.test(one) && /needs a seat/.test(one)),
+    refused.join(' | '));
+
+  // A file handed over: the chip is the delivery.
+  page.push({ type: 'tool_call', tool: 'send_file', summary: 'the report',
+    arguments: JSON.stringify({ path: '/w/out/report.pdf', note: 'the report' }) });
+  await flush(20);
+  page.push({ type: 'tool_result', tool: 'send_file', approved: true, preview: 'handed over /w/out/report.pdf' });
+  await flush(60);
+  const fileChip = page.rows('.preview-chip').filter((one) => /report\.pdf/.test(one.textContent))[0];
+  check('P1 preview a handed-over file renders its chip', !!fileChip,
+    page.rows('.preview-chip').map((one) => one.textContent).join(' | '));
+  const before = page.calls.length;
+  if (fileChip) fileChip.click();
+  await flush(60);
+  check('P1 preview the file chip opens the pane',
+    page.calls.slice(before).some((one) => one.url.startsWith('/api/file')),
+    JSON.stringify(page.calls.slice(before).map((one) => one.url)));
+
+  // A call that makes no artifact draws no card: the preview stays hidden.
+  page.push({ type: 'tool_call', tool: 'read_file', summary: 'Cargo.toml',
+    arguments: JSON.stringify({ path: 'Cargo.toml' }) });
+  await flush(20);
+  page.push({ type: 'tool_result', tool: 'read_file', approved: true, preview: '[package]' });
+  await flush(60);
+  const boxes = page.rows('.tool-preview');
+  const shown = boxes.filter((one) => !one.hidden);
+  check('P1 preview a call with no artifact draws no card',
+    boxes.length === 5 && shown.length === 4, shown.length + ' of ' + boxes.length);
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -19010,6 +19118,7 @@ const cases = [
   ['P1 gutter the rail counts each turn\u2019s receipts from the log', theGutterCountsEachTurnsReceipts],
   ['P1 composer one field and three controls at most', theComposerIsOneFieldAndThreeControls],
   ['P1 fork a turn mark forks at its own turn', theTurnMarkForksAtItsOwnTurn],
+  ['P1 preview a frame call renders its card', aFrameCallRendersItsPreviewCard],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

@@ -240,6 +240,20 @@ answer, and dropping the turn from the post failed
 `the press names the turn and the session — /api/session/fork?session=fork-1 {}`.
 Harness 1678 checks across 236 cases.
 
+**P1, the artifact preview cards: the row carries the artifact or names why
+nothing can be shown.** A receipt whose record is a tool call that produced
+something holds a preview card beside it, and the card follows the call's own
+kind — a `frame`/`review_frame` renders the frame's own served page as a
+sandboxed thumbnail (the same document the design surface serves, not a
+re-drawing, with a chip for the page and a press to its board); a `send_file`
+renders a file chip that opens its pane; a call that never ran names its
+resolution; a record naming no artifact draws **no card** — a preview invented
+from a call's arguments would be a claim, not a preview. Coverage:
+`P1 preview a frame call renders its card` (10 checks — thumbnail, chip, board
+press, the honest empties, and the non-artifact negative). Red-proved by
+removing the `paintToolPreview` call: all ten failed by name against the
+timer-only card. Harness **1688 checks across 237 cases**.
+
 **P1, the door: measured, then covered.** The door already existed
 (`paintOnboard` → `#onboard-door`, the landing token `data-onboard="door"`), so
 the work was the case the plan asked for, not a screen. It now asserts:

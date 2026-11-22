@@ -2337,6 +2337,87 @@ import { node, svg, clip } from './core/dom.js';
     return String(raw);
   }
 
+  // What a call made, as a card on its own row (P1). Only the tools whose
+  // output the desk names get one: a `frame` (a page on a canvas board), a
+  // file handed over (`send_file`), and a deck — which already draws its
+  // own cover from the `deck` event, so it needs nothing here. Everything
+  // else has nothing to preview, and the card stays hidden rather than
+  // drawing an empty frame.
+  //
+  // Nothing is invented. The frame's board and name come from the call's
+  // own arguments; the frame id comes from the result's own words; the
+  // file's path from the call. A call that names nothing says so, and a
+  // refused call names the permission instead of showing a thumbnail of
+  // something that was never made.
+  var PREVIEW_TOOLS = { frame: 'frame', review_frame: 'frame', send_file: 'file' };
+
+  function paintToolPreview(box, call, result) {
+    if (!box) return;
+    box.textContent = '';
+    var kind = PREVIEW_TOOLS[call && call.tool];
+    if (!kind) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    if (result && result.approved === false) {
+      box.appendChild(node('p', 'preview-empty',
+        'no preview \u00b7 the call was not run' +
+        (result.resolution ? ' \u00b7 ' + result.resolution : '')));
+      return;
+    }
+    var args = {};
+    try { args = JSON.parse((call && call.arguments) || '{}') || {}; } catch (error) { args = {}; }
+    if (kind === 'frame') {
+      var slug = args.project || '';
+      var name = args.name || '';
+      var found = /frame `([^`]+)`/.exec(String((result && result.preview) || ''));
+      var frameId = found ? found[1] : '';
+      var shot = node('div', 'preview-frame');
+      if (slug && frameId) {
+        // The frame's own page, served on the face's origin, in the same
+        // sandbox the design canvas uses: scripts only, no same-origin,
+        // no top-level navigation.
+        var view = node('iframe', 'preview-thumb');
+        view.setAttribute('sandbox', 'allow-scripts');
+        view.setAttribute('scrolling', 'no');
+        view.setAttribute('tabindex', '-1');
+        view.setAttribute('title', name || 'the frame');
+        view.setAttribute('src', '/api/design/frame/' + encodeURIComponent(slug) +
+          '/' + encodeURIComponent(frameId));
+        shot.appendChild(view);
+      }
+      var chip = node('button', 'preview-chip',
+        (name || 'the frame') + (slug ? ' \u00b7 ' + slug : ''));
+      chip.type = 'button';
+      chip.title = slug ? 'open the design board this frame is on' : 'open the pane';
+      chip.addEventListener('click', function () {
+        if (slug) window.location.hash = '#/design/' + encodeURIComponent(slug);
+        else openPane();
+      });
+      shot.appendChild(chip);
+      if (!slug || !frameId) {
+        shot.appendChild(node('p', 'preview-empty',
+          slug ? 'no thumbnail \u00b7 the record names no frame id'
+            : 'no preview \u00b7 the call names no board'));
+      }
+      box.appendChild(shot);
+      return;
+    }
+    // A file the run handed over: the chip is the delivery, and the press
+    // opens the same pane any path does.
+    var path = args.path || '';
+    if (!path) {
+      box.appendChild(node('p', 'preview-empty', 'no preview \u00b7 the call names no path'));
+      return;
+    }
+    var file = node('button', 'preview-chip', String(path).split('/').pop());
+    file.type = 'button';
+    file.title = 'open ' + path;
+    file.addEventListener('click', function () { openFile(path); });
+    box.appendChild(file);
+  }
+
   function toolRow(event) {
     var status = node('span', 'status', 'running · 0s');
     // The card wears the tools icon and is one line while it stands —
@@ -2349,6 +2430,15 @@ import { node, svg, clip } from './core/dom.js';
     el0.dataset.status = 'running';
     el0.querySelector('.glyph').appendChild(icon('tools', 'glyph-icon'));
     el0.querySelector('.body').appendChild(status);
+    // The artifact's preview (P1): a call that makes something the desk
+    // names carries a card of it — the frame's own page as a thumbnail, a
+    // handed-over file as a chip — and the card opens the pane. It is
+    // built from the call's own arguments and the result's own words, and
+    // a call with nothing to preview says so instead of drawing an empty
+    // frame.
+    var preview = node('div', 'tool-preview');
+    preview.hidden = true;
+    el0.appendChild(preview);
     // The expanded detail: what the call said it would do, what ran,
     // how long, what came back, and the raw record one more press
     // away. Closed by default, one line while closed.
@@ -2433,6 +2523,7 @@ import { node, svg, clip } from './core/dom.js';
         output.textContent = result.preview;
         output.hidden = false;
       }
+      paintToolPreview(preview, event, result);
       if (result.approved) {
         // Done collapses: one line, outcome dot in the css, the command
         // and its output one press away.

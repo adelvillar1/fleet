@@ -188,12 +188,43 @@ because "with which tool" is half of what a receipt is.
 A press on a glyph is a link to its turn: the rail scrolls to that
 turn's mark and opens the record — the tool row's own detail when the
 flow holds one, the drawer's card for a receipt the run strip folded.
+
+## The artifact preview card
+
+When a receipt's record is a tool call that produced something, the row
+holds a preview card beside it, and the card's content follows the
+call's own kind: a `frame` or `review_frame` renders **the frame's own
+served page** as a sandboxed thumbnail — the same document the design
+surface serves, not a re-drawing — with a chip naming the page and a
+press to its board; a `send_file` call renders a file chip that opens
+the pane the file lives in; a call that never ran names its resolution
+(`no preview · the call was not run · refused before execution`); and a
+record that names no artifact at all draws no card, because a preview
+invented from a call's argument would be a claim, not a preview. The
+honest empties are the contract: every card either shows the artifact
+or says in one sentence why nothing can be shown.
+
 The cards stay in the flow (hard rule 5 keeps them in the log); the
 rail makes the anatomy scannable without moving a single receipt. It
 paints only when a record it counts lands (a token delta never walks the
 log), it is hidden on a conversation with no turn, and it is rebuilt
 from the log on every load rather than cached. The harness counts a
 two-turn fixture by hand and demands the rail agree kind by kind.
+
+## The artifact preview card
+
+When a receipt's record is a tool call that produced something, the row
+holds a preview card beside it, and the card's content follows the
+call's own kind: a `frame` or `review_frame` renders **the frame's own
+served page** as a sandboxed thumbnail — the same document the design
+surface serves, not a re-drawing — with a chip naming the page and a
+press to its board; a `send_file` call renders a file chip that opens
+the pane the file lives in; a call that never ran names its resolution
+(`no preview · the call was not run · refused before execution`); and a
+record that names no artifact at all draws no card, because a preview
+invented from a call's argument would be a claim, not a preview. The
+honest empties are the contract: every card either shows the artifact
+or says in one sentence why nothing can be shown.
 
 ## Selected objects and related suggestions
 
