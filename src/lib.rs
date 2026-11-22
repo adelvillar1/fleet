@@ -104,6 +104,7 @@ pub mod tool_coverage;
 pub mod tool_router;
 pub mod tools;
 pub mod tui;
+pub mod tuios;
 pub mod update;
 pub mod vault;
 pub mod verify;

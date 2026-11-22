@@ -160,6 +160,7 @@ pub(crate) const MODULES: &[(&str, &str)] = &[
     ("tool_coverage.rs", include_str!("tool_coverage.rs")),
     ("tool_router.rs", include_str!("tool_router.rs")),
     ("tools.rs", include_str!("tools.rs")),
+    ("tuios.rs", include_str!("tuios.rs")),
     ("tui/app.rs", include_str!("tui/app.rs")),
     ("tui/events.rs", include_str!("tui/events.rs")),
     ("tui/mod.rs", include_str!("tui/mod.rs")),
