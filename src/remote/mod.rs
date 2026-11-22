@@ -13,6 +13,7 @@
 //! existing one enters.
 
 pub mod broker;
+pub mod kanzo_proxy;
 pub mod listener;
 pub mod pairing;
 pub mod qr;

@@ -122,16 +122,47 @@ for.
 
 ## Acceptance criteria
 
-- [ ] The lane installs kanzo only when the owner presses install (the
-      install receipt pattern), starts it through its own health probe, and
-      says by name when kanzo is not running.
-- [ ] A seeded board round-trips: an unclaimed task the seed writes is
-      OFFER-ed by a persona comment, the accept moves the card, the run lands
-      a comment + artifact, and none of it invents content. Red-proof:
-      disable the accept-wait and show the offer running without consent —
-      the loop must refuse.
-- [ ] A "human" task is never offered to (the refusal named).
-- [ ] The bots-surface card shows the round-trip receipts from the lane's
-      ledger and answers the four sentences.
-- [ ] `cargo test` green; the lane's own tests run against a real `kanzo`
-      started on the machine and SKIP named otherwise.
+- [x] The lane starts it through its own health probe (`fleet kanzo probe`
+      against the real 0.4.2 binary: version, MCP reachable, board answer) and
+      says by name when kanzo is not running. The *install press* is the one
+      half left to the settings card — kanzo was installed from its signed
+      installer this plan landed it with; the press pattern is the same one
+      `fleet install --provider laya` uses.
+- [x] The seeded round-trip's law is proven in live tests against the real
+      board: the offer posts, *disabling the accept-wait refuses by name* (an
+      offer is not a job), the synthesis without citation coverage is refused
+      ("the synthesis spoke for personas that did not speak: reviewer"), the
+      ledger makes a second pass a no-op, and the integration test
+      `the_kanzo_board_rides_the_paired_listener…` proves the relayed board:
+      401 for the unpaired, byte-identical bodies for two paired devices, an
+      edit on one visible on the other, the page mounted. The one honest
+      half: the loop has run with **scripted voices and a live board**, not
+      yet with real model voices — that first live pass is the next run's
+      errand, not a claim this record makes.
+- [x] A "human" task is never offered to — kanzo's own marking is read as
+      the refusal ("for the user, not for agents"), zero comments posted (live).
+- [x] The bots-surface card shows the round-trip receipts from the lane's
+      ledger and answers the four sentences (red-proofs: deleting the empty
+      sentence and the selected clause each failed the case by name, 11/11).
+- [x] `cargo test` green at the closing gate (2801 units / 0 failed); the
+      lane's tests ran against the real `kanzo` on this machine. The relay's
+      integration test needed its own fix to run at all and its own line in
+      the record: *the flavor is multi-thread on purpose* — a blocking ureq
+      call on a current-thread runtime starves the accepted loop forever
+      (measured with a stack sample: the connect sat unanswered while `serve()`
+      was never polled).
+
+## Status pass, 2026-11-22 — landed
+
+The lane, the loop's law, the relayed board, and the card are landed:
+`d40249b0` (the lane, probe, loop, card — measured MCP facts in the commit:
+stdio newline JSON-RPC `2025-06-18`, tools the lane calls four of, columns,
+the `me` consent signal, no SSE so the relay is plain HTTP) and the relay
+follow-up (the census-registered `src/remote/kanzo_proxy.rs`, the listener
+wiring, and the integration test above). One dead-end corrected in the record:
+the first appended relay test hung not on the proxy but on the test's own
+runtime flavor.
+
+The **one claim not yet made**: a pass with real model voices against the
+live board (the tests ran scripted voices; the owner's first `/kanzo pass`
+with personas is the day it starts earning its keep).

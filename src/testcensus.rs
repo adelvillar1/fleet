@@ -138,6 +138,10 @@ pub(crate) const MODULES: &[(&str, &str)] = &[
     ("remote/mod.rs", include_str!("remote/mod.rs")),
     ("remote/pairing.rs", include_str!("remote/pairing.rs")),
     ("remote/qr.rs", include_str!("remote/qr.rs")),
+    (
+        "remote/kanzo_proxy.rs",
+        include_str!("remote/kanzo_proxy.rs"),
+    ),
     ("remote/relay.rs", include_str!("remote/relay.rs")),
     ("repo_map.rs", include_str!("repo_map.rs")),
     ("roles.rs", include_str!("roles.rs")),

@@ -332,6 +332,19 @@ async fn serve_connection(
         }
     }
 
+    // The kanzo board, proxied: its own bytes, written here because the
+    // board's assets are images as well as text, and `Reply` carries a
+    // String. The pairing gate above has already run — an unpaired
+    // request never reaches this line, so the board is never contacted
+    // on behalf of a device that is not paired.
+    if crate::remote::kanzo_proxy::owns(&request.path) {
+        let answer = match kanzo_answer(&request, rest, &mut stream).await {
+            Ok(answer) => answer,
+            Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+        };
+        return write_proxied(&mut stream, &answer).await;
+    }
+
     // The same negotiation the loopback face performs: a paired phone is
     // a browser, and a browser asks for gzip.
     let answer = route_with(&request, rest, &mut stream, bridge, &device.name, face)
@@ -522,6 +535,12 @@ impl crate::remote::relay::Handler for RelayHandler {
                     return answer;
                 }
             }
+            // The kanzo board, relayed: the same proxy the socket path
+            // runs, carried as a frame. Text rides as it is; an image
+            // rides base64 under the marker the relay already decodes.
+            if crate::remote::kanzo_proxy::owns(bare) {
+                return kanzo_frame_answer(&frame).await;
+            }
             let wire = answer_frame(&frame, &self.bridge, &self.device_name, self.face).await;
             relay_answer(frame.id, wire)
         })
@@ -557,6 +576,84 @@ fn relay_answer(id: String, wire: Wire) -> crate::remote::relay::Answer {
         headers,
         body,
         enc: None,
+    }
+}
+
+/// One kanzo answer as a relay frame: the proxy's own status, content
+/// type and bytes. A text body rides as it is; anything else — an image,
+/// the favicon — rides base64 under `x-fleet-b64`, the marker the relay
+/// already decodes, so a phone on the relay gets the board's bytes
+/// rather than a mojibake page. An origin that does not answer is a
+/// named 502, never an empty frame.
+async fn kanzo_frame_answer(frame: &crate::remote::relay::Frame) -> crate::remote::relay::Answer {
+    let bare = frame
+        .path
+        .split('?')
+        .next()
+        .unwrap_or(&frame.path)
+        .to_string();
+    let query = frame
+        .path
+        .split_once('?')
+        .map(|(_, query)| query.to_string())
+        .unwrap_or_default();
+    let method = frame.method.clone();
+    let content_type = frame
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.clone());
+    let body = frame.body.clone().into_bytes();
+    let forwarded = tokio::task::spawn_blocking(move || {
+        crate::remote::kanzo_proxy::forward(&crate::remote::kanzo_proxy::Ask {
+            method: &method,
+            path: &bare,
+            query: &query,
+            content_type: content_type.as_deref(),
+            body: &body,
+        })
+    })
+    .await;
+    match forwarded {
+        Ok(Ok(answer)) => {
+            let mut headers = vec![("content-type".to_string(), answer.content_type.clone())];
+            if let Some(version) = &answer.version {
+                headers.push(("x-kanzo-version".to_string(), version.clone()));
+            }
+            let body = if answer.is_text() {
+                String::from_utf8_lossy(&answer.body).into_owned()
+            } else {
+                headers.push(("x-fleet-b64".to_string(), "1".to_string()));
+                B64.encode(&answer.body)
+            };
+            crate::remote::relay::Answer {
+                id: frame.id.clone(),
+                status: answer.status,
+                headers,
+                body,
+                enc: None,
+            }
+        }
+        Ok(Err(message)) => crate::remote::relay::Answer {
+            id: frame.id.clone(),
+            status: 502,
+            headers: vec![(
+                "content-type".to_string(),
+                "text/plain; charset=utf-8".to_string(),
+            )],
+            body: format!("the kanzo board could not be reached: {message}\n"),
+            enc: None,
+        },
+        Err(error) => crate::remote::relay::Answer {
+            id: frame.id.clone(),
+            status: 502,
+            headers: vec![(
+                "content-type".to_string(),
+                "text/plain; charset=utf-8".to_string(),
+            )],
+            body: format!("the kanzo proxy did not run: {error}\n"),
+            enc: None,
+        },
     }
 }
 
@@ -717,10 +814,98 @@ fn versioned_or_plain(content_type: &'static str, body: &'static str, request: &
     }
 }
 
+/// The kanzo board's answer, proxied: the request's body read as bytes
+/// (an image upload is not UTF-8), the forward run on the blocking pool
+/// (it is a loopback HTTP call), and the board's own bytes returned.
+async fn kanzo_answer(
+    request: &Request,
+    rest: Vec<u8>,
+    stream: &mut tokio::net::TcpStream,
+) -> Result<crate::remote::kanzo_proxy::Proxied, String> {
+    let body = crate::remote::kanzo_proxy::read_body_bytes(stream, request, rest).await?;
+    let method = request.method.clone();
+    let path = request.path.clone();
+    let query = request.query.clone();
+    let content_type = request.header("content-type").map(str::to_string);
+    tokio::task::spawn_blocking(move || {
+        crate::remote::kanzo_proxy::forward(&crate::remote::kanzo_proxy::Ask {
+            method: &method,
+            path: &path,
+            query: &query,
+            content_type: content_type.as_deref(),
+            body: &body,
+        })
+    })
+    .await
+    .map_err(|error| format!("the kanzo proxy did not run: {error}"))?
+}
+
+/// Write a proxied answer as its own bytes. The board's page and its
+/// images are one byte stream each, and the face's `Reply` carries a
+/// String — so this path writes the head and the body itself, with the
+/// board's version stamp when it sent one.
+async fn write_proxied(
+    stream: &mut tokio::net::TcpStream,
+    answer: &crate::remote::kanzo_proxy::Proxied,
+) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    let reason = match answer.status {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        409 => "Conflict",
+        413 => "Payload Too Large",
+        422 => "Unprocessable Entity",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        _ => "OK",
+    };
+    let mut head = format!(
+        "HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {}\r\n\
+         Cache-Control: no-store\r\nConnection: close\r\n",
+        answer.status,
+        answer.content_type,
+        answer.body.len()
+    );
+    if let Some(version) = &answer.version {
+        head.push_str(&format!("x-kanzo-version: {version}\r\n"));
+    }
+    head.push_str("\r\n");
+    stream
+        .write_all(head.as_bytes())
+        .await
+        .map_err(|error| format!("the proxy could not write the head: {error}"))?;
+    stream
+        .write_all(&answer.body)
+        .await
+        .map_err(|error| format!("the proxy could not write the body: {error}"))?;
+    stream
+        .flush()
+        .await
+        .map_err(|error| format!("the proxy could not flush: {error}"))
+}
+
 /// The allowlist check, method-aware. A path may be readable and not
 /// writable, which is the difference between `/api/state` and
 /// `/api/settings` here.
 fn allowed(request: &Request, face: RemoteFace) -> bool {
+    // The kanzo board's own paths, under one mount: the board is one
+    // application with GET, POST, PATCH and DELETE on its own routes, and
+    // the pairing gate above this check is what authorizes the device.
+    // A mount that admitted only GET/POST would be a board the owner
+    // could read from the couch but never move a card on.
+    if crate::remote::kanzo_proxy::owns(&request.path) {
+        return matches!(
+            request.method.as_str(),
+            "GET" | "POST" | "PATCH" | "PUT" | "DELETE"
+        );
+    }
     match request.method.as_str() {
         "GET" => {
             ALLOWED_GET_API.contains(&request.path.as_str())

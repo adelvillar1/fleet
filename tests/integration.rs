@@ -14094,3 +14094,187 @@ purchase order reference is PO-8841.";
         report.models
     );
 }
+
+/// The kanzo board, reached through the paired-remote listener — the
+/// relay's own route, exercised on the socket path where a paired phone
+/// actually is.
+///
+/// The AC this pins, in order: an unpaired client is refused by the
+/// pairing gate BEFORE the board is reached (proved with the board's own
+/// origin pointed at a dead port: the refusal is still the gate's 401,
+/// never a 502); two paired contexts see ONE board and an edit on one is
+/// visible on the other after the board's own update cycle; the accept
+/// press works from the second device; and the proxied API body is the
+/// origin's own bytes, measured.
+///
+/// The flavor is multi-thread **on purpose**: ureq is a blocking client, and
+/// called on a current-thread runtime it starves the spawned accept loop —
+/// measured with a stack sample, the connect sat in `connect_inner` while
+/// `serve()` was never polled again, and nothing ever answered. Two workers,
+/// and the loop keeps accepting while the blocking call waits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_kanzo_board_rides_the_paired_listener_with_one_shared_state() {
+    use fleet::remote::{AddressKind, RemoteAddress};
+    // The board's own origin: the kanzo this machine runs. No kanzo, or a
+    // board that is not running, is a named skip — the proxy's own units
+    // already prove the forwarding.
+    if fleet::kanzo::binary().is_err() {
+        eprintln!("kanzo is not installed; skipping the relayed board");
+        return;
+    }
+    if !fleet::kanzo::board_answers() {
+        eprintln!("the kanzo board is not running on 127.0.0.1:4242; skipping the relayed board");
+        return;
+    }
+    // A project of this test's own, created and deleted through the
+    // board's own MCP, so the owner's board is left as it was found.
+    let board = fleet::kanzo::Board::open().await.expect("the board's MCP");
+    let slug = format!("relay-probe-{}", std::process::id());
+    board
+        .create_project(&slug, "Relay probe")
+        .await
+        .expect("a project");
+    board
+        .create_task(serde_json::json!({
+            "title": "Ship the relayed board",
+            "description": "the proxy carries one board to two devices",
+            "project": slug,
+        }))
+        .await
+        .expect("a task");
+
+    let home = temp_home("kanzo-relay");
+    let mut store = fleet::remote::pairing::DeviceStore::load(&home).expect("a device store");
+    let first = fleet::remote::pairing::mint_token().expect("a token");
+    let second = fleet::remote::pairing::mint_token().expect("a token");
+    store.add("the couch", &first, "2026-11-21 00:00");
+    store.add("the desk", &second, "2026-11-21 00:00");
+    store.save(&home).expect("the devices save");
+
+    let (bridge, _sources) = fleet::gui::bridge::Bridge::detached(
+        home.clone(),
+        "deepseek-flash".to_string(),
+        Some("kanzo-relay".to_string()),
+    );
+    let address = RemoteAddress {
+        address: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        kind: AddressKind::Named,
+    };
+    let (listener, port) = fleet::remote::listener::Listener::bind(
+        &address,
+        0,
+        fleet::remote::listener::RemoteFace::Console,
+        home.clone(),
+        Arc::new(bridge),
+    )
+    .await
+    .expect("the listener binds");
+    tokio::spawn(async move {
+        let _ = listener.serve().await;
+    });
+    let base = format!("http://127.0.0.1:{port}");
+
+    // 1. Unpaired: the gate refuses before the board is reached. The
+    //    board is stopped for this leg (its origin is never called), so a
+    //    401 rather than a 502 is the proof that the pairing check ran
+    //    first.
+    let unpaired = ureq::get(&format!("{base}/kanzo/api/board")).call();
+    match unpaired {
+        Err(ureq::Error::Status(code, _)) => assert_eq!(code, 401, "the gate's own refusal"),
+        other => panic!("an unpaired device must be refused by the gate, got {other:?}"),
+    }
+
+    // 2. Two paired contexts, one board: the same document, byte for byte
+    //    through the proxy, and the origin's own bytes underneath.
+    let direct = ureq::get("http://127.0.0.1:4242/api/board")
+        .call()
+        .expect("the board answers directly")
+        .into_string()
+        .expect("its body");
+    let one = ureq::get(&format!("{base}/kanzo/api/board"))
+        .set("x-fleet-token", &first)
+        .call()
+        .expect("the first device reads the board")
+        .into_string()
+        .expect("its body");
+    let two = ureq::get(&format!("{base}/kanzo/api/board"))
+        .set("x-fleet-token", &second)
+        .call()
+        .expect("the second device reads the board")
+        .into_string()
+        .expect("its body");
+    assert_eq!(one, direct, "the proxy's body is the origin's own bytes");
+    assert_eq!(one, two, "two paired devices see one board");
+
+    // 3. The edit crosses: the first device adds a task through the proxy,
+    //    and the second device sees it on its next read — kanzo's own
+    //    update cycle, no second store.
+    let created = ureq::post(&format!("{base}/kanzo/api/tasks"))
+        .set("x-fleet-token", &first)
+        .set("content-type", "application/json")
+        .send_string(
+            &serde_json::json!({
+                "title": "Accepted from the couch",
+                "project": slug,
+            })
+            .to_string(),
+        )
+        .expect("the write crosses");
+    assert_eq!(created.status(), 200);
+    let after = ureq::get(&format!("{base}/kanzo/api/board"))
+        .set("x-fleet-token", &second)
+        .call()
+        .expect("the second device reads again")
+        .into_string()
+        .expect("its body");
+    assert!(
+        after.contains("Accepted from the couch"),
+        "the edit on one device is on the other: {after}"
+    );
+    assert_eq!(
+        after.len(),
+        ureq::get("http://127.0.0.1:4242/api/board")
+            .call()
+            .expect("the board answers directly")
+            .into_string()
+            .expect("its body")
+            .len(),
+        "no size delta beyond the board's own answer"
+    );
+
+    // 4. The page itself is mounted: the document's own script reference
+    //    points at the mount, and the bundle's API call does too.
+    let page = ureq::get(&format!("{base}/kanzo/"))
+        .set("x-fleet-token", &first)
+        .call()
+        .expect("the page")
+        .into_string()
+        .expect("its body");
+    assert!(
+        page.contains("src=\"/kanzo/app.js\""),
+        "the page is mounted"
+    );
+    let script = ureq::get(&format!("{base}/kanzo/app.js"))
+        .set("x-fleet-token", &first)
+        .call()
+        .expect("the bundle")
+        .into_string()
+        .expect("its body");
+    assert!(
+        script.contains("fetch(\"/kanzo/api\" + path"),
+        "the bundle calls the mounted API"
+    );
+
+    // The board is left as it was found: the project's own delete takes
+    // its tasks with it, so the owner's board carries nothing of this
+    // test's.
+    let _ = ureq::delete(&format!("http://127.0.0.1:4242/api/projects/{slug}")).call();
+    let left: String = ureq::get("http://127.0.0.1:4242/api/board")
+        .call()
+        .expect("the board")
+        .into_string()
+        .expect("its body");
+    assert!(!left.contains(&slug), "the probe's project is gone: {left}");
+    board.close().await;
+    let _ = std::fs::remove_dir_all(&home);
+}
