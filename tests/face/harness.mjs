@@ -5023,6 +5023,16 @@ async function theLandingPrefersTheOwnersConversations() {
   await flush();
   page.open();
   await flush(80);
+  // The archive is the collapsed remainder (the relevance pass): the
+  // decisions lead, the inventory is one press away and remembered.
+  const fold = page.rows('.recent-fold')[0];
+  check('F1 the archive starts folded',
+    !!fold && fold.dataset.collapsed === 'true', fold ? fold.dataset.collapsed : 'no fold');
+  if (fold) fold.click();
+  await flush(40);
+  check('F1 the fold remembers the owner opened it',
+    page.window.localStorage.getItem('fleet-landing-archive') === 'open',
+    String(page.window.localStorage.getItem('fleet-landing-archive')));
   const words = page.rows('.recent-row').map((r) => r.textContent || '');
   check('F1 the landing asks for the archive itself',
     page.calls.some((c) => c.url === '/api/sessions'),
@@ -5033,6 +5043,168 @@ async function theLandingPrefersTheOwnersConversations() {
   check('F1 a background run never leads the landing',
     words.every((word) => !word.includes('lifecycle-sweep') && !word.includes('corpus-refresh')),
     JSON.stringify(words));
+}
+
+// RP1 (the relevance pass, 2026-11-22): the landing's first block is what
+// needs a decision. Three needs exist at once — a held door, an approval
+// awaited, an offered card — and the block renders them in the document's
+// order: doors -> approvals -> offers. Each row names its own thing, so
+// dropping any kind from the derivation fails here BY NAME: the check's
+// detail prints what the block holds, and the missing door is missing.
+async function theLandingLeadsWithWhatNeedsYou() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 1, working: 0, background: 0, earlier: 1, total: 2 },
+      needs_you: {
+        type: 'needs_you', order: ['door', 'approval', 'offer'],
+        counts: { doors: 1, approvals: 1, offers: 1, working: 0, total: 3 },
+        surfaces: ['inbox', 'sessions', 'board'],
+        rows: [
+          { kind: 'door', surface: 'inbox', id: 'held:h1',
+            session: null, label: 'the CI box \u00b7 run the tests',
+            why: 'a delivery is held for your answer',
+            at: '2026-11-21 09:00', link: '#/inbox', press: 'answer' },
+          { kind: 'approval', surface: 'sessions', id: 'ship-1', session: 'ship-1',
+            label: 'ship the migration', why: 'a run is stopped for your approval',
+            at: 1763751600000, link: '#/sessions/ship-1', press: 'open' },
+          { kind: 'offer', surface: 'board', id: 'card-17', session: null,
+            label: 'card-17', why: 'a persona offered to take this card',
+            at: '2026-11-21 10:00', link: '#/board', press: 'accept' },
+        ],
+        working: [], refused: [],
+      },
+      changed: {
+        type: 'changed', bound: 6,
+        rows: [
+          { session: 'ship-1', name: 'ship the migration', at: 1763751600000,
+            state: 'needs-approval', kind: 'user', line: 'ship the migration',
+            link: '#/sessions/ship-1' },
+          { session: 'older-1', name: 'the design deliverable review', at: 1763740000000,
+            state: 'completed', kind: 'assistant', line: 'the review is in',
+            link: '#/sessions/older-1' },
+        ],
+      },
+      sessions: [
+        row('ship-1', 'needs-approval', { title: 'ship the migration' }),
+        row('older-1', 'completed', { title: 'the design deliverable review' }),
+      ],
+    },
+  };
+  const page = boot({ width: 1440, height: 810, hash: '#/sessions', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const rows = page.rows('.needs-row');
+  const kinds = rows.map((r) => r.dataset.kind);
+  check('RP1 the landing leads with a needs-you block', rows.length === 3,
+    'kinds=' + JSON.stringify(kinds));
+  // The order is the document's, not the renderer's.
+  check('RP1 the order is doors, then approvals, then offers',
+    kinds.join(',') === 'door,approval,offer', JSON.stringify(kinds));
+  // Each row names its own thing and its own door out. The door's own
+  // name is the peer the delivery came from — drop the door rows from the
+  // derivation and this check names the door that vanished.
+  const door = rows.find((r) => r.dataset.kind === 'door');
+  check('RP1 the held door is named and opens the door',
+    !!door && (door.textContent || '').includes('the CI box') &&
+      door.dataset.link === '#/inbox',
+    door ? door.textContent + ' -> ' + door.dataset.link
+      : 'the door row is missing: the CI box \u00b7 run the tests');
+  const approval = rows.find((r) => r.dataset.kind === 'approval');
+  check('RP1 the awaited approval names its session',
+    !!approval && (approval.textContent || '').includes('ship the migration') &&
+      approval.dataset.link === '#/sessions/ship-1',
+    approval ? approval.textContent + ' -> ' + approval.dataset.link : 'the approval row is missing');
+  const offer = rows.find((r) => r.dataset.kind === 'offer');
+  check('RP1 the posted offer names its card and opens the board',
+    !!offer && (offer.textContent || '').includes('card-17') &&
+      offer.dataset.link === '#/board',
+    offer ? offer.textContent + ' -> ' + offer.dataset.link : 'the offer row is missing');
+  // The block leads the page: it sits above the changed block, which sits
+  // above the archive. The stub's document is flat, so the order is read
+  // from the page's own source — which is the order a browser paints.
+  const at = (id) => HTML.indexOf('id="' + id + '"');
+  check('RP1 needs you leads, then changed, then the archive',
+    at('needs') > 0 && at('needs') < at('changed') && at('changed') < at('recent'),
+    'needs=' + at('needs') + ' changed=' + at('changed') + ' recent=' + at('recent'));
+  // A press answers: the row's own link is the address the page takes.
+  if (door) door.click();
+  await flush(40);
+  check('RP1 a needs row is one press away',
+    page.window.location.hash === '#/inbox', page.window.location.hash);
+  // The numeric AC: three needs paint inside a 900x810 stage without a
+  // scroll. The arithmetic is the block's own — its top margin, the head's
+  // line, and three rows of the CSS's declared padding and line height.
+  const rule = ruleBlock('.needs-row, .changed-row');
+  const pad = /padding:\s*([\d.]+)px\s+([\d.]+)px/.exec(rule);
+  const size = /font-size:\s*([\d.]+)px/.exec(rule);
+  const lead = /line-height:\s*([\d.]+)/.exec(rule);
+  const rowHeight = pad && size && lead
+    ? Number(pad[1]) * 2 + Number(size[1]) * Number(lead[1]) : 0;
+  const blockHeight = 18 + 26 + rows.length * (rowHeight + 4);
+  check('RP1 three needs paint inside a 900x810 stage',
+    rowHeight > 0 && blockHeight < 810,
+    'row=' + rowHeight.toFixed(1) + ' block=' + blockHeight.toFixed(1));
+}
+
+// RP2: the second block is what changed since the owner last looked —
+// N events, newest first, each naming its session. A fixture event the
+// block omits is the red proof: the count and the names are asserted.
+async function theChangedBlockNamesTheNewestEvents() {
+  const at = Date.now() - 3 * 60000;
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 3, total: 3 },
+      needs_you: { type: 'needs_you', order: ['door', 'approval', 'offer'],
+        counts: { doors: 0, approvals: 0, offers: 0, working: 0, total: 0 },
+        surfaces: [], rows: [], working: [], refused: [] },
+      changed: {
+        type: 'changed', bound: 6,
+        rows: [
+          { session: 'newest-1', name: 'the newest conversation', at: at + 2000,
+            state: 'working', kind: 'assistant', line: 'the newest line',
+            link: '#/sessions/newest-1' },
+          { session: 'middle-1', name: 'the middle conversation', at: at + 1000,
+            state: 'completed', kind: 'assistant', line: 'the middle line',
+            link: '#/sessions/middle-1' },
+          { session: 'oldest-1', name: 'the oldest conversation', at: at,
+            state: 'completed', kind: 'user', line: 'the oldest line',
+            link: '#/sessions/oldest-1' },
+        ],
+      },
+      sessions: [
+        row('newest-1', 'working', { title: 'the newest conversation' }),
+        row('middle-1', 'completed', { title: 'the middle conversation' }),
+        row('oldest-1', 'completed', { title: 'the oldest conversation' }),
+      ],
+    },
+  };
+  const page = boot({ width: 1440, height: 810, hash: '#/sessions', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const rows = page.rows('.changed-row');
+  check('RP2 the changed block names every event', rows.length === 3,
+    String(rows.length));
+  const names = rows.map((r) => {
+    const found = r.find((one) => String(one.className || '').includes('changed-name'));
+    return found.length ? found[0].textContent : '';
+  });
+  check('RP2 the changed block names its sessions newest first',
+    names.join('|') === 'the newest conversation|the middle conversation|the oldest conversation',
+    JSON.stringify(names));
+  // The line is the log's own, never a summary — and the row opens it.
+  const newest = rows[0];
+  check('RP2 the newest row carries its log line and its link',
+    !!newest && (newest.textContent || '').includes('the newest line') &&
+      newest.dataset.session === 'newest-1',
+    newest ? newest.textContent : 'the newest conversation vanished from the block');
+  if (newest) newest.click();
+  await flush(40);
+  check('RP2 a changed row opens its conversation',
+    page.window.location.hash === '#/sessions/newest-1', page.window.location.hash);
 }
 
 // New mints a real conversation at the press (the owner's 2026-11-05
@@ -20479,6 +20651,8 @@ const cases = [
   ['N0 the work rail renders the owner\u2019s work only', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['N1 the home is always reachable', theHomeIsAlwaysReachable],
   ['F1 the landing prefers the owner\u2019s conversations', theLandingPrefersTheOwnersConversations],
+  ['RP1 the landing leads with what needs you, doors first', theLandingLeadsWithWhatNeedsYou],
+  ['RP2 the changed block names the newest events, newest first', theChangedBlockNamesTheNewestEvents],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],

@@ -1246,6 +1246,8 @@ import { node, svg, clip } from './core/dom.js';
     empty: document.getElementById('empty'),
     emptyTitle: document.getElementById('empty-title'),
     recent: document.getElementById('recent'),
+    needs: document.getElementById('needs'),
+    changed: document.getElementById('changed'),
     onboardDoor: document.getElementById('onboard-door'),
     doorDiscovered: document.getElementById('door-discovered'),
     onboardKey: document.getElementById('onboard-key'),
@@ -5240,21 +5242,158 @@ import { node, svg, clip } from './core/dom.js';
     // the read, and a cold landing showed nothing to return to (the
     // findability fix, 2026-11-15). Throttled by the read's own cache.
     readSessions(false);
+    // The relevance pass (2026-11-22): the page leads with the decisions,
+    // then the changes, then the inventory — the owner's own order.
+    paintNeeds();
+    paintChanged();
     paintRecent();
+    markLandingLook();
   }
 
-  // The pick-up rows: the three most recent owned threads, then the
-  // archive door. The owner's own conversations first — the archive read
-  // classes every row and the owner's are the ones the rail renders — and
-  // the spine's work items as the fallback while that read is cold. The
-  // spine is a fallback, never the head: its work items can be a task or
-  // a run, and the row's link is an archive link. Nothing renders when
+  // -------------------------------------------------- the leading blocks
+  //
+  // The owner's verdict on two rounds of reskinning was that nothing was
+  // re-organised: the pages read in the same order. This is the order they
+  // asked for — what needs a decision, then what changed, then what
+  // exists. Every row comes from the bridge's one `needs_you` document
+  // (`/api/sessions`); nothing here decides what a need is.
+
+  // The mark each kind of need wears. A door is someone outside, an
+  // approval is a run stopped mid-flight, an offer is a persona asking.
+  var NEEDS_MARKS = { door: '◆', approval: '▸', offer: '○' };
+
+  function needsDocument() {
+    var read = face.sessions;
+    return read && read.needs_you ? read.needs_you : null;
+  }
+
+  function paintNeeds() {
+    if (!el.needs) return;
+    var doc = needsDocument();
+    var rows = (doc && doc.rows) || [];
+    var refused = (doc && doc.refused) || [];
+    el.needs.textContent = '';
+    el.needs.hidden = !rows.length && !refused.length;
+    if (el.needs.hidden) return;
+    var head = node('div', 'recent-head');
+    head.appendChild(node('h2', 'recent-title', 'needs you'));
+    if (rows.length) {
+      var count = node('span', 'needs-count', String(rows.length));
+      count.title = rows.length === 1 ? 'one decision' : rows.length + ' decisions';
+      head.appendChild(count);
+    }
+    el.needs.appendChild(head);
+    rows.forEach(function (row) {
+      // One row, one press: the row IS the door to the thing that needs
+      // the answer, and it says why in the owner's words rather than a
+      // category label.
+      var line = node('button', 'needs-row');
+      line.type = 'button';
+      line.dataset.kind = row.kind || '';
+      line.dataset.link = row.link || '';
+      line.appendChild(node('span', 'needs-mark', NEEDS_MARKS[row.kind] || '·'));
+      line.appendChild(node('span', 'needs-label', row.label || 'a decision'));
+      line.appendChild(node('span', 'needs-why', row.why || ''));
+      line.title = (row.label || '') + (row.why ? ' — ' + row.why : '');
+      line.addEventListener('click', function () {
+        if (row.link) window.location.hash = row.link;
+      });
+      el.needs.appendChild(line);
+    });
+    refused.forEach(function (why) {
+      el.needs.appendChild(node('p', 'board-empty', why));
+    });
+  }
+
+  // The landing's own "last look" clock: when the owner last stood here.
+  // Written after the block paints, so the NEXT visit marks what arrived
+  // since — which is what the block's words promise.
+  var LANDING_LOOK = 'fleet-landing-look';
+
+  function landingLook() {
+    try {
+      return Number(window.localStorage.getItem(LANDING_LOOK)) || 0;
+    } catch (error) { return 0; }
+  }
+
+  function markLandingLook() {
+    try {
+      window.localStorage.setItem(LANDING_LOOK, String(Date.now()));
+    } catch (error) { }
+  }
+
+  // A millisecond stamp as a span: the changed block's clock is the log's
+  // write time, which is milliseconds — the rooms' `roomAge` reads
+  // seconds, so this is its own conversion rather than a second meaning.
+  function msAge(at) {
+    if (!at) return '';
+    var span = Math.max(0, Date.now() - at);
+    var minutes = Math.floor(span / 60000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return minutes + 'm ago';
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + 'h ago';
+    return Math.floor(hours / 24) + 'd ago';
+  }
+
+  function paintChanged() {
+    if (!el.changed) return;
+    var doc = face.sessions && face.sessions.changed;
+    var rows = (doc && doc.rows) || [];
+    el.changed.textContent = '';
+    el.changed.hidden = !rows.length;
+    if (!rows.length) return;
+    var look = landingLook();
+    var head = node('div', 'recent-head');
+    head.appendChild(node('h2', 'recent-title', 'changed since you last looked'));
+    el.changed.appendChild(head);
+    rows.forEach(function (row) {
+      var line = node('button', 'changed-row');
+      line.type = 'button';
+      line.dataset.session = row.session || '';
+      if (look && row.at > look) line.dataset.fresh = 'true';
+      line.appendChild(node('span', 'changed-when', msAge(row.at)));
+      var said = node('span', 'changed-name', row.name || 'a conversation');
+      line.appendChild(said);
+      if (row.line) line.appendChild(node('span', 'changed-line', row.line));
+      line.title = (row.name || '') + ' · ' + (row.state || '') +
+        (row.line ? ' · ' + row.line : '');
+      line.addEventListener('click', function () {
+        if (row.link) window.location.hash = row.link;
+      });
+      el.changed.appendChild(line);
+    });
+  }
+
+  // The archive's fold: collapsed by default, remembered across visits the
+  // way the work column's fold is (`fleet-work`). Collapsed is not
+  // deleted — the rows are one press away, which is the whole point of
+  // putting the inventory under the decisions.
+  var LANDING_ARCHIVE = 'fleet-landing-archive';
+
+  function archiveOpen() {
+    try {
+      return window.localStorage.getItem(LANDING_ARCHIVE) === 'open';
+    } catch (error) { return false; }
+  }
+
+  function setArchiveOpen(open) {
+    try {
+      window.localStorage.setItem(LANDING_ARCHIVE, open ? 'open' : 'collapsed');
+    } catch (error) { }
+  }
+
+  // The pick-up rows: the three most recent owned threads, under the
+  // archive's own fold. The owner's own conversations first — the archive
+  // read classes every row and the owner's are the ones the rail renders —
+  // and the spine's work items as the fallback while that read is cold.
+  // The spine is a fallback, never the head: its work items can be a task
+  // or a run, and the row's link is an archive link. Nothing renders when
   // the home holds nothing to return to.
   function paintRecent() {
     if (!el.recent) return;
-    var rows = ((face.sessions && face.sessions.sessions) || [])
-      .filter(railRow)
-      .slice(0, 3)
+    var all = ((face.sessions && face.sessions.sessions) || []).filter(railRow);
+    var rows = all.slice(0, 3)
       .map(function (row) {
         return { id: row.id, title: row.title, created: row.created || '' };
       });
@@ -5266,20 +5405,37 @@ import { node, svg, clip } from './core/dom.js';
     el.recent.hidden = !rows.length;
     el.recent.textContent = '';
     if (!rows.length) return;
+    var open = archiveOpen();
+    el.recent.dataset.collapsed = open ? 'false' : 'true';
     var head = node('div', 'recent-head');
-    head.appendChild(node('h2', 'recent-title', 'pick up where you left off'));
-    var all = node('button', 'recent-all', 'open the archive');
-    all.type = 'button';
-    all.addEventListener('click', function () { window.location.hash = '#/sessions'; });
-    head.appendChild(all);
+    var fold = node('button', 'recent-fold');
+    fold.type = 'button';
+    fold.setAttribute('aria-expanded', open ? 'true' : 'false');
+    fold.dataset.collapsed = open ? 'false' : 'true';
+    fold.title = open ? 'put the archive away' : 'open the archive';
+    fold.appendChild(node('span', 'recent-fold-mark', open ? '▾ ' : '▸ '));
+    fold.appendChild(node('span', null, 'the archive'));
+    var held = all.length;
+    fold.appendChild(node('span', 'recent-fold-count',
+      held + (held === 1 ? ' conversation' : ' conversations')));
+    fold.addEventListener('click', function () {
+      setArchiveOpen(!archiveOpen());
+      paintRecent();
+    });
+    head.appendChild(fold);
+    var openAll = node('button', 'recent-all', 'open the archive');
+    openAll.type = 'button';
+    openAll.addEventListener('click', function () { window.location.hash = '#/sessions'; });
+    head.appendChild(openAll);
     el.recent.appendChild(head);
+    if (!open) return;
     rows.forEach(function (row) {
       var line = node('button', 'recent-row');
       line.type = 'button';
       var when = String(row.created || '');
       var label = node('span', 'recent-id',
         row.title || ('a conversation' +
-          (when ? ' \u00b7 ' + when.slice(5, 16).replace('T', ' ') : '')));
+          (when ? ' · ' + when.slice(5, 16).replace('T', ' ') : '')));
       label.title = row.id;
       line.appendChild(label);
       line.addEventListener('click', function () {
