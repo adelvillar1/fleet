@@ -8246,6 +8246,28 @@ import { node, svg, clip } from './core/dom.js';
           ' \u2014 the dispatch bar sends to it';
       }
     },
+    // The tuios section answers about the OWNER'S MULTIPLEXER: the sessions
+    // the daemon on this instance carries, each window counted by the
+    // daemon's own AGENT state words, and the panes that run Fleet. It is
+    // read only where the owner enabled it, so its absence is a named
+    // state of its own \u2014 the armada's "no fleet carries armada yet" rule,
+    // applied to a section that would otherwise vanish without a word.
+    // Nothing here judges: tuios marks agent-activity untrusted itself, and
+    // the map shows, it does not judge.
+    tuios: {
+      empty: 'no tuios section on any instance yet \u2014 the map reads a multiplexer only ' +
+        'where the owner enabled one, in `<home>/tuios.json`, never everywhere.',
+      loading: 'the tuios section is read with the map \u2014 nothing is probed until the ' +
+        'roster lands.',
+      refused: function (said) {
+        return said + ' \u2014 the map shows the daemon\u2019s own words, never a grid of none';
+      },
+      selected: function (d) {
+        return 'showing ' + d.session + ' \u00b7 ' + d.windows +
+          (d.windows === 1 ? ' window' : ' windows') + ' \u00b7 ' + d.states +
+          ' \u2014 the AGENT words are the daemon\u2019s own';
+      }
+    },
     // Calibration answers about the DAY: what was graded, what the graded
     // beats' precision was, and what the same rows would have done at
     // another floor. An empty day says so rather than showing zeros.
@@ -20097,8 +20119,99 @@ import { node, svg, clip } from './core/dom.js';
     var carries = node('div', 'deploy-map-cell deploy-map-carries');
     carries.appendChild(node('strong', null, gib + ' GiB'));
     carries.appendChild(node('span', 'cfg-note', 'version ' + (instance.version || 'unknown')));
+    // tuios is one of the things an instance carries, so its section rides
+    // this cell: the sessions the daemon holds, the AGENT words verbatim,
+    // and the panes running Fleet. An instance the owner has not enabled
+    // carries no block; the card names that absence once, below.
+    if (instance.tuios) carries.appendChild(tuiosSection(instance.tuios));
     row.appendChild(carries);
     return row;
+  }
+
+  /// The tuios section of one instance's row (the tuios armada plan): what
+  /// the owner's multiplexer carries, in the daemon's own words. One line
+  /// per session — its name, its window count, its windows counted by the
+  /// daemon's AGENT state words verbatim (`working 2`, `needs_input 1`) —
+  /// and the panes the map found running Fleet, marked by the live command
+  /// line rather than by their text.
+  ///
+  /// The section is a transcription, not a judgment: tuios marks
+  /// agent-activity untrusted itself, so the map does not read it, and the
+  /// AGENT words are printed as the daemon said them, never mapped onto
+  /// Fleet's vocabulary. A daemon that does not answer gets the named
+  /// refusal — `tuios is not running on <sid>` — never an empty grid: an
+  /// empty session list is a measurement, an unreachable daemon is not.
+  function tuiosSection(section) {
+    var block = node('div', 'deploy-map-tuios');
+    block.dataset.state = section.refusal ? 'refused' : 'read';
+    var sessions = section.sessions || [];
+    var head = node('p', 'cfg-note tuios-head');
+    head.textContent = 'tuios \u00b7 ' + (section.server || 'the default socket') +
+      (section.refusal
+        ? ''
+        : ' \u00b7 ' + sessions.length +
+          (sessions.length === 1 ? ' session' : ' sessions') +
+          ' \u00b7 ' + (section.attention_open || 0) + ' open attention');
+    block.appendChild(head);
+    if (section.refusal) {
+      block.appendChild(node('p', 'board-empty tuios-refusal',
+        sentence('tuios', 'refused', section.refusal)));
+      return block;
+    }
+    var states = function (session) {
+      var words = Object.keys(session.agents || {}).map(function (state) {
+        return state + ' ' + session.agents[state];
+      });
+      return words.length ? words.join(' \u00b7 ') : 'no AGENT state';
+    };
+    var agentsOf = function (session) {
+      return (section.agents || []).filter(function (agent) {
+        return agent.session === session.name;
+      });
+    };
+    sessions.forEach(function (session) {
+      var line = node('div', 'svc-line tuios-session');
+      line.dataset.session = session.name;
+      line.appendChild(node('strong', null, session.name));
+      line.appendChild(document.createTextNode(' \u00b7 ' + session.windows +
+        (session.windows === 1 ? ' window' : ' windows') + ' \u00b7 ' +
+        states(session)));
+      block.appendChild(line);
+      // A verb that did not answer for this session is named here, not
+      // folded into an empty count.
+      if (session.probe_error) {
+        block.appendChild(node('p', 'board-empty tuios-probe', session.probe_error));
+      }
+      (session.fleet_panes || []).forEach(function (pane) {
+        var mark = node('p', 'cfg-note tuios-fleet-pane');
+        mark.dataset.window = pane.window;
+        mark.textContent = 'fleet pane \u00b7 ' + pane.window + ' \u00b7 ' + pane.command +
+          (pane.cwd ? ' \u00b7 ' + pane.cwd : '');
+        block.appendChild(mark);
+      });
+      // The agents' own stage words, as the daemon lists them — the same
+      // vocabulary as the counts above, never a Fleet word for it.
+      agentsOf(session).forEach(function (agent) {
+        var row = node('p', 'cfg-note tuios-agent');
+        row.dataset.state = agent.state;
+        row.textContent = 'agent \u00b7 ' + agent.name + ' \u00b7 ' + agent.state +
+          (agent.foreground ? ' \u00b7 ' + agent.foreground : '');
+        block.appendChild(row);
+      });
+    });
+    // The selected sentence names the session that carries Fleet's TUI: the
+    // one row this map can point at with the daemon's own evidence.
+    var carrying = sessions.filter(function (session) {
+      return (session.fleet_panes || []).length;
+    })[0];
+    if (carrying) {
+      block.appendChild(selectedLine('tuios', {
+        session: carrying.name,
+        windows: carrying.windows,
+        states: states(carrying)
+      }));
+    }
+    return block;
   }
 
   function armadaMapCard(read) {
@@ -20129,6 +20242,14 @@ import { node, svg, clip } from './core/dom.js';
     instances.forEach(function (instance) {
       card.appendChild(armadaMapRow(instance));
     });
+    // The tuios section is per instance and opt-in. When no row carries
+    // one, the absence is named once, in the section's own words — a map
+    // that silently omitted a section the owner might be looking for is
+    // the silent state the four sentences exist to end.
+    if (!instances.some(function (instance) { return instance.tuios; })) {
+      card.appendChild(node('p', 'board-empty tuios-absent',
+        sentence('tuios', 'empty', {})));
+    }
     return card;
   }
 
@@ -20220,6 +20341,10 @@ import { node, svg, clip } from './core/dom.js';
         'corpus the instances share.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty', sentence('armada', 'loading', {})));
+      // The tuios section rides this read, so it has no separate loading
+      // state: while the roster is on the wire, nothing has been probed.
+      waiting.appendChild(node('p', 'cfg-note tuios-waiting',
+        sentence('tuios', 'loading', {})));
       el.armadaBoard.appendChild(waiting);
       paintArmadaRail(null);
       return;

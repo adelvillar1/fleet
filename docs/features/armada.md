@@ -184,3 +184,55 @@ roster, sessions, cron and devices out of the shared set by name. GitRiver is
 the documented host — self-hosted Rust git with an OCI registry beside it,
 which is what a container deploy needs — with any git remote still working.
 
+## As-built 2026-11-22 — tuios in the deployment map
+
+The owner runs **tuios 0.13.3** as their desktop shell, and Fleet's TUI runs
+inside it as a daemon-kept pane (`tuios attach fleet-tui`). The deployment map
+now carries that as one more thing an instance holds: `src/tuios.rs` reads
+tuios's own JSON control protocol (`tuios call <verb> [params] [--server NAME]
+--timeout 4s --json`, control protocol v1) and the map's "what it carries" cell
+renders it.
+
+**Four read verbs, and no others.** `list-sessions`, `list-windows` (once per
+session — with no session it answers for the most recent one, which would
+attribute one session's windows to another), `list-agents` (`all`), and
+`list-attention` (its `total`). `add-task`, `send-keys` and every verb that
+changes the multiplexer are never called: Fleet watches the owner's shell, it
+does not drive it.
+
+**The AGENT words pass through verbatim** — `working`, `needs_input`, `idle`,
+`done`, `errored`, `unknown`, `limit_reached`, `none` — counted per session and
+printed as the daemon said them, never mapped onto Fleet's vocabulary. The map
+shows, it does not judge: `agent-activity` is deliberately not read, because
+tuios marks it untrusted itself.
+
+**A fleet pane is matched by the live command line.** A pane runs Fleet when
+`foreground_cmd`, or the first word of `running_cmdline` (which `list-windows`
+documents as present *while a command runs*), is the fleet binary by basename —
+`fleet`, `./target/debug/fleet`, a path ending in `/fleet`. History
+(`last_cmdline`), the directory (`cwd`) and the pane's text are not evidence:
+Fleet's own frame says "fleet" on every row, so a capture would match any pane
+showing the docs, and a shell that ran `fleet tui` an hour ago is a shell.
+
+**The refusal is named, never an empty grid.** Exit 3 is `tuios is not running
+on <sid>` with the daemon's own words after the dash; a missing binary is
+`not installed`; a verb error is the daemon's code and message; an unreadable
+answer says so. The daemon's multi-line transport message is cut to its first
+line, because a row is one line. An empty session list is a measurement; an
+unreachable daemon is not.
+
+**Per-instance opt-in, same-document.** `<home>/tuios.json` names the sids whose
+machine runs the daemon (`{"instances":{"<sid>":{"enabled":true,"server":""}}}`);
+an instance the owner has not enabled costs no call and carries no section, and
+the card names that absence once in the section's own sentence. Every word in a
+section is the daemon's answer for *this* read — nothing is cached or
+recomputed.
+
+Verified against the real daemon on this machine (`tests/tuios.rs`, which skips
+by name where tuios is absent): the four verbs' shapes, the dead-socket refusal
+(a named server with no socket, exit 3), the live specimen (session `fleet-tui`,
+pane `Terminal cb1fe908`, command `fleet`), and the armada document carrying the
+section only after the opt-in. The face harness pins the card: the sessions, the
+AGENT words verbatim, the marked fleet pane, the refusal, and the absence
+sentence — deleting that sentence fails its case by name. Measured while
+building: a `--server` name is capped at 14 characters by the CLI itself.

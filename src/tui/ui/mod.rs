@@ -3760,6 +3760,7 @@ mod tests {
                     settled: 3,
                     calibrated: true,
                     reliability: 2.0 / 3.0,
+                    tuios: None,
                 },
                 crate::boards::ArmadaInstance {
                     sid: "sid-b".to_string(),
@@ -3770,6 +3771,7 @@ mod tests {
                     settled: 0,
                     calibrated: false,
                     reliability: 0.0,
+                    tuios: None,
                 },
             ],
         }

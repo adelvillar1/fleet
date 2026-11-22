@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed — 2026-11-22 (4df5fd0c the protocol layer and the rule; the card, the harness cases and the live tests in its follow-up commit)
 created: 2026-11-21
 plan: tuios-armada
 ---
@@ -55,14 +55,63 @@ they are).
 
 ## Acceptance criteria
 
-- [ ] A machines card gains a tuios section when `tuios call list-windows`
+- [x] A machines card gains a tuios section when `tuios call list-windows`
       answers, with per-session rows named above; red-proof: kill the daemon
       (or point the probe at a dead socket) and the row names the refusal.
-- [ ] The AGENT states pass through verbatim with tuios's own vocabulary.
-- [ ] A fleet-tui pane is discoverable (the session this plan created for its
-      own proof is the first live specimen).
-- [ ] `cargo test` green; the verb calls are integration-tested against the
-      real daemon on this machine and SKIP named otherwise.
+      Landed: the section rides the map's "what it carries" cell
+      (`tuiosSection` in `app.js`). The refusal is proven twice — on a dead
+      socket against the real binary (`--server fleet-dead`, exit 3, the
+      daemon's own words: `tests/tuios.rs`) and in the card
+      (`TUIO a refusal is named and never an empty grid`), which paints the
+      sentence and no session rows.
+- [x] The AGENT states pass through verbatim with tuios's own vocabulary.
+      `BTreeMap<String, u64>` of the daemon's words per session, printed as
+      `working 2 · needs_input 1` — the harness asserts the words and
+      asserts Fleet's own (`needs you`, `waiting`, `blocked`) are absent.
+- [x] A fleet-tui pane is discoverable (the session this plan created for its
+      own proof is the first live specimen). Measured on the live daemon:
+      `1 session(s) (["fleet-tui"]); 1 fleet pane(s): [("fleet-tui",
+      "Terminal cb1fe908", "fleet")]`. The rule is the live command line —
+      `foreground_cmd` or `running_cmdline` by basename — and the red test
+      that started this pass (a fake answering one session's windows for
+      every session) is settled with it: history and cwd are not evidence.
+- [x] `cargo test` green; the verb calls are integration-tested against the
+      real daemon on this machine and SKIP named otherwise. `tests/tuios.rs`
+      (4 tests) reads the live daemon; with no binary it prints
+      `tuios: skipped — tuios is not installed on this machine
+      (FLEET_TUIOS_BIN=… is not a file)` and passes. The armada document is
+      proven opt-in-gated: `tuios: null` before `<home>/tuios.json` enables
+      the sid, the daemon's sessions after.
+
+## Status pass, 2026-11-22 — landed
+
+`4df5fd0c` (the protocol layer: `src/tuios.rs`, the opt-in file, the four read
+verbs, the refusal shapes, the fleet-pane rule and its red-proof) and this
+commit (the card, the harness cases, the live tests, this record).
+
+The red test the interrupted pass left: `a_fleet_pane_is_matched_by_the_live_
+command_line` was right and its fixture was wrong — the fake `tuios` answered
+`list-windows` for every session from one body, so the work session "held"
+Fleet's windows. The fake now answers per session, as the daemon does
+(`$3` is the params JSON), and the work session keeps a shell whose cwd is the
+repo and whose history says `fleet tui` — and stays a shell. Inverted and
+restored: adding `last_cmdline` as evidence reds both the case and the rule
+table by name.
+
+The four sentences are the section's own (`SENTENCES.tuios`): the absence is
+named once below the map (`no tuios section on any instance yet — … in
+<home>/tuios.json`), the refusal carries the daemon's words, the selected line
+names the session carrying Fleet's TUI, and the loading line rides the map's
+own reading card. Deleting the absence sentence reds
+`TUIO the section's absence is its own named state` and the table case.
+
+Measured while building: a `--server` name is capped at **14 characters** by
+the CLI itself (a longer one is a usage error, not a transport error) — worth
+knowing before naming a daemon.
+
+The one thing this plan did not add: a `fleet tuios` CLI verb. The opt-in is
+the file `<home>/tuios.json` (`OptIn::enable` is the library's own writer), and
+the card's sentence names the file rather than a command that does not exist.
 
 ## Files
 

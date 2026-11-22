@@ -302,7 +302,11 @@ pub fn call(
                     .get("error")
                     .and_then(|error| error.get("message"))
                     .and_then(|message| message.as_str())
-                    .map(|message| message.to_string())
+                    // The daemon's message can run to several lines (the
+                    // cause, the fix); a row is one line, so the first one
+                    // is the refusal and the rest is a paragraph nobody
+                    // reads in a cell.
+                    .map(|message| message.lines().next().unwrap_or("").to_string())
             })
             .or_else(|| {
                 let text = if stdout.trim().is_empty() {
@@ -806,6 +810,45 @@ mod tests {
             None,
             "a directory is not a process"
         );
+    }
+
+    /// The document the card reads: the section serializes with the keys
+    /// `app.js` names (`sessions[].agents`, `sessions[].fleet_panes`,
+    /// `attention_open`), so a rename here without one there would paint an
+    /// empty section instead of failing a build.
+    #[test]
+    fn the_section_serializes_as_the_card_reads_it() {
+        let scratch = Scratch::new("document");
+        let program = fake_daemon(
+            scratch.path(),
+            &[
+                ("list-sessions", SESSIONS),
+                ("list-windows", WINDOWS_FLEET),
+                (
+                    "list-agents",
+                    r#"{"agents":[{"session":"fleet-tui","name":"Terminal cb1fe908","state":"none","foreground":"fleet"}]}"#,
+                ),
+                ("list-attention", r#"{"total":2}"#),
+            ],
+        );
+        let section = section_with("sid-a", "", &program);
+        let doc = serde_json::to_value(&section).expect("the section is a document");
+        assert_eq!(doc["sid"], "sid-a");
+        assert_eq!(doc["attention_open"], 2);
+        assert!(
+            doc.get("refusal").is_none(),
+            "a section that landed carries no refusal key: {doc}"
+        );
+        let session = &doc["sessions"][0];
+        assert_eq!(session["name"], "fleet-tui");
+        assert_eq!(session["windows"], 1);
+        assert_eq!(session["agents"]["none"], 1, "the AGENT words, verbatim");
+        assert_eq!(session["fleet_panes"][0]["command"], "fleet");
+        assert_eq!(
+            session["fleet_panes"][0]["window"], "Terminal cb1fe908",
+            "the pane is named by the daemon's display name"
+        );
+        assert_eq!(doc["agents"][0]["state"], "none");
     }
 
     #[test]

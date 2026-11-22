@@ -20085,6 +20085,151 @@ async function p6ArmadaNamesItsFourSentences() {
     /showing sid-a \u00b7 live \u00b7 dispatchable/.test(said), said.slice(0, 200));
 }
 
+// The tuios section of the deployment map (the tuios armada plan): what the
+// owner's multiplexer carries, read through tuios's own control protocol.
+// The fixture is the shape `src/tuios.rs` serializes — a session's windows
+// counted by the daemon's AGENT state words, and the panes matched by their
+// live command line. The words below are tuios's own (`none`,
+// `needs_input`, `working`), never Fleet's, and the map prints them as
+// given: it shows, it does not judge.
+const TUIO_FLEET = {
+  type: 'armada', flagship: true,
+  instances: [{
+    sid: 'sid-a', install_id: 'i-a', version: '0.9.1', capacity_kib: 2097152,
+    live: true, heartbeat_age_secs: 40, settled: 3, calibrated: true, reliability: 0.67,
+    tuios: {
+      sid: 'sid-a', server: '', attention_open: 2,
+      sessions: [
+        {
+          name: 'fleet-tui', windows: 1, agents: { none: 1 },
+          fleet_panes: [{
+            window: 'Terminal cb1fe908', command: 'fleet',
+            cwd: '/Users/owner/Projects/fleet',
+          }],
+        },
+        {
+          name: 'work', windows: 2, agents: { needs_input: 1, working: 1 },
+          fleet_panes: [],
+        },
+      ],
+      agents: [
+        { session: 'fleet-tui', name: 'Terminal cb1fe908', state: 'none', foreground: 'fleet' },
+        { session: 'work', name: 'api', state: 'working', foreground: 'claude' },
+      ],
+    },
+  }],
+};
+
+async function tuiosSectionDrawsTheDaemonsOwnAnswer() {
+  const page = boot({ hash: '#/armada', documents: {
+    armada: TUIO_FLEET, state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(160);
+
+  const sections = page.rows('.deploy-map-tuios');
+  check('TUIO the row carries one tuios section', sections.length === 1,
+    String(sections.length));
+  const block = sections[0];
+  const said = block ? block.textContent : '';
+  check('TUIO the section names the socket it read', /tuios \u00b7 the default socket/.test(said),
+    said.slice(0, 200));
+  check('TUIO the section names both sessions the daemon holds',
+    said.includes('fleet-tui') && said.includes('work'), said.slice(0, 240));
+  // The AGENT words pass through verbatim: tuios's own vocabulary, and not
+  // one of Fleet's words for the same thing.
+  check('TUIO the AGENT states pass through verbatim',
+    /none 1/.test(said) && /needs_input 1/.test(said) && /working 1/.test(said) &&
+      !/needs you|waiting|blocked/i.test(said),
+    said.slice(0, 240));
+  // The fleet pane is marked on the session that carries it, by the live
+  // command line — and the shell session carries no such mark.
+  const marks = page.rows('.tuios-fleet-pane');
+  check('TUIO the pane running Fleet is marked, once',
+    marks.length === 1 && /fleet pane \u00b7 Terminal cb1fe908 \u00b7 fleet/.test(marks[0].textContent),
+    marks.map((one) => one.textContent).join(' | ') || 'no fleet pane mark');
+  const shell = page.rows('.tuios-session')
+    .find((one) => one.dataset.session === 'work');
+  check('TUIO the shell session is not marked as a fleet pane',
+    !!shell && shell.textContent.includes('needs_input 1') &&
+      !/fleet pane/.test(shell.textContent),
+    shell ? shell.textContent : 'no work session row');
+  // The agents' own stage words ride their session, in the daemon's
+  // vocabulary (the same words the counts use, never Fleet's).
+  const agents = page.rows('.tuios-agent');
+  check('TUIO the agents\u2019 own stage words ride their session',
+    agents.length === 2 &&
+      agents.some((one) => one.dataset.state === 'working' &&
+        /agent \u00b7 api \u00b7 working \u00b7 claude/.test(one.textContent)),
+    agents.map((one) => one.textContent).join(' | ') || 'no agent rows');
+  // The selected sentence points at the session carrying Fleet's TUI.
+  const selected = page.rows('[data-state="selected"]')
+    .filter((one) => one.dataset.surface === 'tuios')
+    .map((one) => one.textContent).join(' | ');
+  check('TUIO the selected line names the session that carries Fleet',
+    /showing fleet-tui \u00b7 1 window \u00b7 none 1/.test(selected) &&
+      /the AGENT words are the daemon\u2019s own/.test(selected),
+    selected.slice(0, 240));
+}
+
+async function tuiosRefusalIsNamedAndNeverAnEmptyGrid() {
+  const page = boot({ hash: '#/armada', documents: {
+    armada: {
+      type: 'armada', flagship: true,
+      instances: [{
+        sid: 'sid-a', install_id: 'i-a', version: '0.9.1', capacity_kib: 2097152,
+        live: true, heartbeat_age_secs: 40, settled: 3, calibrated: true, reliability: 0.67,
+        tuios: {
+          sid: 'sid-a', server: '', attention_open: 0, sessions: [], agents: [],
+          refusal: 'tuios is not running on sid-a',
+        },
+      }],
+    },
+    state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(160);
+
+  const block = page.rows('.deploy-map-tuios')[0];
+  const said = block ? block.textContent : '';
+  check('TUIO a daemon that is not running is named, not an empty grid',
+    /tuios is not running on sid-a/.test(said) && /never a grid of none/.test(said),
+    said.slice(0, 240));
+  check('TUIO the refused section draws no session rows',
+    page.rows('.tuios-session').length === 0 && page.rows('.tuios-fleet-pane').length === 0,
+    String(page.rows('.tuios-session').length));
+}
+
+async function tuiosSectionNamesItsFourSentences() {
+  // Loading: the map paints before the roster lands, and the section says
+  // it rides that read rather than inventing a daemon answer.
+  const loading = boot({ hash: '#/armada', documents: {} });
+  check('TUIO loading says the section is read with the map',
+    /the tuios section is read with the map/.test(loading.text('armada-board')),
+    loading.text('armada-board').slice(0, 200));
+
+  // Empty: no instance carries a section, and the absence is named once —
+  // the armada's "no fleet carries armada yet" rule, applied to a section
+  // that would otherwise vanish without a word.
+  const empty = boot({ hash: '#/armada', documents: {
+    armada: p6ArmadaFleet, state: (asked) => emptyState(asked),
+  } });
+  await flush(); empty.open(); await flush(160);
+  check('TUIO the section\u2019s absence is its own named state',
+    /no tuios section on any instance yet/.test(empty.text('armada-board')) &&
+      /<home>\/tuios\.json/.test(empty.text('armada-board')),
+    empty.text('armada-board').slice(0, 260));
+
+  // Refused and selected are driven above; this pins the table holds all
+  // four wordings, so a deleted one reds a case by name. The slice ends at
+  // the next surface's entry — a slice that ran on would find the
+  // neighbour's `empty:` and pass for the wrong reason.
+  const at = SRC.indexOf('tuios: {');
+  const table = SRC.slice(at, SRC.indexOf('calibration: {', at));
+  ['empty:', 'loading:', 'refused:', 'selected:'].forEach((kind) => {
+    check('TUIO the table holds its ' + kind.replace(':', '') + ' sentence',
+      at > 0 && table.includes(kind), table.slice(0, 120));
+  });
+}
+
 // The kanzo board's card (the kanzo plan's bots-surface AC): five
 // receipt rows from the lane's own ledger, each with the board task's
 // name, the persona and the task's URL — and a row with no receipt says
@@ -20528,6 +20673,9 @@ const cases = [
   ['P6 an armada with no roster says so, and never a zero',
     p6ArmadaWithNoRosterSaysSoAndNeverAZero],
   ['P6 armada names its four sentences', p6ArmadaNamesItsFourSentences],
+  ['TUIO the section draws the daemon\u2019s own answer', tuiosSectionDrawsTheDaemonsOwnAnswer],
+  ['TUIO a refusal is named and never an empty grid', tuiosRefusalIsNamedAndNeverAnEmptyGrid],
+  ['TUIO the section names its four sentences', tuiosSectionNamesItsFourSentences],
   ['P6 an empty replay window is named', p6CalibrationCounterfactualRefusesAnEmptyWindow],
   ['P6 calibration names its four sentences', p6CalibrationNamesItsFourSentences],
   ['KANZO the card carries the five receipts the ledger counts',

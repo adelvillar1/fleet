@@ -2143,6 +2143,11 @@ impl Bridge {
                         "settled": grade.settled,
                         "calibrated": grade.calibrated,
                         "reliability": grade.reliability,
+                        // The tuios section, when the owner enabled this
+                        // instance's machine: the daemon's own sessions,
+                        // windows by AGENT state, agents and fleet panes,
+                        // or the named refusal when it does not answer.
+                        "tuios": crate::tuios::section(&home, &instance.sid),
                     })
                 })
                 .collect();

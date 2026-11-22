@@ -3876,6 +3876,12 @@ pub struct ArmadaInstance {
     /// measurement, never by registration.
     pub calibrated: bool,
     pub reliability: f64,
+    /// The tuios section, when the owner enabled this instance's machine
+    /// (`<home>/tuios.json`). `None` is the ordinary install: the row
+    /// carries its four cells and nothing else. The section is the
+    /// daemon's own answer, read-only over its control protocol — see
+    /// [`crate::tuios`].
+    pub tuios: Option<crate::tuios::Section>,
 }
 
 /// Read the roster and grade each instance. The roster's own load treats
@@ -3893,6 +3899,9 @@ pub fn read_armada(home: &Path) -> Result<ArmadaSnapshot, String> {
         .into_values()
         .map(|instance| {
             let grade = crate::armada::control::grade(home, &instance.sid);
+            // The tuios section is per instance and opt-in: an instance the
+            // owner has not enabled costs no call and carries no section.
+            let tuios = crate::tuios::section(home, &instance.sid);
             ArmadaInstance {
                 live: instance.live(now_secs),
                 sid: instance.sid,
@@ -3902,6 +3911,7 @@ pub fn read_armada(home: &Path) -> Result<ArmadaSnapshot, String> {
                 settled: grade.settled,
                 calibrated: grade.calibrated,
                 reliability: grade.reliability,
+                tuios,
             }
         })
         .collect();
