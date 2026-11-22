@@ -6306,6 +6306,13 @@ async function aHeldDeliveryIsOneCardWithTwoVerbsAndTheAcceptPosts() {
     Boolean(card) && card.textContent.includes('run the tests') &&
       card.textContent.includes('twice over'),
     card ? card.textContent.slice(0, 140) : 'no card');
+  // Pass 3: the held card carries the age of the hold - the stamp is the
+  // row's own; the wording is roomAge's, so the pin reads the element
+  // and its shape.
+  const heldAge = card ? card.querySelectorAll('.ib-age') : [];
+  check('IBC the held card carries the age of the hold',
+    heldAge.length === 1 && /^[0-9]+[hd] ago$|^now$/.test(heldAge[0].textContent),
+    heldAge.length ? heldAge[0].textContent : 'no age');
   const buttons = card ? [...card.querySelectorAll('button')] : [];
   const accept = buttons.find((b) => b.textContent === 'accept');
   const decline = buttons.find((b) => b.textContent === 'decline');
@@ -17472,6 +17479,16 @@ async function theInboxRowWearsThePrincipalChip() {
   check('S4 the inbox row wears the resolved principal chip',
     chips.length === 1 && chips[0].textContent === 'reef',
     'chips=' + chips.length);
+
+  // Pass 3 (the gated mockup): the age rides every row that carries a
+  // stamp - the door is ordered by the age of the hold, so the row shows
+  // the age it was ordered by, not only the asks. The stamp is the row's
+  // own; the wording is roomAge's, so the pin reads the element and its
+  // shape, never a wall-clock-exact word.
+  const ageLine = page.rows('.ib-age');
+  check('S4 the ask row carries the age its stamp ordered it by',
+    ageLine.length === 1 && /^[0-9]+[hd]$|^now$/.test(ageLine[0].textContent),
+    ageLine.map((a) => a.textContent).join('|'));
 }
 
 // The sinkhole audit (2026-11-14): the calibration lens surfaces every

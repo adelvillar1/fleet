@@ -5967,9 +5967,11 @@ import { node, svg, clip } from './core/dom.js';
         }
         if (where) what.appendChild(node('div', 'ib-where', where));
         if (why) what.appendChild(node('div', 'ib-why', why));
-        if (kind.cls === 'ask' && row.at) {
-          what.appendChild(node('div', 'ib-age', age(row.at)));
-        }
+        // The age rides every row that carries a stamp (the gated
+        // mockup): the door is ordered by the age of the hold, so the
+        // row shows the age it was ordered by - not only the asks. A
+        // row without a stamp says nothing.
+        if (row.at) what.appendChild(node('div', 'ib-age', age(row.at)));
         var act = node('div', 'ib-actions');
         var act1 = function (label, fn, primary) {
           var b = node('button', primary ? 'primary' : null, label);
