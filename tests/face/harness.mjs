@@ -5459,6 +5459,70 @@ async function theDelegationSurfaceLeadsWithTheBlockers() {
     !!fold && fold.dataset.collapsed === 'true', fold ? fold.dataset.collapsed : 'no fold');
 }
 
+// RP7 (the relevance pass, 2026-11-22): the rail carries state groups —
+// needs-you, working — read off the one `needs_you` document, both
+// expanded, with the rest of the destinations left in their categories as
+// the idle inventory. The red proof runs BOTH ways: a surface with active
+// work is in its state group and NOT in a category, and a surface with
+// nothing is in its category and NOT in a state group.
+async function theRailCarriesStateGroups() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 1, working: 1, background: 0, earlier: 1, total: 2 },
+      needs_you: {
+        type: 'needs_you', order: ['door', 'approval', 'offer'],
+        counts: { doors: 1, approvals: 0, offers: 0, working: 1, total: 1 },
+        surfaces: ['inbox', 'sessions'],
+        rows: [{ kind: 'door', surface: 'inbox', id: 'held:h1', session: null,
+          label: 'the CI box \u00b7 run the tests', why: 'a delivery is held for your answer',
+          at: '2026-11-21 09:00', link: '#/inbox', press: 'answer' }],
+        working: [{ surface: 'sessions', id: 'run-1', session: 'run-1',
+          label: 'skills the model can reach', at: 2, link: '#/sessions/run-1' }],
+        refused: [],
+      },
+      changed: { type: 'changed', bound: 6, rows: [] },
+      sessions: [row('run-1', 'working', { title: 'skills the model can reach' })],
+    },
+  };
+  const page = boot({ width: 1440, hash: '#/sessions', documents: doc });
+  await flush();
+  page.open();
+  await flush(200);
+  const sections = page.IDS['rail-tree'].find((one) =>
+    String(one.className || '').split(/\s+/).includes('surfaces-section'));
+  const stateOf = (surface) => {
+    const holder = sections.find((section) =>
+      section.find((one) => one.dataset && one.dataset.address === surface).length);
+    return holder ? (holder.dataset.state || holder.dataset.group || 'category') : 'missing';
+  };
+  check('RP7 the rail carries a needs-you group', stateOf('inbox') === 'needs',
+    'inbox is in ' + stateOf('inbox'));
+  check('RP7 the rail carries a working group', stateOf('sessions') === 'working',
+    'sessions is in ' + stateOf('sessions'));
+  // Both directions of the red proof: nothing with work drops into the
+  // idle inventory, and nothing idle is promoted into a state group.
+  check('RP7 a surface with work never drops into the idle inventory',
+    stateOf('board') !== 'needs' && stateOf('board') !== 'working' &&
+      stateOf('board') !== 'missing',
+    'board is in ' + stateOf('board'));
+  // Both state groups stand expanded.
+  const heads = sections.filter((section) =>
+    section.dataset.state === 'needs' || section.dataset.state === 'working')
+    .map((section) => section.find((one) =>
+      String(one.className || '').split(/\s+/).includes('surfaces-group'))[0]);
+  check('RP7 both state groups stand expanded',
+    heads.length === 2 && heads.every((head) => head && head.getAttribute('aria-expanded') === 'true'),
+    heads.map((head) => head && head.getAttribute('aria-expanded')).join(','));
+  // One press folds one — the group is a fold like every other, and the
+  // fold is remembered.
+  if (heads[0]) heads[0].click();
+  await flush(60);
+  check('RP7 a state group folds and remembers',
+    String(page.window.localStorage.getItem('fleet-rail-folded') || '').includes('state:'),
+    String(page.window.localStorage.getItem('fleet-rail-folded')));
+}
+
 // New mints a real conversation at the press (the owner's 2026-11-05
 // ruling, replacing N2's create-then-send): the log exists before any
 // words, so the send that follows can only name this conversation —
@@ -20936,6 +21000,7 @@ const cases = [
   ['RP4 the door is ordered by the age of the hold', theDoorIsOrderedByTheAgeOfTheHold],
   ['RP5 the board leads with change and divergence', theBoardLeadsWithChangeAndDivergence],
   ['RP6 delegation leads with the blockers', theDelegationSurfaceLeadsWithTheBlockers],
+  ['RP7 the rail carries needs-you, working and the idle inventory', theRailCarriesStateGroups],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],

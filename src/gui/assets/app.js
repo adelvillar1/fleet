@@ -13601,7 +13601,21 @@ import { node, svg, clip } from './core/dom.js';
         face.sessionAsking = false;
         if (face.panel === 'sessions') paintWork();
         paintRecent();
+        paintNeeds();
+        paintChanged();
         paintConvHead();
+        // The rail's state groups are derived from THIS document (the
+        // relevance pass): a surface moves between needs-you, working and
+        // the idle inventory as the document says. Rebuilt only when the
+        // groups actually change, so a read that says the same thing does
+        // not repaint the rail under the owner's pointer.
+        var signature = stateGroups().map(function (group) {
+          return group.id + ':' + group.rows.map(function (row) { return row.surface; }).join(',');
+        }).join('|');
+        if (signature !== face.railStateSignature) {
+          face.railStateSignature = signature;
+          buildRail();
+        }
         paintRailCounts();
       })
       .catch(function () {
@@ -33479,9 +33493,116 @@ import { node, svg, clip } from './core/dom.js';
     return ADDRESS_MARKS[address] || address;
   }
 
+  // The rail's state groups (the relevance pass, 2026-11-22): the rail
+  // stops being a catalogue of destinations and becomes what the owner
+  // needs to see first — which surfaces NEED them, which are WORKING, and
+  // the rest. Both groups are read off the one `needs_you` document; the
+  // page files a surface by the state the document gave it and asks
+  // nothing else.
+  function stateGroups() {
+    var doc = face.sessions && face.sessions.needs_you;
+    if (!doc) return [];
+    var tally = function (rows) {
+      var out = [];
+      (rows || []).forEach(function (row) {
+        var surface = row.surface;
+        if (!surface) return;
+        var seen = null;
+        out.forEach(function (one) { if (one.surface === surface) seen = one; });
+        if (!seen) { seen = { surface: surface, count: 0 }; out.push(seen); }
+        seen.count += 1;
+      });
+      return out;
+    };
+    var needs = tally(doc.rows);
+    // A surface with a need is a NEED, never also "working": one surface
+    // files under the strongest state it carries.
+    var working = tally(doc.working).filter(function (one) {
+      return !needs.some(function (need) { return need.surface === one.surface; });
+    });
+    var groups = [];
+    if (needs.length) groups.push({ id: 'state:needs', name: 'needs you', tone: 'needs', rows: needs });
+    if (working.length) groups.push({ id: 'state:working', name: 'working', tone: 'working', rows: working });
+    return groups;
+  }
+
+  /// The plain name of a surface, read from the same tables the rail and
+  /// the palette already carry — one vocabulary, never a second.
+  function surfaceLabel(address) {
+    var found = null;
+    GROUPS.forEach(function (group) {
+      group[2].forEach(function (item) {
+        if (item[0] === address) found = item[1];
+      });
+    });
+    if (found) return found;
+    ADVANCED.forEach(function (row) { if (row[0] === address) found = row[1]; });
+    if (found) return found;
+    ROUTES.forEach(function (route) { if (route[0] === address) found = route[1]; });
+    return found || address;
+  }
+
+  /// One rail row: the mark, the plain label, the expert name when the
+  /// register is on, and the count its surface will paint. One builder for
+  /// the state groups and the category groups, so a row cannot look like
+  /// two different things depending on which group holds it.
+  function railLink(address, name) {
+    var link = node('button', 'surfaces-link');
+    link.type = 'button';
+    link.dataset.address = address;
+    link.setAttribute('aria-label', name);
+    link.title = name;
+    var isPlugin = (face.plugins || []).some(function (one) {
+      return one.enabled && one.name === address;
+    });
+    link.appendChild(icon(isPlugin ? 'plugin' : markFor(address), 'surfaces-icon'));
+    link.appendChild(node('span', 'surfaces-label', name));
+    if (EXPERT_NAMES[address]) {
+      link.appendChild(node('span', 'surfaces-expert expert-only', EXPERT_NAMES[address]));
+    }
+    var count = node('span', 'surfaces-count');
+    count.dataset.count = address;
+    count.hidden = true;
+    link.appendChild(count);
+    link.addEventListener('click', function () {
+      window.location.hash = '#/' + address;
+      setMobileRail(false);
+    });
+    return link;
+  }
+
   function buildRail() {
     el.railTree.textContent = '';
     var folded = railFoldedGroups();
+    // The state groups lead, expanded, and a surface they hold is NOT
+    // repeated in its category: the categories below are the idle
+    // inventory, and a surface with work must never drop into it.
+    var claimed = {};
+    stateGroups().forEach(function (group) {
+      var section = node('div', 'surfaces-section');
+      section.dataset.group = group.id;
+      section.dataset.state = group.tone;
+      if (folded.indexOf(group.id) >= 0) section.dataset.folded = 'true';
+      var head = node('button', 'surfaces-group');
+      head.type = 'button';
+      head.setAttribute('aria-expanded', String(section.dataset.folded !== 'true'));
+      head.appendChild(node('span', 'surfaces-group-chev')).appendChild(icon('chevron'));
+      head.appendChild(node('span', 'surfaces-group-name', group.name));
+      var badge = node('span', 'surfaces-group-needs', String(group.rows.length));
+      badge.dataset.needs = group.id;
+      head.appendChild(badge);
+      head.addEventListener('click', function () {
+        setRailGroupFolded(group.id, section.dataset.folded !== 'true');
+        buildRail();
+        paintRailCounts();
+      });
+      section.appendChild(head);
+      group.rows.forEach(function (row) {
+        claimed[row.surface] = true;
+        section.appendChild(railLink(row.surface, surfaceLabel(row.surface)));
+      });
+      el.railTree.appendChild(section);
+    });
     GROUPS.forEach(function (group) {
       var id = group[0], label = group[1], items = group[2].slice();
       // The face plugins' entries join their declared group — the
@@ -33542,34 +33663,11 @@ import { node, svg, clip } from './core/dom.js';
         var address = item[0], name = item[1];
         // U44: the fleet lens exists only where there is a fleet.
         if (address === 'armada' && document.body.dataset.armada !== 'on') return;
-        var link = node('button', 'surfaces-link');
-        link.type = 'button';
-        link.dataset.address = address;
-        link.setAttribute('aria-label', name);
-        link.title = name;
-        var isPlugin = (face.plugins || []).some(function (one) {
-          return one.enabled && one.name === address;
-        });
-        link.appendChild(icon(isPlugin ? 'plugin' : markFor(address), 'surfaces-icon'));
-        link.appendChild(node('span', 'surfaces-label', name));
-        // The expert register (U45): the subsystem name behind the plain
-        // label, revealed when the console's expert switch is on. The
-        // switch flipped body[data-expert] but nothing wore expert-only,
-        // so it did nothing — this annotation is what it reveals.
-        if (EXPERT_NAMES[address]) {
-          link.appendChild(node('span', 'surfaces-expert expert-only', EXPERT_NAMES[address]));
-        }
-        // A surface that has something waiting says so on the rail, and
-        // says nothing when it does not — an empty counter is decoration.
-        var count = node('span', 'surfaces-count');
-        count.dataset.count = address;
-        count.hidden = true;
-        link.appendChild(count);
-        link.addEventListener('click', function () {
-          window.location.hash = '#/' + address;
-          setMobileRail(false);
-        });
-        section.appendChild(link);
+        // A surface the state groups already hold is not repeated here:
+        // these categories are the idle inventory, and a surface with
+        // active work must never drop into it.
+        if (claimed[address]) return;
+        section.appendChild(railLink(address, name));
       });
       el.railTree.appendChild(section);
     });

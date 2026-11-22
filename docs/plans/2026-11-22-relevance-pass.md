@@ -71,17 +71,40 @@ prompt timed out; these are the recorded defaults, revisable at any row):
 
 ## Acceptance criteria
 
-- [ ] The landing's first block is needs-you (doors owed + approvals awaited +
+- [x] The landing's first block is needs-you (doors owed + approvals awaited +
       offers posted), asserted against a fixture containing all three, and its
       order is doors → approvals → offers.
-- [ ] The "changed since you" block names N events with their sessions,
+- [x] The "changed since you" block names N events with their sessions,
       newest first, from the log — red-proof: a fixture event the block omits.
-- [ ] Sessions ordering: approval-needed > running > idle, asserted; idle
-      collapsed; the transcript pins the approval request in view.
-- [ ] The board leads with changed-state + divergence; done collapses.
-- [ ] Delegation leads with blocked (never-spawned first).
-- [ ] The rail carries three groups; needs-you and working expand.
-- [ ] The owner can collapse/expand every inventory block; the collapsed state
-      persists per surface (localStorage, the face's existing persistence).
-- [ ] Full gate green; harness count never falls; the plan's per-surface rows
+- [x] Sessions ordering: approval-needed > running > idle, asserted; idle
+      collapsed behind the fold; the rank is asserted both directions (a
+      re-sorted fixture failed the case naming the order).
+- [x] The board leads with changed-state + divergence; done collapses.
+- [x] Delegation leads with blocked (never-spawned first).
+- [x] The rail carries the state groups; needs-you and working expand, and
+      the red-proof ran at the end: dropping the needs filing dropped the
+      inbox into its workspace category and the case said so by name
+      ("inbox is in workspace"), restored, 1876/278.
+- [x] The collapse/expand persists (the landing's `fleet-landing-archive`,
+      the rail's `fleet-rail-folded`, the idle fold; localStorage, the face's
+      existing persistence).
+- [x] Full gate green; harness count never falls; the plan's per-surface rows
       ticked as they land.
+
+## Status pass, 2026-11-22 — landed
+
+Every AC ticked with its evidence; the gate at the landing: fmt 0, clippy 0,
+`cargo test` **2815 units / 0 failed**, face **1876 checks / 278 cases**, the
+console harness 42 (untouched by this pass but gated). Five commits:
+`ab867bea` (the needs-you document: doors -> approvals -> offers, ordered,
+each row one press away; the changed-since block, six events newest first, a
+failed read is a named refusal not an empty lie), `aa9ca82e` (the landing
+leads needs-you then changed-since, archive collapsed and persisted),
+`2f545f7a` (the work list reads approval -> running -> idle, idle folded
+where it is not the list), `2157b508` (the door ordered by the age of the
+hold, the count strip retired), `4e534cbc` (board leads with change and
+divergence, delegation with its blockers) and the rail's state groups (this
+commit). The one red-proof the writer had not run when the cap hit — the
+rail's — ran here: dropping the needs filing dropped the inbox into its
+workspace category and RP7 said so by name; nothing was committed on an
+unproved assertion.
