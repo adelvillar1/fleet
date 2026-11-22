@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-21
 plan: tui-surfaces
 ---
