@@ -185,6 +185,101 @@ pub(crate) const CONSOLE_WORKER_GZ: &[u8] =
 /// (`Reply::negotiated` compares the bytes, not the path), and the test
 /// that walks this table gunzips every entry and compares it to the
 /// identity reply, so a body that moved without its twin is red.
+const VENDOR_BOOPFACE_BOOPFACE_LITE_JS: &str =
+    include_str!("assets/vendor/boopface/boopface-lite.js");
+pub(crate) const VENDOR_BOOPFACE_BOOPFACE_LITE_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-boopface-lite.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_ACTIONS_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-actions.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_ACTIONS_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-actions.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_ANTENNA_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-antenna.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_ANTENNA_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-antenna.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_CORE_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-core.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_CORE_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-core.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_EXTENSION_HOST_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-extension-host.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_EXTENSION_HOST_JS_GZ: &[u8] =
+    include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/vendor-boopface-src-boopface-extension-host.js.gz"
+    ));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_FAILURE_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-failure.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_FAILURE_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-failure.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_GEOMETRY_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-geometry.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_GEOMETRY_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-geometry.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_GESTURES_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-gestures.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_GESTURES_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-gestures.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_HEAD_ROUNDNESS_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-head-roundness.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_HEAD_ROUNDNESS_JS_GZ: &[u8] =
+    include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/vendor-boopface-src-boopface-head-roundness.js.gz"
+    ));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_INSPECT_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-inspect.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_INSPECT_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-inspect.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_LOVE_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-love.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_LOVE_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-love.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_RANDOM_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-random.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_RANDOM_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-random.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_RUNTIME_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-runtime.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_RUNTIME_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-runtime.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_VERSION_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-version.js");
+const VENDOR_BOOPFACE_SRC_BOOPFACE_WAITING_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-waiting.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_WAITING_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-waiting.js.gz"
+));
+const VENDOR_BOOPFACE_SRC_BOOPFACE_WRAP_JS: &str =
+    include_str!("assets/vendor/boopface/src/boopface-wrap.js");
+pub(crate) const VENDOR_BOOPFACE_SRC_BOOPFACE_WRAP_JS_GZ: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/vendor-boopface-src-boopface-wrap.js.gz"
+));
+
 pub(crate) const GZIP_ASSETS: &[(&str, &str, &[u8])] = &[
     ("/", INDEX_STAMPED, INDEX_GZ),
     ("/app.css", STYLES, STYLES_GZ),
@@ -204,6 +299,81 @@ pub(crate) const GZIP_ASSETS: &[(&str, &str, &[u8])] = &[
     ("/vendor/docx-preview.min.js", VENDOR_DOCX, VENDOR_DOCX_GZ),
     ("/vendor/jszip.min.js", VENDOR_JSZIP, VENDOR_JSZIP_GZ),
     ("/vendor/VENDOR.json", VENDOR_MANIFEST, VENDOR_MANIFEST_GZ),
+    (
+        "/vendor/boopface/boopface-lite.js",
+        VENDOR_BOOPFACE_BOOPFACE_LITE_JS,
+        VENDOR_BOOPFACE_BOOPFACE_LITE_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-actions.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_ACTIONS_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_ACTIONS_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-antenna.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_ANTENNA_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_ANTENNA_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-core.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_CORE_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_CORE_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-extension-host.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_EXTENSION_HOST_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_EXTENSION_HOST_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-failure.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_FAILURE_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_FAILURE_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-geometry.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_GEOMETRY_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_GEOMETRY_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-gestures.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_GESTURES_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_GESTURES_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-head-roundness.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_HEAD_ROUNDNESS_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_HEAD_ROUNDNESS_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-inspect.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_INSPECT_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_INSPECT_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-love.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_LOVE_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_LOVE_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-random.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_RANDOM_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_RANDOM_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-runtime.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_RUNTIME_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_RUNTIME_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-waiting.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_WAITING_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_WAITING_JS_GZ,
+    ),
+    (
+        "/vendor/boopface/src/boopface-wrap.js",
+        VENDOR_BOOPFACE_SRC_BOOPFACE_WRAP_JS,
+        VENDOR_BOOPFACE_SRC_BOOPFACE_WRAP_JS_GZ,
+    ),
     // The bot face's own shell, at both the root it has always had and
     // the scoped `/bot/` address KI-588 installed it at.
     ("/bot/", BOT_SHELL_STAMPED, BOT_SHELL_GZ),
@@ -521,6 +691,17 @@ async fn serve_connection(
         }
         // The vendored type (U6): binary woff2, the blob writer's own
         // path — same cache discipline as the icons.
+        // A 46-byte module: gzip's header costs more than its body, so
+        // it serves raw, the fonts' own pattern.
+        ("GET", "/vendor/boopface/src/boopface-version.js") => {
+            write_blob(
+                &mut stream,
+                "text/javascript; charset=utf-8",
+                ICON_CACHE,
+                VENDOR_BOOPFACE_SRC_BOOPFACE_VERSION_JS.as_bytes(),
+            )
+            .await
+        }
         ("GET", "/vendor/fonts/SpaceGrotesk.woff2") => {
             write_blob(&mut stream, "font/woff2", ICON_CACHE, FONT_SPACE_GROTESK).await
         }

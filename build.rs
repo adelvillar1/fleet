@@ -113,6 +113,66 @@ const ASSETS: &[Asset] = &[
         stamp: Stamp::None,
     },
     Asset {
+        path: "src/gui/assets/vendor/boopface/boopface-lite.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-actions.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-antenna.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-core.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-extension-host.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-failure.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-geometry.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-gestures.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-head-roundness.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-inspect.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-love.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-random.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-runtime.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-waiting.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/boopface/src/boopface-wrap.js",
+        stamp: Stamp::None,
+    },
+    Asset {
         path: "src/gui/assets/manifest.webmanifest",
         stamp: Stamp::None,
     },

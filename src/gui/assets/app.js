@@ -13815,6 +13815,57 @@ import { node, svg, clip } from './core/dom.js';
   // derives the grouping once — the browser renders, it never decides.
   // ---------------------------------------------------------------
 
+
+  // --- the persona face (A1-A5, the harness redesign): the seam between
+  // the roster and the vendored robot-face component. The component
+  // vendors in-repo (the lite graph, every expression, no skins - D8);
+  // this seam is the only door: the tint resolves from the token chain
+  // at runtime (the component's color attribute takes a value, not a
+  // var, so the chain resolves here and hands the value over), the
+  // motion honors the reduced-motion default (A3), and the state map
+  // (A2) plays the face's own states - never a mood the record does not
+  // carry. Product copy never names the upstream character (U42).
+  var PERSONA_FACE_STATES = {
+    idle: function (face) { face.reset(); },
+    streaming: function (face) { face.play('input'); },
+    working: function (face) { face.startWaiting({ variant: 'spin' }); },
+    'needs-you': function (face) { face.play('wary'); },
+    pass: function (face) { face.play('success'); },
+    refused: function (face) { face.play('failure'); },
+    asleep: function (face) { face.play('sleep'); }
+  };
+
+  function resolvedTint(varExpr) {
+    var probe = document.createElement('span');
+    probe.style.color = varExpr;
+    probe.style.display = 'none';
+    document.body.appendChild(probe);
+    var resolved = getComputedStyle(probe).color;
+    probe.remove();
+    return resolved;
+  }
+
+  function personaFaceEl(name, state, size) {
+    var seat = presence(name);
+    var face = document.createElement('boop-face');
+    face.setAttribute('size', String(size || 28));
+    face.setAttribute('color', resolvedTint(seat.tint));
+    face.setAttribute('motion', 'auto');
+    face.setAttribute('auto-sleep', '0');
+    face.setAttribute('aria-hidden', 'true');
+    face.dataset.persona = name || '';
+    // The component module loads before app.js (index.html's script
+    // order), so a constructed element carries the state methods; a
+    // component that failed to load leaves the face idle - the try names
+    // nothing because there is nothing to name.
+    try {
+      PERSONA_FACE_STATES[state || 'idle'](face);
+    } catch (error) {
+      // the face stays at rest
+    }
+    return face;
+  }
+
   // The presence table (P0 of the face rethink): a persona's tint, its
   // glyph and the word it says while it works — one place. They used to be
   // three facts that had to agree: a tint map here, a glyph derived from the
@@ -13843,10 +13894,17 @@ import { node, svg, clip } from './core/dom.js';
     };
   }
 
-  // A member's mark: the serif initial on an opaque disc tinted from its
-  // lane. An owner-supplied image replaces the initial when the role
-  // carries one (C11); absent that, this is the whole identity.
+  // A member's mark: the persona face (A1/A4 - the vendored component
+  // behind the persona-face seam), tinted from the presence table at
+  // runtime. An owner-supplied image replaces the face where the role
+  // carries one (C11) - the image is the mark's whole surface. The face
+  // renders idle here; the surfaces that carry a state play it through
+  // the state map (A2).
   function huddleMark(name, size, avatar) {
+    if (!avatar && window.customElements && customElements.get('boop-face')) {
+      var px = size === 'lg' ? 44 : size === 'md' ? 30 : 22;
+      return personaFaceEl(name, 'idle', px);
+    }
     var disc = node('span', 'pmark' + (size ? ' ' + size : ''));
     var mark = presence(name);
     disc.style.setProperty('--tint', mark.tint);

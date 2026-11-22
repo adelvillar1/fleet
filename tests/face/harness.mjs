@@ -8009,6 +8009,42 @@ async function theStrategyStepShowsItsPreview() {
       'bot attachments');
     check('C7 the bot inserts clipboard text at the caret',
       BOTJS.indexOf('textarea.setSelectionRange(caret, caret)') !== -1, 'bot caret');
+  // The avatar pass (A1-A5, the gated mockup 33): the component vendors
+  // in-repo behind the persona-face seam, the state map plays the face's
+  // own states, flat tint mode per D8, and the identity carve-out is
+  // named in the vendor notice.
+  const FACE_JS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.js'), 'utf8');
+  const FACE_HTML = fs.readFileSync(path.join(ROOT, 'src/gui/assets/index.html'), 'utf8');
+  const VENDOR_NOTICE = fs.readFileSync(path.join(ROOT, 'src/gui/assets/vendor/VENDOR.json'), 'utf8');
+  const VENDOR_LICENSE = fs.readFileSync(path.join(ROOT, 'src/gui/assets/vendor/boopface/LICENSE'), 'utf8');
+  check('AVATAR the component vendors in-repo behind the seam',
+    fs.existsSync(path.join(ROOT, 'src/gui/assets/vendor/boopface/boopface-lite.js')) &&
+      fs.existsSync(path.join(ROOT, 'src/gui/assets/vendor/boopface/src/boopface-core.js')) &&
+      FACE_HTML.includes('/vendor/boopface/boopface-lite.js') &&
+      FACE_JS.includes('function personaFaceEl('),
+    'vendored');
+  check('AVATAR the state map plays the face\u2019s own seven states',
+    FACE_JS.includes('PERSONA_FACE_STATES') &&
+      ['idle', 'streaming', 'working', 'needs-you', 'pass', 'refused', 'asleep']
+        .every((state) => FACE_JS.includes(state + ': function (face)') ||
+          FACE_JS.includes("'" + state + "': function (face)")) &&
+      FACE_JS.includes("face.play('wary')") &&
+      FACE_JS.includes("face.play('failure')") &&
+      FACE_JS.includes('face.startWaiting'),
+    'states');
+  check('AVATAR flat tint mode - the tint resolves at runtime, skins stay off',
+    FACE_JS.includes('function resolvedTint(') &&
+      FACE_JS.includes("face.setAttribute('motion', 'auto')") &&
+      FACE_JS.indexOf('setSkin') === -1 &&
+      FACE_JS.indexOf("face.setAttribute('skin'") === -1,
+    'tint');
+  check('AVATAR the vendor notice carries the license and the carve-out',
+    VENDOR_NOTICE.includes('BoopFace') && VENDOR_NOTICE.includes('0.8.0') &&
+      VENDOR_NOTICE.includes('MIT') &&
+      VENDOR_NOTICE.includes('never names the upstream character') &&
+      VENDOR_LICENSE.includes('MIT License') &&
+      VENDOR_LICENSE.includes('CX ART Lab'),
+    'notice');
   // Pass 3 (the gated mockups 30/31): the iPad split view composes the
   // sidebar, the conversation and the receipts at landscape; the
   // receipts derive from the conversation's own cards; the touch floor

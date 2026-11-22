@@ -22,7 +22,7 @@
       "sha256": "57456c8e0c81e46be31174b499ef77f2b9f5ee46d04412ba627320a36755d4c2",
       "license": "Apache-2.0",
       "vendored": "2026-10-29",
-      "reason": "PDF rendering inside the fence (D3): the sandbox disables the browser's native viewer, so the fence chooses PDF.js — API mode, scripting disabled, the document as data."
+      "reason": "PDF rendering inside the fence (D3): the sandbox disables the browser's native viewer, so the fence chooses PDF.js \u2014 API mode, scripting disabled, the document as data."
     },
     {
       "file": "pdf.worker.min.mjs",
@@ -33,7 +33,7 @@
       "sha256": "9536359f1b8367850d485731ca1d5e45c159a7b7a0912325e539937aa21ceb18",
       "license": "Apache-2.0",
       "vendored": "2026-10-29",
-      "reason": "PDF.js's parse worker — the pair with pdf.min.mjs, one version pin."
+      "reason": "PDF.js's parse worker \u2014 the pair with pdf.min.mjs, one version pin."
     },
     {
       "file": "docx-preview.min.js",
@@ -44,7 +44,7 @@
       "sha256": "c4a133c65a112799e35b143c572dfff9e923a3bf39b5fd3b07a06aa0f8f530c2",
       "license": "Apache-2.0",
       "vendored": "2026-10-29",
-      "reason": "DOCX rendering (D5) — runs inside the sandboxed frame, its output never touches the app's origin."
+      "reason": "DOCX rendering (D5) \u2014 runs inside the sandboxed frame, its output never touches the app's origin."
     },
     {
       "file": "jszip.min.js",
@@ -66,7 +66,7 @@
       "sha256": "a0d054c4af557de20afd6ca59f47ab353bcaec49c63ff04b6c9d39d0f8910557",
       "license": "OFL-1.1",
       "vendored": "2026-11-12",
-      "reason": "The U6 display voice (U-ledger): brand, headings, object titles. Latin variable subset; the stack after it is the degradation path, never a second voice. Served from the binary — the face fetches nothing (hard rule 12)."
+      "reason": "The U6 display voice (U-ledger): brand, headings, object titles. Latin variable subset; the stack after it is the degradation path, never a second voice. Served from the binary \u2014 the face fetches nothing (hard rule 12)."
     },
     {
       "file": "fonts/Inter.woff2",
@@ -89,6 +89,17 @@
       "license": "OFL-1.1",
       "vendored": "2026-11-12",
       "reason": "The U6 data voice: tags, timestamps, gauges, micro-labels. Latin variable subset; served from the binary (hard rule 12)."
+    },
+    {
+      "file": "boopface/ (the lite graph, 16 modules)",
+      "name": "BoopFace (the persona faces)",
+      "version": "0.8.0",
+      "upstream": "https://github.com/CX-ArtLab/BoopFace",
+      "download": "https://github.com/CX-ArtLab/BoopFace/releases/download/v0.8.0/boopface-0.8.0.zip",
+      "sha256": "08113c9f9a88bd89c2edacc6ad76636c6ebe38cf1c4b1ee98b621adbe9383e85",
+      "license": "MIT (the license does not transfer the BoopFace name or the character identity - fleet vendors the software, presents its own personas, and never names the upstream character in product copy)",
+      "vendored": "2026-11-22",
+      "reason": "The persona faces (the harness redesign A1-A5): expressive robot faces for the roster, tinted from the token chain at runtime. The lite graph ships - every expression, no skins (D8: skins stay off; the painters in the full build are not vendored)."
     }
   ]
 }
