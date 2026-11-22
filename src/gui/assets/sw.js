@@ -18,6 +18,11 @@
 var VERSION = '__FLEET_ASSET_HASH__';
 var CACHE = 'fleet-shell-' + VERSION;
 var ASSETS = ['/app.css?v=' + VERSION, '/app.js?v=' + VERSION];
+// The one line the activation sweep keeps beside the two assets: when this
+// generation was born. A cache name is a build hash — a coordinate, not a
+// clock — and the server sends no `Date`, so nothing else in the cache can
+// order two generations.
+var BORN = '/__fleet-born';
 
 // The worker's two clocks. Both exist for the same failure, and it is not
 // the one `unreachable()` was written for: a dropped tailnet or mobile path
@@ -75,14 +80,24 @@ self.addEventListener('install', function (event) {
     caches
       .open(CACHE)
       .then(function (cache) {
-        return Promise.all(
-          ASSETS.map(function (url) {
-            return fetchWithin(new Request(url), ASSET_DEADLINE_MS).then(function (attempt) {
-              if (attempt.expired || !attempt.response.ok) return null;
-              return cache.put(url, attempt.response).catch(function () {});
-            }).catch(function () {});
-          }),
-        );
+        // One line beside the two assets: when this generation was born.
+        // The activation below keeps one previous generation, and the cache
+        // name is a build hash — a coordinate, not a clock — so the sweep
+        // needs something it can order. (The server sends no `Date`, so the
+        // stored responses cannot supply it.)
+        var born = cache
+          .put(BORN, new Response(String(Date.now()), { headers: { 'Content-Type': 'text/plain' } }))
+          .catch(function () {});
+        return born.then(function () {
+          return Promise.all(
+            ASSETS.map(function (url) {
+              return fetchWithin(new Request(url), ASSET_DEADLINE_MS).then(function (attempt) {
+                if (attempt.expired || !attempt.response.ok) return null;
+                return cache.put(url, attempt.response).catch(function () {});
+              }).catch(function () {});
+            }),
+          );
+        });
       })
       .then(function () {
         return self.skipWaiting();
@@ -92,24 +107,56 @@ self.addEventListener('install', function (event) {
 
 self.addEventListener('activate', function (event) {
   event.waitUntil(
-    caches
-      .keys()
-      .then(function (keys) {
-        return Promise.all(
-          keys
-            .filter(function (key) {
-              return key.indexOf('fleet-shell-') === 0 && key !== CACHE;
-            })
-            .map(function (key) {
-              return caches.delete(key);
-            }),
-        );
-      })
-      .then(function () {
-        return self.clients.claim();
-      }),
+    (async function () {
+      // Claim first, sweep second. Once this worker controls a live client,
+      // that client's own asset requests are compared against THIS worker's
+      // VERSION (`isVersionedAsset`), so it falls through to the network
+      // instead of reading a cache we are about to drop. That is the
+      // property the diagnosis measured as safe at every viewport: the live
+      // client survived the old cache being deleted.
+      await self.clients.claim();
+
+      // Then sweep one generation LATE. Deleting the previous generation in
+      // the activation that replaces it empties the only answer a stalled
+      // update has: KI-587 measured the new cache created empty (its
+      // prefetch could not finish) and the old one deleted in the same
+      // breath, so `anyVersion` would have had nothing to serve and the
+      // shell would still have frozen — the deadline would only have turned
+      // an endless wait into a named failure. Keeping one generation costs
+      // two assets for one release; by the next activation every live
+      // client has had a full generation to reload.
+      var keys = await caches.keys();
+      var older = [];
+      for (var i = 0; i < keys.length; i += 1) {
+        if (keys[i].indexOf('fleet-shell-') !== 0 || keys[i] === CACHE) continue;
+        older.push({ name: keys[i], born: await bornAt(keys[i]) });
+      }
+      older.sort(function (a, b) {
+        return b.born - a.born;
+      });
+      for (var j = 0; j < older.length; j += 1) {
+        // Keep the newest previous generation, and keep anything we cannot
+        // date: never delete a cache we cannot prove is stale.
+        if (j === 0 || older[j].born === 0) continue;
+        await caches.delete(older[j].name);
+      }
+    })(),
   );
 });
+
+// A generation's birth stamp, or 0 when it has none (a cache written by an
+// older worker that predates the stamp).
+async function bornAt(name) {
+  try {
+    var cache = await caches.open(name);
+    var stamp = await cache.match(BORN);
+    if (!stamp) return 0;
+    var value = parseInt(await stamp.text(), 10);
+    return isNaN(value) ? 0 : value;
+  } catch (error) {
+    return 0;
+  }
+}
 
 function isVersionedAsset(url) {
   if (url.origin !== self.location.origin) return false;
@@ -146,7 +193,7 @@ async function fromCacheOrNetwork(request) {
 // The same asset at any generation. `ignoreSearch` is the whole trick: the
 // cached entry is `/app.js?v=<old>` and the request is `/app.js?v=<new>`,
 // and the two are the same file one build apart — the query is exactly the
-// coordinate this load no longer trusts. With the activation policy below
+// coordinate this load no longer trusts. With the activation policy above
 // keeping one previous generation there is at most one such cache; the
 // loop is written for the case where an older one outlived a sweep.
 async function anyVersion(request) {

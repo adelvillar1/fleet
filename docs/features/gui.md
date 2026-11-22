@@ -1032,7 +1032,8 @@ an unreachable face a readable retry page instead of a blank tab.
   paths, the HTML, the manifest, and the worker itself revalidate, so an
   upgraded binary cannot be hidden behind yesterday's script.
 - **The worker caches exactly two URLs** — the versioned stylesheet and
-  script — and prefetches them at install. Its fetch handler returns
+  script — plus a one-line birth stamp, and prefetches them at install. Its
+  fetch handler returns
   early for every non-GET, every cross-origin request, `/api/*`,
   `/events`, `/pair`, and any request asking for an event stream. The
   remote face's credential is a cookie, which the browser attaches after
@@ -1042,15 +1043,43 @@ an unreachable face a readable retry page instead of a blank tab.
   cannot be reached the worker answers a 503 retry page (themed, with a
   reload action). An installed face still reads its session live — there
   is no offline conversation.
+- **Two clocks answer silence, not refusal.** A dropped path does not reset
+  the connection, it goes quiet, and a fetch that never settles holds
+  whatever waits on it — the shell's own script included. So the worker puts
+  a deadline on every shell fetch: 6 s for a versioned asset, 8 s for a
+  navigation. The timer measures silence and not throughput — it is cleared
+  the moment headers arrive, so a 1.4 MB script on a slow link is never cut
+  mid-body. An asset that expires is answered from the *previous*
+  generation's cache, matched by path (the query is exactly the coordinate
+  the load no longer trusts), so a device that updated on a dead path boots
+  the build it already had; a navigation that expires gets the same 503
+  retry page as a refusal. The page's clock is the 15 s boot watchdog, armed
+  at script evaluation rather than on `DOMContentLoaded` — a pending module
+  blocks that event, so the guard could not fire for the one failure it
+  exists for. The worker's deadline lands first (a mount from the last
+  generation); the card is the net under it (a named failure). Neither can
+  leave the face silently inert, which is what a stalled update used to do.
+- **An update keeps one generation.** Activation claims its clients first and
+  sweeps one generation late: the cache it replaced is deleted by the *next*
+  activation, not by the one that replaces it. Claiming first is what makes
+  the sweep safe — an old client's asset requests are compared against the
+  new worker's own `VERSION`, so it falls through to the network instead of
+  reading a cache about to be dropped. Keeping the previous generation is
+  what leaves the deadline something to serve: deleting it in the same
+  activation empties the only answer a stalled update has. Each cache carries
+  a birth stamp beside its two assets because a cache name is a build hash —
+  a coordinate, not a clock — and the server sends no `Date`; an undateable
+  cache is never deleted.
 - **Installation needs a secure context.** Loopback and an HTTPS remote
   face qualify; a phone over plain-HTTP LAN does not, and the relayed
   face under `/s/<sid>/` is per-session and is not installable. Those
   paths run as ordinary pages, with no worker and no retry shell.
 - **A failed boot is visible.** An ES5 guard names the browser floor
   fleet's CSS actually needs (`color-mix` and `100dvh`: Chrome/Edge 111+,
-  Firefox 113+, Safari 16.2+), and a 15-second watchdog shows one themed
-  card with a retry if `app.js` never marks the shell mounted. The
-  browser chrome follows the chosen theme through `theme-color`.
+  Firefox 113+, Safari 16.2+), and a 15-second watchdog — armed when its own
+  script is evaluated, not on `DOMContentLoaded` — shows one themed card with
+  a retry if `app.js` never marks the shell mounted. The browser chrome
+  follows the chosen theme through `theme-color`.
 
 ## Pairing from the face
 
