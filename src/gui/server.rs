@@ -6572,6 +6572,30 @@ mod tests {
         for secret in ["DEEPSEEK_API_KEY", "fleet_gui"] {
             assert!(!body.contains(secret) && !head.contains(secret), "{page}");
         }
+        // The same rule on the compressed path: the stream on the wire is
+        // the same document, so it is held to the same rule. A compressed
+        // body that carried a name the identity body does not would be a
+        // credential hiding behind an encoding.
+        let compressed = ask_bytes(
+            port,
+            "GET /app.js HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Encoding: gzip\r\n\r\n",
+        );
+        let (compressed_head, compressed_body) = split_reply(&compressed);
+        assert!(
+            compressed_head.contains("content-encoding: gzip"),
+            "{compressed_head}"
+        );
+        let decoded = String::from_utf8(gunzip(&compressed_body)).expect("the twin is text");
+        assert_eq!(
+            decoded, SCRIPT,
+            "the compressed path answers another document"
+        );
+        for secret in ["DEEPSEEK_API_KEY", "Authorization", "Bearer"] {
+            assert!(!decoded.contains(secret), "the twin names {secret}");
+        }
+        if let Some((at, word)) = key_shaped_occurrence(&decoded) {
+            panic!("the compressed payload carries a key-shaped token at byte {at}: {word}");
+        }
         if let Some((at, word)) =
             key_shaped_occurrence(body).or_else(|| key_shaped_occurrence(head))
         {

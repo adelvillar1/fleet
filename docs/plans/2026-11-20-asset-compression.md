@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-11-20
-updated: 2026-11-20
+updated: 2026-11-21
 slug: asset-compression
 ---
 
@@ -133,28 +133,115 @@ Binary delta: +1,082,997 B of twins beside the raw copies on a 36,081,984 B
 release binary (+3.0 %). Recorded, and accepted: the raw copies are the
 identity path the harness and the no-credential test read.
 
+## Status pass, 2026-11-21 — shipped: the wire, the cells, the red-proofs
+
+### The wire, measured on the release binary
+
+Raw socket, `curl`, `Accept-Encoding: gzip` against the release face:
+
+| path | identity | gzip | % of raw |
+|---|---:|---:|---:|
+| `/app.js` | 1,511,485 | 389,583 | 25.8 % |
+| `/app.css` | 378,840 | 73,473 | 19.4 % |
+| `/` (the shell) | 78,712 | 22,072 | 28.0 % |
+| `/core/store.js` | 11,464 | 4,465 | 38.9 % |
+| `/sw.js` | 12,995 | 5,202 | 40.0 % |
+| `/vendor/pdf.worker.min.mjs` | 1,264,342 | 375,085 | 29.7 % |
+
+Every negotiable reply carries `Vary: Accept-Encoding`; the compressed one
+carries `Content-Encoding: gzip` and a `Content-Length` that is the encoded
+length. The identity reply is byte-identical to what it was, plus `Vary`.
+
+### The cold load, after
+
+Same rig, same 390×844 viewport, same 1.5 Mbps / 150 ms RTT, the worker
+unregistered and both caches cleared:
+
+| | before | after |
+|---|---:|---:|
+| `app.js` on the wire | 1,511,646 | **389,840** |
+| `app.css` on the wire | 378,993 | **73,722** |
+| the shell on the wire | 78,911 | **22,295** |
+| `app.js` + `app.css` | 1,890,639 | **463,562** (24.5 %) |
+| the whole shell path (fonts, core, manifest) | 2,047,119 | **555,513** (27.1 %) |
+| shell painted (`data-fleet-mounted`) | 11,471 ms | **3,578 ms** |
+
+### The KI-587 cells, re-measured
+
+The release face behind a proxy that adds only the fault modes (stall,
+503, refuse) the cells need — every byte the browser counted came from the
+server:
+
+| cell | KI-587 record | now |
+|---|---|---|
+| warm mount from the worker's cache | 75 ms | **61 ms** |
+| stalled v2, fallback from the any-version cache | 7,437 / 6,051 ms | **6,057 ms**, no card |
+| refused navigation | 7 / 14 ms | the worker's "fleet is not reachable" page, first paint |
+| install prefetch with both assets silent | bounded by the 6 s deadline | new cache created, worker `activated` within 9 s |
+| entries in the new cache after install | 2 assets + the born stamp | 2 assets + the born stamp |
+
+The worker stores **decoded** bodies: after install, `fleet-shell-<hash>`
+holds `/app.css?v=…` and `/app.js?v=…`, a warm reload reads both from the
+cache (`encodedDataLength 0`) and mounts in 61 ms. `Content-Encoding` on
+the wire never becomes a header the cache has to decode twice.
+
+### The red-proofs
+
+1. **The negotiation, removed** (`accepts_gzip` forced to `true`):
+   `a_client_that_cannot_decode_gzip_gets_the_identity_body` and
+   `a_gzip_client_gets_the_compressed_body_and_the_identity_bytes` both
+   red — a client that never asked for gzip got a stream it cannot decode.
+2. **The body guard, removed** (the comparison replaced with `|| true`):
+   `a_body_the_build_did_not_compress_is_never_gzipped` red, "a live body
+   was gzipped" — the rule that keeps a dev tree's edit from being served
+   as a stream that decodes to something else.
+3. **The coordinate, moved by a byte**: 66 bytes appended to `app.css`
+   moved `?v=` from `8fe3bca0a24f5939` to `49a72bffbd75ea62`; reverting the
+   bytes returned it to `8fe3bca0a24f5939` — which also proves the gzip
+   streams are deterministic, since they are in the hash input.
+
+### The gate
+
+`cargo fmt --all --check` 0 · `cargo clippy --all-targets -- -D warnings`
+0 · `cargo build --release` 0 · `cargo test` 0 (2,776 passed, 11 ignored) ·
+`node tests/face/harness.mjs` 0 (1,811 checks across 264 cases) ·
+`python3 scripts/plan_check.py` 0.
+
+Binary delta: the twins are 1,082,997 B embedded beside the raw copies;
+the release binary measures 39,301,584 B.
+
 ## Acceptance Criteria
 
-- [ ] `GET /app.js` with `Accept-Encoding: gzip` answers
+- [x] `GET /app.js` with `Accept-Encoding: gzip` answers
       `Content-Encoding: gzip` and the body gunzips to exactly the embedded
-      bytes — pinned by a test that decodes and compares (`flate2` as a
-      dev-dependency).
-- [ ] `app.js` over gzip is ≤ 30 % of raw (measured, recorded); `app.css`
-      and the shell likewise measured.
-- [ ] Requests without `Accept-Encoding` receive the identity body with
-      no `Content-Encoding` header, and the existing
-      `no_payload_carries_a_credential` test still passes over both paths.
-- [ ] `Vary: Accept-Encoding` is present on every negotiable asset reply.
-- [ ] Binary size delta recorded and accepted (gz copies add weight; the
-      plan states the number rather than assuming it is fine).
-- [ ] The full gate exits 0.
+      bytes — pinned by `a_gzip_client_gets_the_compressed_body_and_the_identity_bytes`
+      (`flate2` as a dev-dependency).
+- [x] `app.js` over gzip is 389,583 B = 25.8 % of raw; `app.css` 73,473 B
+      (19.4 %) and the shell 22,072 B (28.0 %) — measured on the release
+      binary and recorded above.
+- [x] Requests without `Accept-Encoding` receive the identity body with no
+      `Content-Encoding` header
+      (`a_client_that_cannot_decode_gzip_gets_the_identity_body`), and
+      `no_payload_carries_a_credential` now reads **both** paths: the
+      decoded twin is the same document and carries no key.
+- [x] `Vary: Accept-Encoding` is present on every negotiable asset reply —
+      asserted on both paths, over the `GZIP_ASSETS` table the test walks
+      (22 paths).
+- [x] Binary size delta recorded and accepted: 1,082,997 B of twins
+      embedded beside the raw copies.
+- [x] The full gate exits 0 (the four legs, plus the face harness and
+      `plan_check.py`, all exit codes read).
 
 ## Files to be touched
 
 - `build.rs` — the precompression step
 - `Cargo.toml` — `flate2` build-dependency, dev-dependency
 - `src/gui/server.rs` — embedding, negotiation, `Vary`
-- `src/gui/mod.rs` — asset table if the embeds live there
+- `src/remote/listener.rs` — the paired device's socket path and the relay
+  frame, which is where a phone's bytes cross a JSON string (found during
+  the pass; the plan's forecast did not name it)
+- `src/gui/mod.rs` — not needed: the embeds live in `server.rs`, beside the
+  raw copies they twin
 
 ## Out of scope
 

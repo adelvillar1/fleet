@@ -1839,6 +1839,74 @@ mod tests {
         std::fs::remove_dir_all(&home).ok();
     }
 
+    /// The relay path carries the compressed body too: a frame's body is a
+    /// JSON string, so the gzip travels base64 under `x-fleet-b64` — the
+    /// door the icons already use — with the `Content-Encoding` the
+    /// phone's browser needs. Without it a relayed phone would still pay
+    /// 1.5 MB of text for a script, which is the cost this plan removes.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_relayed_asset_travels_compressed() {
+        let home = fresh_home();
+        let (bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let bridge = Arc::new(bridge);
+        let frame = crate::remote::relay::Frame {
+            id: "f1".to_string(),
+            method: "GET".to_string(),
+            path: "/app.js".to_string(),
+            headers: vec![
+                ("host".to_string(), "127.0.0.1".to_string()),
+                ("accept-encoding".to_string(), "gzip, deflate".to_string()),
+            ],
+            body: String::new(),
+            enc: None,
+        };
+        let answer = relay_answer(
+            frame.id.clone(),
+            answer_frame(&frame, &bridge, "a relayed phone", RemoteFace::Console).await,
+        );
+        let header = |name: &str| {
+            answer
+                .headers
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(header("content-encoding").as_deref(), Some("gzip"));
+        assert_eq!(header("x-fleet-b64").as_deref(), Some("1"));
+        assert_eq!(header("vary").as_deref(), Some("accept-encoding"));
+        let gz = B64
+            .decode(answer.body.as_bytes())
+            .expect("the frame's body is base64");
+        assert_eq!(
+            gz,
+            crate::gui::server::SCRIPT_GZ,
+            "the frame carried something other than the build's twin"
+        );
+        // The frame is smaller than the script it carries, which is the
+        // whole point of putting it there.
+        assert!(answer.body.len() < crate::gui::server::SCRIPT.len());
+
+        // A phone that cannot decode gzip gets the text, exactly as it did
+        // before this mechanism existed.
+        let mut plain = frame.clone();
+        plain.headers = vec![("host".to_string(), "127.0.0.1".to_string())];
+        let plain = relay_answer(
+            plain.id.clone(),
+            answer_frame(&plain, &bridge, "a relayed phone", RemoteFace::Console).await,
+        );
+        assert!(plain
+            .headers
+            .iter()
+            .all(|(key, _)| key != "content-encoding"));
+        assert!(plain.headers.iter().all(|(key, _)| key != "x-fleet-b64"));
+        assert_eq!(plain.body, crate::gui::server::SCRIPT);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
     /// Every reply's status line is `NNN Reason`, and the relay's frame
     /// carries the number. Reading the word after the number handed every
     /// answer to a phone as a 500 with a correct body under it — so this
