@@ -1448,11 +1448,15 @@
       }, GRACE_MS);
     }
 
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', arm);
-    } else {
-      arm();
-    }
+    // Armed here, at script evaluation, and not on DOMContentLoaded.
+    // KI-587: the one failure this card exists for is a `<script
+    // type="module">` that never answers, and a pending module *blocks*
+    // DOMContentLoaded — so the DCL-gated arm could not fire for the case
+    // it was written for. Measured before the change: the shell painted
+    // its chrome, `mounted` stayed false, and at twenty seconds there was
+    // no card and `readyState` was still "loading". The timer starts now;
+    // a module that mounts late still cancels it through `mounted()`.
+    arm();
   })();
 </script>
 <script>
