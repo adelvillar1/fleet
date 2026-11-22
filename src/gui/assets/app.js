@@ -8216,6 +8216,21 @@ import { node, svg, clip } from './core/dom.js';
           d.declared + ' declared quer' + (d.declared === 1 ? 'y' : 'ies') + ' asked';
       }
     },
+    // Armada answers about the FLEET: which instances this hand can reach,
+    // the health each one earned, the role that role is measured into, and
+    // what it carries. An install with no roster says the one sentence it
+    // owes \u2014 "no fleet carries armada yet" \u2014 rather than a strip of
+    // zeros dressed as a reading.
+    armada: {
+      empty: 'no fleet carries armada yet \u2014 a roster is written when this install joins a ' +
+        'flagship or deploys an instance, and until then this is an ordinary single-instance fleet.',
+      loading: 'Still loading. This comes from the roster file and the journal the dispatches settle into.',
+      refused: function (said) { return 'The armada could not be read: ' + said.join('; '); },
+      selected: function (d) {
+        return 'showing ' + d.sid + ' \u00b7 ' + d.health + ' \u00b7 ' + d.role +
+          ' \u2014 the dispatch bar sends to it';
+      }
+    },
     // Calibration answers about the DAY: what was graded, what the graded
     // beats' precision was, and what the same rows would have done at
     // another floor. An empty day says so rather than showing zeros.
@@ -20017,6 +20032,167 @@ import { node, svg, clip } from './core/dom.js';
     return Math.round(secs / 86400) + 'd ago';
   }
 
+  /// P6: the deployment map. One row per instance, four readings in the
+  /// order an owner asks them: who it is, the health it earned, the role
+  /// its measurement bought, and what it carries. Every cell comes from
+  /// the armada read the surface already serves — no second store, and no
+  /// derived fact the document does not hold.
+  ///
+  /// The role is not a label someone assigns: an instance that has settled
+  /// dispatches has earned the hand (D49), and one that has not is
+  /// observing. Registration buys neither.
+  function armadaMapRow(instance) {
+    var row = node('div', 'list-row deploy-map-row');
+    row.dataset.sid = instance.sid;
+    if (face.armadaSid === instance.sid) row.dataset.selected = 'true';
+    // The row is a selection: the dispatch bar below sends to the row the
+    // owner is reading, so a press on the row moves the bar's target.
+    row.addEventListener('click', function () {
+      face.armadaSid = instance.sid;
+      paintArmada();
+    });
+
+    var who = node('div', 'deploy-map-cell deploy-map-instance');
+    who.appendChild(node('strong', 'list-row-key', instance.sid));
+    who.appendChild(node('span', 'cfg-note',
+      instance.install_id ? 'install ' + instance.install_id : 'no install id'));
+    row.appendChild(who);
+
+    var age = instance.heartbeat_age_secs;
+    var heard = age == null ? 'never heard' : 'heard ' + heartbeatAge(age);
+    var reliability = instance.calibrated
+      ? Math.round((instance.reliability || 0) * 100) + '% reliable'
+      : 'un-calibrated';
+    var health = node('div', 'deploy-map-cell deploy-map-health');
+    health.dataset.health = instance.live ? 'live' : 'idle';
+    health.appendChild(node('strong', null, instance.live ? 'live' : 'not live'));
+    health.appendChild(node('span', 'cfg-note', heard + ' \u00b7 ' + reliability));
+    row.appendChild(health);
+
+    var role = node('div', 'deploy-map-cell deploy-map-role');
+    role.dataset.role = instance.calibrated ? 'dispatchable' : 'observing';
+    role.appendChild(node('strong', null,
+      instance.calibrated ? 'dispatchable' : 'observing'));
+    role.appendChild(node('span', 'cfg-note', instance.calibrated
+      ? instance.settled + (instance.settled === 1 ? ' dispatch settled' : ' dispatches settled')
+      : 'receives, but has not earned the hand'));
+    row.appendChild(role);
+
+    var gib = Math.round(((instance.capacity_kib || 0) / 1048576) * 100) / 100;
+    var carries = node('div', 'deploy-map-cell deploy-map-carries');
+    carries.appendChild(node('strong', null, gib + ' GiB'));
+    carries.appendChild(node('span', 'cfg-note', 'version ' + (instance.version || 'unknown')));
+    row.appendChild(carries);
+    return row;
+  }
+
+  function armadaMapCard(read) {
+    var instances = read.instances || [];
+    var card = boardCard(12, 'the deployment map',
+      'instance \u00b7 health \u00b7 role \u00b7 what it carries');
+    card.classList.add('deploy-map');
+    if (!instances.length) {
+      // The one sentence the armada owes an install with no roster. A
+      // strip of zeros would read as a measured fleet of none, which is a
+      // different and false claim.
+      card.appendChild(node('p', 'board-empty', sentence('armada', 'empty', {})));
+      return card;
+    }
+    var current = instances.filter(function (one) {
+      return one.sid === face.armadaSid;
+    })[0] || instances[0];
+    card.appendChild(selectedLine('armada', {
+      sid: current.sid,
+      health: current.live ? 'live' : 'not live',
+      role: current.calibrated ? 'dispatchable' : 'observing'
+    }));
+    var head = node('div', 'list-row deploy-map-row deploy-map-head');
+    ['instance', 'health', 'role', 'what it carries'].forEach(function (label) {
+      head.appendChild(node('span', 'deploy-map-cell', label));
+    });
+    card.appendChild(head);
+    instances.forEach(function (instance) {
+      card.appendChild(armadaMapRow(instance));
+    });
+    return card;
+  }
+
+  /// The dispatch bar: a task named for one instance, admitted under the
+  /// owner principal before it obeys. It rides directly under the map, so
+  /// the row being read is the row the press sends to. An install with no
+  /// roster has no bar to press — the absence is named, never a select
+  /// with nothing in it.
+  function armadaDispatchBar(read) {
+    var instances = (read && read.instances) || [];
+    var card = boardCard(12, 'the dispatch bar', 'admitted under the owner principal');
+    card.classList.add('dispatch-bar');
+    if (!instances.length) {
+      card.appendChild(node('p', 'board-empty',
+        'no instance to dispatch to \u2014 no fleet carries armada yet.'));
+      return card;
+    }
+    // The note is state, not a transient DOM write (KI-447): the refresh
+    // after the press repaints it rather than erasing what the owner just
+    // did.
+    var form = node('div', 'svc-line');
+    var pick = node('select', 'hook-input');
+    pick.setAttribute('aria-label', 'the instance to dispatch to');
+    instances.forEach(function (instance) {
+      var option = node('option', null, instance.sid);
+      option.value = instance.sid;
+      pick.appendChild(option);
+    });
+    var asked = face.armadaSid
+      && instances.some(function (one) { return one.sid === face.armadaSid; })
+      ? face.armadaSid : (instances[0] || {}).sid || '';
+    if (asked) pick.value = asked;
+    pick.addEventListener('change', function () { face.armadaSid = pick.value; });
+    var task = node('input', 'hook-input');
+    task.type = 'text';
+    task.placeholder = 'the task to dispatch';
+    task.setAttribute('aria-label', 'the task to dispatch');
+    task.value = face.armadaTask || '';
+    task.addEventListener('input', function () { face.armadaTask = task.value; });
+    var send = node('button', 'foot-btn', 'dispatch');
+    send.type = 'button';
+    send.addEventListener('click', function () {
+      var sid = pick.value;
+      var words = task.value.trim();
+      if (!sid || !words) {
+        face.armadaDispatchNote = 'a dispatch names an instance and a task';
+        paintArmada();
+        return;
+      }
+      face.armadaDispatchNote = 'dispatching\u2026';
+      send.disabled = true;
+      post('/api/armada/dispatch', { sid: sid, task: words })
+        .then(function (reply) {
+          face.armadaDispatchNote = reply.status !== 200
+            ? 'refused \u00b7 ' + ((reply.body && reply.body.error) || 'the dispatch did not land')
+            : 'admitted \u00b7 ' + (reply.body.sid || sid) +
+              ' \u00b7 ' + (reply.body.principal || 'owner');
+          if (reply.status === 200) {
+            face.armadaTask = '';
+            readArmada(true).then(paintArmada);
+          } else {
+            paintArmada();
+          }
+        })
+        .catch(function () {
+          face.armadaDispatchNote = 'refused \u00b7 the dispatch did not land';
+          paintArmada();
+        });
+    });
+    form.appendChild(pick);
+    form.appendChild(task);
+    form.appendChild(send);
+    card.appendChild(form);
+    if (face.armadaDispatchNote) {
+      card.appendChild(node('p', 'board-empty', face.armadaDispatchNote));
+    }
+    return card;
+  }
+
   function paintArmada() {
     var read = face.armada;
     el.armadaBoard.textContent = '';
@@ -20028,9 +20204,7 @@ import { node, svg, clip } from './core/dom.js';
         'The flagship\u2019s hand: the roster it commands, the dispatch it admits, and the ' +
         'corpus the instances share.', null));
       var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'Still loading. This comes from the roster file and grades each ' +
-        'instance\u2019s settled dispatches over the journal.'));
+      waiting.appendChild(node('p', 'board-empty', sentence('armada', 'loading', {})));
       el.armadaBoard.appendChild(waiting);
       paintArmadaRail(null);
       return;
@@ -20041,15 +20215,20 @@ import { node, svg, clip } from './core/dom.js';
         'The flagship\u2019s hand: the roster it commands, the dispatch it admits, and the ' +
         'corpus the instances share.', null));
       el.armadaBoard.appendChild(refusedCard(read.refused));
+      el.armadaBoard.appendChild(node('p', 'derivation',
+        sentence('armada', 'refused', read.refused)));
       return;
     }
     var instances = read.instances || [];
     var live = instances.filter(function (one) { return one.live; }).length;
-    var calibrated = instances.filter(function (one) { return one.calibrated; }).length;
-    var instrument = surfaceInstrument('the roster',
+    var instrument = surfaceInstrument('the deployment map',
       read.flagship ? 'flagship' : 'no roster',
-      instances.length + (instances.length === 1 ? ' instance' : ' instances') +
-      ' \u00b7 ' + live + ' live',
+      // P6: a count is a reading only when it counts something. With no
+      // roster the instrument carries the sentence, never `0 instances`.
+      instances.length
+        ? instances.length + (instances.length === 1 ? ' instance' : ' instances') +
+          ' \u00b7 ' + live + ' live'
+        : 'no fleet carries armada yet',
       [{
         label: 'refresh',
         run: function () { readArmada(true).then(paintArmada); }
@@ -20057,43 +20236,16 @@ import { node, svg, clip } from './core/dom.js';
     el.armadaBoard.appendChild(surfaceHead('System', 'Armada',
       'Liveness is earned by heartbeats and reliability by settled dispatches \u2014 never ' +
       'by registration. The corpus syncs over git whether the relay is up or down.', instrument));
-    el.armadaBoard.appendChild(surfaceStrip([
-      [instances.length, 'instances'],
-      [live, 'live'],
-      [calibrated, 'calibrated']
-    ], read.flagship ? 'this install holds the roster' : 'an ordinary single-instance fleet'));
-    // The roster board: one line per instance — the sid, its version,
-    // the liveness it earned, its capacity in GiB, and the reliability
-    // its settles measured. A fresh instance says un-calibrated.
-    var roster = boardCard(12, 'the roster', 'liveness earned, not assumed');
-    if (!instances.length) {
-      roster.appendChild(node('p', 'board-empty', 'no instances registered'));
-    } else {
-      instances.forEach(function (instance) {
-        var line = node('div', 'svc-line');
-        line.appendChild(node('strong', null, instance.sid));
-        var gib = Math.round(((instance.capacity_kib || 0) / 1048576) * 100) / 100;
-        var reliability = instance.calibrated
-          ? Math.round((instance.reliability || 0) * 100) + '% reliable'
-          : 'un-calibrated';
-        // The heartbeat's AGE, not just the boolean: "live" and "last heard
-        // 40s ago" answer different questions when an instance is failing,
-        // and the age is what turns a dead instance into a diagnosable one.
-        var age = instance.heartbeat_age_secs;
-        var heard = age == null
-          ? 'never heard'
-          : 'heard ' + heartbeatAge(age);
-        line.appendChild(document.createTextNode(
-          ' \u00b7 ' + (instance.version || 'unknown') +
-          ' \u00b7 ' + (instance.live ? 'live' : 'not live') +
-          ' \u00b7 ' + heard +
-          ' \u00b7 ' + gib + ' GiB' +
-          ' \u00b7 ' + reliability +
-          (instance.calibrated ? ' (' + instance.settled + ' settled)' : '')));
-        roster.appendChild(line);
-      });
-    }
-    el.armadaBoard.appendChild(roster);
+    // P6: the deployment map replaces the count strip and the roster
+    // list. The strip was three numbers standing in for the question the
+    // owner arrives with ("what is out there, and is it any good"), and a
+    // strip of zeros is the one reading the armada may never fake: an
+    // install with no roster carries no fleet, and says so in a sentence.
+    el.armadaBoard.appendChild(armadaMapCard(read));
+
+    // The dispatch bar rides the map: the row the owner is reading is the
+    // row the bar sends to, one press below it.
+    el.armadaBoard.appendChild(armadaDispatchBar(read));
 
     // The shared mind's own state (L4): a console that showed instances but
     // not whether the corpus was current would let an owner believe the
@@ -20206,68 +20358,6 @@ import { node, svg, clip } from './core/dom.js';
         rolesBody.textContent = 'the roles read did not land';
       });
     el.armadaBoard.appendChild(rolesCard);
-    // The dispatch composer: a task named for one instance, admitted
-    // under the owner principal before it obeys. The note is state, not
-    // a transient DOM write (KI-447): the refresh after the press
-    // repaints it rather than erasing what the owner just did.
-    var composer = boardCard(12, 'dispatch', 'admitted under the owner principal');
-    var form = node('div', 'svc-line');
-    var pick = node('select', 'hook-input');
-    pick.setAttribute('aria-label', 'the instance to dispatch to');
-    instances.forEach(function (instance) {
-      var option = node('option', null, instance.sid);
-      option.value = instance.sid;
-      pick.appendChild(option);
-    });
-    var asked = face.armadaSid
-      && instances.some(function (one) { return one.sid === face.armadaSid; })
-      ? face.armadaSid : (instances[0] || {}).sid || '';
-    if (asked) pick.value = asked;
-    pick.addEventListener('change', function () { face.armadaSid = pick.value; });
-    var task = node('input', 'hook-input');
-    task.type = 'text';
-    task.placeholder = 'the task to dispatch';
-    task.setAttribute('aria-label', 'the task to dispatch');
-    task.value = face.armadaTask || '';
-    task.addEventListener('input', function () { face.armadaTask = task.value; });
-    var send = node('button', 'foot-btn', 'dispatch');
-    send.type = 'button';
-    send.addEventListener('click', function () {
-      var sid = pick.value;
-      var words = task.value.trim();
-      if (!sid || !words) {
-        face.armadaDispatchNote = 'a dispatch names an instance and a task';
-        paintArmada();
-        return;
-      }
-      face.armadaDispatchNote = 'dispatching\u2026';
-      send.disabled = true;
-      post('/api/armada/dispatch', { sid: sid, task: words })
-        .then(function (reply) {
-          face.armadaDispatchNote = reply.status !== 200
-            ? 'refused \u00b7 ' + ((reply.body && reply.body.error) || 'the dispatch did not land')
-            : 'admitted \u00b7 ' + (reply.body.sid || sid) +
-              ' \u00b7 ' + (reply.body.principal || 'owner');
-          if (reply.status === 200) {
-            face.armadaTask = '';
-            readArmada(true).then(paintArmada);
-          } else {
-            paintArmada();
-          }
-        })
-        .catch(function () {
-          face.armadaDispatchNote = 'refused \u00b7 the dispatch did not land';
-          paintArmada();
-        });
-    });
-    form.appendChild(pick);
-    form.appendChild(task);
-    form.appendChild(send);
-    composer.appendChild(form);
-    if (face.armadaDispatchNote) {
-      composer.appendChild(node('p', 'board-empty', face.armadaDispatchNote));
-    }
-    el.armadaBoard.appendChild(composer);
     // The corpus view: the shared corpus's standing, named by the
     // flagship role — the sync itself rides the control plane's verb.
     var corpus = boardCard(12, 'the corpus',

@@ -6301,6 +6301,35 @@ pre.drawer-code {
 
 .list-row:last-child { border-bottom: 0; }
 
+/* P6: the armada's deployment map. Four readings per instance in one
+   row — who it is, the health it earned, the role its measurement bought,
+   and what it carries. Aliases only (P7a's token law): no hex, no
+   gradient, and the label voice is the head row's alone. */
+.deploy-map { display: block; }
+.deploy-map-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.1fr) minmax(120px, 1fr) minmax(120px, 1fr) minmax(140px, 1.2fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+}
+.deploy-map-row:last-child { border-bottom: 0; }
+.deploy-map-row[data-selected="true"] .list-row-key { color: var(--dsw-alias-accent-lift); }
+.deploy-map-head { padding-top: 2px; }
+.deploy-map-head .deploy-map-cell {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.deploy-map-cell { display: grid; gap: 2px; min-width: 0; }
+.deploy-map-cell strong { font-family: var(--font-mono); font-size: 12px; color: var(--dsw-alias-ink); }
+.deploy-map-cell .cfg-note { font-size: 11px; }
+@media (max-width: 720px) {
+  .deploy-map-row { grid-template-columns: 1fr 1fr; }
+}
+
 /* The configuration sections: one nav, a grid of fields, and chips. */
 
 .cfg-nav {

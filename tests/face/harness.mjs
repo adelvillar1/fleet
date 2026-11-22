@@ -19949,6 +19949,136 @@ async function p6CalibrationNamesItsFourSentences() {
     said.slice(0, 200));
 }
 
+// P6's armada clause: a deployment map — instance · health · role · what
+// it carries — with the dispatch bar. The map derives every cell from the
+// armada read the surface already serves; nothing here needs a second
+// store, and the role is measured, not assigned: an instance that has
+// settled dispatches has earned the hand (D49), one that has not is
+// observing.
+const p6ArmadaFleet = {
+  type: 'armada', flagship: true,
+  instances: [
+    { sid: 'sid-a', install_id: 'i-a', version: '0.8.12', capacity_kib: 2097152,
+      live: true, heartbeat_age_secs: 40, settled: 3, calibrated: true, reliability: 0.67 },
+    { sid: 'sid-b', install_id: 'i-b', version: '0.8.12', capacity_kib: 1048576,
+      live: false, heartbeat_age_secs: 7200, settled: 0, calibrated: false, reliability: 0 },
+  ],
+};
+
+async function p6ArmadaDrawsTheDeploymentMap() {
+  const page = boot({ hash: '#/armada', documents: {
+    armada: p6ArmadaFleet, state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(160);
+
+  const head = page.rows('.deploy-map-head').map((one) => one.textContent.trim());
+  check('P6 the map\u2019s head names its four columns',
+    head.length === 1 && /instance/.test(head[0]) && /health/.test(head[0]) &&
+      /role/.test(head[0]) && /what it carries/.test(head[0]),
+    head.join(' | ') || 'no .deploy-map-head');
+
+  const rows = page.rows('.deploy-map-row').filter((one) => one.dataset.sid);
+  check('P6 the map carries one row per instance', rows.length === 2,
+    String(rows.length));
+  const a = rows.find((one) => one.dataset.sid === 'sid-a');
+  const b = rows.find((one) => one.dataset.sid === 'sid-b');
+  check('P6 the row names the instance and what it carries',
+    !!a && a.textContent.includes('sid-a') && a.textContent.includes('2 GiB') &&
+      a.textContent.includes('version 0.8.12'),
+    a ? a.textContent.slice(0, 200) : 'no sid-a row');
+  check('P6 the row carries the health the instance earned',
+    !!a && a.textContent.includes('live') && a.textContent.includes('heard 40s ago') &&
+      a.textContent.includes('67% reliable'),
+    a ? a.textContent.slice(0, 200) : 'no sid-a row');
+  // The role is measured: settles earn the hand, registration does not.
+  const roleA = a && a.querySelectorAll('.deploy-map-role')[0];
+  const roleB = b && b.querySelectorAll('.deploy-map-role')[0];
+  check('P6 a settled instance\u2019s role is dispatchable',
+    !!roleA && roleA.dataset.role === 'dispatchable' &&
+      roleA.textContent.includes('dispatchable') && roleA.textContent.includes('3 dispatches settled'),
+    roleA ? roleA.textContent : 'no role cell');
+  check('P6 an un-settled instance observes, and says why',
+    !!roleB && roleB.dataset.role === 'observing' &&
+      roleB.textContent.includes('observing') &&
+      roleB.textContent.includes('has not earned the hand'),
+    roleB ? roleB.textContent : 'no role cell');
+
+  // The dispatch bar rides the map: the row being read is the row it
+  // sends to.
+  const bar = page.rows('.dispatch-bar')[0];
+  const targets = bar ? bar.querySelectorAll('option').map((one) => one.value) : [];
+  check('P6 the dispatch bar rides the map and names every instance',
+    !!bar && targets.join(',') === 'sid-a,sid-b', targets.join(',') || 'no dispatch bar');
+
+  // The selected sentence names the row the bar would send to.
+  const said = page.rows('[data-state="selected"]').map((one) => one.textContent).join(' | ');
+  check('P6 the map\u2019s selected line names the row and its role',
+    /showing sid-a \u00b7 live \u00b7 dispatchable/.test(said) && /the dispatch bar sends to it/.test(said),
+    said.slice(0, 200));
+}
+
+// The armada's refusal of a zero: an install with no roster carries no
+// fleet, and it says so in a sentence. `0 instances \u00b7 0 live` is a
+// measured fleet of none, which is a different and false claim — the one
+// reading this surface may never fake.
+async function p6ArmadaWithNoRosterSaysSoAndNeverAZero() {
+  const page = boot({ hash: '#/armada', documents: {
+    armada: { type: 'armada', flagship: false, instances: [] },
+    state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(160);
+  const board = page.text('armada-board');
+  check('P6 an install with no roster says no fleet carries armada yet',
+    board.includes('no fleet carries armada yet'), board.slice(0, 240));
+  // No trailing word boundary: the strip's cells abut in textContent
+  // ("0 instances0 live"), so `\b0 instances\b` could never match the
+  // very string it was written to catch.
+  check('P6 the empty armada never prints a zero as a reading',
+    !/0 instances/.test(board) && !/0 live/.test(board) &&
+      !/0 calibrated/.test(board), board.slice(0, 240));
+  const bar = page.rows('.dispatch-bar')[0];
+  check('P6 the dispatch bar names its missing instance instead of an empty select',
+    !!bar && bar.textContent.includes('no instance to dispatch to') &&
+      bar.querySelectorAll('select').length === 0,
+    bar ? bar.textContent.slice(0, 200) : 'no dispatch bar');
+}
+
+async function p6ArmadaNamesItsFourSentences() {
+  const loading = boot({ hash: '#/armada', documents: {} });
+  check('P6 armada loading names the roster and the journal',
+    /Still loading. This comes from the roster file and the journal/.test(
+      loading.text('armada-board')),
+    loading.text('armada-board').slice(0, 160));
+
+  const refused = boot({ hash: '#/armada', documents: {
+    armada: { type: 'armada', refused: ['the roster file is not readable'] },
+    state: (asked) => emptyState(asked),
+  } });
+  await flush(); refused.open(); await flush(80);
+  check('P6 armada refusal names what refused',
+    /The armada could not be read: the roster file is not readable/.test(
+      refused.text('armada-board')),
+    refused.text('armada-board').slice(0, 200));
+
+  const empty = boot({ hash: '#/armada', documents: {
+    armada: { type: 'armada', flagship: false, instances: [] },
+    state: (asked) => emptyState(asked),
+  } });
+  await flush(); empty.open(); await flush(80);
+  check('P6 armada empty says no fleet carries armada yet',
+    /no fleet carries armada yet/.test(empty.text('armada-board')),
+    empty.text('armada-board').slice(0, 200));
+
+  const selected = boot({ hash: '#/armada', documents: {
+    armada: p6ArmadaFleet, state: (asked) => emptyState(asked),
+  } });
+  await flush(); selected.open(); await flush(160);
+  const said = selected.rows('[data-state="selected"]')
+    .map((one) => one.textContent).join(' | ');
+  check('P6 armada selected names the instance, its health and its role',
+    /showing sid-a \u00b7 live \u00b7 dispatchable/.test(said), said.slice(0, 200));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -20238,6 +20368,11 @@ const cases = [
   ['P6 the grader scorecard counts each beat\u2019s precision', p6CalibrationScorecardPerOp],
   ['P6 the counterfactual names every flip and invents none',
     p6CalibrationCounterfactualNamesEveryFlip],
+  ['P6 the armada draws a deployment map with the dispatch bar',
+    p6ArmadaDrawsTheDeploymentMap],
+  ['P6 an armada with no roster says so, and never a zero',
+    p6ArmadaWithNoRosterSaysSoAndNeverAZero],
+  ['P6 armada names its four sentences', p6ArmadaNamesItsFourSentences],
   ['P6 an empty replay window is named', p6CalibrationCounterfactualRefusesAnEmptyWindow],
   ['P6 calibration names its four sentences', p6CalibrationNamesItsFourSentences],
 ];
