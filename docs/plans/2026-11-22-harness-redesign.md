@@ -1,5 +1,6 @@
 ---
-status: active
+status: completed
+completed: 2026-11-22
 created: 2026-11-22
 plan: harness-redesign
 ---
@@ -193,8 +194,12 @@ shadow law, the drawer as the reading surface, the OMH borrowables) append
       viewports — 390 the phone inbox, 820 the portrait tablet conversation,
       1180 the landscape split with the made-here receipts. The run exposed
       G24 (the bot's discs never got the face seam), closed the same turn.
-- [ ] D7's hygiene pass run after every delivery in this plan, recorded in
-      the row's note.
+- [x] D7's hygiene pass run after every delivery in this plan, recorded in
+      the row's note. It ran after every delivery — the last at 9895c2de
+      (G13 + G16): `repo-hygiene.sh --report` clean (fleet self-dir 0
+      candidates), `plan_check.py` reports every completed plan's ACs
+      ticked, `ki_ledger.py` parses 589 rows / 6 open, `git status` clean;
+      the two full suites behind the commit were green by exit code.
 
 ### The capture-tool lesson (the measurement needed the read, and the read needed a trustworthy capture)
 
