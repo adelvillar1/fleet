@@ -8209,6 +8209,19 @@ import { node, svg, clip } from './core/dom.js';
           (d.plaintext ? ' \u00b7 ' + d.plaintext + ' plaintext line' +
             (d.plaintext === 1 ? '' : 's') + ' still in .env' : '');
       }
+    },
+    // Plugins answers about the DIFF: a manifest says what a bundle may
+    // read, the ledger says what it asked. The selected sentence counts
+    // the two against each other, which is the only interesting number on
+    // the page.
+    plugins: {
+      empty: 'No bundles installed yet \u2014 press install a bundle, or read how trust works.',
+      loading: 'Still loading. This comes from the plugin registry and each bundle\u2019s own manifest.',
+      refused: function (said) { return 'The plugin registry could not be read: ' + said.join('; '); },
+      selected: function (d) {
+        return 'showing ' + d.name + ' \u00b7 ' + d.tier + ' \u2014 ' + d.asked + ' of ' +
+          d.declared + ' declared quer' + (d.declared === 1 ? 'y' : 'ies') + ' asked';
+      }
     }
   };
 
@@ -11350,6 +11363,11 @@ import { node, svg, clip } from './core/dom.js';
     face.plugins = state.plugins || [];
     face.pluginProposals = state.proposals || [];
     face.pluginBuiltIns = state.built_ins || [];
+    // The plugins surface's own landed flag: the board paints before this
+    // read resolves, and a count of zero over an unlanded read is the one
+    // silence the four sentences exist to end.
+    face.pluginsLoaded = true;
+    face.pluginsRefused = state.refused || [];
     // The rail's dynamic rows read the same assignment — a changed
     // list rebuilds it; the plugins page repaints with it.
     var pluginsAfter = face.plugins.map(function (one) {
@@ -22018,6 +22036,149 @@ import { node, svg, clip } from './core/dom.js';
     return row;
   }
 
+  // -------------------------------------------------- the manifest diff (P6)
+  //
+  // A manifest states what a bundle MAY read. A ledger states what it DID
+  // ask and whether the bridge answered. Neither alone is honest: the
+  // manifest alone reads as a promise the bundle may never have used, and
+  // the ledger alone reads as reach without a boundary. The diff is the
+  // two, one row per query, and every row says which of the four things
+  // happened — including the two rows that are not "empty cells":
+  //
+  //   refused, not asked      — the bundle asked for what its manifest
+  //                             never declared, and the bridge refused it
+  //   asked, never counted    — the ledger holds the ask but no outcome
+  //                             (a line lost, a build before the ledger)
+  //
+  // A ledger line that did not parse is counted and named, never folded
+  // into "never asked".
+  function manifestDiffRows(plugin) {
+    var allowed = (plugin.queries || []).slice();
+    var asks = plugin.asks || [];
+    // The newest ask per query is the one that stands: a later answered
+    // ask supersedes an earlier refusal, and vice versa.
+    var latest = {};
+    asks.forEach(function (ask) {
+      var query = String(ask.query || '');
+      if (!query) return;
+      var at = String(ask.at || '');
+      var held = latest[query];
+      if (!held || at >= String(held.at || '')) latest[query] = ask;
+    });
+    var rows = [];
+    allowed.forEach(function (query) {
+      var ask = latest[query] || null;
+      rows.push({
+        query: query,
+        allowed: true,
+        asked: !!ask,
+        state: !ask ? 'declared-not-asked'
+          : (ask.answered == null ? 'asked-unrecorded'
+            : (ask.answered ? 'answered' : 'refused')),
+        reason: ask && ask.reason ? String(ask.reason) : ''
+      });
+      if (ask) delete latest[query];
+    });
+    Object.keys(latest).forEach(function (query) {
+      var ask = latest[query];
+      rows.push({
+        query: query,
+        allowed: false,
+        asked: true,
+        state: ask.answered == null ? 'asked-unrecorded'
+          : (ask.answered ? 'answered-not-declared' : 'refused-not-declared'),
+        reason: ask.reason ? String(ask.reason) : ''
+      });
+    });
+    return rows;
+  }
+
+  /// One row's sentence, in the surface's own words. The two "honest
+  /// rows" are the ones a table of ticks would have shown as empty.
+  function manifestDiffSaid(row) {
+    if (row.state === 'answered') return 'answered';
+    if (row.state === 'refused') {
+      return 'refused \u2014 ' + (row.reason || 'the bridge gave no reason');
+    }
+    if (row.state === 'declared-not-asked') return 'declared, never asked';
+    if (row.state === 'asked-unrecorded') {
+      return 'asked, but no outcome was recorded \u2014 the ledger holds the ask and not ' +
+        'its answer';
+    }
+    if (row.state === 'refused-not-declared') {
+      return 'asked and refused \u2014 the manifest never declared it: ' +
+        (row.reason || 'the sandbox refused it');
+    }
+    return 'answered although the manifest never declared it \u2014 the sandbox let through ' +
+      'a query its manifest does not name';
+  }
+
+  function manifestDiffCard(plugin) {
+    var rows = manifestDiffRows(plugin);
+    var answered = rows.filter(function (row) { return row.state === 'answered'; }).length;
+    var card = boardCard(12, 'the manifest diff \u2014 ' + (plugin.label || plugin.name),
+      rows.length + ' quer' + (rows.length === 1 ? 'y' : 'ies') + ' \u00b7 ' + answered +
+      ' answered \u00b7 ' + (plugin.queries || []).length + ' declared');
+    card.classList.add('manifest-diff');
+    card.dataset.plugin = plugin.name;
+    if (!rows.length) {
+      card.appendChild(node('p', 'board-empty',
+        'This bundle declares no queries and has asked for none \u2014 there is nothing to ' +
+        'diff.'));
+      return card;
+    }
+    rows.forEach(function (row) {
+      var line = node('div', 'list-row manifest-row');
+      line.dataset.query = row.query;
+      line.dataset.state = row.state;
+      line.appendChild(node('span', 'list-row-key', row.query));
+      line.appendChild(badge(row.allowed ? 'declared' : 'undeclared',
+        row.allowed ? null : 'warn'));
+      line.appendChild(node('span', 'cfg-note', manifestDiffSaid(row)));
+      card.appendChild(line);
+    });
+    if (plugin.ledger_unreadable) {
+      card.appendChild(node('p', 'derivation manifest-ledger-note',
+        plugin.ledger_unreadable + ' ledger line' +
+        (plugin.ledger_unreadable === 1 ? '' : 's') + ' did not parse \u2014 the asks they ' +
+        'held are not counted here, and are not read as "never asked"'));
+    }
+    return card;
+  }
+
+  /// The three tiers as a table, not a ladder of prose: what each may
+  /// reach, what moves a bundle into it, and how many bundles stand there
+  /// right now. The counts are the document's own.
+  function pluginTierTable(plugins, proposals) {
+    var privileged = plugins.filter(function (one) { return one.tier === 'privileged'; });
+    var untrusted = plugins.filter(function (one) { return one.tier !== 'privileged'; });
+    var card = boardCard(12, 'the three tiers', 'what each may reach, and what moves a bundle');
+    card.classList.add('plugins-tier-table');
+    var tiers = [
+      { id: 'draft', name: 'draft',
+        reach: 'nothing \u2014 a directory that has not been installed, on no route',
+        move: 'creator mode writes it; installing it is your act',
+        count: proposals.length },
+      { id: 'untrusted', name: 'installed \u00b7 untrusted',
+        reach: 'the read-only queries its manifest declares, enforced bridge-side',
+        move: 'an install without the elevation act', count: untrusted.length },
+      { id: 'privileged', name: 'privileged',
+        reach: 'every route the face can, writes included',
+        move: 'the whole suite passing, then your elevation act', count: privileged.length },
+    ];
+    tiers.forEach(function (tier) {
+      var row = node('div', 'list-row plugins-tier-row');
+      row.dataset.tier = tier.id;
+      row.appendChild(node('span', 'list-row-key', tier.name));
+      row.appendChild(node('span', 'cfg-note', tier.reach));
+      row.appendChild(node('span', 'cfg-note', tier.move));
+      row.appendChild(badge(tier.count + (tier.count === 1 ? ' bundle' : ' bundles'),
+        tier.count ? 'ok' : null));
+      card.appendChild(row);
+    });
+    return card;
+  }
+
   function paintPlugins() {
     var board = el.pluginsBoard;
     board.textContent = '';
@@ -22030,6 +22191,20 @@ import { node, svg, clip } from './core/dom.js';
     var plugins = face.plugins || [];
     var proposals = face.pluginProposals || [];
     board.appendChild(pageHead('System', 'Plugins', null, null));
+    // The read has not landed: the loading sentence, not a count of zero.
+    if (!face.pluginsLoaded) {
+      var waiting = boardCard(12, 'reading', null, null);
+      waiting.appendChild(node('p', 'board-empty', sentence('plugins', 'loading', {})));
+      board.appendChild(waiting);
+      return;
+    }
+    if (face.pluginsRefused && face.pluginsRefused.length) {
+      board.appendChild(node('p', 'derivation',
+        sentence('plugins', 'refused', face.pluginsRefused)));
+    }
+    if (!plugins.length && !builtIns.length) {
+      board.appendChild(node('p', 'board-empty', sentence('plugins', 'empty', {})));
+    }
 
     // The head's one line: the counts and the trust disclosure.
     var headline = node('p', 'plugins-headline');
@@ -22123,6 +22298,12 @@ import { node, svg, clip } from './core/dom.js';
       board.appendChild(node('p', 'board-empty',
         'No bundles installed yet \u2014 press \u201cinstall a bundle\u201d below, or read how trust works.'));
     }
+    // P6: the tiers as a table, and one manifest diff per bundle — the
+    // manifest's declared set against the ledger's recorded asks.
+    board.appendChild(pluginTierTable(plugins, proposals));
+    plugins.forEach(function (one) {
+      board.appendChild(manifestDiffCard(one));
+    });
 
     // The install door's press.
     var press = node('button', 'press');
@@ -22277,6 +22458,35 @@ import { node, svg, clip } from './core/dom.js';
     form.appendChild(cancel);
     door.appendChild(form);
     return door;
+  }
+
+  /// One bundle's own page — the address `#/plugins/<name>` mounts. The
+  /// diff leads, because the bundle's reach against its own history is
+  /// the first thing its page owes; the facts and the writes follow.
+  function paintPluginCard(board, plugin) {
+    board.appendChild(pageHead('System', plugin.label || plugin.name,
+      plugin.tier === 'privileged'
+        ? 'privileged \u2014 the face\u2019s own API reach; you vouched for this bundle'
+        : 'untrusted \u2014 sandboxed to the read-only queries its manifest declares',
+      null));
+    var rows = manifestDiffRows(plugin);
+    board.appendChild(selectedLine('plugins', {
+      name: plugin.label || plugin.name,
+      tier: plugin.tier === 'privileged' ? 'privileged' : 'untrusted',
+      asked: rows.filter(function (row) { return row.asked && row.allowed; }).length,
+      declared: (plugin.queries || []).length
+    }));
+    board.appendChild(manifestDiffCard(plugin));
+    var facts = boardCard(12, 'the bundle', plugin.version || 'no version');
+    pluginSections(plugin).forEach(function (section) {
+      facts.appendChild(node('h3', 'form-section', section[0]));
+      facts.appendChild(section[1]);
+    });
+    board.appendChild(facts);
+    var back = node('button', 'press', '\u2190 every bundle');
+    back.type = 'button';
+    back.addEventListener('click', function () { window.location.hash = '#/plugins'; });
+    board.appendChild(back);
   }
 
   function pluginSections(plugin) {

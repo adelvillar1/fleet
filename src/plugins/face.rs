@@ -162,6 +162,98 @@ pub struct FaceRegistry {
     pub plugins: BTreeMap<String, FaceState>,
 }
 
+/// The ask ledger's file name, inside the bundle's own directory: the
+/// record of what the bundle asked the bridge for, and what it got.
+///
+/// A manifest says what a bundle MAY read. Whether it ever asked, and
+/// whether the bridge could answer, is history — and history is the one
+/// thing a manifest cannot state about itself. The ledger is append-only
+/// JSONL, bounded, and lives beside the bundle so removing the bundle
+/// removes its record.
+pub const LEDGER_FILE: &str = "asks.jsonl";
+
+/// The ledger's bound: the newest this many asks are kept. Past it the
+/// file is rewritten from the tail rather than growing without limit.
+pub const LEDGER_CAP: usize = 200;
+
+/// One recorded ask.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskRow {
+    pub at: String,
+    pub query: String,
+    /// The bridge answered it. A refusal is a recorded outcome, not an
+    /// absence — the row says which, and why.
+    pub answered: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// The ledger's path for one bundle.
+pub fn ledger_path(home: &Path, name: &str) -> PathBuf {
+    plugin_dir(home, name).join(LEDGER_FILE)
+}
+
+/// Record one ask. `refused` is the bridge's own words when it did not
+/// answer, `None` when it did. A bundle that is not installed records
+/// nothing: an ask for a name the home does not carry has no ledger to
+/// belong to.
+///
+/// Never fails the caller: an ask that answered must not become an error
+/// because its record could not be written. The surface reads the
+/// ledger's absence honestly ("no outcome was recorded"), which is the
+/// same sentence a lost ledger earns.
+pub fn record_ask(home: &Path, name: &str, query: &str, refused: Option<&str>) {
+    let dir = plugin_dir(home, name);
+    if !dir.is_dir() {
+        return;
+    }
+    let row = AskRow {
+        at: crate::session::iso_utc_stamp(std::time::SystemTime::now()).unwrap_or_default(),
+        query: query.to_string(),
+        answered: refused.is_none(),
+        reason: refused.map(str::to_string),
+    };
+    let Ok(line) = serde_json::to_string(&row) else {
+        return;
+    };
+    let path = ledger_path(home, name);
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<&str> = existing
+        .lines()
+        .filter(|one| !one.trim().is_empty())
+        .collect();
+    lines.push(&line);
+    // Bounded: keep the newest LEDGER_CAP. The rewrite is the file's own
+    // tail, so the cap costs one pass when it is crossed and nothing
+    // while it is not.
+    let keep = if lines.len() > LEDGER_CAP {
+        lines[lines.len() - LEDGER_CAP..].to_vec()
+    } else {
+        lines
+    };
+    let mut text = keep.join("\n");
+    text.push('\n');
+    let _ = std::fs::write(&path, text);
+}
+
+/// One bundle's ledger: the rows, oldest first, and the count of lines
+/// that did not parse — a corrupt line is named, never silently dropped
+/// into "never asked".
+pub fn asks(home: &Path, name: &str) -> (Vec<AskRow>, usize) {
+    let Ok(text) = std::fs::read_to_string(ledger_path(home, name)) else {
+        return (Vec::new(), 0);
+    };
+    let mut rows = Vec::new();
+    let mut unreadable = 0usize;
+    for line in text.lines().filter(|one| !one.trim().is_empty()) {
+        match serde_json::from_str::<AskRow>(line) {
+            Ok(row) => rows.push(row),
+            Err(_) => unreadable += 1,
+        }
+    }
+    (rows, unreadable)
+}
+
 /// The registry's path in the home.
 pub fn registry_path(home: &Path) -> PathBuf {
     home.join(REGISTRY_FILE)
@@ -437,6 +529,63 @@ mod tests {
         "queries": ["state", "sessions"],
         "provenance": "creator:conv-9"
     }"#;
+
+    #[test]
+    fn the_ask_ledger_records_every_outcome_and_stays_bounded() {
+        let home = scratch("ledger");
+        install(&home, &bundle("ledger", MANIFEST), None).expect("installs");
+        // An answered ask and a refusal are two different facts, and the
+        // ledger keeps both — a refusal is an outcome, not an absence.
+        record_ask(&home, "stats", "state", None);
+        record_ask(
+            &home,
+            "stats",
+            "usage",
+            Some("`usage` is not among `stats`'s declared queries (state, sessions)"),
+        );
+        let (rows, unreadable) = asks(&home, "stats");
+        assert_eq!(unreadable, 0);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].answered);
+        assert_eq!(rows[0].query, "state");
+        assert!(!rows[1].answered);
+        assert_eq!(rows[1].query, "usage");
+        assert!(rows[1]
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("declared queries"));
+        // The bound: past the cap the newest are kept, oldest first.
+        for at in 0..(LEDGER_CAP + 5) {
+            record_ask(&home, "stats", &format!("q{at}"), None);
+        }
+        let (rows, _) = asks(&home, "stats");
+        assert_eq!(rows.len(), LEDGER_CAP);
+        let newest = format!("q{}", LEDGER_CAP + 4);
+        assert_eq!(
+            rows.last().map(|row| row.query.as_str()),
+            Some(newest.as_str())
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_corrupt_ledger_line_is_named_and_an_absent_bundle_records_nothing() {
+        let home = scratch("ledger-corrupt");
+        install(&home, &bundle("corrupt", MANIFEST), None).expect("installs");
+        let mut text = String::new();
+        text.push_str("{\"at\":\"2026-11-21T09:00:00Z\",\"query\":\"state\",\"answered\":true}\n");
+        text.push_str("this line is not a row\n");
+        std::fs::write(ledger_path(&home, "stats"), text).unwrap();
+        let (rows, unreadable) = asks(&home, "stats");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(unreadable, 1);
+        // A name the home does not carry has no ledger to belong to: the
+        // record is skipped rather than creating a directory for it.
+        record_ask(&home, "ghost", "state", None);
+        assert!(!plugin_dir(&home, "ghost").exists());
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     #[test]
     fn a_bundle_installs_and_the_registry_rides_the_writer() {

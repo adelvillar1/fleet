@@ -19591,6 +19591,148 @@ async function p6VaultNamesItsFourSentences() {
       /1 plaintext line still in \.env/.test(said), said.slice(0, 200));
 }
 
+// The plugins surface's diff: the manifest's declared set against the
+// ledger's recorded asks. The fixture carries all five row kinds, so a
+// renderer that folds any of them into an empty cell fails by name.
+const p6PluginBundles = [
+  {
+    name: 'demo', tier: 'untrusted', enabled: true, group: 'system',
+    label: 'the demo bundle', version: '0.2.0', provenance: 'creator:conv-1',
+    queries: ['state', 'sessions', 'memory'],
+    asks: [
+      { at: '2026-11-21T09:00:00Z', query: 'state', answered: true, reason: null },
+      { at: '2026-11-21T09:01:00Z', query: 'sessions', answered: false,
+        reason: 'the sessions read did not land' },
+      { at: '2026-11-21T09:02:00Z', query: 'usage', answered: false,
+        reason: '`usage` is not among `demo`\'s declared queries' },
+      { at: '2026-11-21T09:03:00Z', query: 'tree', answered: null },
+    ],
+    ledger_unreadable: 2,
+  },
+  {
+    name: 'vouched', tier: 'privileged', enabled: true, group: 'work',
+    label: 'the vouched bundle', version: '1.0.0', provenance: 'owner',
+    queries: ['state'], asks: [], ledger_unreadable: 0,
+  },
+];
+
+function p6PluginsState(bundles, extra) {
+  return Object.assign({
+    ...emptyState(''),
+    plugins: bundles,
+    proposals: [{ name: 'draft-one', path: '/tmp/draft-one' }],
+    built_ins: [],
+  }, extra || {});
+}
+
+async function p6PluginsDiffPerBundle() {
+  const page = boot({ hash: '#/plugins', documents: {
+    state: (asked) => p6PluginsState(p6PluginBundles),
+    settings: p6SettingsDoc(),
+  } });
+  await flush(); page.open(); await flush(140);
+
+  const cards = page.rows('.manifest-diff');
+  check('P6 one manifest diff per bundle',
+    cards.length === 2 && cards.map((one) => one.dataset.plugin).join(',') ===
+      'demo,vouched', cards.map((one) => one.dataset.plugin).join(','));
+  const demo = cards.find((one) => one.dataset.plugin === 'demo');
+  const rows = demo ? [...demo.querySelectorAll('.manifest-row')] : [];
+  const at = (query) => rows.find((one) => one.dataset.query === query);
+  check('P6 an answered query is a row that says answered',
+    !!at('state') && at('state').dataset.state === 'answered' &&
+      /answered/.test(String(at('state').textContent)),
+    at('state') ? String(at('state').textContent) : 'no state row');
+  check('P6 a refused query names the bridge\u2019s own reason',
+    !!at('sessions') && at('sessions').dataset.state === 'refused' &&
+      /refused \u2014 the sessions read did not land/.test(String(at('sessions').textContent)),
+    at('sessions') ? String(at('sessions').textContent) : 'no sessions row');
+  check('P6 a declared query never asked says so',
+    !!at('memory') && at('memory').dataset.state === 'declared-not-asked' &&
+      /declared, never asked/.test(String(at('memory').textContent)),
+    at('memory') ? String(at('memory').textContent) : 'no memory row');
+  check('P6 refused-but-not-declared is a named row, not an empty cell',
+    !!at('usage') && at('usage').dataset.state === 'refused-not-declared' &&
+      /asked and refused \u2014 the manifest never declared it/.test(
+        String(at('usage').textContent)),
+    at('usage') ? String(at('usage').textContent) : 'no usage row');
+  check('P6 asked-but-never-counted is a named row, not an empty cell',
+    !!at('tree') && at('tree').dataset.state === 'asked-unrecorded' &&
+      /asked, but no outcome was recorded/.test(String(at('tree').textContent)),
+    at('tree') ? String(at('tree').textContent) : 'no tree row');
+  check('P6 a corrupt ledger line is counted, never read as never-asked',
+    /2 ledger lines did not parse/.test(String(demo ? demo.textContent : '')),
+    demo ? String(demo.textContent).slice(-160) : 'no demo card');
+
+  const vouched = cards.find((one) => one.dataset.plugin === 'vouched');
+  check('P6 a bundle that never asked shows its declaration and no asks',
+    !!vouched && /declared, never asked/.test(String(vouched.textContent)),
+    vouched ? String(vouched.textContent).slice(0, 160) : 'no vouched card');
+}
+
+async function p6PluginsTierTable() {
+  const page = boot({ hash: '#/plugins', documents: {
+    state: (asked) => p6PluginsState(p6PluginBundles),
+    settings: p6SettingsDoc(),
+  } });
+  await flush(); page.open(); await flush(140);
+  const rows = page.rows('.plugins-tier-row');
+  check('P6 the tier table has three rows',
+    rows.length === 3 && rows.map((one) => one.dataset.tier).join(',') ===
+      'draft,untrusted,privileged',
+    rows.map((one) => one.dataset.tier).join(','));
+  const counts = rows.map((one) => String(one.textContent));
+  check('P6 each tier row names its reach, its gate, and its count',
+    /draft/.test(counts[0]) && /1 bundle/.test(counts[0]) &&
+      /enforced bridge-side/.test(counts[1]) && /1 bundle/.test(counts[1]) &&
+      /writes included/.test(counts[2]) && /your elevation act/.test(counts[2]) &&
+      /1 bundle/.test(counts[2]),
+    counts.join(' | ').slice(0, 320));
+}
+
+async function p6PluginsNamesItsFourSentences() {
+  // The board paints before the state read lands: a zero over an unlanded
+  // read is the silence the four sentences exist to end.
+  const loading = boot({ hash: '#/plugins', documents: {
+    state: (asked) => p6PluginsState([]),
+  } });
+  check('P6 plugins loading names the registry and the manifests',
+    /Still loading. This comes from the plugin registry and each bundle\u2019s own manifest/
+      .test(loading.text('plugins-board')),
+    loading.text('plugins-board').slice(0, 160));
+
+  const refused = boot({ hash: '#/plugins', documents: {
+    state: (asked) => p6PluginsState([], { refused: ['the plugin registry is not valid JSON'] }),
+    settings: p6SettingsDoc(),
+  } });
+  await flush(); refused.open(); await flush(120);
+  check('P6 plugins refusal names what refused',
+    /The plugin registry could not be read: the plugin registry is not valid JSON/.test(
+      refused.text('plugins-board')),
+    refused.text('plugins-board').slice(0, 200));
+
+  const empty = boot({ hash: '#/plugins', documents: {
+    state: (asked) => p6PluginsState([], { proposals: [], built_ins: [] }),
+    settings: p6SettingsDoc(),
+  } });
+  await flush(); empty.open(); await flush(120);
+  check('P6 plugins empty names the way forward',
+    /No bundles installed yet \u2014 press install a bundle/.test(
+      empty.text('plugins-board')),
+    empty.text('plugins-board').slice(0, 200));
+
+  const selected = boot({ hash: '#/plugins/demo', documents: {
+    state: (asked) => p6PluginsState(p6PluginBundles),
+    settings: p6SettingsDoc(),
+  } });
+  await flush(); selected.open(); await flush(140);
+  const said = selected.rows('[data-state="selected"]')
+    .map((one) => one.textContent).join(' | ');
+  check('P6 plugins selected counts what was asked against what was declared',
+    /showing the demo bundle \u00b7 untrusted \u2014 2 of 3 declared queries asked/.test(said),
+    said.slice(0, 200));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -19874,6 +20016,9 @@ const cases = [
   ['P6 a refused probe names its reason', p6VaultProbeRefusalIsNamed],
   ['P6 the .env migration names the delete step', p6VaultMigrationNamesTheDeleteStep],
   ['P6 vault names its four sentences', p6VaultNamesItsFourSentences],
+  ['P6 the manifest diff names all five rows', p6PluginsDiffPerBundle],
+  ['P6 the plugins tier table has three rows', p6PluginsTierTable],
+  ['P6 plugins names its four sentences', p6PluginsNamesItsFourSentences],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

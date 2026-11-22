@@ -1583,6 +1583,24 @@ impl Bridge {
     /// queries the bridge cannot answer yet refuse the same way —
     /// the declared set is the boundary, not a promise of breadth.
     pub async fn plugin_query(&self, name: &str, query: &str) -> Result<Value, String> {
+        let answer = self.plugin_query_unrecorded(name, query).await;
+        // The ledger sees EVERY ask: an answered one, a refusal by name,
+        // and a declared query the bridge cannot answer yet. The manifest
+        // diff the plugins surface paints is only honest if the history
+        // is complete, so the record is written here — around the
+        // enforcement, not inside one of its branches.
+        crate::plugins::face::record_ask(
+            &self.home,
+            name,
+            query,
+            answer.as_ref().err().map(String::as_str),
+        );
+        answer
+    }
+
+    /// The enforcement itself: the manifest's declared set is the
+    /// sandbox's whole data path.
+    async fn plugin_query_unrecorded(&self, name: &str, query: &str) -> Result<Value, String> {
         let home = self.home.clone();
         let manifest_path = crate::plugins::face::FaceManifest::path(
             &crate::plugins::face::plugin_dir(&home, name),
@@ -1631,19 +1649,34 @@ impl Bridge {
         let listings = crate::plugins::face::list(&home).unwrap_or_default();
         serde_json::json!(listings
             .iter()
-            .map(|listing| serde_json::json!({
-                "name": listing.name,
-                "tier": match listing.tier {
-                    crate::plugins::face::FaceTier::Privileged => "privileged",
-                    crate::plugins::face::FaceTier::Untrusted => "untrusted",
-                },
-                "enabled": listing.enabled,
-                "group": listing.group,
-                "label": listing.label,
-                "version": listing.version,
-                "provenance": listing.provenance,
-                "queries": listing.queries,
-            }))
+            .map(|listing| {
+                // The ask ledger, beside the manifest's declared set: what
+                // the bundle MAY read is the manifest, what it DID ask and
+                // whether the bridge answered is history. The surface
+                // diffs the two; shipping only the manifest would make
+                // "never asked" indistinguishable from "asked and lost".
+                let (asks, unreadable) = crate::plugins::face::asks(&home, &listing.name);
+                serde_json::json!({
+                    "name": listing.name,
+                    "tier": match listing.tier {
+                        crate::plugins::face::FaceTier::Privileged => "privileged",
+                        crate::plugins::face::FaceTier::Untrusted => "untrusted",
+                    },
+                    "enabled": listing.enabled,
+                    "group": listing.group,
+                    "label": listing.label,
+                    "version": listing.version,
+                    "provenance": listing.provenance,
+                    "queries": listing.queries,
+                    "asks": asks.iter().map(|ask| serde_json::json!({
+                        "at": ask.at,
+                        "query": ask.query,
+                        "answered": ask.answered,
+                        "reason": ask.reason,
+                    })).collect::<Vec<_>>(),
+                    "ledger_unreadable": unreadable,
+                })
+            })
             .collect::<Vec<_>>())
     }
 
