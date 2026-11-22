@@ -259,7 +259,11 @@ colors are fixed by the skin. Single-file vendorable (~56 KB without skins).
         turn (bot.html's module, `faceMark`, `FACE_STATES`, `wireFaces`,
         harness pin 1913/280); the six PWA captures above are the 390/820/1180
         evidence with the faces in place.
-  - [ ] D7 hygiene pass after the delivery.
+  - [x] D7 hygiene pass after the delivery — `repo-hygiene.sh --report` clean
+        (fleet self-dir 0 candidates), `plan_check.py` reports every completed
+        plan's ACs ticked (two unrelated 2026-10-29 drafts carry its staleness
+        warning), `ki_ledger.py` parses 589 rows / 8 open, `git status` clean
+        at 20eda857.
 
 ### Amendment, 2026-11-22 (the owner's read: the iPad mockup was mangled; both orientations are the requirement)
 
