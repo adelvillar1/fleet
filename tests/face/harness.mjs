@@ -19158,6 +19158,241 @@ async function p7MemoryNamesItsFourSentences() {
     /showing today\u2019s recall \u00b7 2 of 35 facts/.test(said), said.slice(0, 160));
 }
 
+// ------------------------------------------------- P6: the system surfaces
+//
+// P6's own ACs, one family per surface, each pinned where the surface
+// actually paints. The settings family proves the posture map BOTH ways —
+// every row expands to exactly the keys it declares, and every knob the
+// registry declares is reachable from exactly one row — because a one-way
+// pin lets a knob fall out of the surface with no case going red.
+
+// The registry's own list, copied from `SETTINGS` in src/settings.rs:
+// thirty-two declared knobs. This is the hand-computed side of the
+// totality proof, so a map in app.js that drops a name fails here by the
+// key's own name rather than by a count that happens to match.
+const P6_REGISTRY_KNOBS = [
+  'pin', 'browser.engine', 'approvals', 'appetite', 'footprint.reserve_gib',
+  'calib.log_root', 'deck.clustering', 'calib.informs_failover', 'ui.adapt',
+  'remote.public_url', 'remote.relay', 'remote.bot_relay',
+  'delegation.max_turns', 'delegation.max_turns_ceiling',
+  'skills.retire_after_sessions', 'skills.merge_similarity',
+  'channels.enabled', 'channels.webhook_port', 'channels.hold',
+  'update_last_check', 'gates.min_confidence', 'gates.default_workload',
+  'gates.allow_api_models', 'FLEET_EMBEDDING_ENDPOINT', 'FLEET_CUA_DRIVER',
+  'FLEET_JUDGE_BUDGET_USD_DAY', 'FLEET_DELEGATE_BUDGET_USD_DAY',
+  'FLEET_EXPLAIN_BUDGET_USD_DAY', 'FLEET_CONCURRENCY',
+  'FLEET_WEB_CACHE_TTL_SECS', 'FLEET_SKILLS_DIR', 'FLEET_SERVICES_ROOT',
+];
+
+// The five postures' keys, as the surface declares them. Written here by
+// hand from the registry (not imported from app.js): the case is the
+// second opinion, and a map that moves a knob between postures fails by
+// the key's name.
+const P6_POSTURE_KEYS = {
+  model: ['pin', 'gates.min_confidence', 'gates.default_workload',
+    'gates.allow_api_models', 'appetite', 'deck.clustering',
+    'FLEET_EMBEDDING_ENDPOINT', 'browser.engine', 'FLEET_CUA_DRIVER',
+    'FLEET_WEB_CACHE_TTL_SECS'],
+  approval: ['approvals', 'calib.informs_failover', 'skills.retire_after_sessions',
+    'skills.merge_similarity'],
+  spend: ['FLEET_JUDGE_BUDGET_USD_DAY', 'FLEET_DELEGATE_BUDGET_USD_DAY',
+    'FLEET_EXPLAIN_BUDGET_USD_DAY', 'FLEET_CONCURRENCY', 'delegation.max_turns',
+    'delegation.max_turns_ceiling', 'footprint.reserve_gib'],
+  schedule: ['channels.enabled', 'channels.webhook_port', 'channels.hold',
+    'remote.public_url', 'remote.relay', 'remote.bot_relay'],
+  identity: ['ui.adapt', 'calib.log_root', 'FLEET_SKILLS_DIR',
+    'FLEET_SERVICES_ROOT', 'update_last_check'],
+};
+
+function p6SettingsDoc(extra) {
+  const values = {
+    pin: '', approvals: 'yes-guarded', 'gates.min_confidence': '0.55',
+    'gates.default_workload': 'quick', 'gates.allow_api_models': 'false',
+    FLEET_JUDGE_BUDGET_USD_DAY: '0.05', FLEET_DELEGATE_BUDGET_USD_DAY: '0.5',
+    FLEET_EXPLAIN_BUDGET_USD_DAY: '0.2', 'ui.adapt': 'on',
+    'channels.enabled': 'off', 'remote.relay': 'https://relay.example',
+  };
+  const doc = {
+    type: 'settings', read_at: '2026-11-21T09:00:00Z',
+    scalars: P6_REGISTRY_KNOBS.map((key) => ({
+      key, kind: 'text', source: 'default', summary: 'the ' + key + ' knob',
+      value: values[key] == null ? '' : values[key],
+    })),
+    lists: [], rules: [], env: [],
+    cron: [
+      { name: 'nightly', schedule: '0 3 * * *', task: 'sweep', enabled: true },
+      { name: 'weekly', schedule: '0 4 * * 1', task: 'digest', enabled: false },
+    ],
+    soul: { present: false, text: '' },
+    identity: { install_id: 'install-abc123456789', principal: 'owner', devices: 1 },
+    grants: { bootstrap: 'owner wildcard', explicit: [] },
+    update: { current: '0.9.0', installed_via: 'source' },
+    router: { pin: '', judged: [], tiers: [], min_confidence: 0.55,
+      default_workload: 'quick', allow_api_models: false, roster: [] },
+    catalog: { models: [], providers: [], tools: [], skills: [] },
+    lanes: { lanes: [], refused: [] },
+    servers: { servers: [], refused: [] },
+    tools: { calls_per_turn: 40, definition_tokens: 9000, disabled: [],
+      last_sweep: '', window: 0 },
+    roles: { dir: '/tmp', entries: [] },
+    vault: { names: [], exists: true, passphrase: true, plaintext: [] },
+    telegram: { present: false, source: 'unset' },
+  };
+  return Object.assign(doc, extra || {});
+}
+
+async function p6SettingsOpensOnFivePostures() {
+  const page = boot({ hash: '#/settings', documents: {
+    settings: p6SettingsDoc(), state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(120);
+
+  const heads = page.rows('.posture-head');
+  check('P6 settings first paint is the five postures',
+    heads.length === 5, heads.map((one) => one.dataset.posture).join(','));
+  const names = heads.map((one) =>
+    (one.querySelector('.cfg-item-name') || {}).textContent || '');
+  check('P6 the five postures are the five questions',
+    names.join('|') === 'the model posture|the approval posture|the spend posture|' +
+      'the schedule|the identity', names.join('|'));
+  // The count strip retires: no strip node on the board, and the five
+  // questions are the board's first card — where the counts stood.
+  const boardText = page.text('settings-board');
+  check('P6 the knob-count strip is gone',
+    page.rows('.surface-strip').length === 0 &&
+      page.rows('.posture-card').length === 1 &&
+      !/provider overrides/.test(boardText) &&
+      !/workload overrides/.test(boardText),
+    page.rows('.surface-strip').length + ' strips');
+  // The save receipt stays: the board's own answer line, empty until a
+  // write answers.
+  check('P6 the save receipt stays on the board',
+    page.rows('.settings-status').length === 1,
+    String(page.rows('.settings-status').length));
+  // Each row says its current stance in the owner's words, from the
+  // document's own values — never a placeholder.
+  const said = heads.map((one) =>
+    (one.querySelector('.cfg-item-value') || {}).textContent || '');
+  check('P6 each posture names its stance from the document',
+    /no pin/.test(said[0]) && /0\.55/.test(said[0]) &&
+      /destructive class asks/.test(said[1]) &&
+      /\$0\.05/.test(said[2]) &&
+      /1 of 2 cron jobs enabled/.test(said[3]) &&
+      /install-abc1/.test(said[4]),
+    said.join(' | '));
+}
+
+async function p6SettingsPosturesMapBothWays() {
+  const page = boot({ hash: '#/settings', documents: {
+    settings: p6SettingsDoc(), state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(120);
+  const headAt = (id) => page.rows('.posture-head')
+    .find((one) => one.dataset.posture === id);
+
+  // Direction one: the row declares its keys, and pressing it renders
+  // exactly those keys, in the mapping's order.
+  for (const id of Object.keys(P6_POSTURE_KEYS)) {
+    const head = headAt(id);
+    check('P6 the ' + id + ' row declares the knobs its mapping names',
+      !!head && String(head.dataset.knobs).split(' ').join('|') ===
+        P6_POSTURE_KEYS[id].join('|'),
+      head ? String(head.dataset.knobs) : 'no ' + id + ' row');
+    if (!head) continue;
+    head.click();
+    await flush(60);
+    const opened = page.rows('.posture-knobs[data-posture="' + id + '"] .cfg-item')
+      .map((row) => String(row.dataset.item).replace(/^posture-knob:/, ''));
+    check('P6 the ' + id + ' row expands to exactly those knobs',
+      opened.length === P6_POSTURE_KEYS[id].length &&
+        opened.every((key, at) => key === P6_POSTURE_KEYS[id][at]),
+      opened.join(','));
+    const again = headAt(id);
+    if (again) again.click();
+    await flush(40);
+  }
+
+  // Direction two: every knob the registry declares is reachable from
+  // exactly one row, and no row claims a knob the registry does not have.
+  const declared = [];
+  page.rows('.posture-head').forEach((head) => {
+    declared.push(...String(head.dataset.knobs).split(' ').filter(Boolean));
+  });
+  const missing = P6_REGISTRY_KNOBS.filter((key) => !declared.includes(key));
+  const unknown = declared.filter((key) => !P6_REGISTRY_KNOBS.includes(key));
+  const twice = declared.filter((key, at) => declared.indexOf(key) !== at);
+  check('P6 every registry knob is reachable from a posture',
+    missing.length === 0, 'missing: ' + missing.join(','));
+  check('P6 no posture invents a knob the registry does not declare',
+    unknown.length === 0, 'unknown: ' + unknown.join(','));
+  check('P6 no knob is claimed by two postures',
+    twice.length === 0, 'twice: ' + twice.join(','));
+}
+
+// The residual: a registry that grows a key the map has not placed yet
+// gets a sixth row that says so. A knob nobody can reach is a knob the
+// owner cannot change, so "not in the map" must never mean "not on the
+// page".
+async function p6SettingsUnclaimedKnobIsNamed() {
+  const doc = p6SettingsDoc();
+  doc.scalars.push({ key: 'experimental.flag', kind: 'text', source: 'default',
+    summary: 'a knob the map has not placed', value: 'on' });
+  const page = boot({ hash: '#/settings', documents: {
+    settings: doc, state: (asked) => emptyState(asked),
+  } });
+  await flush(); page.open(); await flush(120);
+  const heads = page.rows('.posture-head');
+  const extra = heads.find((one) => one.dataset.posture === 'unclaimed');
+  check('P6 an unmapped knob earns a row that says so',
+    heads.length === 6 && !!extra &&
+      (extra.querySelector('.cfg-item-name') || {}).textContent ===
+        'no posture governs these',
+    heads.map((one) => one.dataset.posture).join(','));
+  if (!extra) return;
+  extra.click();
+  await flush(60);
+  const opened = page.rows('.posture-knobs[data-posture="unclaimed"] .cfg-item')
+    .map((row) => String(row.dataset.item));
+  check('P6 the unmapped knob is reachable from that row',
+    opened.includes('posture-knob:experimental.flag'), opened.join(','));
+}
+
+async function p6SettingsNamesItsFourSentences() {
+  const loading = boot({ hash: '#/settings', documents: { settings: {} } });
+  check('P6 settings loading names the files it reads',
+    /Still loading. This comes from this home\u2019s config, routing, and env files/.test(
+      loading.text('settings-board')),
+    loading.text('settings-board').slice(0, 140));
+
+  const refused = boot({ hash: '#/settings', documents: {
+    settings: p6SettingsDoc({ refused: ['the routing file is not valid JSON'] }),
+    state: (asked) => emptyState(asked),
+  } });
+  await flush(); refused.open(); await flush(80);
+  check('P6 settings refusal names what refused',
+    /could not be read: the routing file is not valid JSON/.test(
+      refused.text('settings-board')),
+    refused.text('settings-board').slice(0, 160));
+
+  const empty = boot({ hash: '#/settings', documents: {
+    settings: p6SettingsDoc({ scalars: [] }), state: (asked) => emptyState(asked),
+  } });
+  await flush(); empty.open(); await flush(80);
+  check('P6 settings empty says every posture is the default\u2019s',
+    /declares no knob beyond the compiled defaults/.test(empty.text('settings-board')),
+    empty.text('settings-board').slice(0, 160));
+
+  const selected = boot({ hash: '#/settings/models', documents: {
+    settings: p6SettingsDoc(), state: (asked) => emptyState(asked),
+  } });
+  await flush(); selected.open(); await flush(120);
+  const said = selected.rows('[data-state="selected"]')
+    .map((one) => one.textContent).join(' | ');
+  check('P6 settings selected names the section under the postures',
+    /showing models \u00b7 \d+ rows \u2014 every write rides the writer the CLI rides/
+      .test(said), said.slice(0, 160));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -19432,6 +19667,10 @@ const cases = [
   ['P7 router names its four sentences', p7RouterNamesItsFourSentences],
   ['P7 delegation names its four sentences', p7DelegationNamesItsFourSentences],
   ['P7 memory names its four sentences', p7MemoryNamesItsFourSentences],
+  ['P6 settings opens on five postures', p6SettingsOpensOnFivePostures],
+  ['P6 the postures map both ways', p6SettingsPosturesMapBothWays],
+  ['P6 an unmapped knob is named, never dropped', p6SettingsUnclaimedKnobIsNamed],
+  ['P6 settings names its four sentences', p6SettingsNamesItsFourSentences],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));

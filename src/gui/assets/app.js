@@ -8182,6 +8182,19 @@ import { node, svg, clip } from './core/dom.js';
         return 'showing ' + d.section + ' \u00b7 ' + d.count + ' of ' + d.total +
           (d.total === 1 ? ' fact' : ' facts');
       }
+    },
+    // P6's surfaces. Settings opens on five postures rather than a count
+    // strip, so its selected line names the section under them and how
+    // many rows it carries — never a number of knobs standing in for the
+    // question the owner came with.
+    settings: {
+      empty: 'This home declares no knob beyond the compiled defaults. Every posture below is the default\u2019s own.',
+      loading: 'Still loading. This comes from this home\u2019s config, routing, and env files.',
+      refused: function (said) { return 'The settings could not be read: ' + said.join('; '); },
+      selected: function (d) {
+        return 'showing ' + d.section + ' \u00b7 ' + d.rows +
+          (d.rows === 1 ? ' row' : ' rows') + ' \u2014 every write rides the writer the CLI rides';
+      }
     }
   };
 
@@ -24146,6 +24159,246 @@ import { node, svg, clip } from './core/dom.js';
     ];
   }
 
+  // ------------------------------------------ the five postures (P6)
+  //
+  // The board used to open on a strip of counts — how many knobs, how
+  // many overrides, how many rules. A count is not a question, and the
+  // owner arrives with one of five intentions: what answers, what asks
+  // before it acts, what a day may cost, when this fleet acts on its
+  // own, and who this home is. So the first paint is those five, each
+  // opening onto exactly the knobs it governs.
+  //
+  // The mapping is DATA and it is total: every scalar the settings
+  // document carries is named by exactly one posture. `SETTINGS_POSTURES`
+  // is the whole of it, `postureRows` the only reader, and the harness
+  // proves both directions against the registry's own list — each row
+  // expands to its keys, and every key is reachable from exactly one
+  // row. A scalar the map does not name is never dropped: it lands in a
+  // sixth row that says no posture governs it, because a knob nobody can
+  // reach is a knob the owner cannot change.
+  //
+  // Each key sits under the DECISION it changes, not the file it is
+  // stored in: `approvals` asks, the three caps spend, `channels.*` is
+  // when this fleet can be reached. The expansion prints the server's
+  // own summary beside each key, so a wrong guess about a knob's home is
+  // visible where the guess is made rather than three presses away.
+  var SETTINGS_POSTURES = [
+    {
+      id: 'model',
+      name: 'the model posture',
+      note: 'what answers, and what it may reach',
+      section: 'models',
+      keys: [
+        'pin', 'gates.min_confidence', 'gates.default_workload',
+        'gates.allow_api_models', 'appetite', 'deck.clustering',
+        'FLEET_EMBEDDING_ENDPOINT', 'browser.engine', 'FLEET_CUA_DRIVER',
+        'FLEET_WEB_CACHE_TTL_SECS'
+      ],
+      said: function (read) {
+        var pin = postureKnob(read, 'pin');
+        var floor = postureKnob(read, 'gates.min_confidence');
+        if (pin) return 'pinned to ' + pin + ' \u2014 every call this home makes goes there';
+        return 'no pin \u2014 the judge picks the model for each call' +
+          (floor !== '' ? ', at a ' + floor + ' confidence floor' : '');
+      }
+    },
+    {
+      id: 'approval',
+      name: 'the approval posture',
+      note: 'what asks before it acts',
+      section: 'trust',
+      keys: [
+        'approvals', 'calib.informs_failover',
+        'skills.retire_after_sessions', 'skills.merge_similarity'
+      ],
+      said: function (read) {
+        var mode = postureKnob(read, 'approvals');
+        if (mode === 'ask') return 'every tool call asks before it runs';
+        if (mode === 'yes') return 'nothing asks \u2014 every tool call runs unattended';
+        if (mode === 'yes-guarded') {
+          return 'the destructive class asks; everything else runs unattended';
+        }
+        return 'the compiled default stands' + (mode ? ' (' + mode + ')' : '');
+      }
+    },
+    {
+      id: 'spend',
+      name: 'the spend posture',
+      note: 'what a day may cost, and how much runs at once',
+      section: 'environment',
+      keys: [
+        'FLEET_JUDGE_BUDGET_USD_DAY', 'FLEET_DELEGATE_BUDGET_USD_DAY',
+        'FLEET_EXPLAIN_BUDGET_USD_DAY', 'FLEET_CONCURRENCY',
+        'delegation.max_turns', 'delegation.max_turns_ceiling',
+        'footprint.reserve_gib'
+      ],
+      said: function (read) {
+        var caps = ['FLEET_JUDGE_BUDGET_USD_DAY', 'FLEET_DELEGATE_BUDGET_USD_DAY',
+          'FLEET_EXPLAIN_BUDGET_USD_DAY'];
+        var named = caps.map(function (key) {
+          var value = postureKnob(read, key);
+          return value === '' ? null : '$' + value;
+        }).filter(function (one) { return one; });
+        if (!named.length) return 'no cap is set here \u2014 the compiled ceilings stand';
+        return named.join(' \u00b7 ') + ' a day \u2014 ' + named.length + ' of the three caps ' +
+          (named.length === 1 ? 'is' : 'are') + ' set here; the rest keep the compiled ceiling';
+      }
+    },
+    {
+      id: 'schedule',
+      name: 'the schedule',
+      note: 'when this fleet acts on its own, and where it can be reached',
+      section: 'schedule',
+      keys: [
+        'channels.enabled', 'channels.webhook_port', 'channels.hold',
+        'remote.public_url', 'remote.relay', 'remote.bot_relay'
+      ],
+      said: function (read) {
+        var jobs = (read.cron || []).length;
+        var on = (read.cron || []).filter(function (job) { return job.enabled; }).length;
+        var doors = ['channels.enabled', 'remote.public_url', 'remote.relay']
+          .filter(function (key) {
+            var value = postureKnob(read, key);
+            return value !== '' && value !== 'off' && value !== 'false' && value !== '0';
+          }).length;
+        return (jobs
+          ? on + ' of ' + jobs + ' cron job' + (jobs === 1 ? '' : 's') + ' enabled'
+          : 'no cron job fires') +
+          ' \u00b7 ' + (doors
+            ? doors + ' reachable door' + (doors === 1 ? '' : 's')
+            : 'no channel or relay door is open');
+      }
+    },
+    {
+      id: 'identity',
+      name: 'the identity',
+      note: 'who this home is, and where it keeps what it knows',
+      section: 'interface',
+      keys: [
+        'ui.adapt', 'calib.log_root', 'FLEET_SKILLS_DIR',
+        'FLEET_SERVICES_ROOT', 'update_last_check'
+      ],
+      said: function (read) {
+        var install = (read.identity && read.identity.install_id) || '';
+        var adapt = postureKnob(read, 'ui.adapt');
+        return (install ? install.slice(0, 12) : 'no install id yet') +
+          ' \u00b7 the face ' +
+          (adapt === 'on' || adapt === 'true'
+            ? 'adapts to the owner'
+            : 'keeps its one shape');
+      }
+    }
+  ];
+
+  /// One scalar's rendered value, or `''` when this home declares no such
+  /// knob — the same emptiness the document's own rows carry, never a
+  /// zero standing in for an absent key.
+  function postureKnob(read, key) {
+    var knob = (read.scalars || []).filter(function (one) { return one.key === key; })[0];
+    if (!knob || knob.value == null) return '';
+    return String(knob.value);
+  }
+
+  /// The five postures plus the residual: whatever the document carries
+  /// that no posture names. Total by construction — the lists are the
+  /// map, and the residual is what is left, so a registry that grows a
+  /// key grows a row rather than losing one.
+  function postureRows(read) {
+    var claimed = {};
+    SETTINGS_POSTURES.forEach(function (posture) {
+      posture.keys.forEach(function (key) { claimed[key] = posture.id; });
+    });
+    var leftover = (read.scalars || []).map(function (knob) { return knob.key; })
+      .filter(function (key) { return !claimed[key]; });
+    var rows = SETTINGS_POSTURES.slice();
+    if (leftover.length) {
+      rows.push({
+        id: 'unclaimed',
+        name: 'no posture governs these',
+        note: 'knobs the map has not placed \u2014 listed, never dropped',
+        section: null,
+        keys: leftover,
+        said: function () {
+          return leftover.length + (leftover.length === 1 ? ' knob sits' : ' knobs sit') +
+            ' outside every posture; each one still opens its own card';
+        }
+      });
+    }
+    return rows;
+  }
+
+  /// One posture: the row, and — when open — exactly the knobs its
+  /// mapping names, in the mapping's order. A mapped key the document
+  /// does not carry still renders, marked absent, so the expansion is
+  /// the mapping rather than the mapping filtered by what happened to
+  /// land.
+  function postureRow(read, posture) {
+    var wrap = node('div', 'posture');
+    wrap.dataset.posture = posture.id;
+    var open = face.settingsPosture === posture.id;
+    var head = node('button', 'cfg-item posture-head');
+    head.type = 'button';
+    head.dataset.kind = 'posture';
+    head.dataset.item = 'posture:' + posture.id;
+    head.dataset.posture = posture.id;
+    // The row declares what it governs, in the DOM: the count it wears
+    // and the list it opens are the same list, so a key deleted from the
+    // map changes both.
+    head.dataset.knobs = posture.keys.join(' ');
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var main = node('span', 'cfg-item-main');
+    main.appendChild(node('span', 'cfg-item-name', posture.name));
+    main.appendChild(node('span', 'cfg-item-value', posture.said(read)));
+    head.appendChild(main);
+    head.appendChild(node('span', 'cfg-item-mark', posture.keys.length +
+      (posture.keys.length === 1 ? ' knob' : ' knobs')));
+    head.addEventListener('click', function () {
+      face.settingsPosture = open ? '' : posture.id;
+      paintSettings();
+    });
+    wrap.appendChild(head);
+    if (!open) return wrap;
+    var body = node('div', 'cfg-list posture-knobs');
+    body.dataset.posture = posture.id;
+    posture.keys.forEach(function (key) {
+      var knob = (read.scalars || []).filter(function (one) { return one.key === key; })[0]
+        || null;
+      body.appendChild(cfgItem({
+        id: 'posture-knob:' + key, kind: 'knob', name: key,
+        value: knob ? String(knob.value == null ? '' : knob.value) : '\u2014',
+        marks: knob ? sourceMark(knob)
+          : [['absent', 'warn', 'this home declares no such knob']],
+        card: function () {
+          return knob
+            ? knobSections(read, key, key, knob.summary || '')
+            : [['the knob', node('p', 'derivation',
+                'this home declares no `' + key + '`, so there is nothing to write')]];
+        }
+      }));
+    });
+    if (posture.section) {
+      var door = node('button', 'replay-button', 'open the ' + posture.section + ' section');
+      door.type = 'button';
+      door.addEventListener('click', function () {
+        face.settingsPosture = '';
+        openSettingsItem(posture.section, '');
+      });
+      body.appendChild(door);
+    }
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  function postureCard(read) {
+    var card = boardCard(12, 'the five postures',
+      'what answers \u00b7 what asks \u00b7 what it costs \u00b7 when it acts \u00b7 who it is');
+    card.classList.add('posture-card');
+    postureRows(read).forEach(function (posture) {
+      card.appendChild(postureRow(read, posture));
+    });
+    return card;
+  }
+
   function paintSettings() {
     var read = face.settings;
     el.settingsBoard.textContent = '';
@@ -24157,15 +24410,15 @@ import { node, svg, clip } from './core/dom.js';
         'Every knob this home carries, written through the same writer the CLI uses.',
         null));
       var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'Still loading. This comes from this home\u2019s config, routing, ' +
-        'and env files.'));
+      waiting.appendChild(node('p', 'board-empty', sentence('settings', 'loading', {})));
       el.settingsBoard.appendChild(waiting);
       paintSettingsRail(null);
       return;
     }
     if (read.refused && read.refused.length) {
       el.settingsBoard.appendChild(refusedCard(read.refused));
+      el.settingsBoard.appendChild(node('p', 'derivation',
+        sentence('settings', 'refused', read.refused)));
     }
     var instrument = surfaceInstrument('the home', read.scalars.length + ' knobs',
       'every write rides the writer the CLI rides',
@@ -24182,16 +24435,16 @@ import { node, svg, clip } from './core/dom.js';
     el.settingsStatus = node('div', 'settings-status');
     el.settingsBoard.appendChild(el.settingsStatus);
     paintSettingsStatus();
-    el.settingsBoard.appendChild(surfaceStrip([
-      [read.scalars.length, 'knobs'],
-      [read.lists.filter(function (e) { return e.kind === 'provider'; }).length,
-        'provider overrides'],
-      [read.lists.filter(function (e) { return e.kind === 'workload'; }).length,
-        'workload overrides'],
-      [read.rules.length, 'remembered rules', read.rules.length ? 'live' : null],
-      [read.cron.length, 'cron jobs'],
-      [read.cron.filter(function (job) { return job.enabled; }).length, 'cron enabled']
-    ], read.read_at));
+    // P6: the first paint is the five postures, not a strip of counts.
+    // The strip said "23 knobs · 1 provider override · 6 cron jobs"; a
+    // count is not a question, and the owner arrives with one of five
+    // intentions. Each row opens onto exactly the knobs its mapping
+    // names, and the mapping is total (proved both ways in the harness).
+    el.settingsBoard.appendChild(postureCard(read));
+    if (!read.scalars.length) {
+      el.settingsBoard.appendChild(node('p', 'board-empty',
+        sentence('settings', 'empty', {})));
+    }
     paintSettingsRail(read);
     paintSettingsSection(settingsSectionId());
     paintSettingsMatches();
@@ -24406,7 +24659,16 @@ import { node, svg, clip } from './core/dom.js';
     });
     var body = node('div', 'section-body');
     body.dataset.section = chosen.id;
-    chosen.paint().forEach(function (card) { body.appendChild(card); });
+    // The surface's selected sentence: what is open, and how much it
+    // carries. One node per section paint, so a repaint replaces it
+    // rather than stacking a second one.
+    var rows = chosen.paint();
+    body.appendChild(selectedLine('settings', {
+      section: chosen.name, rows: rows.reduce(function (sum, card) {
+        return sum + (card.querySelectorAll ? card.querySelectorAll('.cfg-item').length : 0);
+      }, 0)
+    }));
+    rows.forEach(function (card) { body.appendChild(card); });
     el.settingsBoard.appendChild(body);
   }
 
