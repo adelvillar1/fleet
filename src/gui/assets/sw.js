@@ -19,17 +19,68 @@ var VERSION = '__FLEET_ASSET_HASH__';
 var CACHE = 'fleet-shell-' + VERSION;
 var ASSETS = ['/app.css?v=' + VERSION, '/app.js?v=' + VERSION];
 
+// The worker's two clocks. Both exist for the same failure, and it is not
+// the one `unreachable()` was written for: a dropped tailnet or mobile path
+// does not reset the connection, it goes quiet. `fetch` then neither
+// resolves nor rejects, so a rejection handler never runs and a request
+// held by `respondWith` holds the page with it. KI-587 measured the shape
+// of that: the shell painted its chrome, `mounted` stayed false, and at
+// twenty seconds there was still no card — an update on a dead path froze
+// the face permanently, while a *refused* route was answered in 28 ms.
+//
+// ASSET_DEADLINE_MS is short because there is something better than waiting:
+// a versioned asset that goes quiet past it is answered from the last
+// generation's cache (`anyVersion`), so a device that updated on a dead path
+// boots the build it already had. NAV_DEADLINE_MS is longer because its only
+// answer is the retry page, and a slow-but-alive face earns the extra second.
+// Both sit under the page's 15 s watchdog (index.html), so the cached answer
+// lands first and the card is the net under the net.
+var ASSET_DEADLINE_MS = 6000;
+var NAV_DEADLINE_MS = 8000;
+
+// A deadline that measures SILENCE, not throughput. The timer is cleared the
+// moment headers arrive, so a 1.4 MB script on a slow link is never aborted
+// mid-body — `AbortSignal.timeout` stays armed for the life of the response
+// and would cancel the stream of a transfer that was working.
+async function fetchWithin(request, ms) {
+  var controller = new AbortController();
+  var expired = false;
+  var timer = setTimeout(function () {
+    expired = true;
+    controller.abort();
+  }, ms);
+  try {
+    var response = await fetch(request, { signal: controller.signal });
+    clearTimeout(timer);
+    return { response: response, expired: false };
+  } catch (error) {
+    clearTimeout(timer);
+    if (!expired) throw error;
+    return { response: null, expired: true };
+  }
+}
+
 self.addEventListener('install', function (event) {
   // Two small assets, fetched once at install: the shell is usable on the
   // next visit even before the first controlled navigation. The page is
   // not cached — an installed face still reads its session live.
+  //
+  // The prefetch carries the same deadline, because a stall here is the
+  // other half of the freeze: `cache.add` never rejects on silence, so
+  // install would hang, the new worker would never activate, and the
+  // page's new `?v=` would fall through the OLD worker to a network that
+  // is not answering. Missing a prefetch only costs the next load one
+  // fetch; hanging costs the face.
   event.waitUntil(
     caches
       .open(CACHE)
       .then(function (cache) {
         return Promise.all(
           ASSETS.map(function (url) {
-            return cache.add(url).catch(function () {});
+            return fetchWithin(new Request(url), ASSET_DEADLINE_MS).then(function (attempt) {
+              if (attempt.expired || !attempt.response.ok) return null;
+              return cache.put(url, attempt.response).catch(function () {});
+            }).catch(function () {});
           }),
         );
       })
@@ -75,11 +126,49 @@ async function fromCacheOrNetwork(request) {
   } catch (error) {
     // A disabled or full browser cache must not stop the face loading.
   }
-  var response = await fetch(request);
+  var attempt = await fetchWithin(request, ASSET_DEADLINE_MS);
+  if (attempt.expired) {
+    // The new coordinate is a cache miss AND the path went quiet: the
+    // update is what broke this load, so answer with the build the device
+    // already has instead of nothing. Failing to the network's error path
+    // is the last resort, not the first.
+    var previous = await anyVersion(request);
+    if (previous) return previous;
+    throw new Error('fleet asset deadline expired and no generation is cached');
+  }
+  var response = attempt.response;
   if (cache && response.status === 200 && response.type === 'basic') {
     cache.put(request, response.clone()).catch(function () {});
   }
   return response;
+}
+
+// The same asset at any generation. `ignoreSearch` is the whole trick: the
+// cached entry is `/app.js?v=<old>` and the request is `/app.js?v=<new>`,
+// and the two are the same file one build apart — the query is exactly the
+// coordinate this load no longer trusts. With the activation policy below
+// keeping one previous generation there is at most one such cache; the
+// loop is written for the case where an older one outlived a sweep.
+async function anyVersion(request) {
+  var url = new URL(request.url);
+  var bare = url.origin + url.pathname;
+  var keys;
+  try {
+    keys = await caches.keys();
+  } catch (error) {
+    return null;
+  }
+  for (var i = keys.length - 1; i >= 0; i -= 1) {
+    if (keys[i].indexOf('fleet-shell-') !== 0) continue;
+    try {
+      var cache = await caches.open(keys[i]);
+      var hit = await cache.match(bare, { ignoreSearch: true });
+      if (hit) return hit;
+    } catch (error) {
+      // An unreadable cache is not a reason to stop looking.
+    }
+  }
+  return null;
 }
 
 function unreachable() {
@@ -151,9 +240,18 @@ self.addEventListener('fetch', function (event) {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(function () {
-        return unreachable();
-      }),
+      fetchWithin(request, NAV_DEADLINE_MS).then(
+        function (attempt) {
+          // Silence gets the same named page as a refusal: a tab that is
+          // still waiting at the deadline has already failed, and the owner
+          // should be told so rather than watching a blank frame.
+          if (attempt.expired) return unreachable();
+          return attempt.response;
+        },
+        function () {
+          return unreachable();
+        },
+      ),
     );
   }
 });
