@@ -1688,7 +1688,7 @@ async function theListGroupsByAttentionAndCountsWhatTheServerCounted() {
   const groups = page.rows('.work-group').map((g) => g.textContent.trim());
   check('C1 group order', groups[0] && groups[0].startsWith('needs you'), groups.join(' | '));
   check('C1 working follows', groups[1] && groups[1].startsWith('working'), groups.join(' | '));
-  check('C1 earlier follows working', groups[2] && groups[2].startsWith('earlier'), groups.join(' | '));
+  check('C1 earlier follows working', groups[2] && /earlier/.test(groups[2]), groups.join(' | '));
   check('C1 the head prints the server count', /1 needs you/.test(page.text('work-head')), page.text('work-head'));
   check('C1 the needs header prints the server count', /needs you1/.test(groups[0] || ''), groups[0]);
   // The rail is the owner's: no toggle exists to unhide the system
@@ -1710,10 +1710,17 @@ async function theListGroupsByAttentionAndCountsWhatTheServerCounted() {
     page.window.location.hash);
 
   // Earlier is the ended owner work: no scheduled run, no child, no peer,
-  // and exactly the rows the fixture puts there.
+  // and exactly the rows the fixture puts there. It folds below the
+  // decisions (the relevance pass) — one press, and the rows are the same.
+  const earlierHead = page.rows('.work-group-fold')[0];
+  check('C1 the idle remainder starts folded below the decisions',
+    !!earlierHead && earlierHead.dataset.collapsed === 'true',
+    earlierHead ? earlierHead.dataset.collapsed : 'no fold');
+  if (earlierHead) earlierHead.click();
+  await flush(40);
   const kids = page.IDS['work-list'].children;
   const isGroup = (kid) => kid.className.split(/\s+/).includes('work-group');
-  const earlierAt = kids.findIndex((kid) => isGroup(kid) && /^earlier/.test(kid.textContent));
+  const earlierAt = kids.findIndex((kid) => isGroup(kid) && /earlier/.test(kid.textContent));
   check('C1 the earlier group exists', earlierAt >= 0, String(earlierAt));
   const earlierRows = earlierAt < 0
     ? []
@@ -1803,6 +1810,10 @@ async function theHeadCarriesTheWayOutAndTheSwitcher() {
   // Pick a second row in the open sheet: the head's name and the address
   // move together, and the list survives the switch.
   page.fireOn('conv-title', 'click');
+  // The idle remainder folds below the run (the relevance pass): one
+  // press opens it, and the fold is remembered across the switch below.
+  const idleFold = page.rows('.work-group-fold')[0];
+  if (idleFold) { idleFold.click(); await flush(40); }
   const second = page.rows('.work-row').find((r) => r.dataset.state === 'working');
   check('C3 a second row stands in the sheet', !!second, String(page.rows('.work-row').length));
   if (second) second.click();
@@ -4526,6 +4537,11 @@ async function theArchiveIsTheOneEndAndTheOwnersVerb() {
   page.open();
   await flush();
 
+  // The idle remainder folds below the working run (the relevance pass):
+  // one press, and the handback row is where it always was.
+  const idle = page.rows('.work-group-fold')[0];
+  if (idle) { idle.click(); await flush(40); }
+
   // The handback is a word the row wears, and it is not "completed".
   const handed = page.rows('.work-row').find((r) => r.dataset.state === 'handed back');
   check('ARCH the handback row exists', !!handed, String(page.rows('.work-row').length));
@@ -5205,6 +5221,69 @@ async function theChangedBlockNamesTheNewestEvents() {
   await flush(40);
   check('RP2 a changed row opens its conversation',
     page.window.location.hash === '#/sessions/newest-1', page.window.location.hash);
+}
+
+// RP3 (the relevance pass, 2026-11-22): the work list reads in the owner's
+// order — a run asking for an answer, then a run working, then the idle
+// remainder. The fixture arrives in the OPPOSITE order, so only the rank
+// can put it right: drop the rank and the case fails naming the row that
+// leads. The idle remainder folds below the decisions, and opening the
+// conversation that awaits an answer pins the seat in view.
+async function theWorkListReadsInTheOwnersOrder() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 1, working: 1, background: 0, earlier: 1, total: 3 },
+      needs_you: { type: 'needs_you', order: ['door', 'approval', 'offer'],
+        counts: { doors: 0, approvals: 1, offers: 0, working: 1, total: 1 },
+        surfaces: ['sessions'],
+        rows: [{ kind: 'approval', surface: 'sessions', id: 'wait-1', session: 'wait-1',
+          label: 'the ledger writer', why: 'a run is stopped for your approval',
+          at: 1, link: '#/sessions/wait-1', press: 'open' }],
+        working: [{ surface: 'sessions', id: 'run-1', session: 'run-1',
+          label: 'skills the model can reach', at: 2, link: '#/sessions/run-1' }],
+        refused: [] },
+      changed: { type: 'changed', bound: 6, rows: [] },
+      // The document's own order is the reverse of the rank: idle first.
+      sessions: [
+        row('done-1', 'completed', { title: 'the finished conversation' }),
+        row('run-1', 'working', { title: 'skills the model can reach' }),
+        row('wait-1', 'needs-approval', { title: 'the ledger writer' }),
+      ],
+    },
+    state: (asked) => asked === 'wait-1'
+      ? { ...emptyState(asked), session: asked,
+          approval: { session: 'wait-1', since: 1, tool: 'write_file', label: 'write_file',
+            summary: 'write the ledger', destructive: false, allowlistable: true } }
+      : { ...emptyState(asked), session: asked },
+  };
+  const page = boot({ width: 1440, hash: '#/sessions', documents: doc });
+  await flush();
+  page.open();
+  await flush(120);
+  const states = page.rows('.work-row').map((r) => r.dataset.state);
+  check('RP3 the list reads approval, then running, then idle',
+    states[0] === 'needs-approval' && states[1] === 'working' && states.length === 2,
+    JSON.stringify(states));
+  // The idle remainder is folded below the decisions, and one press opens
+  // it — the same rows, one press away.
+  const fold = page.rows('.work-group-fold')[0];
+  check('RP3 the idle remainder folds below the decisions',
+    !!fold && fold.dataset.collapsed === 'true' &&
+      !states.includes('completed'),
+    fold ? fold.dataset.collapsed + ' states=' + JSON.stringify(states) : 'no fold');
+  if (fold) fold.click();
+  await flush(40);
+  const opened = page.rows('.work-row').map((r) => r.dataset.state);
+  check('RP3 the fold opens the idle remainder', opened.includes('completed'),
+    JSON.stringify(opened));
+  // Opening the conversation that awaits an answer pins the request in
+  // view: the seat stands with its decisions, not behind the transcript.
+  page.hash('#/sessions/wait-1');
+  await flush(160);
+  check('RP3 the approval is pinned in view when its conversation opens',
+    page.IDS['seat'].hidden === false && page.text('seat-label') === 'write_file',
+    'seat hidden=' + page.IDS['seat'].hidden + ' label=' + page.text('seat-label'));
 }
 
 // New mints a real conversation at the press (the owner's 2026-11-05
@@ -13156,7 +13235,11 @@ async function theConversationNamesThemselvesByTheirWork() {
   await flush(120);
 
   // The rail rows carry the dynamic names, the header names the open
-  // conversation and says what named it.
+  // conversation and says what named it. The idle remainder folds below
+  // the running one (the relevance pass), so the rows are read after the
+  // fold's one press.
+  const idleFold = page.rows('.work-group-fold')[0];
+  if (idleFold) { idleFold.click(); await flush(60); }
   const workText = page.text('work-list') || page.rows('.work-row').map((r) => r.textContent).join(' | ');
   check('NAME the rail rows carry the dynamic names',
     workText.includes('rethink the landing') &&
@@ -20653,6 +20736,7 @@ const cases = [
   ['F1 the landing prefers the owner\u2019s conversations', theLandingPrefersTheOwnersConversations],
   ['RP1 the landing leads with what needs you, doors first', theLandingLeadsWithWhatNeedsYou],
   ['RP2 the changed block names the newest events, newest first', theChangedBlockNamesTheNewestEvents],
+  ['RP3 the work list reads approval, running, then idle', theWorkListReadsInTheOwnersOrder],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],

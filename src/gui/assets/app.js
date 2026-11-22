@@ -13271,6 +13271,20 @@ import { node, svg, clip } from './core/dom.js';
     return state === 'needs-approval' || state === 'paused';
   }
 
+  // The one rank the work list sorts by (the relevance pass, 2026-11-22):
+  // a conversation whose run asks for an answer outranks one merely
+  // running, which outranks the idle remainder. The rank is a surface
+  // concern — the document carries the state word, the page orders by it —
+  // and it is a RANK, not a filter: the list is sorted, so a fixture whose
+  // rows arrive in any order renders in this one. An unknown state is the
+  // idle tail rather than an invented fourth tier.
+  var WORK_RANK = { 'needs-approval': 0, paused: 0, working: 1 };
+
+  function workRank(row) {
+    var rank = WORK_RANK[row && row.state];
+    return rank == null ? 3 : rank;
+  }
+
   function workStateWord(state) {
     return WORK_STATE_WORD[state] || state || 'unknown';
   }
@@ -16446,6 +16460,25 @@ import { node, svg, clip } from './core/dom.js';
     ];
   }
 
+  /// Whether the idle remainder is open. The owner's own press wins; with
+  /// no press on record the answer is "only when there is nothing above
+  /// it" — see the group's own comment in `paintWork`.
+  function idleOpen(hasAbove) {
+    var saved = null;
+    try {
+      saved = window.localStorage.getItem('fleet-work-idle');
+    } catch (error) { saved = null; }
+    if (saved === 'open') return true;
+    if (saved === 'collapsed') return false;
+    return !hasAbove;
+  }
+
+  function setIdleOpen(open) {
+    try {
+      window.localStorage.setItem('fleet-work-idle', open ? 'open' : 'collapsed');
+    } catch (error) { }
+  }
+
   /// Whether `row` passes the state filter. Absent a choice, active.
   function workStatePasses(row) {
     var chosen = face.sessionsFilter || 'active';
@@ -16630,14 +16663,26 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
     var shown = all.filter(railRow).filter(workStatePasses).filter(sessionMatchesQuery);
-    var groups = {
-      needs: shown.filter(function (row) { return workNeeds(row.state); }),
-      working: shown.filter(function (row) { return row.state === 'working'; }),
-      archived: shown.filter(function (row) { return row.state === 'archived'; }),
-      earlier: shown.filter(function (row) {
-        return !workNeeds(row.state) && row.state !== 'working' && row.state !== 'archived';
-      })
-    };
+    // The rank decides the reading order, and the BANDS carry it to the
+    // page: the list is one ranked sequence, and a head is emitted where
+    // the rank changes — so the order on screen IS the rank, not a
+    // renderer's fixed idea of it. Drop the rank and every row falls into
+    // one band, which is what the ordering case reads. The sort is stable,
+    // so within a rank the archive's own newest-first order holds.
+    shown.sort(function (left, right) { return workRank(left) - workRank(right); });
+    var archivedShown = shown.filter(function (row) { return row.state === 'archived'; });
+    var ranked = shown.filter(function (row) { return row.state !== 'archived'; });
+    var bands = [];
+    ranked.forEach(function (row) {
+      var rank = workRank(row);
+      var last = bands[bands.length - 1];
+      if (!last || last.rank !== rank) {
+        last = { rank: rank, rows: [] };
+        bands.push(last);
+      }
+      last.rows.push(row);
+    });
+    var groups = { archived: archivedShown };
 
     // Under a search the heads count what SURVIVED it, not what the
     // archive holds: a "28" over two rows is the same lie as an unfiltered
@@ -16649,31 +16694,59 @@ import { node, svg, clip } from './core/dom.js';
       if (searching) return rows.length;
       return counts ? counts[key] : rows.length;
     };
-    if (groups.needs.length) {
-      el.workList.appendChild(workGroupHead('needs you', groupCount('needs', groups.needs)));
-      groups.needs.forEach(function (row) { el.workList.appendChild(workRow(row)); });
-    }
-    if (groups.working.length) {
-      el.workList.appendChild(workGroupHead('working', groupCount('working', groups.working)));
-      groups.working.forEach(function (row) { el.workList.appendChild(workRow(row)); });
-    }
-    if (groups.earlier.length) {
-      el.workList.appendChild(workGroupHead('earlier', groupCount('earlier', groups.earlier)));
-      sessionGroups(groups.earlier).forEach(function (group) {
-        var folded = !face.sessionQuery && !!face.sessionFolded[group.name];
-        var head = node('button', 'work-group');
-        head.type = 'button';
-        head.setAttribute('aria-expanded', folded ? 'false' : 'true');
-        head.appendChild(node('span', null, (folded ? '\u25b8 ' : '\u25be ') + group.name));
-        head.appendChild(node('span', 'work-group-why', String(group.rows.length)));
-        head.addEventListener('click', function () {
-          face.sessionFolded[group.name] = !face.sessionFolded[group.name];
-          paintWork();
-        });
-        el.workList.appendChild(head);
-        if (!folded) group.rows.forEach(function (row) { el.workList.appendChild(workRow(row)); });
+    // The band's own words. Rank 0 and 1 are the two states that ask
+    // something of the owner; everything below is the idle remainder,
+    // which folds.
+    var BAND_WORDS = { 0: ['needs you', 'needs'], 1: ['working', 'working'] };
+    var above = false;
+    bands.forEach(function (band) {
+      var words = BAND_WORDS[band.rank];
+      if (words) {
+        above = true;
+        el.workList.appendChild(workGroupHead(words[0], groupCount(words[1], band.rows)));
+        band.rows.forEach(function (row) { el.workList.appendChild(workRow(row)); });
+        return;
+      }
+      // The idle remainder folds (the relevance pass): with something
+      // above it — a need or a run — the inventory collapses below the
+      // decisions, and one press opens it. With NOTHING above it the idle
+      // rows ARE the list, so they stay open: a page whose only content is
+      // folded reads as an empty home, and sending the owner hunting for
+      // their own conversations is the failure this pass exists to fix.
+      // The owner's own press is remembered (`fleet-work-idle`), the work
+      // column's fold idiom.
+      var idle = idleOpen(above);
+      var rows = band.rows;
+      var idleHead = node('button', 'work-group work-group-fold');
+      idleHead.type = 'button';
+      idleHead.setAttribute('aria-expanded', idle ? 'true' : 'false');
+      idleHead.dataset.collapsed = idle ? 'false' : 'true';
+      idleHead.title = idle ? 'fold the idle conversations' : 'open the idle conversations';
+      idleHead.appendChild(node('span', null,
+        (idle ? '\u25be ' : '\u25b8 ') + 'earlier'));
+      idleHead.appendChild(node('span', 'work-group-why', String(groupCount('earlier', rows))));
+      idleHead.addEventListener('click', function () {
+        setIdleOpen(!idleOpen(above));
+        paintWork();
       });
-    }
+      el.workList.appendChild(idleHead);
+      if (idle) {
+        sessionGroups(rows).forEach(function (group) {
+          var folded = !face.sessionQuery && !!face.sessionFolded[group.name];
+          var head = node('button', 'work-group');
+          head.type = 'button';
+          head.setAttribute('aria-expanded', folded ? 'false' : 'true');
+          head.appendChild(node('span', null, (folded ? '\u25b8 ' : '\u25be ') + group.name));
+          head.appendChild(node('span', 'work-group-why', String(group.rows.length)));
+          head.addEventListener('click', function () {
+            face.sessionFolded[group.name] = !face.sessionFolded[group.name];
+            paintWork();
+          });
+          el.workList.appendChild(head);
+          if (!folded) group.rows.forEach(function (row) { el.workList.appendChild(workRow(row)); });
+        });
+      }
+    });
     if (groups.archived.length) {
       // The archived group rides the filter now. It used to be a quiet
       // toggle here — "archived · N sessions", closed by default — which
