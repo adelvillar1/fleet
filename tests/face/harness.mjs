@@ -12782,6 +12782,40 @@ async function theLearningRailCarriesTheFourSections() {
       props[0].textContent.includes('because a-request-runs-until-its-handler-returns'),
     props.map((p) => p.textContent).join(' | '));
 
+  // Pass 3 (the gated mockup): the graph is DRAWN - one disc per
+  // proposition laid by chain depth, an edge per chain step between
+  // drawn discs, and the ring riding the graph's weakest link. A chain
+  // whose premise is not itself a drawn disc draws no edge (the honest
+  // absence), and a document with no weakness draws no ring.
+  const drawing = graph.rows('.lr-graph');
+  check('LEARN the graph is drawn',
+    drawing.length === 1 &&
+      graph.rows('.lr-disc').length === 1 &&
+      graph.rows('.lr-disc-name')[0].textContent.includes('a-blocked-handler-stalls'),
+    'discs=' + graph.rows('.lr-disc').length +
+      ' edges=' + graph.rows('.lr-edge').length);
+  check('LEARN a chain step outside the drawn set draws no edge, and no weakness draws no ring',
+    graph.rows('.lr-edge').length === 0 && graph.rows('.lr-ring').length === 0,
+    'edges=' + graph.rows('.lr-edge').length + ' rings=' + graph.rows('.lr-ring').length);
+
+  // The ring rides the weakness: a document that names its weakest link
+  // rings that proposition's disc.
+  const weakDoc = learningDoc();
+  weakDoc.graph.weakness = { node: 'a-blocked-handler-stalls',
+    sentence: 'the weakest link is the one you have not practised' };
+  const weakGraph = boot({
+    width: 1440, hash: '#/learning/graph',
+    documents: { learning: weakDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  await flush();
+  weakGraph.open();
+  await flush(120);
+  check('LEARN the weakest link\u2019s disc carries the ring',
+    weakGraph.rows('.lr-ring').length === 1 &&
+      weakGraph.rows('.lr-disc-c').length === 1,
+    'rings=' + weakGraph.rows('.lr-ring').length);
+
   // The practice section carries the entry and the outcomes.
   const practice = bootLearning('#/learning/practice');
   await flush();

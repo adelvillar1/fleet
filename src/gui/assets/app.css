@@ -12434,3 +12434,28 @@ section.board-card > .board-head {
 .cfg-item[data-basis="validated"] { border-left: 3px solid var(--ok); }
 .cfg-item[data-basis="inferred"] { border-left: 3px solid var(--warn); }
 .cfg-item[data-basis="guessed"] { border-left: 3px solid var(--down); }
+
+/* --- the learning graph drawn (the gated mockup): the propositions as
+   discs laid by chain depth, the premise chains as edges, and the
+   graph's weakest link carrying the ring. The claim list stays under
+   it: the drawing for the eye, the text for search and a screen reader. */
+.lr-graph { width: 100%; height: auto; margin-bottom: 10px; }
+.lr-edge {
+  stroke: var(--dsw-alias-hairline-strong);
+  stroke-width: 1.5;
+}
+.lr-disc-c {
+  fill: var(--dsw-alias-surface-raised);
+  stroke: var(--dsw-alias-accent);
+  stroke-width: 1.5;
+}
+.lr-disc-name {
+  font: 500 10.5px var(--font-mono);
+  fill: var(--dsw-alias-ink-secondary);
+}
+.lr-ring {
+  fill: none;
+  stroke: var(--dsw-alias-accent);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}

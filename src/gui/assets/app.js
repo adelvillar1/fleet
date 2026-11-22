@@ -9910,6 +9910,75 @@ import { node, svg, clip } from './core/dom.js';
     return card;
   }
 
+  /// The proposition graph drawn (Pass 3, the gated mockup): the
+  /// propositions as discs laid left to right by chain depth - a
+  /// foundation sits leftmost, each dependent one step right of what it
+  /// builds on - and the premise chains as edges. The ring rides the
+  /// graph's weakest link when the document names one. Positions are
+  /// computed from the propositions' own premises, never a hand layout.
+  function learningGraphDrawing(read) {
+    var rows = (read.graph ? read.graph.propositions : []);
+    if (!rows.length) return null;
+    var byName = {};
+    rows.forEach(function (p) { byName[p.name] = p; });
+    function depth(p, seen) {
+      if (!p.premises || !p.premises.length) return 0;
+      if (seen[p.name]) return 0; // a cycle cannot spin the layout
+      seen[p.name] = true;
+      var d = 0;
+      p.premises.forEach(function (name) {
+        if (byName[name]) d = Math.max(d, depth(byName[name], seen) + 1);
+      });
+      return d;
+    }
+    var columns = {};
+    var maxDepth = 0;
+    rows.forEach(function (p) {
+      var d = depth(p, {});
+      (columns[d] = columns[d] || []).push(p);
+      maxDepth = Math.max(maxDepth, d);
+    });
+    var maxRows = Math.max.apply(null, Object.keys(columns).map(function (k) { return columns[k].length; }));
+    var colW = 190, rowH = 84, padX = 80, padY = 50;
+    var width = padX * 2 + (maxDepth + 1) * colW;
+    var height = padY * 2 + maxRows * rowH;
+    var pos = {};
+    Object.keys(columns).forEach(function (d) {
+      columns[d].forEach(function (p, i) {
+        pos[p.name] = { x: padX + Number(d) * colW, y: padY + i * rowH + rowH / 2 };
+      });
+    });
+    var plot = svg('svg', { class: 'lr-graph',
+      viewBox: '0 0 ' + width + ' ' + height,
+      role: 'img',
+      ariaLabel: 'the proposition graph: ' + rows.length + ' propositions and their chains' });
+    rows.forEach(function (p) {
+      (p.premises || []).forEach(function (name) {
+        var from = pos[name], to = pos[p.name];
+        if (!from || !to) return;
+        plot.appendChild(svg('line', { class: 'lr-edge',
+          x1: from.x, y1: from.y, x2: to.x, y2: to.y }));
+      });
+    });
+    var weakness = read.graph ? read.graph.weakness : null;
+    rows.forEach(function (p) {
+      var at = pos[p.name];
+      if (!at) return;
+      var ringed = !!(weakness && weakness.node === p.name);
+      if (ringed) {
+        plot.appendChild(svg('circle', { class: 'lr-ring', cx: at.x, cy: at.y, r: 31 }));
+      }
+      var g = svg('g', { class: 'lr-disc' });
+      g.appendChild(svg('circle', { class: 'lr-disc-c', cx: at.x, cy: at.y, r: 24 }));
+      g.appendChild(svg('text', { class: 'lr-disc-name', x: at.x, y: at.y + 42,
+        'text-anchor': 'middle' }, clip(p.name, 30)));
+      var said = svg('title', null, p.claim);
+      g.appendChild(said);
+      plot.appendChild(g);
+    });
+    return plot;
+  }
+
   // The graph pane: the propositions and their chains, read off the
   // substrate — the ideas and their connections, never a mastery.
   function learningGraphCard(read) {
@@ -9920,6 +9989,15 @@ import { node, svg, clip } from './core/dom.js';
         'no propositions yet. A lesson\u2019s teaching prose is extracted into the graph once the lesson completes.'));
       return card;
     }
+    // The graph drawn (the gated mockup): the propositions as discs laid
+    // left to right by chain depth - a foundation sits leftmost, each
+    // dependent one step right of what it builds on - and the premise
+    // chains as edges between them. The graph's weakest link carries the
+    // ring when the document names one; a document with no weakness draws
+    // no ring. The claim list below stays: the drawing for the eye, the
+    // text for search and a screen reader.
+    var drawing = learningGraphDrawing(read);
+    if (drawing) card.appendChild(drawing);
     rows.forEach(function (row) {
       var item = node('div', 'lr-prop');
       item.appendChild(node('span', 'lr-claim', row.claim));
