@@ -12297,3 +12297,24 @@ section.board-card > .board-head {
   color: var(--on-flat);
   background: var(--dsw-alias-accent);
 }
+
+/* --- the connections tab's goal edge (G11 2b): the conversation serves
+   the session's standing objective — one row, the state glyph, the text
+   the face already holds. */
+.pane-goal-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--radius-md);
+  background: var(--dsw-alias-surface);
+}
+.pane-goal-row .pane-goal-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dsw-alias-ink);
+  overflow-wrap: anywhere;
+}

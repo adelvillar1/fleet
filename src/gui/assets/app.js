@@ -1323,15 +1323,10 @@ import { node, svg, clip } from './core/dom.js';
     facts: document.getElementById('facts'),
     rules: document.getElementById('rules'),
     ruleCount: document.getElementById('rule-count'),
-    scrim: document.getElementById('scrim'),
-    drawer: document.getElementById('drawer'),
     paneProject: document.getElementById('pane-project'),
     paneWork: document.getElementById('pane-work'),
     paneWorkList: document.getElementById('pane-work-list'),
     paneDetail: document.getElementById('pane-detail'),
-    drawerTitle: document.getElementById('drawer-title'),
-    drawerBody: document.getElementById('drawer-body'),
-    drawerClose: document.getElementById('drawer-close'),
     inspectFace: document.getElementById('inspect-face')
   };
 
@@ -8163,9 +8158,27 @@ import { node, svg, clip } from './core/dom.js';
   function paintPaneWork() {
     if (!el.paneWorkList) return;
     el.paneWorkList.textContent = '';
+    // The goal edge leads the connections list (G11 2b): the conversation
+    // serves the session's standing objective, and the objective is a
+    // fact the face already holds — face.goal while active, face.goalDone
+    // once the run marked it done. Nothing is inferred here.
+    if (face.goal || face.goalDone) {
+      var goal = node('div', 'pane-work-goal');
+      goal.appendChild(node('p', 'pane-work-head',
+        face.goal ? 'serves the goal' : 'the goal it carried \u00b7 done'));
+      var goalRow = node('div', 'pane-goal-row');
+      goalRow.dataset.state = face.goal ? 'active' : 'done';
+      goalRow.appendChild(node('span', 'pane-work-state', face.goal ? '\u25cf' : '\u2713'));
+      goalRow.appendChild(node('span', 'pane-goal-text', face.goal || face.goalDone));
+      goal.appendChild(goalRow);
+      el.paneWorkList.appendChild(goal);
+    }
     var read = face.delegation;
     if (!read) {
-      el.paneWorkList.appendChild(node('p', 'pane-empty', 'reading the work…'));
+      el.paneWorkList.appendChild(node('p', 'pane-empty',
+        face.goal || face.goalDone
+          ? 'Nothing is delegated in this conversation yet.'
+          : 'reading the work\u2026'));
       return;
     }
     var live = read.live;
@@ -11585,24 +11598,18 @@ import { node, svg, clip } from './core/dom.js';
   /// The fixed `aside#drawer` remains only as the narrow-screen fallback
   /// below the pane's breakpoint, where there is no column to put it in.
   function openDrawer(title, sections) {
-    if (el.paneDetail) {
-      openPane();
-      face.objectTitle = title;
-      el.dockObjectTitle.textContent = title;
-      el.dockObjectBody.textContent = '';
-      renderSections(el.dockObjectBody, sections);
-      // An object is open, so the read tab's document mode is the one
-      // showing — the object IS the focus's document (G11).
-      face.readMode = 'document';
-      showPaneTab('read');
-      return;
-    }
-    el.drawerTitle.textContent = title;
-    el.drawerBody.textContent = '';
-    renderSections(el.drawerBody, sections);
-    el.drawer.hidden = false;
-    el.drawer.setAttribute('aria-modal', 'true');
-    el.scrim.hidden = false;
+    // The pane is the one inspector (G11 2b): the narrow aside#drawer
+    // fallback is retired — its branch gated on element existence, which
+    // is always true, so it was unreachable dead code at every width.
+    openPane();
+    face.objectTitle = title;
+    el.dockObjectTitle.textContent = title;
+    el.dockObjectBody.textContent = '';
+    renderSections(el.dockObjectBody, sections);
+    // An object is open, so the read tab's document mode is the one
+    // showing — the object IS the focus's document (G11).
+    face.readMode = 'document';
+    showPaneTab('read');
   }
 
   /// Whether an object is open in the pane: the face's own field is the
@@ -11643,8 +11650,6 @@ import { node, svg, clip } from './core/dom.js';
         function (one) { one.removeAttribute('aria-current'); });
       return;
     }
-    el.drawer.hidden = true;
-    el.scrim.hidden = true;
   }
 
   // The deck, full-page in the pane. The fragment references the face's
@@ -13432,8 +13437,6 @@ import { node, svg, clip } from './core/dom.js';
     el.task.style.height = Math.min(200, el.task.scrollHeight) + 'px';
   }
 
-  el.drawerClose.addEventListener('click', closeDrawer);
-  el.scrim.addEventListener('click', closeDrawer);
   if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
   if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
   if (el.inviteAdd) el.inviteAdd.addEventListener('click', addInvitedBots);
@@ -13877,6 +13880,9 @@ import { node, svg, clip } from './core/dom.js';
   /// flight, or a plan whose graph declares work. Read off the same
   /// delegation document the lens reads, so the two cannot disagree.
   function workTabAvailable() {
+    // The goal is a connection too (G11 2b): a conversation that serves a
+    // standing objective carries that edge with or without delegations.
+    if (face.goal || face.goalDone) return true;
     var read = face.delegation;
     if (!read) return false;
     if (read.live) return true;

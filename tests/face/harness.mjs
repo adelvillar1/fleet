@@ -2483,6 +2483,10 @@ async function theDockIsClosedAndTheWorkColumnTakesItsPlace() {
       HTML.includes('id="process-card"') === true &&
       HTML.indexOf('id="process-card"') > HTML.indexOf('id="pane-run"'),
     'tabs');
+  check('C7 the narrow inspector is retired — the pane is the one inspector',
+    !HTML.includes('id="drawer"') && !HTML.includes('id="scrim"') &&
+      HTML.includes('id="dock-object-body"'),
+    'html');
   check('C7 the work column is open', page.body.dataset.work === 'open', String(page.body.dataset.work));
   check('C7 the work column is shown', page.IDS['work-col'].hidden === false, 'hidden');
   check('C7 the column has a width token', flat(CSS).includes('--work-width: 320px'), '--work-width');
@@ -17622,6 +17626,38 @@ async function thePaneIsRootedAtTheConversationsProject() {
 // non-plan work alike), D2 the current work only, D3 "show just as a tree
 // that shows the delegatable work status and depends on not visually fancy
 // but effective for a pane on the drawer."
+  /// G11 2b: the goal edge — a conversation that serves a standing
+  /// objective carries that connection with or without delegations, and
+  /// the text is the state document's own, never invented.
+  async function theConnectionsTabCarriesTheGoalEdge() {
+    const goalPage = boot({
+      width: 1440, hash: '#/sessions/goal-one',
+      documents: {
+        sessions: { type: 'sessions', read_at: 'now', current: 'goal-one',
+          counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+          sessions: [row('goal-one', 'working', { title: 'goal conversation' })] },
+        state: (asked) => ({ ...emptyState(asked), session: asked,
+          goal: 'ship the drawer grammar', running: true }),
+      },
+    });
+    await flush();
+    goalPage.open();
+    await flush(200);
+    goalPage.push({ type: 'session', session: 'goal-one' });
+    await flush(120);
+    goalPage.IDS['pane-open'].click();
+    await flush(200);
+    const goalTab = goalPage.IDS['tab-connections'];
+    check('GOAL the connections tab appears with a goal and no delegation',
+      goalTab && goalTab.hidden === false, 'hidden=' + (goalTab && goalTab.hidden));
+    if (goalTab) goalTab.click();
+    await flush(120);
+    const said = goalPage.text('pane-work-list');
+    check('GOAL the connections list leads with the goal it serves',
+      said.includes('serves the goal') && said.includes('ship the drawer grammar'),
+      said.slice(0, 140));
+  }
+
 async function thePaneCarriesTheDelegationTree() {
   const delegation = {
     type: 'delegation', read_at: 'now', depth_cap: 4, refused: [],
@@ -21053,6 +21089,7 @@ const cases = [
   ['D3 a finished delegation updates the execution view',
     aFinishedDelegationUpdatesTheExecutionView],
   ['TREE the pane carries the delegation tree', thePaneCarriesTheDelegationTree],
+  ['GOAL the connections tab carries the goal edge', theConnectionsTabCarriesTheGoalEdge],
   ['CTX the pane is rooted at the conversation\u2019s project',
     thePaneIsRootedAtTheConversationsProject],
   ['P4 the advanced surfaces are findable by their plain names', theAdvancedSurfacesAreFindableByTheirPlainNames],
