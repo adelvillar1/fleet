@@ -106,6 +106,97 @@ const FONT_SPACE_GROTESK: &[u8] = include_bytes!("assets/vendor/fonts/SpaceGrote
 const FONT_INTER: &[u8] = include_bytes!("assets/vendor/fonts/Inter.woff2");
 const FONT_JETBRAINS_MONO: &[u8] = include_bytes!("assets/vendor/fonts/JetBrainsMono.woff2");
 
+/// The precompressed twin of each text asset above, made once by
+/// `build.rs` and embedded beside the raw copy. The raw copy stays
+/// because it is what a client that cannot decode gzip gets, and what the
+/// harness and the no-credential test read; the twin is what the wire
+/// carries when the client asks for it.
+///
+/// The four assets that embed the build stamp arrive *stamped*: the
+/// build's own bytes, not the file's, because a compressed body cannot
+/// have a placeholder substituted into it after the fact.
+pub(crate) const STYLES_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app.css.gz"));
+pub(crate) const SCRIPT_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app.js.gz"));
+pub(crate) const STORE_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/core-store.js.gz"));
+pub(crate) const ROUTER_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/core-router.js.gz"));
+pub(crate) const DOM_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/core-dom.js.gz"));
+pub(crate) const VENDOR_PURIFY_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-purify.min.js.gz"));
+pub(crate) const VENDOR_PDF_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-pdf.min.mjs.gz"));
+pub(crate) const VENDOR_PDF_WORKER_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-pdf.worker.min.mjs.gz"));
+pub(crate) const VENDOR_DOCX_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-docx-preview.min.js.gz"));
+pub(crate) const VENDOR_JSZIP_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-jszip.min.js.gz"));
+pub(crate) const VENDOR_MANIFEST_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-VENDOR.json.gz"));
+pub(crate) const MANIFEST_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/manifest.webmanifest.gz"));
+pub(crate) const BOT_STYLES_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bot.css.gz"));
+pub(crate) const BOT_SCRIPT_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bot.js.gz"));
+pub(crate) const BOT_MANIFEST_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/bot.webmanifest.gz"));
+/// The stamped bodies, and their compressed twins: the page, both
+/// workers, and the bot's shell all carry `?v=<build>` / the cache name,
+/// so the build stamps them and the server serves what the build made.
+pub(crate) const INDEX_STAMPED: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/index.html.stamped"));
+pub(crate) const INDEX_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/index.html.stamped.gz"));
+const WORKER_STAMPED: &str = include_str!(concat!(env!("OUT_DIR"), "/sw.js.stamped"));
+const WORKER_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sw.js.stamped.gz"));
+pub(crate) const BOT_SHELL_STAMPED: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/bot.html.stamped"));
+pub(crate) const BOT_SHELL_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/bot.html.stamped.gz"));
+pub(crate) const BOT_WORKER_STAMPED: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/bot-sw.js.stamped"));
+pub(crate) const BOT_WORKER_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/bot-sw.js.stamped.gz"));
+
+/// Every served text asset with a precompressed twin: the path a request
+/// names, the exact bytes the server answers with, and the gzip stream
+/// `build.rs` made of them.
+///
+/// One table, because the three facts that can drift — the route, the
+/// body, and the compressed copy — are only correct together. A route
+/// that answers a body this table does not name falls back to identity
+/// (`Reply::negotiated` compares the bytes, not the path), and the test
+/// that walks this table gunzips every entry and compares it to the
+/// identity reply, so a body that moved without its twin is red.
+pub(crate) const GZIP_ASSETS: &[(&str, &str, &[u8])] = &[
+    ("/", INDEX_STAMPED, INDEX_GZ),
+    ("/app.css", STYLES, STYLES_GZ),
+    ("/app.js", SCRIPT, SCRIPT_GZ),
+    ("/core/store.js", STORE, STORE_GZ),
+    ("/core/router.js", ROUTER, ROUTER_GZ),
+    ("/core/dom.js", DOM, DOM_GZ),
+    ("/manifest.webmanifest", MANIFEST, MANIFEST_GZ),
+    ("/sw.js", WORKER_STAMPED, WORKER_GZ),
+    ("/vendor/purify.min.js", VENDOR_PURIFY, VENDOR_PURIFY_GZ),
+    ("/vendor/pdf.min.mjs", VENDOR_PDF, VENDOR_PDF_GZ),
+    (
+        "/vendor/pdf.worker.min.mjs",
+        VENDOR_PDF_WORKER,
+        VENDOR_PDF_WORKER_GZ,
+    ),
+    ("/vendor/docx-preview.min.js", VENDOR_DOCX, VENDOR_DOCX_GZ),
+    ("/vendor/jszip.min.js", VENDOR_JSZIP, VENDOR_JSZIP_GZ),
+    ("/vendor/VENDOR.json", VENDOR_MANIFEST, VENDOR_MANIFEST_GZ),
+    // The bot face's own shell, at both the root it has always had and
+    // the scoped `/bot/` address KI-588 installed it at.
+    ("/bot/", BOT_SHELL_STAMPED, BOT_SHELL_GZ),
+    ("/bot.css", BOT_STYLES, BOT_STYLES_GZ),
+    ("/bot.js", BOT_SCRIPT, BOT_SCRIPT_GZ),
+    ("/bot.webmanifest", BOT_MANIFEST, BOT_MANIFEST_GZ),
+    ("/bot-sw.js", BOT_WORKER_STAMPED, BOT_WORKER_GZ),
+    ("/bot/bot.css", BOT_STYLES, BOT_STYLES_GZ),
+    ("/bot/bot.js", BOT_SCRIPT, BOT_SCRIPT_GZ),
+    ("/bot/bot-sw.js", BOT_WORKER_STAMPED, BOT_WORKER_GZ),
+];
+
 /// The build stamp `build.rs` computed over every served asset. The page
 /// asks for the two script assets at this address, the worker's cache
 /// name carries it, and only a request naming it is immutable.
@@ -289,9 +380,11 @@ async fn serve_connection(
         }
     }
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/") => write_reply(&mut stream, page()).await,
-        ("GET", "/manifest.webmanifest") => write_reply(&mut stream, manifest()).await,
-        ("GET", "/sw.js") => write_reply(&mut stream, worker()).await,
+        ("GET", "/") => write_reply(&mut stream, page().negotiated(&request)).await,
+        ("GET", "/manifest.webmanifest") => {
+            write_reply(&mut stream, manifest().negotiated(&request)).await
+        }
+        ("GET", "/sw.js") => write_reply(&mut stream, worker().negotiated(&request)).await,
         ("GET", "/icon-192.png") => {
             write_blob(&mut stream, "image/png", ICON_CACHE, ICON_192).await
         }
@@ -312,7 +405,7 @@ async fn serve_connection(
                 "text/css; charset=utf-8",
                 STYLES,
                 "src/gui/assets/app.css",
-                &request.query,
+                &request,
             );
             write_reply(&mut stream, reply).await
         }
@@ -321,7 +414,7 @@ async fn serve_connection(
                 "text/javascript; charset=utf-8",
                 SCRIPT,
                 "src/gui/assets/app.js",
-                &request.query,
+                &request,
             );
             write_reply(&mut stream, reply).await
         }
@@ -330,7 +423,7 @@ async fn serve_connection(
                 "text/javascript; charset=utf-8",
                 STORE,
                 "src/gui/assets/core/store.js",
-                &request.query,
+                &request,
             );
             write_reply(&mut stream, reply).await
         }
@@ -339,7 +432,7 @@ async fn serve_connection(
                 "text/javascript; charset=utf-8",
                 ROUTER,
                 "src/gui/assets/core/router.js",
-                &request.query,
+                &request,
             );
             write_reply(&mut stream, reply).await
         }
@@ -348,49 +441,52 @@ async fn serve_connection(
                 "text/javascript; charset=utf-8",
                 DOM,
                 "src/gui/assets/core/dom.js",
-                &request.query,
+                &request,
             );
             write_reply(&mut stream, reply).await
         }
         ("GET", "/vendor/purify.min.js") => {
             write_reply(
                 &mut stream,
-                versioned_asset("text/javascript; charset=utf-8", VENDOR_PURIFY),
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_PURIFY)
+                    .negotiated(&request),
             )
             .await
         }
         ("GET", "/vendor/pdf.min.mjs") => {
             write_reply(
                 &mut stream,
-                versioned_asset("text/javascript; charset=utf-8", VENDOR_PDF),
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_PDF).negotiated(&request),
             )
             .await
         }
         ("GET", "/vendor/pdf.worker.min.mjs") => {
             write_reply(
                 &mut stream,
-                versioned_asset("text/javascript; charset=utf-8", VENDOR_PDF_WORKER),
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_PDF_WORKER)
+                    .negotiated(&request),
             )
             .await
         }
         ("GET", "/vendor/docx-preview.min.js") => {
             write_reply(
                 &mut stream,
-                versioned_asset("text/javascript; charset=utf-8", VENDOR_DOCX),
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_DOCX).negotiated(&request),
             )
             .await
         }
         ("GET", "/vendor/jszip.min.js") => {
             write_reply(
                 &mut stream,
-                versioned_asset("text/javascript; charset=utf-8", VENDOR_JSZIP),
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_JSZIP)
+                    .negotiated(&request),
             )
             .await
         }
         ("GET", "/vendor/VENDOR.json") => {
             write_reply(
                 &mut stream,
-                versioned_asset("application/json", VENDOR_MANIFEST),
+                versioned_asset("application/json", VENDOR_MANIFEST).negotiated(&request),
             )
             .await
         }
@@ -3448,6 +3544,7 @@ pub(crate) fn query_value<'a>(query: &'a str, name: &str) -> Option<&'a str> {
 
 /// One reply, assembled as bytes before it touches the socket: the
 /// status line, the headers this surface always sends, and the body.
+#[derive(Clone)]
 pub(crate) struct Reply {
     pub(crate) status: &'static str,
     pub(crate) content_type: &'static str,
@@ -3456,12 +3553,18 @@ pub(crate) struct Reply {
 }
 
 impl Reply {
-    pub(crate) fn bytes(&self) -> Vec<u8> {
+    /// The reply's bytes, with the encoding header when `gzip` is some and
+    /// the `Vary` a negotiable path always carries.
+    fn bytes_with(&self, gzip: Option<&[u8]>, vary: bool) -> Vec<u8> {
+        let body: &[u8] = match gzip {
+            Some(gzip) => gzip,
+            None => self.body.as_bytes(),
+        };
         let mut head = format!(
             "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
             self.status,
             self.content_type,
-            self.body.len()
+            body.len()
         );
         for (name, value) in &self.extra {
             head.push_str(name);
@@ -3469,11 +3572,133 @@ impl Reply {
             head.push_str(value);
             head.push_str("\r\n");
         }
+        if gzip.is_some() {
+            head.push_str("Content-Encoding: gzip\r\n");
+        }
+        if vary {
+            head.push_str("Vary: Accept-Encoding\r\n");
+        }
         head.push_str("\r\n");
         let mut bytes = head.into_bytes();
-        bytes.extend_from_slice(self.body.as_bytes());
+        bytes.extend_from_slice(body);
         bytes
     }
+
+    /// This reply as it goes on the wire, negotiated against the request:
+    /// the precompressed body when the path has one, the client asks for
+    /// gzip, and the body is the exact bytes `build.rs` compressed;
+    /// identity otherwise.
+    ///
+    /// The body comparison is the safety, not the path: a live body (a dev
+    /// tree under `FLEET_ASSETS_FROM`, or a debug build reading the source
+    /// it was compiled from) is only gzipped when it still equals the
+    /// embedded copy, so an edit in the tree can never be handed to a
+    /// browser as a stream that decodes to something else.
+    pub(crate) fn negotiated(self, request: &Request) -> Wire {
+        let twin = GZIP_ASSETS
+            .iter()
+            .find(|(path, _, _)| *path == request.path.as_str());
+        let (vary, gzip) = match twin {
+            Some((_, identity, gz)) if *identity == self.body.as_str() => {
+                (true, accepts_gzip(request).then_some(*gz))
+            }
+            // The path has a twin but this body is not the one it was made
+            // from: identity, and `Vary` still, because the answer a
+            // well-behaved cache may store depends on the request's
+            // encoding either way.
+            Some(_) => (true, None),
+            None => (false, None),
+        };
+        Wire {
+            reply: self,
+            gzip,
+            vary,
+        }
+    }
+}
+
+/// One reply on the wire: the assembled reply, plus the precompressed body
+/// when the negotiation chose it.
+///
+/// The body is the only thing that differs between the two answers — same
+/// status, same content type, same cache grammar — so the encoded form is
+/// a field of the reply rather than a second route.
+pub(crate) struct Wire {
+    reply: Reply,
+    /// The precompressed body, when the client asked for gzip and the
+    /// reply's bytes are the ones the build compressed.
+    gzip: Option<&'static [u8]>,
+    /// Whether this path has a compressed twin at all: the `Vary` the
+    /// reply carries even when it answered identity.
+    vary: bool,
+}
+
+impl Wire {
+    pub(crate) fn bytes(&self) -> Vec<u8> {
+        self.reply.bytes_with(self.gzip, self.vary)
+    }
+
+    /// The reply this wire carries, for the callers that read a status or
+    /// a content type rather than the bytes.
+    pub(crate) fn reply(&self) -> &Reply {
+        &self.reply
+    }
+
+    /// The identity body, which a relay frame carries as text.
+    pub(crate) fn text(&self) -> &str {
+        &self.reply.body
+    }
+
+    /// The compressed body, when the negotiation chose it.
+    pub(crate) fn gzip(&self) -> Option<&'static [u8]> {
+        self.gzip
+    }
+
+    pub(crate) fn varies(&self) -> bool {
+        self.vary
+    }
+}
+
+impl From<Reply> for Wire {
+    fn from(reply: Reply) -> Wire {
+        Wire {
+            reply,
+            gzip: None,
+            vary: false,
+        }
+    }
+}
+
+impl From<&Reply> for Wire {
+    fn from(reply: &Reply) -> Wire {
+        reply.clone().into()
+    }
+}
+
+/// Whether the request's `Accept-Encoding` admits gzip.
+///
+/// A browser sends `gzip, deflate, br, zstd` on this origin; a client that
+/// sends nothing, or `gzip;q=0`, gets the identity body — the face is not
+/// allowed to assume an encoder the client did not name.
+fn accepts_gzip(request: &Request) -> bool {
+    let Some(value) = request.header("accept-encoding") else {
+        return false;
+    };
+    value.split(',').any(|offer| {
+        let mut parts = offer.trim().split(';');
+        let coding = parts.next().unwrap_or_default().trim();
+        if !coding.eq_ignore_ascii_case("gzip") && !coding.eq_ignore_ascii_case("x-gzip") {
+            return false;
+        }
+        // `gzip;q=0` is a client saying it would rather not.
+        !parts.any(|parameter| {
+            parameter
+                .trim()
+                .strip_prefix("q=")
+                .and_then(|q| q.trim().parse::<f32>().ok())
+                .is_some_and(|q| q == 0.0)
+        })
+    })
 }
 
 /// The page. There is no credential in it and none beside it: the
@@ -3689,14 +3914,18 @@ fn served(
 /// asset route repeated the same four-line `if` — and the dev read would
 /// have had to be threaded through each copy, which is how one route ends
 /// up serving a stale script while the other five do not.
+///
+/// The negotiation lives here too: every asset this answers is one the
+/// build compressed, so the reply is a `Wire` already decided between the
+/// identity body and its gzip twin.
 fn env_asset(
     content_type: &'static str,
     embedded: &'static str,
     relative: &'static str,
-    query: &str,
-) -> Reply {
-    let versioned = query_value(query, "v") == Some(ASSET_HASH);
-    served(content_type, embedded, relative, versioned)
+    request: &Request,
+) -> Wire {
+    let versioned = query_value(&request.query, "v") == Some(ASSET_HASH);
+    served(content_type, embedded, relative, versioned).negotiated(request)
 }
 
 /// The bot shell and its assets: the same cache grammar the console's
@@ -3869,10 +4098,11 @@ fn method_not_allowed(method: &str) -> Reply {
 
 pub(crate) async fn write_reply(
     stream: &mut tokio::net::TcpStream,
-    reply: Reply,
+    reply: impl Into<Wire>,
 ) -> Result<(), String> {
+    let wire: Wire = reply.into();
     stream
-        .write_all(&reply.bytes())
+        .write_all(&wire.bytes())
         .await
         .map_err(|e| format!("fleet gui could not write the reply: {e}"))?;
     stream
@@ -6347,6 +6577,218 @@ mod tests {
         {
             panic!("a reply carries a key-shaped token at byte {at}: {word}");
         }
+    }
+
+    // ------------------------------------------- the compressed assets (the
+    // asset-compression plan, 2026-11-20)
+
+    /// The bytes a gzip stream decodes to. `flate2` is a dev-dependency
+    /// for exactly this: the claim "the compressed body is the identity
+    /// body" is only worth what a decoder says about it.
+    fn gunzip(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(bytes)
+            .read_to_end(&mut out)
+            .expect("the body is one gzip stream");
+        out
+    }
+
+    /// One request, answered as bytes. `ask` returns a lossy `String`,
+    /// which would destroy the stream these tests are here to decode.
+    fn ask_bytes(port: u16, raw: &str) -> Vec<u8> {
+        let mut stream =
+            std::net::TcpStream::connect(("127.0.0.1", port)).expect("the server is listening");
+        stream
+            .set_read_timeout(Some(ASK_BUDGET))
+            .expect("a read timeout is settable");
+        stream
+            .write_all(raw.as_bytes())
+            .expect("the request is sent");
+        let mut reply: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 8192];
+        let mut total: Option<usize> = None;
+        loop {
+            if let Some(total) = total {
+                if reply.len() >= total {
+                    break;
+                }
+            }
+            if total.is_none() {
+                if let Some(head_end) = find(&reply, b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&reply[..head_end]).to_ascii_lowercase();
+                    total = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .map(|length| head_end + 4 + length);
+                }
+            }
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => reply.extend_from_slice(&chunk[..read]),
+                Err(_) => break,
+            }
+        }
+        reply
+    }
+
+    /// A reply split into its head (lowercased, so a header lookup is one
+    /// `contains`) and its body.
+    fn split_reply(reply: &[u8]) -> (String, Vec<u8>) {
+        let at = find(reply, b"\r\n\r\n").expect("a reply has a head");
+        (
+            String::from_utf8_lossy(&reply[..at]).to_ascii_lowercase(),
+            reply[at + 4..].to_vec(),
+        )
+    }
+
+    /// Every compressed twin decodes to exactly the bytes the face serves
+    /// for that path, and the four stamped bodies are the ones the build
+    /// stamped.
+    #[test]
+    fn every_compressed_twin_decodes_to_the_bytes_the_face_serves() {
+        for (path, identity, gzip) in GZIP_ASSETS {
+            assert_eq!(
+                gunzip(gzip),
+                identity.as_bytes(),
+                "{path}'s compressed twin is not its body"
+            );
+            assert!(
+                gzip.len() < identity.len(),
+                "{path} did not compress: {} of {} bytes",
+                gzip.len(),
+                identity.len()
+            );
+        }
+        // The stamped assets: the build's stamping is the server's, byte
+        // for byte. A drift here is a page whose `?v=` is not the
+        // coordinate its body was compressed under.
+        assert_eq!(index_page(), INDEX_STAMPED, "the page's stamping drifted");
+        assert_eq!(
+            bot_page().body,
+            BOT_SHELL_STAMPED,
+            "the bot shell's stamping drifted"
+        );
+        assert_eq!(
+            bot_worker("/").body,
+            BOT_WORKER_STAMPED,
+            "the bot worker's stamping drifted"
+        );
+        // The console worker is a self-unregistering stub in a dev build
+        // (the face reads its assets from disk there), so only the
+        // shipped shape carries the stamped script.
+        if !cfg!(debug_assertions) {
+            assert_eq!(worker().body, WORKER_STAMPED, "the worker drifted");
+        }
+    }
+
+    /// The round trip over a real socket: a gzip client gets
+    /// `Content-Encoding: gzip` and a body that decodes to the identity
+    /// body, and the wire carries a quarter of the bytes.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_gzip_client_gets_the_compressed_body_and_the_identity_bytes() {
+        let (_token, port) = launch().await;
+        let plain = ask_bytes(port, "GET /app.js HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+        let gzip = ask_bytes(
+            port,
+            "GET /app.js HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Encoding: gzip, deflate, br\r\n\r\n",
+        );
+        let (plain_head, plain_body) = split_reply(&plain);
+        let (gzip_head, gzip_body) = split_reply(&gzip);
+        assert!(plain_head.starts_with("http/1.1 200"), "{plain_head}");
+        assert!(!plain_head.contains("content-encoding"), "{plain_head}");
+        assert!(plain_head.contains("vary: accept-encoding"), "{plain_head}");
+        assert!(gzip_head.contains("content-encoding: gzip"), "{gzip_head}");
+        assert!(gzip_head.contains("vary: accept-encoding"), "{gzip_head}");
+        assert_eq!(gunzip(&gzip_body), plain_body, "the twin is not the body");
+        assert_eq!(plain_body, SCRIPT.as_bytes(), "the identity body moved");
+        // The plan's own bar: `app.js` over gzip is at most 30 % of raw.
+        assert!(
+            gzip_body.len() * 100 <= plain_body.len() * 30,
+            "gzip is {} of {} bytes",
+            gzip_body.len(),
+            plain_body.len()
+        );
+        // The declared length is the encoded one: a browser that is told
+        // 1.5 MB is coming reads the stream to the end and waits.
+        assert!(
+            gzip_head.contains(&format!("content-length: {}", gzip_body.len())),
+            "{gzip_head}"
+        );
+        // The versioned coordinate serves the same bytes both ways, so
+        // the immutable URL is one URL with two representations.
+        let versioned = ask_bytes(
+            port,
+            &format!(
+                "GET /app.js?v={ASSET_HASH} HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Encoding: gzip\r\n\r\n"
+            ),
+        );
+        let (versioned_head, versioned_body) = split_reply(&versioned);
+        // A dev build reads the tree, so the same URL revalidates instead
+        // of promising immutability; the shipped shape keeps the
+        // immutable grammar. What must not differ is the body.
+        if !cfg!(debug_assertions) {
+            assert!(
+                versioned_head.contains("cache-control: public, max-age=31536000, immutable"),
+                "{versioned_head}"
+            );
+        }
+        assert_eq!(versioned_body, gzip_body, "the coordinate moved the body");
+    }
+
+    /// A client that cannot decode gzip gets exactly what it always got.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_client_that_cannot_decode_gzip_gets_the_identity_body() {
+        let (_token, port) = launch().await;
+        for header in [
+            "".to_string(),
+            "Accept-Encoding: deflate, br\r\n".to_string(),
+            "Accept-Encoding: gzip;q=0\r\n".to_string(),
+        ] {
+            let reply = ask_bytes(
+                port,
+                &format!("GET /app.css HTTP/1.1\r\nHost: 127.0.0.1\r\n{header}\r\n"),
+            );
+            let (head, body) = split_reply(&reply);
+            assert!(!head.contains("content-encoding"), "{head}");
+            assert_eq!(body, STYLES.as_bytes(), "{header:?} did not get the body");
+            // `Vary` is the cache's fact, not the client's: every reply on
+            // a negotiable path carries it.
+            assert!(head.contains("vary: accept-encoding"), "{head}");
+        }
+    }
+
+    /// A body the build did not compress is never gzipped, whatever the
+    /// client asks for: this is the guard that keeps a live tree's edit
+    /// from being handed over as a stream that decodes to something else.
+    #[test]
+    fn a_body_the_build_did_not_compress_is_never_gzipped() {
+        let request =
+            Request::parse("GET /app.js HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Encoding: gzip\r\n")
+                .expect("the head parses");
+        let edited = Reply {
+            status: "200 OK",
+            content_type: "text/javascript; charset=utf-8",
+            extra: Vec::new(),
+            body: "// an edit the build never saw\n".to_string(),
+        };
+        let wire = edited.negotiated(&request);
+        assert!(wire.gzip().is_none(), "a live body was gzipped");
+        assert!(wire.varies(), "a negotiable path dropped its Vary");
+    }
+
+    /// The stamp is over the compressed bytes, not only the sources. If
+    /// the build stopped feeding the gzip streams in, the coordinate
+    /// would be the raw-only one — and a returning client could keep a
+    /// body whose compressed form changed under an unchanged address.
+    #[test]
+    fn the_stamp_covers_the_compressed_bytes() {
+        assert_ne!(
+            ASSET_HASH,
+            env!("FLEET_ASSET_STAMP_RAW"),
+            "the stamp is the raw-only one: the compressed bytes are not in it"
+        );
+        assert_eq!(ASSET_HASH.len(), 16, "{ASSET_HASH}");
     }
 
     // -------------------------------------------------- the sessions surface (G6)

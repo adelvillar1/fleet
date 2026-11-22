@@ -37,6 +37,7 @@ use tokio::net::TcpListener;
 use crate::gui::bridge::Bridge;
 use crate::gui::server::{
     api, decode_query, query_value, read_body, read_head, steer_of, write_reply, Reply, Request,
+    Wire,
 };
 use crate::remote::pairing::{DeviceStore, PairingWindow};
 
@@ -331,7 +332,11 @@ async fn serve_connection(
         }
     }
 
-    let answer = route_with(&request, rest, &mut stream, bridge, &device.name, face).await;
+    // The same negotiation the loopback face performs: a paired phone is
+    // a browser, and a browser asks for gzip.
+    let answer = route_with(&request, rest, &mut stream, bridge, &device.name, face)
+        .await
+        .negotiated(&request);
     // The device was heard from: a display stamp, written off the
     // request's path so a slow disk never holds the answer.
     let home = home.to_path_buf();
@@ -517,15 +522,41 @@ impl crate::remote::relay::Handler for RelayHandler {
                     return answer;
                 }
             }
-            let reply = answer_frame(&frame, &self.bridge, &self.device_name, self.face).await;
-            crate::remote::relay::Answer {
-                id: frame.id,
-                status: status_of(&reply),
-                headers: vec![("content-type".to_string(), reply.content_type.to_string())],
-                body: reply.body,
-                enc: None,
-            }
+            let wire = answer_frame(&frame, &self.bridge, &self.device_name, self.face).await;
+            relay_answer(frame.id, wire)
         })
+    }
+}
+
+/// One reply as a relay frame.
+///
+/// A frame's body is a JSON string, so a gzip stream cannot ride it as-is.
+/// It travels base64 under `x-fleet-b64` — the marker the reference relay
+/// already decodes for the icons — with the `Content-Encoding` the phone's
+/// browser needs, so a phone on the relay path gets the same compressed
+/// bytes a phone on the socket path gets rather than 1.5 MB of text.
+fn relay_answer(id: String, wire: Wire) -> crate::remote::relay::Answer {
+    let mut headers = vec![(
+        "content-type".to_string(),
+        wire.reply().content_type.to_string(),
+    )];
+    if wire.varies() {
+        headers.push(("vary".to_string(), "accept-encoding".to_string()));
+    }
+    let body = match wire.gzip() {
+        Some(gzip) => {
+            headers.push(("content-encoding".to_string(), "gzip".to_string()));
+            headers.push(("x-fleet-b64".to_string(), "1".to_string()));
+            B64.encode(gzip)
+        }
+        None => wire.text().to_string(),
+    };
+    crate::remote::relay::Answer {
+        id,
+        status: status_of(wire.reply()),
+        headers,
+        body,
+        enc: None,
     }
 }
 
@@ -560,7 +591,7 @@ async fn answer_frame(
     bridge: &Arc<Bridge>,
     device_name: &str,
     face: RemoteFace,
-) -> Reply {
+) -> Wire {
     // Re-parse the frame's head the way a socket's head is parsed: one
     // parser, one shape.
     // The length is the frame's own body, stated here rather than taken
@@ -582,7 +613,7 @@ async fn answer_frame(
         frame.body.len()
     );
     let Ok(request) = Request::parse(head.trim_end()) else {
-        return bad_request("the relay forwarded a request this face could not read");
+        return bad_request("the relay forwarded a request this face could not read").into();
     };
     // The boundary does not depend on the transport. A relayed phone is
     // held to the same allowlist the socket path applies, and refused by
@@ -590,16 +621,18 @@ async fn answer_frame(
     // route that is closed only because nothing matches it is a route
     // that opens the day somebody adds a match.
     if !allowed(&request, face) {
-        return forbidden(&request.method, &request.path);
+        return forbidden(&request.method, &request.path).into();
     }
     if request.path == "/events" {
-        return relay_stream(&request, bridge);
+        return relay_stream(&request, bridge).into();
     }
     // The body rides the frame, so the routes that read one read the
     // frame's body rather than the socket's.
     let mut cursor = std::io::Cursor::new(frame.body.clone().into_bytes());
     let rest = cursor.get_ref().to_vec();
-    route_with(&request, rest, &mut cursor, bridge, device_name, face).await
+    route_with(&request, rest, &mut cursor, bridge, device_name, face)
+        .await
+        .negotiated(&request)
 }
 
 /// The stream's stand-in behind a relay: the session's current tail, with
@@ -1742,7 +1775,7 @@ mod tests {
                 RemoteFace::Console,
             )
             .await;
-            assert_eq!(reply.status, "200 OK", "{path}");
+            assert_eq!(reply.reply().status, "200 OK", "{path}");
         }
         // A frame's body is the frame's: a POST reaches the router with
         // the bytes the phone sent, whatever the relay did with the
@@ -1763,16 +1796,21 @@ mod tests {
         // but refused by the *router*, which means the body was read and
         // parsed. A body that never arrived fails earlier, with the
         // parser's own words, which is the defect this pins.
-        assert_eq!(accepted.status, "409 Conflict", "{}", accepted.body);
-        assert!(
-            accepted.body.contains("no agent"),
-            "the body reached the router: {}",
-            accepted.body
+        assert_eq!(
+            accepted.reply().status,
+            "409 Conflict",
+            "{}",
+            accepted.text()
         );
         assert!(
-            !accepted.body.contains("could not read the run's body"),
+            accepted.text().contains("no agent"),
+            "the body reached the router: {}",
+            accepted.text()
+        );
+        assert!(
+            !accepted.text().contains("could not read the run's body"),
             "the frame's bytes are the request's body: {}",
-            accepted.body
+            accepted.text()
         );
 
         // And the boundary, named.
@@ -1791,11 +1829,11 @@ mod tests {
                 RemoteFace::Console,
             )
             .await;
-            assert_eq!(reply.status, "403 Forbidden", "{method} {path}");
+            assert_eq!(reply.reply().status, "403 Forbidden", "{method} {path}");
             assert!(
-                reply.body.contains(path),
+                reply.text().contains(path),
                 "the refusal names the route: {}",
-                reply.body
+                reply.text()
             );
         }
         std::fs::remove_dir_all(&home).ok();

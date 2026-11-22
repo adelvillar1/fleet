@@ -54,6 +54,19 @@ arboard = "3.7.0"
 png = "0.18.1"
 cpal = "0.18.2"
 
+# The faces' assets are compressed once, at build time, into OUT_DIR
+# (`build.rs`), and embedded beside the raw copy — so the served path has
+# no encoder in it and the crate carries no new runtime dependency.
+# flate2 is already in the graph through ureq's gzip, so this declares a
+# crate the lock already holds rather than adding one.
+[build-dependencies]
+flate2 = "1.1"
+
+# The tests decode what the server answered: the round-trip test is the
+# proof that the compressed body is the identity body.
+[dev-dependencies]
+flate2 = "1.1"
+
 # The gate and the inner loop build in dev; at full debuginfo this tree
 # reached 22 GiB (deps 13.9, incremental 9.8) on a 16 GiB machine that ran
 # out of headroom mid-gate. Line tables are enough to point a debugger at a

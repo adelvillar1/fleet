@@ -1224,6 +1224,7 @@ dependencies = [
  "base64 0.22.1",
  "cpal",
  "crossterm",
+ "flate2",
  "hkdf",
  "libc",
  "png",
