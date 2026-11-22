@@ -26,6 +26,9 @@
 </head>
 <body>
 <div id="app"></div>
+<!-- The persona face (A1/A2): the vendored component upgrades before the
+     deferred bot script runs, so mark() can emit it rather than a disc. -->
+<script type="module" src="/vendor/boopface/boopface-lite.js"></script>
 <script src="/bot/bot.js?v=__FLEET_ASSET_HASH__" defer></script>
 <script>
   // Installability. Nothing registered the bot worker before this: the

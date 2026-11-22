@@ -150,6 +150,14 @@ button {
 .mark.md { width: 30px; height: 30px; font-size: 16px; }
 .mark.lg { width: 44px; height: 44px; font-size: 22px; }
 
+/* A1: the persona face replaces the initials disc. The component draws its
+   own tinted head, so the disc's wash and clip are not painted behind it;
+   only the slot's size stays, so layouts (stacks, headers) do not move. */
+.mark.face {
+  background: none;
+  border-radius: 0;
+}
+
 .stack { display: flex; align-items: center; flex: 0 0 auto; }
 .stack .mark + .mark { margin-left: -9px; box-shadow: 0 0 0 2px var(--page); }
 

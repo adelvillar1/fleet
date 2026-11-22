@@ -228,7 +228,97 @@ const INK = {
 
 const initial = (name) => (name ? name.charAt(0) : 'f');
 
-function mark(name, size, extra) {
+// ---------- the persona face (A1/A2) ----------
+// The vendored component (MIT, see the vendor notice) draws a tinted robot
+// face in place of the initials disc; the disc stays as the fallback when
+// the module is absent, so a face is never a blank. The expression is
+// applied after insertion by one observer, which is what lets every render
+// path (inbox, conversation, split) carry state without its own wiring.
+const FACE_STATES = {
+  idle: (face) => { if (face.reset) face.reset(); },
+  streaming: (face) => { if (face.play) face.play('input'); },
+  working: (face) => {
+    if (face.startWaiting) face.startWaiting({ variant: 'spin' });
+    else if (face.play) face.play('input');
+  },
+  'needs-you': (face) => { if (face.play) face.play('wary'); },
+  pass: (face) => { if (face.play) face.play('success'); },
+  refused: (face) => { if (face.play) face.play('failure'); },
+  asleep: (face) => { if (face.play) face.play('sleep'); },
+};
+
+/// The inbox row's state, mapped to the face's vocabulary. The rows carry
+/// the server's word (D5); the face only needs the family.
+function faceStateForRow(row) {
+  const word = String((row && row.state) || '');
+  if (word === 'working' || word === 'running') return 'working';
+  if (word === 'needs-approval' || word === 'needs-you' || word === 'held') return 'needs-you';
+  if (word === 'refused') return 'refused';
+  if (word === 'done' || word === 'pass') return 'pass';
+  return 'idle';
+}
+
+/// The open conversation's state, from the same runState() the header uses.
+function conversationFaceState() {
+  const run = runState();
+  if (run === 'seat') return 'needs-you';
+  if (run === 'running') return 'working';
+  return 'idle';
+}
+
+// The component takes a resolved color, not a var() reference: probe the
+// token chain once per page through a hidden span, the console's seam.
+let tintProbe = null;
+function resolvedColor(varExpr) {
+  if (!tintProbe) {
+    tintProbe = document.createElement('span');
+    tintProbe.style.display = 'none';
+    document.body.appendChild(tintProbe);
+  }
+  tintProbe.style.color = varExpr;
+  return getComputedStyle(tintProbe).color;
+}
+
+const faceAvailable = () => Boolean(window.customElements && customElements.get('boop-face'));
+
+function faceMark(name, size, extra, state) {
+  const persona = PERSONAS[name] || {};
+  const px = size === 'lg' ? 44 : size === 'md' ? 30 : 22;
+  return `<boop-face class="mark face ${size}"${extra ? ` ${extra}` : ''} ` +
+    `size="${px}" color="${resolvedColor(persona.tint || 'var(--accent)')}" ` +
+    `motion="auto" auto-sleep="0" aria-hidden="true" ` +
+    `data-persona="${name || ''}" data-face-state="${state || 'idle'}"></boop-face>`;
+}
+
+/// Apply each face's expression as it enters the document. Runs once; the
+/// observer covers every innerHTML mount, and the first scan the inbox's.
+function wireFaces() {
+  const apply = (face) => {
+    if (face.dataset.faceWired) return;
+    face.dataset.faceWired = '1';
+    const play = FACE_STATES[face.dataset.faceState || 'idle'];
+    try {
+      if (play) play(face);
+    } catch (error) { /* the face stays at rest; the word carries the state */ }
+  };
+  const scan = (root) => {
+    if (!root.querySelectorAll) return;
+    for (const face of root.querySelectorAll('boop-face[data-face-state]')) apply(face);
+  };
+  scan(document);
+  new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (node.matches && node.matches('boop-face[data-face-state]')) apply(node);
+        scan(node);
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
+function mark(name, size, extra, state) {
+  if (faceAvailable()) return faceMark(name, size, extra, state);
   const persona = PERSONAS[name] || {};
   const theme = document.documentElement.dataset.theme || 'paper';
   const ink = (INK[theme] && INK[theme][name]) || '';
@@ -240,8 +330,8 @@ function mark(name, size, extra) {
   return `<span class="mark ${size}"${extra ? ` ${extra}` : ''} style="${style}">${initial(name)}</span>`;
 }
 
-const stack = (names, size) =>
-  `<span class="stack">${names.map((n, i) => mark(n, size, i ? 'data-extra' : '')).join('')}</span>`;
+const stack = (names, size, state) =>
+  `<span class="stack">${names.map((n, i) => mark(n, size, i ? 'data-extra' : '', state)).join('')}</span>`;
 
 // ---------- the state words: rendered from the server's mapping ----------
 // /api/inbox's rows already carry the mapped word (D5); the client only
@@ -377,7 +467,7 @@ function renderInbox() {
         <div class="bar">Needs you · ${needs.length}</div>
         ${needs.map((row) => `
           <button class="row ${row.state}" data-session="${row.id}">
-            ${stack(row.personas?.slice(0, 1) || [], 'sm')}
+            ${stack(row.personas?.slice(0, 1) || [], 'sm', faceStateForRow(row))}
             <span class="title">${escapeHtml(row.goal || rowTitle(row))}</span>
             <span class="age">${age(row.at)}</span>
           </button>`).join('')}
@@ -573,7 +663,7 @@ function conversationView(withBack) {
   view.innerHTML = `
     <header class="app-head">
       ${withBack ? `<button class="act" id="back" aria-label="Back to the inbox">${ICON_BACK}</button>` : ''}
-      ${personas.length ? stack(personas.slice(0, 2), 'md') : mark('everyone', 'md')}
+      ${personas.length ? stack(personas.slice(0, 2), 'md', conversationFaceState()) : mark('everyone', 'md', null, conversationFaceState())}
       <div class="titles">
         <h1 id="who">${escapeHtml(personas.length > 1 ? personas.join(' + ') : personas[0] || 'fleet')}</h1>
         <p class="head-state"><span class="dot"></span><span id="headstate">${escapeHtml(headState())}</span></p>
@@ -725,7 +815,7 @@ function renderSplit() {
       <div class="bar">Needs you \u00b7 ${needs.length}</div>
       ${needs.map((row) => `
         <button class="row ${row.state}" data-session="${row.id}">
-          ${stack(row.personas?.slice(0, 1) || [], 'sm')}
+          ${stack(row.personas?.slice(0, 1) || [], 'sm', faceStateForRow(row))}
           <span class="title">${escapeHtml(row.goal || rowTitle(row))}</span>
           <span class="age">${age(row.at)}</span>
         </button>`).join('')}
@@ -829,7 +919,7 @@ function transcriptHtml(conversation) {
           const author = card.persona || personaFor();
           parts.push(`
             <div class="turn fleet">
-              <div class="byline">${mark(author, 'sm')}<span>${escapeHtml(author)}</span></div>
+              <div class="byline">${mark(author, 'sm', null, conversationFaceState())}<span>${escapeHtml(author)}</span></div>
               <p>${escapeHtml(card.text)}</p>
             </div>`);
         }
@@ -852,7 +942,7 @@ function transcriptHtml(conversation) {
       case 'plan':
         parts.push(`
           <div class="turn fleet">
-            <div class="byline">${mark(personaFor(), 'sm')}<span>plan</span></div>
+            <div class="byline">${mark(personaFor(), 'sm', null, conversationFaceState())}<span>plan</span></div>
             <p>${escapeHtml(card.text)}</p>
           </div>`);
         break;
@@ -1028,6 +1118,7 @@ const ICON_CLOSE = `<svg width="17" height="17" viewBox="0 0 20 20" fill="none" 
 
 // ---------- the boot: the inbox, the events, the 5s floor ----------
 
+wireFaces();
 loadInbox()
   .catch((error) => console.error('fleet bot: the inbox could not be read —',
     error && error.message ? error.message : error));

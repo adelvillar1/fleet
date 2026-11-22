@@ -181,8 +181,14 @@ shadow law, the drawer as the reading surface, the OMH borrowables) append
 - [x] M5 bot phone + iPad + console mockups — `screens/30` (390×844), `31` (1180×820 landscape split), `32`.
 - [x] M6 measurement + PNG reads: obscura CDP capture at real viewports in night and day (44 PNGs), in-page audit (overflow, type floor, contrast), and the reads. Defects the passes caught, all fixed the turn they were found: unconstrained icon SVGs (the rail painted as a giant blob); the desktop shell leaking into the phone screen (323 px overflow); `1fr` grid blowout against the drawer on eight screens (`minmax(0,1fr)`); the iPad drawer hijacked by the ≤1180 media rule and the split view starved at portrait (moved to 1180×820 landscape); sub-AA label tones (`--faint` → `--muted`); emoji glyph discs replaced with drawn keys. One capture-tool lesson recorded below.
 - [ ] The owner's gate on the set before any implementation row starts.
-- [ ] I-rows: each surface rebuilt with harness pins, gate green by exit code,
-      PWA verified at 390 and 820 widths, committed the turn it lands.
+- [x] I-rows: each surface rebuilt with harness pins, gate green by exit code,
+      PWA verified at 390 and 820 widths, committed the turn it lands. The PWA
+      half landed last: the bot's viewport evidence is
+      `png/bot-pwa-{night,day}-{390,820,1180}.png`, captured from the
+      implementation in WKWebView (the app's own engine) at the exact
+      viewports — 390 the phone inbox, 820 the portrait tablet conversation,
+      1180 the landscape split with the made-here receipts. The run exposed
+      G24 (the bot's discs never got the face seam), closed the same turn.
 - [ ] D7's hygiene pass run after every delivery in this plan, recorded in
       the row's note.
 
@@ -240,11 +246,19 @@ colors are fixed by the skin. Single-file vendorable (~56 KB without skins).
   its text marks (no SVG in ratatui); the mini console keeps its compact
   rows.
 - **A5 — acceptance.**
-  - [ ] M7 avatar spec mockup drawn (tints, the state grid, sizes, in-context
-        surfaces), measured and read in both themes.
-  - [ ] The owner's gate on M7 before implementation.
-  - [ ] I-row: vendor the component + the `persona-face` seam + the state map,
+  - [x] M7 avatar spec mockup drawn (tints, the state grid, sizes, in-context
+        surfaces), measured and read in both themes — `screens/33-avatars.html`,
+        `png/33-avatars-{night,day}-1440.png`.
+  - [x] The owner's gate on M7 before implementation. The owner's read
+        ("the avatars look good"), with the roster corrected to the home's
+        own ten roles (`~/.fleet/roles/`) — the mockup's roster was rewritten
+        to those ten and the invented one retired.
+  - [x] I-row: vendor the component + the `persona-face` seam + the state map,
         harness pins for the state-word pairing, PWA verified at 390/820.
+        Console seam at 2937d0a5; the PWA half exposed G24 and closed the same
+        turn (bot.html's module, `faceMark`, `FACE_STATES`, `wireFaces`,
+        harness pin 1913/280); the six PWA captures above are the 390/820/1180
+        evidence with the faces in place.
   - [ ] D7 hygiene pass after the delivery.
 
 ### Amendment, 2026-11-22 (the owner's read: the iPad mockup was mangled; both orientations are the requirement)
@@ -276,6 +290,22 @@ default; the interactive page demonstrates the slide-over live, and the DOM
 probe is the open state's evidence. `position: absolute` (scoped to the pad,
 not the viewport) is kept as the slide-over's implementation — the better
 PWA scoping regardless.
+
+**Third capture-tool finding (the PWA evidence run), recorded with its
+evidence:** obscura's Chromium under-sizes an inline-flex element whose
+content ends in an element child — the persona chip's count span painted past
+the pill's edge at every width, and the engine's `getComputedStyle` reported
+`padding: 0` and no matched rules for a rule the CSSOM held intact, so its
+introspection cannot be trusted for layout either. A minimal repro
+(`/tmp/chipmin`) reproduced it across display modes (flex/grid) and padding
+values; **WKWebView — the engine the app and the iPad actually run — measures
+the same chip at 130 px with the count inside**, so the defect is the capture
+build's, not the product's, and no product CSS changed for it. From this run
+on, layout-sensitive evidence captures (the PWA at real viewports) come from
+a small WKWebView tool (`/tmp/wkprobe/capture.swift`: exact frame, the theme
+seeded at document start, the conversation opened by a real click, snapshot
+at 2×); obscura stays the quick structural probe. The six PWA PNGs were
+re-shot through it after G24's seam landed.
 
 ## Out of scope
 

@@ -8045,6 +8045,19 @@ async function theStrategyStepShowsItsPreview() {
       VENDOR_LICENSE.includes('MIT License') &&
       VENDOR_LICENSE.includes('CX ART Lab'),
     'notice');
+  // A4 names the bot PWA: its discs are faces too, state-wired from the
+  // row's word and the conversation's runState (the gap evidence led here).
+  const BOT_SHELL = fs.readFileSync(path.join(ROOT, 'src/gui/assets/bot.html'), 'utf8');
+  check('AVATAR the bot PWA draws the same face, state-wired at every disc',
+    BOT_SHELL.includes('/vendor/boopface/boopface-lite.js') &&
+      BOTJS.includes('function faceMark(') &&
+      BOTJS.includes('const FACE_STATES') &&
+      BOTJS.includes('data-face-state') &&
+      BOTJS.includes('faceStateForRow(row)') &&
+      BOTJS.includes('conversationFaceState()') &&
+      BOTJS.includes('wireFaces();') &&
+      BOT.includes('.mark.face {'),
+    'bot face');
   // Pass 3 (the gated mockups 30/31): the iPad split view composes the
   // sidebar, the conversation and the receipts at landscape; the
   // receipts derive from the conversation's own cards; the touch floor
