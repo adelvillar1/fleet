@@ -21094,6 +21094,31 @@ import { node, svg, clip } from './core/dom.js';
     return card;
   }
 
+  /// The relay's own traffic (G22): the conversations the paired device
+  /// opened through a relay, from the bridge's listener-side counters.
+  /// Counters only — the read carries no copy of anything that travelled —
+  /// and a launch with no relay traffic says so in its own words rather
+  /// than hiding the card (an absent card and a zero are different claims).
+  function armadaRelayCard(read) {
+    var relay = (read && read.relay) || { conversations: 0, reads: 0 };
+    var card = boardCard(12, 'the relay', 'what the paired device opened through it');
+    card.classList.add('relay-traffic');
+    if (!relay.conversations) {
+      card.appendChild(node('p', 'board-empty',
+        'no conversation has ridden the relay yet \u2014 nothing has been opened ' +
+        'through it since this face launched.'));
+      return card;
+    }
+    var line = node('div', 'relay-line');
+    line.appendChild(node('b', 'relay-count', String(relay.conversations)));
+    line.appendChild(node('span', 'relay-word',
+      relay.conversations === 1 ? 'conversation' : 'conversations'));
+    card.appendChild(line);
+    card.appendChild(node('p', 'relay-reads',
+      String(relay.reads) + (relay.reads === 1 ? ' read carried it' : ' reads carried them')));
+    return card;
+  }
+
   /// The dispatch bar: a task named for one instance, admitted under the
   /// owner principal before it obeys. It rides directly under the map, so
   /// the row being read is the row the press sends to. An install with no
@@ -21223,6 +21248,10 @@ import { node, svg, clip } from './core/dom.js';
     // strip of zeros is the one reading the armada may never fake: an
     // install with no roster carries no fleet, and says so in a sentence.
     el.armadaBoard.appendChild(armadaMapCard(read));
+
+    // G22: the relay's own traffic rides directly under the map — the
+    // same rows the paired device reaches, counted at the listener.
+    el.armadaBoard.appendChild(armadaRelayCard(read));
 
     // The dispatch bar rides the map: the row the owner is reading is the
     // row the bar sends to, one press below it.

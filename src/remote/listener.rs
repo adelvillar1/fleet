@@ -1059,6 +1059,14 @@ async fn route_with(
         ("GET", "/api/inbox") => api(200, bridge.inbox(50).await),
         ("GET", "/api/session") => {
             let asked = decode_query(&request.query, "id");
+            // G22: a conversation opened through a relay is the Fleet
+            // card's unit. The relay marks its own frames; a direct
+            // tailnet read is not relay traffic and must not inflate the
+            // count.
+            let via_relay = request.header("x-fleet-via") == Some("relay");
+            if via_relay {
+                bridge.record_relay_read(&asked);
+            }
             api(200, bridge.replay(&asked).await)
         }
         ("GET", "/api/checkpoints") => {
@@ -2537,6 +2545,64 @@ mod relay_handler_tests {
             "the relayed pairing hands its phone the secret: {}",
             relayed.body
         );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// G22: the Fleet card's number is counted here — a conversation read
+    /// that arrives marked by a relay records; the same read arriving
+    /// directly (the tailnet path) is not relay traffic and must not
+    /// inflate the count.
+    #[tokio::test]
+    async fn a_relayed_session_read_counts_as_relay_traffic_and_a_direct_one_does_not() {
+        let home = fresh_home();
+        let (bridge, _sources) = Bridge::detached(home.clone(), "test-model".to_string(), None);
+        let bridge = std::sync::Arc::new(bridge);
+        let read = |id: &str, via: bool| {
+            let head = if via {
+                format!("GET /api/session?id={id} HTTP/1.1\r\nHost: x\r\nx-fleet-via: relay\r\n")
+            } else {
+                format!("GET /api/session?id={id} HTTP/1.1\r\nHost: x\r\n")
+            };
+            crate::gui::server::Request::parse(head.trim_end()).expect("the head parses")
+        };
+        let relayed = read("conv-a", true);
+        let mut io = std::io::Cursor::new(Vec::new());
+        let _ = route_with(
+            &relayed,
+            Vec::new(),
+            &mut io,
+            &bridge,
+            "phone",
+            RemoteFace::Console,
+        )
+        .await;
+        // Two reads of the same conversation are one conversation.
+        let relayed_again = read("conv-a", true);
+        let mut io = std::io::Cursor::new(Vec::new());
+        let _ = route_with(
+            &relayed_again,
+            Vec::new(),
+            &mut io,
+            &bridge,
+            "phone",
+            RemoteFace::Console,
+        )
+        .await;
+        // A direct read of another conversation: no marker, no count.
+        let direct = read("conv-b", false);
+        let mut io = std::io::Cursor::new(Vec::new());
+        let _ = route_with(
+            &direct,
+            Vec::new(),
+            &mut io,
+            &bridge,
+            "desktop",
+            RemoteFace::Console,
+        )
+        .await;
+        let traffic = bridge.relay_traffic();
+        assert_eq!(traffic["conversations"], 1, "{traffic}");
+        assert_eq!(traffic["reads"], 2, "{traffic}");
         std::fs::remove_dir_all(&home).ok();
     }
 }

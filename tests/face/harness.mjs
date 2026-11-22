@@ -20857,6 +20857,8 @@ async function p6CalibrationNamesItsFourSentences() {
 // observing.
 const p6ArmadaFleet = {
   type: 'armada', flagship: true,
+  // G22: the bridge's listener-side relay counters ride this same read.
+  relay: { conversations: 3, reads: 9 },
   instances: [
     { sid: 'sid-a', install_id: 'i-a', version: '0.8.12', capacity_kib: 2097152,
       live: true, heartbeat_age_secs: 40, settled: 3, calibrated: true, reliability: 0.67 },
@@ -20938,6 +20940,16 @@ async function p6ArmadaDrawsTheDeploymentMap() {
   check('P6 the map\u2019s selected line names the row and its role',
     /showing sid-a \u00b7 live \u00b7 dispatchable/.test(said) && /the dispatch bar sends to it/.test(said),
     said.slice(0, 200));
+
+  // G22: the relay card rides the map and names the bridge's own counters
+  // — distinct conversations first, the read total beneath.
+  const relay = page.rows('.relay-traffic')[0];
+  const relayCount = relay && relay.querySelectorAll('.relay-count')[0];
+  check('G22 the relay card names the conversations that rode it',
+    !!relay && !!relayCount && relayCount.textContent.trim() === '3' &&
+      relay.textContent.includes('conversations') &&
+      relay.textContent.includes('9 reads carried them'),
+    relay ? relay.textContent.slice(0, 160) : 'no relay card');
 }
 
 // The armada's refusal of a zero: an install with no roster carries no
@@ -20964,6 +20976,15 @@ async function p6ArmadaWithNoRosterSaysSoAndNeverAZero() {
     !!bar && bar.textContent.includes('no instance to dispatch to') &&
       bar.querySelectorAll('select').length === 0,
     bar ? bar.textContent.slice(0, 200) : 'no dispatch bar');
+  // G22: a read with no relay traffic says so in words — a hidden card and
+  // a measured zero are different claims, and this surface may not fake
+  // either one.
+  const relayZero = page.rows('.relay-traffic')[0];
+  check('G22 no relay traffic is said in words, never a zero as a reading',
+    !!relayZero &&
+      relayZero.textContent.includes('no conversation has ridden the relay yet') &&
+      relayZero.querySelectorAll('.relay-count').length === 0,
+    relayZero ? relayZero.textContent.slice(0, 160) : 'no relay card');
 }
 
 async function p6ArmadaNamesItsFourSentences() {

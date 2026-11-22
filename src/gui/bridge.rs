@@ -418,6 +418,20 @@ pub struct Bridge {
     /// The last auto-heal attempt, for the cooldown that keeps the probe
     /// loop from thrashing a worker that will not start.
     last_heal: std::sync::Mutex<Option<std::time::Instant>>,
+    /// The relay's own traffic (G22): the conversations the paired device
+    /// opened THROUGH a relay, recorded by the listener's session read and
+    /// surfaced by the armada read. A direct tailnet read does not count —
+    /// the card says "rode the relay", so only the relay's own marker
+    /// (`x-fleet-via`) records.
+    relay_traffic: std::sync::Mutex<RelayTraffic>,
+}
+
+/// Distinct conversations plus the total reads that carried them. The
+/// card names the conversations; the read total says how much travelled.
+#[derive(Default)]
+pub struct RelayTraffic {
+    conversations: std::collections::BTreeSet<String>,
+    reads: u64,
 }
 
 /// The bot face's pairing-card facts, attached at launch.
@@ -518,6 +532,7 @@ impl Bridge {
             dictate: Arc::new(std::sync::Mutex::new(DictateState::default())),
             commands: None,
             _agent: None,
+            relay_traffic: std::sync::Mutex::new(RelayTraffic::default()),
         };
         (
             bridge,
@@ -2106,6 +2121,34 @@ impl Bridge {
         )
     }
 
+    /// Record one conversation read that arrived through a relay (G22).
+    /// The listener calls this on `GET /api/session` only when the frame
+    /// carries the relay's own marker; a direct tailnet read of the same
+    /// conversation is not relay traffic and does not count. An empty id
+    /// is the archive's list route surfacing here, not a conversation.
+    pub fn record_relay_read(&self, id: &str) {
+        if id.is_empty() {
+            return;
+        }
+        if let Ok(mut traffic) = self.relay_traffic.lock() {
+            traffic.reads += 1;
+            traffic.conversations.insert(id.to_string());
+        }
+    }
+
+    /// The relay's traffic for the armada read: distinct conversations
+    /// and the total reads that carried them. Counters only — no copy of
+    /// anything that travelled.
+    pub fn relay_traffic(&self) -> Value {
+        match self.relay_traffic.lock() {
+            Ok(traffic) => json!({
+                "conversations": traffic.conversations.len(),
+                "reads": traffic.reads,
+            }),
+            Err(_) => json!({"conversations": 0, "reads": 0}),
+        }
+    }
+
     /// The armada panel's document (armada L9, C3): the flagship roster
     /// with each instance's earned liveness and measured reliability,
     /// and the flagship role named. One read off the async worker — the
@@ -2113,6 +2156,7 @@ impl Bridge {
     /// never holds the runtime while they are read.
     pub async fn armada(&self) -> Value {
         let home = self.home.clone();
+        let relay = self.relay_traffic();
         tokio::task::spawn_blocking(move || {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2199,6 +2243,10 @@ impl Bridge {
                 "instances": instances,
                 "corpus": corpus,
                 "audit": audit,
+                // G22: the conversations the paired device opened through
+                // a relay, and the reads that carried them. Absent is
+                // never faked — a launch with no relay answers 0/0.
+                "relay": relay,
             })
         })
         .await
@@ -16887,6 +16935,45 @@ pub(crate) fn rank_with(
         })
         .collect();
     (ranked, degraded)
+}
+
+/// The relay's traffic counters (G22): the armada card's unit is the
+/// conversation, counted at the one seam that knows a read came through a
+/// relay, and carried to the face by the same document the map reads.
+#[cfg(test)]
+mod relay_traffic_tests {
+    use super::*;
+
+    fn detached(home: &std::path::Path) -> Bridge {
+        let (bridge, _sources) =
+            Bridge::detached(home.to_path_buf(), "test-model".to_string(), None);
+        bridge
+    }
+
+    #[tokio::test]
+    async fn relayed_reads_count_distinct_conversations_and_the_armada_carries_them() {
+        let home = std::env::temp_dir().join(format!("fleet-relay-traffic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("the fixture home");
+        let bridge = detached(&home);
+        // Two reads of one conversation and one of another: distinct
+        // conversations are the card's number, the read total is traffic.
+        bridge.record_relay_read("conv-a");
+        bridge.record_relay_read("conv-a");
+        bridge.record_relay_read("conv-b");
+        // The archive's list route is not a conversation and must not
+        // inflate either counter.
+        bridge.record_relay_read("");
+        let traffic = bridge.relay_traffic();
+        assert_eq!(traffic["conversations"], 2);
+        assert_eq!(traffic["reads"], 3);
+        // The face reads one document: the counters ride the armada read
+        // rather than a second route.
+        let armada = bridge.armada().await;
+        assert_eq!(armada["relay"]["conversations"], 2);
+        assert_eq!(armada["relay"]["reads"], 3);
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }
 
 #[cfg(test)]
