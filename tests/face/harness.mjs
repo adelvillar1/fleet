@@ -5286,6 +5286,46 @@ async function theWorkListReadsInTheOwnersOrder() {
     'seat hidden=' + page.IDS['seat'].hidden + ' label=' + page.text('seat-label'));
 }
 
+// RP4 (the relevance pass, 2026-11-22): the door is ordered by the age of
+// the hold, so the longest wait is the first decision — and the count strip
+// that used to say "N waiting" retires, because the order and each row's
+// own age answer the same question with an action attached. The fixture's
+// holds arrive newest first, so only the age order puts the old one on top.
+async function theDoorIsOrderedByTheAgeOfTheHold() {
+  const doc = {
+    inbox: {
+      type: 'inbox', total: 2, held_error: null,
+      held: [
+        { key: 'held:new', class: 'held', id: 'new', channel: 'webhook', peer_id: 'b',
+          peer: 'the deploy box', task: 'the newer ask', at: '2026-11-22 09:00',
+          label: 'the deploy box \u00b7 via webhook', signature: 's2' },
+        { key: 'held:old', class: 'held', id: 'old', channel: 'webhook', peer_id: 'a',
+          peer: 'the CI box', task: 'the older ask', at: '2026-11-21 09:00',
+          label: 'the CI box \u00b7 via webhook', signature: 's1' },
+      ],
+      seats: [], onboarding: [], asks: [], cron: [], doctor: [], archived: [], dismissed: [],
+    },
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(120);
+  const held = page.rows('.ib-held');
+  check('RP4 both holds are on the door', held.length === 2, String(held.length));
+  // The older wait leads. Drop the age order and the store's newest-first
+  // order stands, so this check names the hold that should have led.
+  check('RP4 the older hold paints above the newer one',
+    held.length === 2 && (held[0].textContent || '').includes('the CI box') &&
+      (held[1].textContent || '').includes('the deploy box'),
+    held.map((r) => (r.textContent || '').slice(0, 40)).join(' | '));
+  check('RP4 each hold carries its own age',
+    (held[0].textContent || '').includes('ago') || (held[0].textContent || '').includes('just now'),
+    held[0].textContent || '');
+  // The count strip retires: a number with no action attached is gone.
+  check('RP4 the count strip retires', page.IDS['ib-total'].hidden === true,
+    'hidden=' + page.IDS['ib-total'].hidden + ' text=' + page.IDS['ib-total'].textContent);
+}
+
 // New mints a real conversation at the press (the owner's 2026-11-05
 // ruling, replacing N2's create-then-send): the log exists before any
 // words, so the send that follows can only name this conversation —
@@ -20737,6 +20777,7 @@ const cases = [
   ['RP1 the landing leads with what needs you, doors first', theLandingLeadsWithWhatNeedsYou],
   ['RP2 the changed block names the newest events, newest first', theChangedBlockNamesTheNewestEvents],
   ['RP3 the work list reads approval, running, then idle', theWorkListReadsInTheOwnersOrder],
+  ['RP4 the door is ordered by the age of the hold', theDoorIsOrderedByTheAgeOfTheHold],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],

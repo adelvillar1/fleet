@@ -5757,9 +5757,14 @@ import { node, svg, clip } from './core/dom.js';
     if (section !== 'archived' && section !== 'waiting') {
       face.inboxFilter = section;
     }
+    // The count strip retires (the relevance pass): "N waiting" was a
+    // number with no action attached, and the order is the better answer —
+    // the page leads with the longest wait and every row carries its own
+    // age. The element stays in the page so nothing that reads it breaks,
+    // and it is never shown.
     if (el.inboxTotal) {
-      el.inboxTotal.textContent = waiting + ' waiting';
-      el.inboxTotal.hidden = waiting === 0;
+      el.inboxTotal.textContent = '';
+      el.inboxTotal.hidden = true;
     }
     if (face.inboxRefusal) {
       var refusal = node('p', 'ib-refusal', face.inboxRefusal);
@@ -6039,6 +6044,18 @@ import { node, svg, clip } from './core/dom.js';
   function paintHeld(rows, hiddenByAct) {
     var visible = rows.filter(function (row) { return !hiddenByAct(row.key); });
     if (!visible.length) return;
+    // The door is ordered by the AGE of the hold (the relevance pass): the
+    // longest wait is the first decision, so the page's order answers
+    // "who has been waiting" without a number standing beside it. A stamp
+    // that will not parse keeps the store's own order at the tail rather
+    // than being sorted to the front on a guess.
+    var heldAt = function (row) {
+      var at = Date.parse(String(row.at || ''));
+      return isNaN(at) ? Number.MAX_SAFE_INTEGER : at;
+    };
+    visible = visible.slice().sort(function (left, right) {
+      return heldAt(left) - heldAt(right);
+    });
     if (visible.length < 3) {
       visible.forEach(function (row) { el.inboxBody.appendChild(heldNode(row, false)); });
       return;
