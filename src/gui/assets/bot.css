@@ -400,6 +400,20 @@ button {
 
 /* ---------- the conversation ---------- */
 
+/* The keystone: #app is the column and every child of .conv already
+   carries its own flex (head/goal 0 0 auto, .scroll 1 1 auto, .dock
+   0 0 auto) — but .conv itself was a block, so those children were
+   inert and .scroll grew to its content. On a phone that put the
+   composer at y=4631 in an 844px #app with overflow:hidden: off the
+   fold, unscrollable, a dead tap target (KI-588). The rule below is
+   the only thing that was missing. */
+.conv {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .conv .app-head h1 { font-size: 20px; }
 .conv .head-state {
   display: inline-flex;
