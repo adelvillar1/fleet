@@ -16,6 +16,38 @@ The owner's intent (2026-10-13): Fleet is the self-contained Rust successor to t
 
 Verified inventory and per-repo state: [docs/architecture/ecosystem.md](docs/architecture/ecosystem.md). Current crate architecture: [docs/architecture/deep-dive-2026-10-15.md](docs/architecture/deep-dive-2026-10-15.md) (the current-state survey; `overview.md` is the slice-1 snapshot with a banner).
 
+## The plan contract — how a request becomes shipped work
+
+Every accepted request enters a plan **the day it is accepted**, as a row with
+its acceptance criteria and its slot in the sequence. "Accepted" is any of: the
+owner names it, an audit names it, or a finding names it. What does NOT exist
+is a queue of requests living only in a conversation — the v0.9.0 era's
+measured failure: eleven drafted plans never stood in a goal, and the session
+kept legitimately superseding its own queue until the drafts were the only
+work no goal ever named.
+
+The rules the contract carries:
+
+1. **A plan row on intake, or the request is not accepted.** Amended into the
+   existing plan it belongs to (an amendment is written into the plan doc with
+   its ACs the day it's made, not appended "at the end" to be picked up later),
+   or into a new plan doc with `status: active`.
+2. **Rows before threads.** The plan doc is the contract a writer implements
+   against; a conversation thread is not. Anything agreed in conversation gets
+   written into the plan before work starts or within the same turn.
+3. **A slot or a named gap.** A plan without a standing-goal slot is named in
+   the next status report as a gap (see `docs/architecture/
+   gap-audit-2026-11-22.md`) with the owner's scheduling decision attached —
+   the audit exists so "identified" can never again pass for "built".
+4. **Supersession is a written ruling, not a silent drop.** When later work
+   covers a draft's claims, the draft's doc records per row: landed in ⟨X⟩ or
+   still real. Checkers nag drafts until they are ruled.
+
+(Owner ruling 2026-11-22: *"most of the additional requests were added towards
+the end of the plan, so you are not following the plan as a contract process."*
+First instance the mechanism caught: the relevance pass, which entered a plan
+before its work started.)
+
 ## Today's state
 
 **Read the numbers, do not trust them here.** This section carried
