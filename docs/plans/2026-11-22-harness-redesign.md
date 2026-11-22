@@ -180,7 +180,11 @@ shadow law, the drawer as the reading surface, the OMH borrowables) append
 - [x] M4 the six advanced surfaces, each one screen — `screens/20–27` (plus Rooms inside Conversations, `28`).
 - [x] M5 bot phone + iPad + console mockups — `screens/30` (390×844), `31` (1180×820 landscape split), `32`.
 - [x] M6 measurement + PNG reads: obscura CDP capture at real viewports in night and day (44 PNGs), in-page audit (overflow, type floor, contrast), and the reads. Defects the passes caught, all fixed the turn they were found: unconstrained icon SVGs (the rail painted as a giant blob); the desktop shell leaking into the phone screen (323 px overflow); `1fr` grid blowout against the drawer on eight screens (`minmax(0,1fr)`); the iPad drawer hijacked by the ≤1180 media rule and the split view starved at portrait (moved to 1180×820 landscape); sub-AA label tones (`--faint` → `--muted`); emoji glyph discs replaced with drawn keys. One capture-tool lesson recorded below.
-- [ ] The owner's gate on the set before any implementation row starts.
+- [x] The owner's gate on the set before any implementation row starts. The
+      owner's reads in sequence — the iPad mockup reworked to both
+      orientations on their word, then "the avatars look good" (with the
+      roster corrected to the home's ten roles) — gated the set; the
+      implementation rows followed those gates, not before them.
 - [x] I-rows: each surface rebuilt with harness pins, gate green by exit code,
       PWA verified at 390 and 820 widths, committed the turn it lands. The PWA
       half landed last: the bot's viewport evidence is
