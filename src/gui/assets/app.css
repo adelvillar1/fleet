@@ -11823,18 +11823,24 @@ body[data-armada="off"] .surfaces-link[data-address="armada"] { display: none; }
 }
 .board-card:hover { border-color: var(--dsw-alias-hairline-strong); }
 
-/* The running sweep (U14): a cyan light crosses the working card. */
+/* A running card carries one static signal (P7): a 2px accent spine on
+   its leading edge. It used to carry a cyan light sweeping across it —
+   a gradient plus an infinite animation, both anti-patterns, and the
+   "no shimmer" the rooms law already names. A card that is working says
+   so once, in one tone; it does not perform. */
+.board-card.running {
+  border-color: color-mix(in srgb, var(--dsw-alias-accent) 55%, var(--dsw-alias-hairline));
+}
 .board-card.running::after {
   content: "";
   position: absolute;
-  inset: 0;
-  background: linear-gradient(100deg, transparent 30%, var(--cyan-d) 50%, transparent 70%);
-  background-size: 220% 100%;
-  animation: board-sweep 2.2s linear infinite;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--dsw-alias-accent);
   pointer-events: none;
 }
-@keyframes board-sweep { from { background-position: 120% 0; } to { background-position: -120% 0; } }
-body[data-motion="off"] .board-card.running::after { animation: none; }
 
 .board-card-top { display: flex; align-items: flex-start; gap: 8px; }
 .board-check {
