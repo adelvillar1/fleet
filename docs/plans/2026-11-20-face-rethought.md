@@ -682,6 +682,117 @@ files' mtimes are all this phase's; the hand walk's notes land in the
 plan's Status pass; `node tests/face/harness.mjs` green with a case count
 **greater** than 197 (the count never falls).
 
+## Status pass, 2026-11-21 — P7 wave two: the four sentences, the icons, the hand walk
+
+**Landed.** `767cf66b` — the four sentences (one table, `SENTENCES`, in
+`app.js`), the eight harness cases that pin them, and `ICONS.advanced`
+(the settings group that wore the state dot). Red-proof: neutering each
+surface's `selected` sentence reds its own case by name, one per family
+(8/8).
+
+**The four sentences, per surface** (the table's own wording; the
+harness case named beside it):
+
+| surface | empty | loading | refused | selected |
+|---|---|---|---|---|
+| sessions | the filter that is empty names itself (`No conversation here is active…`) | `Reading the archive…` | `The archive could not be read: <why>` | `reading <title> · <state> — the transcript below is the whole of it` |
+| board | `No approved plan carries work right now…` | `Still loading your work.` | the read's own refusals, joined | `showing <plan> · N tasks in it — every plan is one press away` |
+| desk | `Say what you want made below…` | `Reading the desk's projects…` | `The desk could not read N project: <slug>` | `open: <name> · <stage> — the shelf is behind this page` |
+| huddles | `Start a huddle.` | `Reading your rooms…` | `The rooms could not be read.` + the reason | `you are in <room> · N members · <state>` |
+| bots | `Pair a phone, or dispatch a task to this persona.` | `Still loading. This comes from the channel stores…` | the channel read's refusals, joined | `showing <persona> · N conversations` |
+| router | `No route rows today…` | `Still loading. The live decision below…` | the ledger's refusals, joined | `pinned to <model> — every call this run goes there` / `no pin — the judge picks the model for each call` |
+| delegation | `This home has declared no dependency graph…` | `Still loading. This comes from the session logs and the graph file…` | the read's refusals, joined | `showing the run in flight · N nodes` / `showing the declared graph · N nodes` |
+| memory | `No fact in this section yet.` | `Still loading. This comes from the memories…` | the corpus read's refusals, joined | `showing <section> · N of M facts` |
+
+Two behaviour changes came with them: the **desk** gained the loading and
+refused sentences it never had (its welcome painted over an unlanded read
+and read as an empty home), and the **board** now paints its loading
+sentence before its read lands (it painted nothing at all until the fetch
+resolved — the one silent blank left in the nine).
+
+**The hand walk**, 2026-11-21, against the seeded gallery home on
+`:3105` (scratch `FLEET_HOME`, never `~/.fleet`; the bot fixer's
+`:3096-3099` untouched), measured with Playwright over the installed
+Chrome. The instrument is the rig's own recipe (about:blank → `/` →
+reload → the hash) and reads `getBoundingClientRect` per surface; it is
+not committed (the plan owns the notes, the rig owns the shots).
+
+**The shell, measured on all eight routes.** 1180: topbar 58, rail 236,
+stage **624×800**, and the 320px right of the window is the tissue graph
+(verified by `elementFromPoint`, not assumed to be empty). 900: the rail
+is off-canvas (`transform: translateX(-268px)`), the tissue is gone, the
+stage is **900×810**. 720: **720×810**. 460: **460×754**. No route
+overflows horizontally at any width (`scrollWidth - innerWidth = 0` on
+all 32 measurements).
+
+- **sessions.** Stage 624/900/720/460; the transcript is the surface
+  (2,791 characters) and the work list is `display:none` at every width —
+  it opens as the sheet, so the conversation never gives width away on
+  arrival. No vertical scroll at any width; no page overflow. Nine
+  controls sit under the 24px tap floor at every width: the onboarding
+  cards' `.foot-btn` (21px high), `.recent-all` and `.onboard-sys1-link`
+  (19px), plus one 28px-wide button clipped by its own box.
+- **board.** Stage 624→460; the title follows the display ladder
+  (37.76 → 30 → 27 → 27px) and the page scrolls vertically at every
+  width (861/957/931/1054 of content). Nothing clips. One tap target
+  under the floor at 460: the section-rail fold, 14×20.
+- **desk.** The work sheet is **open at all four widths**
+  (`body[data-work="open"]`, 360px). At 460 that covers 360 of the 460px
+  stage — the deliverable shows through the right 100px, and `.room-back`
+  plus the 26px fold are both present, so it is dismissible, but arrival
+  on a phone lands on the list rather than on the deliverable. The centre
+  does not scroll (the project's cards fit 800/810/810/754); the
+  selected sentence leads it, above the deliverable's head. Title
+  51.9/39.6/40/40px.
+- **huddles.** Stage 624→460; the room title is one elided line and the
+  seeded name is 1078px of text in a 560/820/656/396px box — so the full
+  name now rides the title attribute (fixed in this wave). The stage
+  scrolls only at 460 (877 of 754). **22 tap targets under 24px at every
+  width**: the transcript's `.row-rewind.msg-*` marks are 22×22 — the
+  conversation's per-message marks, the one real tap defect the walk
+  found. `.composer-hint` clips at 900 (93/160).
+- **bots.** Stage 624→460; 410 characters (the seeded persona is quiet:
+  `showing tower · 0 conversations`); no scroll, no clipping, one tap
+  target under the floor (the rail fold).
+- **router.** The tallest surface: 5,137px of content at 1180 against
+  3,488 at 900 (the rail cards stack into one column and the page gets
+  shorter but still scrolls). At 1180 three right-rail `.board-card`s
+  clip their own text (179px box, 292/240/234px of content); at 460 four
+  `.scatter-name`s clip (137px box, 216/151/180/209). No page overflow;
+  no tap targets under the floor.
+- **delegation.** 3,516/3,393/3,477/3,688 of content; one right-rail
+  `.board-card` clips at 1180 (179/240); no tap targets under the floor;
+  the selected sentence reads `showing the declared graph · 5 nodes` at
+  all four widths.
+- **memory.** 1,474/1,245/1,207/1,486 of content; one `.board-card.lib-card`
+  clips at 1180 (111/185); one tap target under the floor; the selected
+  sentence reads `showing today's recall · 3 of 6 facts`.
+
+**What the walk found, and who owns it.** The tap floor (22×22 message
+marks, 19–21px text buttons, 14×20 rail fold) is a **stylesheet** size —
+`app.css` is P7 wave one's file, so these are named here for its next
+pass, not patched around in `app.js`. The desk's sheet landing open at
+460 is a shell behaviour (`paintDesk` asks for the list; the sheet is the
+list) — named as a **P6 note** rather than changed, because it moves the
+phone's first screen. The room title's elision was `app.js`'s to fix and
+is fixed.
+
+**The gallery.** Nine shots re-taken from the built tree on `:3105`
+through the committed rig (`scripts/gallery-shoot.mjs`, JPEG q82):
+`surface-sessions`, `surface-board`, `surface-desk-drawer`,
+`surface-huddles`, `surface-bots`, `surface-router`, `surface-delegation`,
+`surface-memory` at **2880×1800** (1440×900 @2x) and
+`surface-huddles-phone` at **780×1688** (390×844 @2x) — every one passing
+the rig's readiness predicate and the KI-586 stage guard, all populated
+(117–289KB). The README strip's four references all resolve; no
+repointing was needed.
+
+The remaining `surface-*.jpg` (`settings`, `vault`, `plugins`,
+`calibration`, `second-brain`, `design`, `skills`, `telemetry`, `chat`,
+`landing`) date from 2026-11-04 and belong to surfaces P6 is rewriting
+now — re-shooting them mid-phase would capture a half-built surface, so
+their refresh is P6's own AC, not this wave's.
+
 ## Files to be touched
 
 - `src/gui/assets/app.js` — every surface builder named above; `ICONS`

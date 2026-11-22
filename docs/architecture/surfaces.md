@@ -11,7 +11,7 @@ specification should speak. The how stays in the code.
 
 ## The shape every surface shares
 
-Fifteen destinations in four groups — **work** (conversation, inbox,
+The destinations, in four groups — **work** (conversation, inbox,
 design, sessions, huddles, desk, learning), **intelligence** (router,
 delegation), **knowledge** (memory, skills, second brain, workspace
 history), **system** (bots, vault, settings, calibration, plugins) —
@@ -95,6 +95,16 @@ the receipt), while the chrome around them keeps the measure it has.
 **Why.** Because the valuable things a harness does were, everywhere
 else, hidden in panes and logs. Here they are the transcript.
 
+**The four sentences.** The list owes four answers, and every one is the
+archive's own document rather than a second derivation: empty names the
+filter that is empty (`No conversation here is active. \`all\` shows every
+one under this home.`), loading is `Reading the archive…`, a refused read
+says `The archive could not be read:` and the server's reason, and the
+selected state names what the page is reading — `reading <title> ·
+<state> — the transcript below is the whole of it` — from the head's own
+row. The counts in the empty sentence are the read's (`counts`, the
+search's `bound`), never counted here.
+
 **State.** The core surface; complete. The working-folder picker now
 browses the whole disk and takes a typed path.
 
@@ -177,12 +187,58 @@ Background work exists to keep the home alive; it should not crowd out
 the work the owner started, and an unfinished log should not pose as a
 live run.
 
+**The four sentences.** Empty names the way forward (`No approved plan
+carries work right now. Approve a plan and its tasks appear here.`),
+loading is `Still loading your work.` (painted before the read lands, so
+the board is never a blank), a refused read prints the bridge's own
+refusals, and the selected state names the plan the rail narrowed to and
+counts the tasks the document already carries — `showing <plan> · N tasks
+in it — every plan is one press away`. The count is the plan's `tasks`,
+not a tally of the columns.
+
 **State.** The archive's rows now carry their ending, their turns, and
 the log's write time, and the bridge derives the state from them plus
 the live face (the seat, the driving session, a pause's control file,
 and a write-time window for a run on another process — a bound the
 surface says rather than a heartbeat the log does not have). The
 separate read-only replay retired: the conversation is the replay.
+
+### Desk — *work*
+
+**What it is.** The deliverable and its claim, in the split the work
+surfaces share: a shelf of what this home is making — briefs and design
+boards together, each card carrying its five-stage track and its refusal
+chips — and, opened, one deliverable: the claim it must carry, the five
+stages (claims → outline → render → review → knowledge), every claim with
+the sentence behind it and its verdict (asserted, contested, vetoed), the
+sources and numbers it will not stand behind, and the conversation that
+made it. The projects rail and the work column are the same list.
+
+**What you do.** Say what you want made; the brief opens with it as the
+claim. Open a deliverable from the shelf or the column; read a claim's
+source; ask for a change in the thread; read why a number was refused.
+The inspector is the pane's drawer, not a second page.
+
+**Why.** A deliverable that cannot name the sentence behind its claim is
+a draft wearing a finished look. The desk's rule is the refuse-to-end
+gate: while a claim is unsourced or a number is uncanonical the work is
+not done, and the card says so where the work is rather than in a report
+nobody opens.
+
+**The four sentences.** Empty is the invitation (`Say what you want made
+below and the brief opens with it as the claim.`), loading is `Reading
+the desk's projects…`, a project the server could not parse is named by
+slug (`The desk could not read 1 project: <slug>`) instead of vanishing
+from the count, and the selected state names the open deliverable and its
+stage — `open: <name> · <stage> — the shelf is behind this page` — with
+the stage word the stage track already derived. The stage word is the
+document's stages, never a client-side guess at progress.
+
+**State.** Implemented: the shelf, the deliverable, the five stages, the
+claims and their verdicts, the refusals, the thread, the pane's drawer.
+The hand walk's one finding is the shell's: at 460 the work sheet lands
+open over 360 of the 460px stage, so a phone arrives on the list rather
+than on the deliverable.
 
 ### Huddles — *work*
 
@@ -232,6 +288,15 @@ recalled and what it produced sit beside its outcomes, so a room that
 produced no files but taught the home three things reads as three. And a
 capability gap is an opportunity to hire, not a reason to abandon the
 brief — if the room needs a quantum physicist, the room gets one.
+
+**The four sentences.** Empty is the invitation itself (`Start a
+huddle.`), loading is `Reading your rooms…` while the rooms read is on the
+wire (the invitation cannot honestly say no room exists before the read
+lands), a refused read is `The rooms could not be read.` with the
+server's reason under it, and the selected state names the room, the
+chips' own member count, and the state word the head already painted —
+`you are in <room> · N members · <state>`. The room name elides to one
+line; the whole name rides its title attribute.
 
 **State.** Complete; the model (mentions, scope, gaps and hires,
 breakouts, knowledge, delivery) is the huddles plan's, and the surface is
@@ -289,6 +354,16 @@ board makes the decision auditable and the failover visible — the tail
 that closes every walk, the demotion that reordered it, the pin that
 narrowed it.
 
+**The four sentences.** Empty names where the rows will come from (`No
+route rows today. The day's calls land here as they are made.`), loading
+is `Still loading. The live decision below comes straight from the run and
+does not wait for it.`, a refused read names the ledger's reason and says
+the board below is the last read that landed, and the selected state is
+the pin — the surface's one standing choice — so `pinned to <model> —
+every call this run goes there` and `no pin — the judge picks the model
+for each call` are both said rather than left to a control's state. The
+pin is the document's `pin`, never a client-side memory.
+
 **State.** Complete; its numbers reflect the week's single-model pin and
 the nightly jobs rather than real routing traffic, which only begins now
 that the pin is off.
@@ -308,6 +383,16 @@ results with a typed reason instead of silence. The tree is rebuilt from
 the logs' own parent ids and the graph is a file the plan's work writes
 — nothing is inferred from what a run did. Delegation is accountable
 the same way everything else is: through the record.
+
+**The four sentences.** Empty names who writes the graph (`This home has
+declared no dependency graph. The graph is a file the plan's work writes;
+nothing here is inferred from what a run did.`), loading is `Still
+loading. This comes from the session logs and the graph file, both of
+which are this machine's own.`, a refused read keeps the last good tree
+and names the refusal beside it, and the selected state says which of the
+two things is on the page — `showing the run in flight · N nodes` or
+`showing the declared graph · N nodes`. The node count is the tree's or
+the graph's own, never a sum of what rendered.
 
 **State.** The surface is complete; it is only as full as the work is.
 Without a run delegating or a plan declaring a graph it reads empty, and
@@ -330,6 +415,15 @@ consolidation pass; see what was recalled today and how strongly.
 nobody can read — so a fact can be edited, protected, superseded, diffed,
 and recalled by meaning. Each recall is scored, and recall feeds back
 into what rises next time.
+
+**The four sentences.** Empty is the section's own sentence (`No fact in
+this section yet.`), loading is `Still loading. This comes from the
+memories and the day's calibration stream, both of which are this
+machine's own.`, a refused read is the corpus read's reason, and the
+selected state names the section the rail picked and how much of the
+corpus it holds — `showing <section> · N of M facts` — where N is the
+section's badge and M the document's `facts`. A section press therefore
+always changes a sentence, never only a list.
 
 **State.** Complete, with 114 live facts in this repo's corpus, 34
 retired, 13 archived, and the recall-count feedback live.
@@ -436,6 +530,16 @@ and what each has done; revoke a device.
 a grant: paired by name, capability fixed at pairing, token stored as a
 digest. Nothing from outside reaches the agent without a person letting
 it in. All of it is off by default.
+
+**The four sentences.** Empty names how a conversation starts (`Pair a
+phone, or dispatch a task to this persona.`), loading is `Still loading.
+This comes from the channel stores and the service's own status
+document.`, a refused read names the channel store's reason, and the
+selected state names the persona the rail picked and how many
+conversations this home holds for it — `showing <persona> · N
+conversations` — from the conversations document's own count. The
+morning read and the channels rows share the surface's mark rather than
+inventing one.
 
 **State.** The pairing and device model are complete; the channel service
 is idle in this home until turned on, and the bot-first phone shell — the remote root since the 2026-10-28 pivot, serving `fleet bot` (see `docs/features/bot-app.md`) is

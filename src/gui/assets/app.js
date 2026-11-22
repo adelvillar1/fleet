@@ -15301,6 +15301,11 @@ import { node, svg, clip } from './core/dom.js';
       });
     });
     el.roomName.textContent = (row && (row.title || row.id)) || face.session;
+    // The name is one line that elides (`.room-title`), and at 1180 the
+    // seeded room's name is 1078px of text in a 560px box — so the whole
+    // name rides the tooltip rather than being unreadable everywhere but
+    // a wide window.
+    el.roomName.title = el.roomName.textContent;
     var tone = row ? roomTone(row) : { word: 'active', tone: 'working' };
     el.roomState.textContent = tone.word;
     el.roomState.dataset.state = tone.tone;

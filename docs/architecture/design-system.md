@@ -129,6 +129,14 @@ nothing animates on load. A refused read keeps the last good value visible
 and names the refusal. Empty, loading, refused and selected are four
 different sentences.
 
+**The four sentences live in one table.** `SENTENCES` in `app.js` holds
+each surface's empty, loading, refused and selected wording — keyed by
+the surface's own address, with a function where the sentence carries a
+count or a name — and the builders read it rather than holding a second
+copy. The selected state is a `derivation` line carrying
+`data-state="selected"`; `tests/face/harness.mjs` pins all four per
+surface by content, so a deleted sentence fails by name.
+
 `@media (prefers-reduced-motion: reduce)` is a real rule: 1ms durations,
 one iteration, zero delay — a reduced-motion page paints its final state
 once and stops. `themes.rs` pins that rule's declarations.
