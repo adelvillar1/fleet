@@ -18018,7 +18018,31 @@ async function theBoardShowsQueuedWorkWithItsAssignment() {
     documents: {
       board,
       sessions: { type: 'sessions', read_at: 'now', current: '',
-        counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 }, sessions: [] },
+        counts: { needs: 2, working: 0, background: 0, earlier: 0, total: 0 }, sessions: [],
+        // The home's needs-you document (G14's Board row): the held
+        // decisions lead the board, in the bridge's own order — the
+        // oldest hold first. The stamps are what the ages are derived
+        // from; nothing on the card is invented.
+        needs_you: {
+          type: 'needs_you', read_at: 'now',
+          order: ['door', 'approval', 'offer'],
+          counts: { doors: 1, approvals: 1, offers: 0, working: 0, total: 2 },
+          surfaces: ['inbox', 'sessions'],
+          rows: [
+            { kind: 'door', surface: 'inbox', id: 'held:1', session: 'fb-1',
+              label: 'kiri \u00b7 deploy went green, but the feed 404s',
+              why: 'a delivery is held for your answer',
+              at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+              link: '#/inbox', press: 'answer' },
+            { kind: 'approval', surface: 'sessions', id: 'run-9', session: 'run-9',
+              label: 'the pricing table run',
+              why: 'a run is stopped for your approval',
+              at: Date.now() - 40 * 60 * 1000,
+              link: '#/sessions/run-9', press: 'open' },
+          ],
+          working: [], refused: [],
+        },
+      },
       state: (asked) => ({ ...emptyState(asked), session: asked }),
       onboard: onboardDoc({ door: false }),
     },
@@ -18026,6 +18050,53 @@ async function theBoardShowsQueuedWorkWithItsAssignment() {
   await flush();
   page.open();
   await flush(220);
+
+  // The needs-you card leads the board (the gated mockup): the held
+  // decisions in the bridge's own order, the oldest hold's age on the
+  // head, and one press per row that follows the row's link.
+  const needsCard = page.rows('.board-card').find((one) =>
+    one.textContent.includes('needs you'));
+  check('BOARD the board leads with the needs-you card',
+    !!needsCard && page.rows('.board-needs-row').length === 2,
+    'rows=' + page.rows('.board-needs-row').length);
+  const firstNeed = page.rows('.board-needs-row')[0];
+  check('BOARD the oldest hold leads and its age is the stamp\u2019s own',
+    firstNeed && firstNeed.textContent.includes('kiri') &&
+      firstNeed.textContent.includes('2h ago'),
+    firstNeed ? firstNeed.textContent.slice(0, 120) : 'no row');
+  check('BOARD the oldest hold\u2019s age is named on the head',
+    needsCard && needsCard.textContent.includes('the oldest hold is 2h ago old'),
+    needsCard ? (needsCard.textContent.split('needs you')[1] || '').slice(0, 120) : 'no card');
+  if (firstNeed) firstNeed.click();
+  await flush(40);
+  check('BOARD a needs-you press follows its link',
+    String(page.window.location.hash).indexOf('#/inbox') >= 0,
+    String(page.window.location.hash));
+  // The press moved the route to the inbox; the case's remaining pins
+  // read the board, so the route comes back — the journey is restored,
+  // not abandoned.
+  page.window.location.hash = '#/board';
+  await flush(120);
+
+  // The honest absence: a board whose home carries no needs-you document
+  // paints no card — an empty is not a lie. (This boot carries no
+  // needs_you in its sessions read; the board reads once per visit.)
+  const bareBoard = boot({
+    hash: '#/board',
+    documents: {
+      board,
+      sessions: { type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 }, sessions: [] },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  bareBoard.open();
+  await flush(220);
+  check('BOARD no needs-you document paints no card',
+    bareBoard.rows('.board-needs-row').length === 0,
+    'rows=' + bareBoard.rows('.board-needs-row').length);
 
   // The done column folds (the relevance pass): open it before counting.
   const doneFold = page.rows('.board-col[data-status="done"] .board-col-head')[0];

@@ -12333,3 +12333,58 @@ section.board-card > .board-head {
   text-overflow: ellipsis;
   max-width: 60%;
 }
+
+/* --- the board's needs-you lead (the gated mockup): the home's held
+   decisions on the board itself, in the landing row's idiom. The
+   changed and divergence rows under it wear the same grammar — the
+   relevance pass painted their classes but shipped no rules for them,
+   which is why they rendered unstyled. */
+.board-needs-row,
+.board-changed,
+.board-divergence {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.board-needs-row:hover,
+.board-changed:hover,
+.board-divergence:hover { background: var(--panel); }
+.board-needs-row[data-kind="door"] { border-left: 2px solid var(--accent-lift); }
+.board-needs-row[data-kind="approval"] { border-left: 2px solid var(--warn, var(--accent-lift)); }
+.board-needs-row[data-kind="offer"] { border-left: 2px solid var(--line); }
+.board-needs-count,
+.board-needs-age {
+  color: var(--muted);
+  flex: 0 0 auto;
+  font: 500 11.5px/1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.board-needs-label,
+.board-changed-name,
+.board-divergence-node {
+  color: var(--text);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.board-needs-age { font-weight: 400; }
+.board-changed-when,
+.board-divergence-word {
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 11.5px;
+}
+.board-divergence-word[data-word] { color: var(--warn); }
+.board-divergence-plan { color: var(--muted); flex: 0 0 auto; font-size: 11.5px; }

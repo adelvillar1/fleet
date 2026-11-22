@@ -5352,6 +5352,17 @@ import { node, svg, clip } from './core/dom.js';
   // A millisecond stamp as a span: the changed block's clock is the log's
   // write time, which is milliseconds — the rooms' `roomAge` reads
   // seconds, so this is its own conversion rather than a second meaning.
+  /// An age that takes what the log carries: an epoch number (the
+  /// approval rows' last_write) or an ISO stamp (the holds' at). A shape
+  /// neither parses says nothing — an unparsable stamp never becomes a
+  /// fake age.
+  function ageOf(at) {
+    if (at == null || at === '') return '';
+    var then = typeof at === 'number' ? Number(at) : Date.parse(at);
+    if (!isFinite(then)) return '';
+    return msAge(then);
+  }
+
   function msAge(at) {
     if (!at) return '';
     var span = Math.max(0, Date.now() - at);
@@ -10688,6 +10699,15 @@ import { node, svg, clip } from './core/dom.js';
     // The leading block is the BOARD's, not a plan's: once the owner has
     // picked a plan the rail has already answered "which one", so the
     // scoped view is that plan's card alone.
+    // The needs-you card leads the board in BOTH scopes (G14's Board row,
+    // the gated mockup): a hold needs an answer whatever plan the owner is
+    // reading. The rows are the home's needs-you document — the same one
+    // the rail reads — ordered as the bridge ordered them (the oldest
+    // hold first), and each row is a press to the thing it names. The
+    // card's head says how old the oldest hold is, derived from the
+    // document's own stamps.
+    var needs = boardNeedsYou();
+    if (needs) el.boardBoard.appendChild(needs);
     var lead = scope === 'all' ? boardLead(plans, read.divergences) : null;
     if (lead) el.boardBoard.appendChild(lead);
     plans.forEach(function (plan) { el.boardBoard.appendChild(planCard(plan)); });
@@ -10720,6 +10740,53 @@ import { node, svg, clip } from './core/dom.js';
     try {
       window.localStorage.setItem(BOARD_LOOK, new Date().toISOString().slice(0, 10));
     } catch (error) { }
+  }
+
+  /// The board's needs-you block (the gated mockup's lead): the held
+  /// doors, approvals and offers the home is waiting on the owner for,
+  /// in the order the bridge ordered them (the oldest hold first). One
+  /// row, one press — the row IS the door to the thing that needs the
+  /// answer. Ages come from the document's own stamps; the head names
+  /// the oldest when one can be computed, and says nothing when none can.
+  function boardNeedsYou() {
+    var doc = needsDocument();
+    var rows = (doc && doc.rows) || [];
+    if (!rows.length) return null;
+    var refused = (doc && doc.refused) || [];
+    var card = boardCard(12, 'needs you', null, null);
+    var oldest = '';
+    for (var i = 0; i < rows.length; i++) {
+      var age = ageOf(rows[i].at);
+      if (age) { oldest = age; break; }
+    }
+    var count = node('span', 'board-needs-count', String(rows.length));
+    count.title = rows.length === 1 ? 'one decision' : rows.length + ' decisions';
+    var head = card.querySelector('.card-head') || card.firstChild;
+    if (head) head.appendChild(count);
+    if (oldest) {
+      var when = node('span', 'board-needs-age', 'the oldest hold is ' + oldest + ' old');
+      when.title = 'the age comes from the hold\u2019s own stamp';
+      if (head) head.appendChild(when);
+    }
+    refused.forEach(function (why) {
+      card.appendChild(node('p', 'board-empty', why));
+    });
+    rows.forEach(function (row) {
+      var line = node('button', 'board-needs-row');
+      line.type = 'button';
+      line.dataset.kind = row.kind || '';
+      line.appendChild(node('span', 'needs-mark', NEEDS_MARKS[row.kind] || '\u00b7'));
+      line.appendChild(node('span', 'board-needs-label', row.label || 'a decision'));
+      if (row.why) line.appendChild(node('span', 'needs-why', row.why));
+      var age = ageOf(row.at);
+      if (age) line.appendChild(node('span', 'board-needs-age', age));
+      line.title = (row.label || '') + (row.why ? ' \u2014 ' + row.why : '');
+      line.addEventListener('click', function () {
+        if (row.link) window.location.hash = row.link;
+      });
+      card.appendChild(line);
+    });
+    return card;
   }
 
   /// The board's first block: the plan whose state moved since the owner
