@@ -90,13 +90,19 @@ say so:
 
 - **D1 — One design system, "Indigo Studio" adapted to fleet.** OKLCH token
   chain (reference → alias → component, the existing three tiers kept), cool
-  graphite night as the default theme, cool paper day, console and contrast
-  retained. One accent (indigo-violet) + the signal law (ok/warn/down),
-  persona seats stay (six tints re-derived on the new surfaces, AA-guarded).
-  Hairlines everywhere; **shadows return** at three fixed elevations — this
-  supersedes the card law's "no shadow" rule BY NAME in the ledger, because
-  design-canvas proves a soft elevation reads calm where a shadowless card
-  reads flat against a dark page.
+  graphite night as the default theme, cool paper day. **Amended 2026-11-22
+  (the owner's ruling: "I like the color design you chose, so don't reuse
+  none of the current themes"): no colour from the current harbor, paper,
+  console, or contrast sets is reused — all four themes re-derive from the
+  Indigo Studio palette. The theme NAMES stay (U48's set: night, day watch,
+  console, contrast); the VALUES are all new, pre-verified against the AA
+  guard's math before any CSS lands (the palette record lives in the gap
+  ledger).** One accent (indigo-violet) + the signal law (ok/warn/down),
+  persona seats stay (six bright tints re-derived, dark `--on-tone` labels,
+  AA-guarded — G2). Hairlines everywhere; **shadows return** at three fixed
+  elevations — this supersedes the card law's "no shadow" rule BY NAME in
+  the ledger, because design-canvas proves a soft elevation reads calm where
+  a shadowless card reads flat against a dark page.
 - **D2 — The shell is rail | stage | drawer, on every experience.** The rail
   (left, persistent, collapsible, state-grouped — needs you / working / the
   rest, the relevance pass's order carried whole). The **contextual drawer**

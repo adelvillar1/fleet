@@ -1,0 +1,94 @@
+# The harness redesign — the plan gap ledger
+
+The goal's rule: a gap in the plan is never closed by an educated guess — it
+is researched, the replan is written here, matched to the plan row it amends,
+and closed by a commit. One row per gap; a gap without a plan row it amends
+is a defect in this ledger, not in the code.
+
+| # | Gap found | Plan row it amends | What the research said | The replan (the decision, recorded) | Closed by |
+|---|-----------|--------------------|------------------------|-------------------------------------|-----------|
+| G1 | D1 says "OKLCH token chain" | D1 | `themes.rs` parses `rgb(r, g, b)` literals only — "a `color-mix` or a `var()` is not a colour this parser can measure, and guessing would make the guard a lie". oklch() values would be unmeasurable by the AA guard, and the mockup's headless capture cannot paint oklch/var on SVG fill at all. | The tier values ship as `rgb()` literals derived from the OKLCH designs (the conversions recorded in this ledger's palette notes); the OKLCH forms stay the design record in the mockup CSS and here. The design is OKLCH-derived; the ship format is what the guard can measure. | Pass 1 |
+| G2 | D1/A1 say "six tints re-derived, AA-guarded" | D1, A1 | The guard measures each tint against the theme's **page ink** (`themes.rs` test `every_theme_carries_six_readable_persona_tints`), but the approved design (the owner: "the avatars look good") is bright tints with dark labels — light page-ink on a bright tint is ~1.8:1. The disc's actual label token is `--on-tone`, which P7 created for exactly "the label on a tone-filled bead", and the guard never measures it against tints. | The tints go bright in every theme; the disc/face label moves to `--on-tone` (per-theme, per P7's own definition); the guard's persona test measures `--on-tone` against each tint instead of page ink, and the test's doc says so. `--on-tone` re-points per theme (dark in all four — the tints stay bright). | Pass 1 |
+| G3 | D1 names Space Grotesk / Inter / mono | D1 | Already shipped: `vendor/fonts/` carries all three as variable woff2 (OFL, VENDOR.json), self-contained since an earlier pass. | No work. The type system is already the design-canvas stack. | already true |
+| G4 | D1 says "console and contrast retained" | D1 | **Amended by the owner's ruling 2026-11-22: "I like the color design you chose, so don't reuse none of the current themes."** No colour from the current sets survives — all four themes re-derive. | All four theme blocks carry the Indigo Studio palette, pre-verified to zero AA failures by the guard's own math before any CSS lands (the pre-verification script and its four iteration findings are recorded below the palette tables). The parser test's pinned console/contrast ink values update to the new shipped values in the same commit. | Pass 1 |
+| G5 | D6 "don't break the app" — unknown whether the face harness pins colors | D6 | (researched before Pass 1 lands — see the Pass 1 note) | Harness pins run against inlined source (vm), not a live server; grep for color literals before the change; any pinned color updates in the same commit. | Pass 1 |
+| G6 | A1 "vendor the component" — which artifact, what license text | A1 | BoopFace releases ship a zip (`boopface-x.y.z.zip`) containing the component; lite build ~45 KB, full ~56 KB without skins. MIT + identity carve-out (the name/character is not transferable). | Vendor the release zip's component into `src/gui/assets/vendor/` beside a VENDOR notice with the upstream link, version, license text, and the carve-out; fleet's wrapper is `persona-face`; skins stay off (D8). | Avatar pass |
+| G7 | D2 "the drawer is the one reading surface" vs the existing pane | D2 | The face already has `.pane`/`.pane-tabs` (440px, drag 300–720) serving four mixed duties across surfaces. The drawer rework needs a per-surface inventory of pane users before any surgery — the plan's per-surface row for each lens. | Pass 2 opens with the inventory (grep every `openPane|pane-body|pane-tabs` call site), then the drawer grammar lands per surface with its harness pins. No guess. | Pass 2 |
+| G8 | D1 "cool graphite night as the default" | D1 | The shipped default IS night (`:root` carries the night values); app.css's header comment claims "the default: warm paper" — a stale doc comment, not a state. | Fix the stale comment in the same commit as the re-point; the default does not move. | Pass 1 |
+
+## The palette record (G1's conversions, amended by G4's ruling — no current colour reused)
+
+Shipped as `rgb()` literals (G1); the OKLCH designs are the record. **Every
+value below was pre-verified against the guard's own math** (text tokens vs
+page/surface/raised, `--on-tone` vs all six tints, `--on-flat` vs accent,
+every gradient stop vs `--on-accent`) — zero failures across all four themes.
+
+Persona tints (identical in every theme — bright heads, dark `--on-tone`
+labels; G2's pairing):
+
+| seat | hex | seat | hex |
+|---|---|---|---|
+| tint-1 | rgb(72, 183, 189) | tint-4 | rgb(210, 133, 203) |
+| tint-2 | rgb(148, 185, 109) | tint-5 | rgb(103, 163, 224) |
+| tint-3 | rgb(233, 158, 94) | tint-6 | rgb(180, 156, 225) |
+
+**night** (the default — cool graphite):
+
+| token | value | token | value |
+|---|---|---|---|
+| page | rgb(10, 12, 17) | accent | rgb(135, 139, 245) |
+| surface | rgb(17, 20, 26) | accent-deep | rgb(111, 110, 229) |
+| raised | rgb(24, 28, 35) | accent-lift | rgb(155, 161, 251) |
+| ink | rgb(238, 240, 243) | ok | rgb(71, 196, 150) |
+| ink-secondary | rgb(160, 165, 172) | warn | rgb(223, 180, 83) |
+| ink-tertiary | rgb(133, 137, 145) | down | rgb(234, 94, 89) |
+| on-accent / on-tone / on-flat | rgb(9, 13, 22) | hairlines | white 9% / 16% |
+
+**day** (cool paper — the design-canvas ground, re-derived signals):
+
+| token | value | token | value |
+|---|---|---|---|
+| page | rgb(240, 244, 247) | accent | rgb(100, 95, 223) |
+| surface | rgb(248, 250, 253) | accent-deep | rgb(79, 69, 196) |
+| raised | rgb(255, 255, 255) | accent-lift | rgb(72, 60, 149) |
+| ink | rgb(25, 30, 40) | ok | rgb(0, 127, 78) |
+| ink-secondary = tertiary | rgb(100, 105, 116) | warn | rgb(134, 89, 0) |
+| on-tone | rgb(9, 13, 22) | down | rgb(197, 55, 50) |
+| **on-flat / on-accent** | **rgb(255, 255, 255)** — white on the mid-bright indigo (the dark label measured 3.93) | hairlines | ink 12% / 20% |
+
+**console** (the graphite collector):
+
+| token | value | token | value |
+|---|---|---|---|
+| page | rgb(17, 19, 22) | accent | rgb(150, 156, 238) |
+| surface | rgb(23, 26, 29) | accent-deep | rgb(119, 122, 216) |
+| raised | rgb(31, 34, 38) | accent-lift | rgb(170, 177, 247) |
+| ink | rgb(227, 229, 232) | ok / warn / down | as night |
+| ink-secondary | rgb(149, 152, 159) | on-accent / on-tone / on-flat | rgb(9, 13, 22) |
+| ink-tertiary | rgb(140, 143, 149) | | |
+
+**contrast** (the accessibility theme — pure ground, near-black ink):
+
+| token | value | token | value |
+|---|---|---|---|
+| page / surface | rgb(255, 255, 255) | accent | rgb(65, 60, 155) |
+| raised | rgb(228, 228, 228) | accent-deep | rgb(51, 42, 136) |
+| ink | rgb(0, 0, 0) | accent-lift | rgb(60, 54, 149) |
+| ink-secondary | rgb(34, 34, 34) | ok | rgb(0, 107, 56) |
+| ink-tertiary | rgb(58, 58, 58) | warn | rgb(131, 82, 0) |
+| on-tone | rgb(20, 24, 34) | down | rgb(176, 12, 21) |
+| **on-flat / on-accent** | **rgb(255, 255, 255)** — white on the dark indigo | hairlines | black 22% / 45% |
+
+**The pre-verification iterations (why the loop exists):** the first pass
+produced four guard failures the mockup's eyes never saw — day's dark label
+on the mid-bright indigo (3.93), day's warn (4.44), console's tertiary on
+raised (4.38), and contrast's dark label on the dark accent (1.98). Each was
+fixed by re-deriving the value (white flat/gradient labels on day and
+contrast, darker warn, lighter tertiary), then re-verified to zero. The
+tint-label decision moved with G2: `--on-tone` is the disc label and the
+guard measures it; `--on-flat`/`--on-accent` are the accent-fill labels and
+stay per-theme (dark on night/console's bright indigo, white on day/contrast's
+deeper one). Tokens split per job — one value never serves two grounds.
+
+Every measured pair is proven by the guard, not by this table — the table
+records intent, `themes.rs` measures the artifact.
