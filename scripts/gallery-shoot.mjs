@@ -88,6 +88,29 @@ const SHOTS = {
       + 'const chat = document.getElementById("panel-chat");'
       + 'return !!list && !chat.hidden && list.querySelectorAll("button, li, [data-session]").length > 0;',
   },
+  'surface-chat': {
+    route: 'chat',
+    ready: 'const chat = document.getElementById("panel-chat");'
+      + 'return !!chat && !chat.hidden && chat.textContent.trim().length > 40;',
+  },
+  'surface-design': {
+    route: 'design',
+    ready: 'const design = document.getElementById("panel-design");'
+      + 'return !!design && !design.hidden && design.textContent.trim().length > 40;',
+  },
+  'surface-second-brain': {
+    route: 'second-brain',
+    ready: 'const brain = document.getElementById("panel-second-brain");'
+      + 'return !!brain && !brain.hidden && brain.textContent.trim().length > 40;',
+  },
+  'surface-skills': {
+    route: 'skills',
+    // The skills surface rides #panel-memory (case 'memory': case 'skills'
+    // both paint it) — its own lens, not its own panel.
+    ready: 'const mem = document.getElementById("panel-memory");'
+      + 'return !!mem && !mem.hidden && mem.textContent.trim().length > 200 '
+      + '&& /skills/i.test(mem.textContent);',
+  },
   'surface-board': {
     route: 'board',
     ready: 'const p = document.getElementById("panel-board");'
