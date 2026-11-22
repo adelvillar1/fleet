@@ -20866,8 +20866,27 @@ import { node, svg, clip } from './core/dom.js';
       : 'un-calibrated';
     var health = node('div', 'deploy-map-cell deploy-map-health');
     health.dataset.health = instance.live ? 'live' : 'idle';
+    // The liveness pulse (U16, the gated mockup): a live instance's mark
+    // pulses - the ambient motion the Motion switch owns, and
+    // prefers-reduced-motion freezes it (U8). An idle instance's mark is
+    // still: absence of pulse is the honest reading of no heartbeat.
+    health.appendChild(node('span', 'deploy-map-pulse' +
+      (instance.live ? ' live' : '')));
     health.appendChild(node('strong', null, instance.live ? 'live' : 'not live'));
-    health.appendChild(node('span', 'cfg-note', heard + ' \u00b7 ' + reliability));
+    health.appendChild(node('span', 'cfg-note', heard));
+    // The reliability meter (U16's own spec): the settled-dispatch grade
+    // as a gauge - the one fraction the row carries that has a real full.
+    // The capacity stays a figure: GiB against no declared ceiling would
+    // be a gauge that invented its own full.
+    if (instance.calibrated) {
+      var meter = node('span', 'deploy-map-meter');
+      meter.setAttribute('aria-hidden', 'true');
+      var fill = node('i');
+      fill.style.width = Math.round((instance.reliability || 0) * 100) + '%';
+      meter.appendChild(fill);
+      health.appendChild(meter);
+    }
+    health.appendChild(node('span', 'cfg-note', reliability));
     row.appendChild(health);
 
     var role = node('div', 'deploy-map-cell deploy-map-role');

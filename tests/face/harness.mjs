@@ -20819,6 +20819,29 @@ async function p6ArmadaDrawsTheDeploymentMap() {
     !!a && a.textContent.includes('live') && a.textContent.includes('heard 40s ago') &&
       a.textContent.includes('67% reliable'),
     a ? a.textContent.slice(0, 200) : 'no sid-a row');
+
+  // Pass 3 (U16, the gated mockup): the live instance's mark pulses and
+  // the calibrated instance's reliability renders as the meter it is -
+  // the one fraction with a real full. The un-calibrated row carries no
+  // meter (nothing has been graded to fill one), and the stylesheet
+  // freezes the pulse under prefers-reduced-motion (U8).
+  const pulseA = a && a.querySelectorAll('.deploy-map-pulse.live').length === 1;
+  const pulseB = b && b.querySelectorAll('.deploy-map-pulse').length === 1 &&
+    b.querySelectorAll('.deploy-map-pulse.live').length === 0;
+  const meterA = a && a.querySelectorAll('.deploy-map-meter i')[0];
+  check('P6 the live mark pulses and the idle mark is still',
+    !!pulseA && !!pulseB, 'live pulse=' + !!pulseA + ' idle still=' + !!pulseB);
+  check('P6 the reliability renders as the meter it is',
+    !!meterA && meterA.style.width === '67%',
+    meterA ? 'width=' + meterA.style.width : 'no meter');
+  check('P6 the un-calibrated row carries no meter',
+    b && b.querySelectorAll('.deploy-map-meter').length === 0 &&
+      b.textContent.includes('un-calibrated'),
+    b ? 'meters=' + b.querySelectorAll('.deploy-map-meter').length : 'no sid-b row');
+  check('P6 the pulse freezes under prefers-reduced-motion',
+    flat(CSS).includes('@media (prefers-reduced-motion: reduce)') &&
+      flat(CSS).includes('.deploy-map-pulse.live { animation: none; }'),
+    'css');
   // The role is measured: settles earn the hand, registration does not.
   const roleA = a && a.querySelectorAll('.deploy-map-role')[0];
   const roleB = b && b.querySelectorAll('.deploy-map-role')[0];

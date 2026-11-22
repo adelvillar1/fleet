@@ -12518,3 +12518,46 @@ section.board-card > .board-head {
   color: var(--dsw-alias-ink-secondary);
   font-variant-numeric: tabular-nums;
 }
+
+/* --- the fleet map's earned liveness (U16, the gated mockup): the live
+   instance's mark pulses (the Motion switch owns ambient motion;
+   prefers-reduced-motion freezes it), and the reliability grade renders
+   as the meter it is - the one fraction with a real full. The capacity
+   stays a figure: GiB against no declared ceiling would invent its own
+   full. */
+.deploy-map-pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--dsw-alias-hairline-strong);
+  flex: 0 0 auto;
+  display: inline-block;
+}
+.deploy-map-pulse.live {
+  background: var(--ok, var(--dsw-alias-ok));
+  animation: deploy-pulse 2.2s var(--ease, ease) infinite;
+}
+.deploy-map-cell[data-health="idle"] .deploy-map-pulse.live { background: var(--ok); }
+@keyframes deploy-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok, var(--dsw-alias-ok)) 45%, transparent); }
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.deploy-map-meter {
+  display: block;
+  width: 100%;
+  height: 5px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-ink) 12%, transparent);
+  overflow: hidden;
+}
+.deploy-map-meter i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--dsw-alias-accent-deep), var(--dsw-alias-accent));
+}
+@media (prefers-reduced-motion: reduce) {
+  .deploy-map-pulse.live { animation: none; }
+}
