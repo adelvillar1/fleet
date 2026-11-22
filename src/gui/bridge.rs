@@ -6152,6 +6152,30 @@ impl Bridge {
         }
     }
 
+    /// The root-relative path the pane's own file route would serve for
+    /// `path`, or None when it would refuse: outside the launch folder, a
+    /// credential name, a directory, or a path that does not exist. The
+    /// desk's source press (G16) renders only on the Some — a press that
+    /// cannot open is worse than text — and the containment is the file
+    /// route's own, because this calls it.
+    pub fn openable_path(&self, path: &std::path::Path) -> Option<String> {
+        let root = self.cwd.canonicalize().ok()?;
+        let candidate = path.canonicalize().ok()?;
+        if !candidate.starts_with(&root) || !candidate.is_file() {
+            return None;
+        }
+        let name = candidate
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if name.starts_with(".env") {
+            return None;
+        }
+        let relative = candidate.strip_prefix(&root).ok()?;
+        let asked = relative.to_string_lossy().to_string();
+        pane_path(&root, &asked).ok().map(|_| asked)
+    }
+
     /// Hand the browser's task to the agent thread as a plan-mode run:
     /// the same door, the plan arm. The owner's message lands in the log
     /// first, exactly as a run's does, so a refresh replays what was
@@ -9475,9 +9499,14 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
                 // and is silent about what it does not hold.
                 cards.push(json!({"type": "skills", "loaded": skills.len()}));
             }
-            session::Record::Memory { shape, facts, design } => {
+            session::Record::Memory {
+                shape,
+                facts,
+                bases,
+                design,
+            } => {
                 cards.push(json!({"type": "memory", "shape": shape, "facts": facts.len(),
-                    "design": design.is_some()}));
+                    "bases": bases, "design": design.is_some()}));
             }
             session::Record::Compaction {
                 first_turn,
@@ -15646,8 +15675,13 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
             "before": tokens_before,
             "after": tokens_after,
         }),
-        UiEvent::Memory { shape, facts, root } => {
-            json!({"type": "memory", "shape": shape, "facts": facts, "root": root})
+        UiEvent::Memory {
+            shape,
+            facts,
+            bases,
+            root,
+        } => {
+            json!({"type": "memory", "shape": shape, "facts": facts, "bases": bases, "root": root})
         }
         UiEvent::SkillsLoaded { loaded, skipped } => {
             json!({"type": "skills", "loaded": loaded, "skipped": skipped})
@@ -16972,6 +17006,39 @@ mod relay_traffic_tests {
         let armada = bridge.armada().await;
         assert_eq!(armada["relay"]["conversations"], 2);
         assert_eq!(armada["relay"]["reads"], 3);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+/// G16's guard: the desk's source press renders only on a path the pane's
+/// own file route would serve, and that route is the rule this calls.
+#[cfg(test)]
+mod openable_path_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_file_under_the_launch_folder_is_openable_and_a_path_outside_is_not() {
+        let home = std::env::temp_dir().join(format!("fleet-openable-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("the fixture home");
+        let (bridge, _sources) = Bridge::detached(home.clone(), "test-model".to_string(), None);
+        // The bridge's root is the process's working directory: a file in
+        // it is servable, and the relative path is what the route takes.
+        let inside = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let asked = bridge
+            .openable_path(&inside)
+            .expect("Cargo.toml sits under the launch folder");
+        assert_eq!(asked, "Cargo.toml", "the route takes root-relative paths");
+        // A file outside the root is not: the route would refuse it.
+        let outside = home.join("outside.txt");
+        std::fs::write(&outside, "x").expect("the outside file");
+        assert_eq!(bridge.openable_path(&outside), None);
+        // A path that does not exist is not, and neither is a directory.
+        assert_eq!(
+            bridge.openable_path(std::path::Path::new("/nonexistent/x.md")),
+            None
+        );
+        assert_eq!(bridge.openable_path(&home), None);
         let _ = std::fs::remove_dir_all(&home);
     }
 }
@@ -22923,6 +22990,7 @@ slug: the-draft
         log.record(&session::Record::Memory {
             shape: "structure".to_string(),
             facts: vec!["alpha".to_string(), "beta".to_string()],
+            bases: vec!["confirmed-by".to_string(), "inferred".to_string()],
             design: None,
         })
         .unwrap();

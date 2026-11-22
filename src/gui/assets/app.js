@@ -1838,7 +1838,33 @@ import { node, svg, clip } from './core/dom.js';
     return '';
   }
 
-  function assistantFooter(getText, ex, turn) {
+  // The evidence chips' tally (G13): the facts a reply's recall carried,
+  // counted by the corpus's own basis words. The assembly is announced
+  // BEFORE the run's first turn, and turn numbers restart with every run,
+  // so a turn number cannot name it — the reply's own position can. Walk
+  // back from the reply to the nearest memory event: that is the block
+  // the model saw when it wrote the words above the footer (a mid-run
+  // curation emits its own, and the nearest is the one that holds).
+  function tallyBases(event) {
+    var tally = {};
+    ((event && event.bases) || []).forEach(function (basis) {
+      if (!basis) return;
+      tally[basis] = (tally[basis] || 0) + 1;
+    });
+    return tally;
+  }
+
+  function runBasesBefore(reply) {
+    var events = face.events || [];
+    var at = reply ? events.indexOf(reply) : events.length;
+    if (at < 0) at = events.length;
+    for (var i = at - 1; i >= 0; i -= 1) {
+      if (events[i].type === 'memory') return tallyBases(events[i]);
+    }
+    return {};
+  }
+
+  function assistantFooter(getText, ex, turn, bases) {
     var tools = node('div', 'msg-tools');
     var routeLine = turn != null ? routeLineForTurn(turn) : '';
     if (routeLine) {
@@ -1846,6 +1872,17 @@ import { node, svg, clip } from './core/dom.js';
       route.title = 'the routing decision that served this reply';
       tools.appendChild(route);
     }
+    // The basis chips, strongest rung first (the corpus's ladder). The
+    // word rides every chip (U4's law); a reply whose records carry no
+    // bases draws none rather than an invented rung.
+    ['confirmed-by', 'validated', 'inferred'].forEach(function (word) {
+      var count = (bases || {})[word];
+      if (!count) return;
+      var chip = node('span', 'msg-basis', count + ' ' + word);
+      chip.dataset.basis = word;
+      chip.title = 'the basis of the facts this reply\u2019s recall surfaced';
+      tools.appendChild(chip);
+    });
     tools.appendChild(makeCopy(getText, 'copy this reply'));
     var held = (face.feedback || {})[String(ex)] || '';
     var up = iconButton(MSG_ICONS.like, 'row-rewind msg-fb', 'like',
@@ -2341,7 +2378,7 @@ import { node, svg, clip } from './core/dom.js';
       highlightMentions(body);
       el0.appendChild(body);
     }
-    el0.appendChild(assistantFooter(function () { return text; }, exchanges(), face.turn));
+    el0.appendChild(assistantFooter(function () { return text; }, exchanges(), face.turn, runBasesBefore(null)));
   }
 
   // The value a call actually names — the command, the path, the content.
@@ -3591,7 +3628,7 @@ import { node, svg, clip } from './core/dom.js';
           var answer = markdown(event.text);
           highlightMentions(answer);
           said.appendChild(answer);
-          said.appendChild(assistantFooter(function () { return event.text; }, exchanges(), event.turn));
+          said.appendChild(assistantFooter(function () { return event.text; }, exchanges(), event.turn, runBasesBefore(event)));
           row(said, event);
         }
         // The board's conversation records the designer's own words: the
@@ -15222,8 +15259,20 @@ import { node, svg, clip } from './core/dom.js';
       var body = node('div');
       body.appendChild(node('div', 'txt', claim.text));
       body.appendChild(node('div', 'quote', '\u201c' + (claim.sentence || '') + '\u201d'));
-      body.appendChild(node('div', 'src mono',
-        (claim.source || 'no source') + ' \u00b7 ' + (claim.kind || 'claim')));
+      var src = node('div', 'src mono',
+        (claim.source || 'no source') + ' \u00b7 ' + (claim.kind || 'claim'));
+      if (claim.source_open) {
+        // G16: the press is offered exactly where the server resolved the
+        // source through the pane's own file route (the containment the
+        // route enforces). A source that does not resolve stays text —
+        // no press that cannot open.
+        var open = node('button', 'dk-src-open', 'read the source');
+        open.type = 'button';
+        open.title = 'open ' + claim.source_open + ' in the read tab';
+        open.addEventListener('click', function () { openPath(claim.source_open); });
+        src.appendChild(open);
+      }
+      body.appendChild(src);
       row.appendChild(body);
       sec.appendChild(row);
     });

@@ -2295,9 +2295,21 @@ async fn serve_connection(
         // named.
         ("GET", path) if path.starts_with("/api/desk/") => {
             let slug = percent_decode(path.trim_start_matches("/api/desk/"));
-            match crate::desk::load(&bridge.home_path(), &slug) {
+            let home = bridge.home_path();
+            match crate::desk::load(&home, &slug) {
                 Ok(desk) => {
-                    write_reply(&mut stream, api(200, crate::desk::project_json(&desk))).await
+                    // G16: a claim's source is pressable exactly when the
+                    // pane's own file route could serve it — the brief's
+                    // resolution, the route's containment, no second rule.
+                    let open = |source: &str| {
+                        crate::desk::claim_source_path(&home, &desk, source)
+                            .and_then(|file| bridge.openable_path(&file))
+                    };
+                    write_reply(
+                        &mut stream,
+                        api(200, crate::desk::project_json_with_open(&desk, &open)),
+                    )
+                    .await
                 }
                 Err(message) => {
                     write_reply(&mut stream, api(404, json!({ "refused": [message] }))).await

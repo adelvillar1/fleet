@@ -1630,6 +1630,27 @@ fn source_text(home: &Path, desk: &DeskProject, source: &Source) -> Result<Optio
         .map_err(|error| format!("the source {} could not be read: {error}", path.display()))
 }
 
+/// The file a claim's `source` names, resolved the brief's own way —
+/// the same rule `source_text` reads by: a file source absolute as
+/// given or under the desk project, a URL capture under the desk
+/// project's sources. `None` when the brief names no such source, or
+/// names a fact (a fact's name is provenance, not a document).
+pub fn claim_source_path(home: &Path, desk: &DeskProject, source: &str) -> Option<PathBuf> {
+    let named = desk.sources.iter().find(|one| one.path == source)?;
+    match named.kind {
+        SourceKind::Fact => None,
+        SourceKind::Url => Some(desk_root(home).join(&named.path)),
+        SourceKind::File => {
+            let given = Path::new(&named.path);
+            if given.is_absolute() {
+                Some(given.to_path_buf())
+            } else {
+                Some(desk_root(home).join(&desk.slug).join(given))
+            }
+        }
+    }
+}
+
 /// The walk. `read_claims` says whether the claims stage should read (a
 /// resumed store with its claim set stands, and passes `false`). Every
 /// stage marks the store as it lands; a stage that fails marks refused
@@ -1835,6 +1856,19 @@ pub fn slug_for(name: &str) -> String {
 /// draft, every refusal named. The states are the store's, never
 /// derived twice.
 pub fn project_json(desk: &DeskProject) -> serde_json::Value {
+    project_json_with_open(desk, &|_| None)
+}
+
+/// The desk document with each claim's source resolved for the pane's
+/// file route (G16's read-the-source press): `open` answers the
+/// root-relative path the route would serve for a claim's `source`, or
+/// `None` where no press may render. The containment rule is the
+/// caller's — this only carries its answer, so the document and the
+/// route cannot disagree about what is openable.
+pub fn project_json_with_open(
+    desk: &DeskProject,
+    open: &dyn Fn(&str) -> Option<String>,
+) -> serde_json::Value {
     serde_json::json!({
         "slug": desk.slug,
         "name": desk.name,
@@ -1866,6 +1900,10 @@ pub fn project_json(desk: &DeskProject) -> serde_json::Value {
         "claims": desk.claims.iter().map(|claim| serde_json::json!({
             "text": claim.text,
             "source": claim.source,
+            // G16: the press's guard — a root-relative path when the
+            // source is servable through the pane's own route, null
+            // otherwise. The face draws the press on the Some only.
+            "source_open": open(&claim.source),
             "sentence": claim.sentence,
             "confidence": claim.confidence,
             "kind": match claim.kind {
@@ -1953,6 +1991,96 @@ mod tests {
             created: "2026-11-04T12:00:00Z".to_string(),
             updated: "2026-11-04T12:00:00Z".to_string(),
         }
+    }
+
+    /// G16: a claim's source resolves the brief's own rule, and only a
+    /// document is a document — a fact's name is provenance, not a press.
+    #[test]
+    fn a_claim_source_resolves_the_briefs_way_and_a_fact_is_not_a_document() {
+        let home = temp_home("claim-source");
+        let mut desk = sample();
+        desk.slug = "brief".to_string();
+        desk.sources = vec![
+            Source {
+                kind: SourceKind::File,
+                path: "sources/brief.md".to_string(),
+                url: None,
+                fetched_at: None,
+                title: None,
+            },
+            Source {
+                kind: SourceKind::Url,
+                path: "sources/page.txt".to_string(),
+                url: Some("https://example.com/page".to_string()),
+                fetched_at: None,
+                title: None,
+            },
+            Source {
+                kind: SourceKind::Fact,
+                path: "the-gate-is-local".to_string(),
+                url: None,
+                fetched_at: None,
+                title: None,
+            },
+        ];
+        // A relative file resolves under the desk project — the rule
+        // `source_text` reads by.
+        assert_eq!(
+            claim_source_path(&home, &desk, "sources/brief.md"),
+            Some(desk_root(&home).join("brief").join("sources/brief.md"))
+        );
+        // A URL capture resolves under the desk root's sources.
+        assert_eq!(
+            claim_source_path(&home, &desk, "sources/page.txt"),
+            Some(desk_root(&home).join("sources/page.txt"))
+        );
+        // A fact's name is not a document.
+        assert_eq!(claim_source_path(&home, &desk, "the-gate-is-local"), None);
+        // A source the brief does not name resolves to nothing.
+        assert_eq!(claim_source_path(&home, &desk, "sources/absent.md"), None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The press's field: the document carries the caller's resolution,
+    /// and the plain document (the tests' and any other reader's) carries
+    /// none — a claim never invents a press for itself.
+    #[test]
+    fn the_claim_document_carries_the_press_only_where_the_caller_resolves_it() {
+        let mut desk = sample();
+        desk.claims = vec![
+            Claim {
+                text: "the fold earns its keep".to_string(),
+                source: "sources/brief.md".to_string(),
+                sentence: "The fold earns its keep on every screen.".to_string(),
+                confidence: 0.91,
+                kind: ClaimKind::Claim,
+                verdict: ClaimVerdict::Asserted,
+            },
+            Claim {
+                text: "the labs measured ninety milliseconds".to_string(),
+                source: "sources/labs.txt".to_string(),
+                sentence: "The measured load sat at ninety milliseconds.".to_string(),
+                confidence: 0.6,
+                kind: ClaimKind::Claim,
+                verdict: ClaimVerdict::Contested,
+            },
+        ];
+        let emitted = project_json_with_open(&desk, &|source: &str| {
+            (source == "sources/brief.md").then(|| "docs/brief.md".to_string())
+        });
+        let claims = emitted
+            .get("claims")
+            .and_then(serde_json::Value::as_array)
+            .expect("claims are an array");
+        assert_eq!(claims[0]["source_open"], "docs/brief.md");
+        assert!(
+            claims[1]["source_open"].is_null(),
+            "an unresolved source carries no press: {}",
+            claims[1]
+        );
+        // The plain document agrees: no presses unless a caller asks.
+        let plain = project_json(&desk);
+        assert!(plain["claims"][0]["source_open"].is_null(), "{plain}");
     }
 
     #[test]

@@ -10343,6 +10343,27 @@ body[data-work="collapsed"] .room-back { display: grid; }
 }
 .dk-claim .src { margin-top: 6px; color: var(--dsw-alias-ink-tertiary); font-size: 12px; }
 
+/* G16: the read-the-source press — offered only where the source is
+   servable through the pane's own file route. Quiet, inline after the
+   provenance; the underline is the affordance, no second colour. */
+.dk-src-open {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 500 11.5px/1 var(--font-mono);
+  color: var(--dsw-alias-accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.dk-src-open:hover { color: var(--dsw-alias-accent); }
+.dk-src-open:focus-visible {
+  outline: 2px solid var(--dsw-alias-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* the outline, with the gap as a real hole */
 .dk-ol { display: grid; gap: 2px; }
 .dk-ol .olrow { display: flex; gap: 11px; padding: 7px 0; font-size: 13px; line-height: 1.5; }
@@ -12332,6 +12353,25 @@ section.board-card > .board-head {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 60%;
+}
+
+/* --- the reply's evidence chips (G13): the basis tally of the facts its
+   recall carried, in the corpus's own words. The tone rides the word
+   (U4's law): the strongest rungs read ok, inferred reads warn, and a
+   reply whose records carry no bases draws none. */
+.msg-basis {
+  align-self: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-ok) 32%, transparent);
+  font: 500 10.5px/1.5 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-ok);
+  white-space: nowrap;
+}
+.msg-basis[data-basis="inferred"] {
+  border-color: color-mix(in srgb, var(--dsw-alias-warn) 36%, transparent);
+  color: var(--dsw-alias-warn);
 }
 
 /* --- the board's needs-you lead (the gated mockup): the home's held

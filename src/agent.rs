@@ -914,6 +914,10 @@ pub enum UiEvent {
     Memory {
         shape: String,
         facts: usize,
+        /// The facts' own bases, parallel to the assembly's names (G13):
+        /// the face tallies them beside the reply. The TUI reads the
+        /// count alone; the words are for the browser's chips.
+        bases: Vec<String>,
         root: String,
     },
     /// The skills library at session start: how many loaded and which
@@ -2904,6 +2908,7 @@ impl<'a> Agent<'a> {
             self.record(&Record::Memory {
                 shape: String::new(),
                 facts: Vec::new(),
+                bases: Vec::new(),
                 design,
             })?;
             return Ok(Some(format!("{design_block}\n\n{desk_block}")));
@@ -2930,6 +2935,28 @@ impl<'a> Agent<'a> {
             .chain(assembly.recalled.iter().map(|hit| hit.fact.name.clone()))
             .chain(assembly.working.iter().map(|fact| fact.name.clone()))
             .collect();
+        // The bases ride parallel to the names (G13): the reply footer
+        // tallies them, so the chips say what the corpus's own ladder
+        // says about the facts this reply's recall surfaced — never a
+        // guessed rung. Same order as `facts`: protected, recalled,
+        // working.
+        let bases: Vec<String> = assembly
+            .protected
+            .iter()
+            .map(|hit| hit.fact.basis.label().to_string())
+            .chain(
+                assembly
+                    .recalled
+                    .iter()
+                    .map(|hit| hit.fact.basis.label().to_string()),
+            )
+            .chain(
+                assembly
+                    .working
+                    .iter()
+                    .map(|fact| fact.basis.label().to_string()),
+            )
+            .collect();
         if !block.is_empty() {
             // The hits do not fire here. KI-068: a hit means the model
             // saw the fact, and at assembly time no request has been
@@ -2955,6 +2982,7 @@ impl<'a> Agent<'a> {
         self.record(&Record::Memory {
             shape: shape.clone(),
             facts: facts.clone(),
+            bases: bases.clone(),
             design,
         })?;
         let named = if shape.is_empty() {
@@ -2980,6 +3008,7 @@ impl<'a> Agent<'a> {
         self.emit(UiEvent::Memory {
             shape,
             facts: facts.len(),
+            bases,
             root,
         });
         Ok(Some(full))
@@ -4987,6 +5016,28 @@ impl<'a> Agent<'a> {
             .chain(assembly.recalled.iter().map(|hit| hit.fact.name.clone()))
             .chain(assembly.working.iter().map(|fact| fact.name.clone()))
             .collect();
+        // The bases ride parallel to the names (G13): the reply footer
+        // tallies them, so the chips say what the corpus's own ladder
+        // says about the facts this reply's recall surfaced — never a
+        // guessed rung. Same order as `facts`: protected, recalled,
+        // working.
+        let bases: Vec<String> = assembly
+            .protected
+            .iter()
+            .map(|hit| hit.fact.basis.label().to_string())
+            .chain(
+                assembly
+                    .recalled
+                    .iter()
+                    .map(|hit| hit.fact.basis.label().to_string()),
+            )
+            .chain(
+                assembly
+                    .working
+                    .iter()
+                    .map(|fact| fact.basis.label().to_string()),
+            )
+            .collect();
         // KI-068's rule, one seam later: a hit means the model saw the
         // fact, so the curation's hits re-arm here and fire after the
         // next successful response. The take in `record_recall_hits`
@@ -5000,6 +5051,7 @@ impl<'a> Agent<'a> {
             turn: self.turns,
             shape: shape.clone(),
             facts: facts.clone(),
+            bases: bases.clone(),
             trigger: trigger.to_string(),
             focus_shape: focus_hint.unwrap_or_default().to_string(),
         })?;
@@ -5018,6 +5070,7 @@ impl<'a> Agent<'a> {
         self.emit(UiEvent::Memory {
             shape,
             facts: facts.len(),
+            bases,
             root: self
                 .memory
                 .as_ref()
@@ -15913,7 +15966,12 @@ You are auditing a change. Read the diff before you judge it.
             .iter()
             .find(|record| matches!(record, Record::Memory { .. }))
         {
-            Some(Record::Memory { shape, facts, .. }) => {
+            Some(Record::Memory {
+                shape,
+                facts,
+                bases,
+                ..
+            }) => {
                 assert_eq!(shape, "deploy");
                 assert_eq!(
                     facts,
@@ -15921,6 +15979,18 @@ You are auditing a change. Read the diff before you judge it.
                         "identity".to_string(),
                         "top".to_string(),
                         "bottom".to_string()
+                    ]
+                );
+                // The bases ride parallel to the names (G13) — the same
+                // order, the corpus's own words: the protected fact is
+                // confirmed-by and both recalled ones inferred, exactly
+                // as the fixture wrote them.
+                assert_eq!(
+                    bases,
+                    &vec![
+                        "confirmed-by".to_string(),
+                        "inferred".to_string(),
+                        "inferred".to_string()
                     ]
                 );
             }

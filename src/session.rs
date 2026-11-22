@@ -545,6 +545,13 @@ pub enum Record {
         /// Every fact name the block carried, in block order: the
         /// protected tier, then ranked recall, then working memory.
         facts: Vec<String>,
+        /// The facts' own bases, parallel to `facts` and in the same
+        /// order — the corpus's word per fact (confirmed-by, validated,
+        /// inferred). The reply footer tallies these (the evidence
+        /// chips, G13); a log written before the field carries none, and
+        /// a missing basis prints no chip rather than a guessed one.
+        #[serde(default)]
+        bases: Vec<String>,
         /// The bounded design section when the run's workspace project
         /// has boards (designs-are-project-knowledge K6): the digest
         /// account that rode the block, so the prompt stays
@@ -577,6 +584,11 @@ pub enum Record {
         shape: String,
         /// Every fact name the note carried, in note order.
         facts: Vec<String>,
+        /// The facts' own bases, parallel to `facts` (G13) — the same
+        /// corpus words the `memory` record carries, so a curated turn's
+        /// chips replay as the run's did.
+        #[serde(default)]
+        bases: Vec<String>,
         /// Which row of the composition decided the curation:
         /// `first-steer`, `judged`, or `cosine`. Absent (empty) on logs
         /// written before the curator-judgment plan landed.
@@ -2944,7 +2956,8 @@ mod tests {
 
     /// One `memory` record, as the agent writes it when a run's
     /// assembly produced a block: the shape the instruction routed
-    /// under and the fact names the block carried, in block order.
+    /// under, the fact names the block carried in block order, and the
+    /// basis each fact ranked at.
     fn memory_record() -> Record {
         Record::Memory {
             shape: "deploy".to_string(),
@@ -2952,6 +2965,11 @@ mod tests {
                 "identity".to_string(),
                 "fleet-the-gate-is-local".to_string(),
                 "working-note".to_string(),
+            ],
+            bases: vec![
+                "confirmed-by".to_string(),
+                "validated".to_string(),
+                "inferred".to_string(),
             ],
             design: None,
         }
@@ -3015,6 +3033,7 @@ mod tests {
             Record::Memory {
                 shape,
                 facts,
+                bases,
                 design,
             } => {
                 assert_eq!(shape, "deploy");
@@ -3024,6 +3043,15 @@ mod tests {
                         "identity".to_string(),
                         "fleet-the-gate-is-local".to_string(),
                         "working-note".to_string(),
+                    ]
+                );
+                // The bases replay parallel to the names (G13's chips).
+                assert_eq!(
+                    bases,
+                    &vec![
+                        "confirmed-by".to_string(),
+                        "validated".to_string(),
+                        "inferred".to_string(),
                     ]
                 );
                 assert_eq!(*design, None);

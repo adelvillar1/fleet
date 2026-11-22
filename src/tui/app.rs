@@ -1662,7 +1662,9 @@ impl App {
                     tokens_after,
                 }));
             }
-            UiEvent::Memory { shape, facts, root } => {
+            UiEvent::Memory {
+                shape, facts, root, ..
+            } => {
                 // What the run's assembled memory carried: the status bar
                 // shows the shape and the fact count, the live half of the
                 // `memory` record the log carries — and now the corpus
@@ -4484,6 +4486,7 @@ mod tests {
         app.apply_ui_event(UiEvent::Memory {
             shape: "deploy".to_string(),
             facts: 3,
+            bases: Vec::new(),
             root: String::new(),
         });
         assert_eq!(app.status.memory, Some(("deploy".to_string(), 3)));
@@ -4491,6 +4494,7 @@ mod tests {
         app.apply_ui_event(UiEvent::Memory {
             shape: String::new(),
             facts: 1,
+            bases: Vec::new(),
             root: String::new(),
         });
         assert_eq!(app.status.memory, Some((String::new(), 1)));
@@ -4965,6 +4969,7 @@ mod tests {
         app.apply_ui_event(UiEvent::Memory {
             shape: "change".to_string(),
             facts: 24,
+            bases: Vec::new(),
             root: String::new(),
         });
         assert_eq!(app.run.facts, 24);

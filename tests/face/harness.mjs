@@ -4812,9 +4812,13 @@ async function theTurnControlsGradeForkAndHook() {
   page.open();
   await flush();
 
-  // The log's shape for one turn: the boundary, the routing decision,
-  // then the reply — the route line reads the turn's own routed record,
-  // so the fixture carries the records the real log writes.
+  // The log's shape for one turn: the run's assembly (announced before
+  // the run's first turn, with each fact's basis beside its count), the
+  // boundary, the routing decision, then the reply — the route line reads
+  // the turn's own routed record and the basis chips read the assembly,
+  // both from the walk the rail already makes.
+  page.push({ type: 'memory', shape: 'deploy', facts: 4,
+    bases: ['confirmed-by', 'confirmed-by', 'inferred', 'inferred'] });
   page.push({ type: 'turn', turn: 1 });
   page.push({ type: 'routed', provider: 'acme', model: 'm', how: 'judged' });
   page.push({ type: 'message', role: 'owner', text: 'grade me' });
@@ -4847,6 +4851,23 @@ async function theTurnControlsGradeForkAndHook() {
     routeLine ? routeLine.textContent : 'no line — debug=' +
       (footers[0] ? footers[0].dataset.routeDebug : 'no footer'));
 
+  // G13: the evidence chips — the assembly's basis tally in the corpus's
+  // own words, strongest rung first, the word on every chip.
+  const chips = footers[0] && footers[0].querySelectorAll('.msg-basis');
+  check('G13 the reply footer tallies the recall bases in the corpus\u2019s words',
+    chips && chips.length === 2 &&
+      chips[0].textContent.trim() === '2 confirmed-by' &&
+      chips[0].dataset.basis === 'confirmed-by' &&
+      chips[1].textContent.trim() === '2 inferred' &&
+      chips[1].dataset.basis === 'inferred',
+    chips ? chips.map((one) => one.textContent.trim()).join(' | ') : 'no chips');
+  check('G13 the inferred rung reads warn and the strongest reads ok',
+    flat(CSS).includes('.msg-basis {') &&
+      flat(CSS).includes('.msg-basis[data-basis="inferred"]') &&
+      flat(CSS).includes('--dsw-alias-warn') &&
+      flat(CSS).includes('--dsw-alias-ok'),
+    'css');
+
   page.push({ type: 'turn', turn: 2 });
   page.push({ type: 'message', role: 'owner', text: 'again, with no reroute' });
   page.push({ type: 'message', role: 'assistant', text: 'the second answer', turn: 2 });
@@ -4855,6 +4876,18 @@ async function theTurnControlsGradeForkAndHook() {
   check('turn a turn with no routed record carries no route line',
     secondFooter && secondFooter.querySelectorAll('.msg-route').length === 0,
     secondFooter ? String(secondFooter.querySelectorAll('.msg-route').length) : 'no footer');
+
+  // A log written before the field existed carries a memory event with
+  // no bases; its reply draws no chip rather than an invented rung.
+  page.push({ type: 'turn', turn: 3 });
+  page.push({ type: 'memory', shape: '', facts: 2 });
+  page.push({ type: 'message', role: 'owner', text: 'an older entry' });
+  page.push({ type: 'message', role: 'assistant', text: 'the third answer', turn: 3 });
+  await flush(40);
+  const thirdFooter = page.rows('.assistant .msg-tools')[2];
+  check('G13 a reply whose assembly carries no bases draws no chip',
+    thirdFooter && thirdFooter.querySelectorAll('.msg-basis').length === 0,
+    thirdFooter ? String(thirdFooter.querySelectorAll('.msg-basis').length) : 'no footer');
 
   // The seeded verdict rehydrates: the like button reads as pressed
   // from the state document, not from the click that never happened.
@@ -15490,6 +15523,10 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
     ],
     claims: [
       { text: 'the fold earns its keep on every screen', source: 'sources/brief.md',
+        // G16: the server resolved this source through the pane's own
+        // file route (root-relative), so the row carries its press; the
+        // second claim's source does not resolve and stays text.
+        source_open: 'docs/brief.md',
         sentence: 'The fold earns its keep on every screen the owner opens.',
         confidence: 0.91, kind: 'claim', verdict: 'asserted' },
       { text: 'the labs measured ninety milliseconds', source: 'sources/labs.txt',
@@ -15644,6 +15681,23 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
         && detail.includes('p 0.91') && detail.includes('contested'), 'no claim card');
     check('DESK the review names the kind each claim was read as (C9)',
       detail.includes('sources/brief.md \u00b7 claim'), 'no kind line');
+
+    // G16: the read-the-source press rides exactly the claim whose source
+    // the server resolved through the pane's file route — the second
+    // claim's source does not resolve and stays text. The press opens the
+    // file the way every file opens: the pane's own route.
+    const srcPresses = page.rows('.dk-claim .dk-src-open');
+    check('G16 the source press rides only the source the server resolved',
+      srcPresses.length === 1 && srcPresses[0].textContent === 'read the source' &&
+        srcPresses[0].title.includes('docs/brief.md'),
+      srcPresses.length + ' presses');
+    const beforePress = page.calls.length;
+    if (srcPresses[0]) srcPresses[0].click();
+    await flush(40);
+    check('G16 the press opens the source through the pane\u2019s file route',
+      page.calls.slice(beforePress).some((one) =>
+        one.url.indexOf('/api/file?path=' + encodeURIComponent('docs/brief.md')) === 0),
+      JSON.stringify(page.calls.slice(beforePress).map((one) => one.url)));
 
     // The gate: what stands, in the store's words, with the way to close it.
     check('DESK the gate says one refusal stands',
