@@ -5986,9 +5986,36 @@ impl VersionPages {
             while !stop_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        let mut request = [0u8; 2048];
-                        let read = stream.read(&mut request).unwrap_or(0);
-                        let line = String::from_utf8_lossy(&request[..read]);
+                        // The listener is nonblocking, and a socket accepted
+                        // from it inherits that on macOS — a read could
+                        // return WouldBlock before the client's head arrived
+                        // and the path parsed empty. Block this connection
+                        // (with a timeout so a silent client cannot wedge
+                        // the loop), then read through the END of the
+                        // headers: a split head parsed as an empty path
+                        // answered 404 (KI-589/KI-590), and stopping at the
+                        // request line left the rest unread, so the close
+                        // became a reset the browser reported.
+                        let _ = stream.set_nonblocking(false);
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+                        let mut head = Vec::new();
+                        let mut chunk = [0u8; 512];
+                        loop {
+                            match stream.read(&mut chunk) {
+                                Ok(0) => break,
+                                Ok(read) => {
+                                    head.extend_from_slice(&chunk[..read]);
+                                    if head.windows(4).any(|window| window == b"\r\n\r\n") {
+                                        break;
+                                    }
+                                    if head.len() >= 4096 {
+                                        break;
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        let line = String::from_utf8_lossy(&head);
                         let path = line
                             .split_whitespace()
                             .nth(1)
@@ -6773,6 +6800,31 @@ mod tests {
         assert!(good.ends_with(DESIGN_PAGE_ONE), "{good}");
         let missing = read(format!("/api/design/version/{slug}/{frame_id}/v-nope"));
         assert!(missing.starts_with("HTTP/1.1 404 Not Found"), "{missing}");
+
+        // A request head split across writes — what a loaded kernel or a
+        // chunked client does — must still parse. The one-read version
+        // answered 404 with an empty body, which is the load-sensitive
+        // failure the eval corpus and the improve race both caught
+        // (KI-589 / KI-590): a real browser's capture could land on the
+        // bad side of that split.
+        {
+            use std::io::{Read, Write};
+            let mut stream = std::net::TcpStream::connect(("127.0.0.1", pages.port)).unwrap();
+            stream.write_all(b"GET /api/desi").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            stream
+                .write_all(
+                    format!(
+                        "gn/version/{slug}/{frame_id}/{version_id} HTTP/1.1\r\n\
+                         Host: 127.0.0.1\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            let mut text = String::new();
+            let _ = stream.read_to_string(&mut text);
+            assert!(text.starts_with("HTTP/1.1 200 OK"), "split head: {text}");
+        }
 
         drop(pages);
         std::fs::remove_dir_all(&home).ok();
