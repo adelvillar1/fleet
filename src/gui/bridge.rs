@@ -6505,6 +6505,37 @@ impl Bridge {
             .map_err(|error| format!("the fork could not be scheduled: {error}"))?
     }
 
+    /// Fork a conversation at a turn of its current run: a new session
+    /// whose log is the source's records through that turn. The source is
+    /// left whole — the cut is the new file's own — and the face opens the
+    /// fork when the reply lands. Refused by name while a run is in flight
+    /// (the log is live) and for a turn the run does not hold.
+    pub async fn fork_turn(&self, session: &str, turn: u64) -> Result<Value, String> {
+        let session = if session.is_empty() {
+            self.launch()
+        } else {
+            session.to_string()
+        };
+        if session.is_empty() {
+            return Err("there is no conversation to fork yet".to_string());
+        }
+        {
+            let state = lock(&self.state);
+            if state
+                .attached_if(&session)
+                .map(|attached| attached.running)
+                .unwrap_or(false)
+            {
+                return Err("a run is in flight; let it finish before forking".to_string());
+            }
+        }
+        let home = self.home.clone();
+        let model = self.model.clone();
+        tokio::task::spawn_blocking(move || fork_at_turn(&home, &session, turn, &model))
+            .await
+            .map_err(|error| format!("the fork could not be scheduled: {error}"))?
+    }
+
     /// One control into the run in flight, its body written verbatim:
     /// a fold, a pin, a pause, a resume, or a steer. The guards are the
     /// stop's own — the run must be in flight, and the driving session
@@ -7955,6 +7986,72 @@ fn fork_at(
             }
         }
     }
+    fork_copy(home, source, &records, cut, model)
+}
+
+/// Fork at a turn (the face rethink's P1): the records through the Nth
+/// model call of the CURRENT run. A turn is one model call and its
+/// tool calls, so the cut is the record after the turn's own assistant
+/// record and everything it went on to do — the next assistant record is
+/// the next turn's first, and the fork stops before it.
+///
+/// The face's turn counter restarts when a session is resumed, so the
+/// count starts after the log's last `Resume` record. A turn the run does
+/// not hold — the log's turns start at 1, and a number past the last one
+/// names nothing — is refused by name rather than cutting somewhere
+/// plausible.
+fn fork_at_turn(
+    home: &std::path::Path,
+    source: &str,
+    turn: u64,
+    model: &str,
+) -> Result<Value, String> {
+    if turn == 0 {
+        return Err(
+            "a conversation's turns start at 1, so there is no turn 0 to fork at".to_string(),
+        );
+    }
+    let source_path = session::session_path(home, source);
+    if !source_path.exists() {
+        return Err(format!("there is no conversation `{source}` to fork"));
+    }
+    let records = session::replay(&source_path)
+        .map_err(|error| format!("the source log could not be read: {error}"))?;
+    let run_from = records
+        .iter()
+        .rposition(|record| matches!(record, session::Record::Resume { .. }))
+        .map(|at| at + 1)
+        .unwrap_or(0);
+    let mut seen = 0u64;
+    let mut cut = records.len();
+    for (index, record) in records.iter().enumerate().skip(run_from) {
+        if matches!(record, session::Record::Assistant { .. }) {
+            seen += 1;
+            if seen == turn + 1 {
+                cut = index;
+                break;
+            }
+        }
+    }
+    if seen < turn {
+        return Err(format!(
+            "this conversation's log holds no turn {turn} to fork at — its run has {seen}"
+        ));
+    }
+    fork_copy(home, source, &records, cut, model)
+}
+
+/// The copy both forks share: a fresh session whose log is `records[..cut]`
+/// (the source's own start line replaced by the fork's, which carries the
+/// lineage), with the conversation's furniture — folder, goal, title —
+/// copied beside the source's, never moved.
+fn fork_copy(
+    home: &std::path::Path,
+    source: &str,
+    records: &[session::Record],
+    cut: usize,
+    model: &str,
+) -> Result<Value, String> {
     let model = match records.first() {
         Some(session::Record::Start { model, .. }) => model.as_str(),
         _ => model,
@@ -17407,6 +17504,114 @@ mod goal_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_fork_at_a_turn_copies_the_logs_own_prefix() {
+        // P1's fork-at-turn AC: a fork from turn N produces a new session
+        // whose records equal the source's first N turns' records — a
+        // prefix of the log, never a rewrite of it. The turn counter is
+        // the face's own, so it restarts at the log's last `resume`; a
+        // turn the run does not hold is refused by name.
+        let home = std::env::temp_dir().join(format!("fleet-fork-turn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut source = crate::session::Session::create(&home, "test-model").unwrap();
+        let id = source.id().to_string();
+        let assistant = |text: &str| crate::session::Record::Assistant {
+            content: Some(text.to_string()),
+            tool_calls: Vec::new(),
+            persona: None,
+        };
+        // Run one: one ask, two turns.
+        source
+            .record(&crate::session::Record::User {
+                content: "the first ask".into(),
+            })
+            .unwrap();
+        source.record(&assistant("the first reply")).unwrap();
+        source.record(&assistant("the second reply")).unwrap();
+        source
+            .record(&crate::session::Record::End {
+                stop_reason: "completed".into(),
+                turns: 2,
+                served_model: None,
+            })
+            .unwrap();
+        // The owner continues: the resume is the boundary the turn counter
+        // restarts at.
+        source
+            .record(&crate::session::Record::Resume {
+                at: "2026-11-21T00:00:00Z".into(),
+            })
+            .unwrap();
+        source
+            .record(&crate::session::Record::User {
+                content: "the third ask".into(),
+            })
+            .unwrap();
+        source.record(&assistant("the third reply")).unwrap();
+        source.record(&assistant("the fourth reply")).unwrap();
+        drop(source);
+        let source_path = crate::session::session_path(&home, &id);
+        let all = crate::session::replay(&source_path).expect("the source log");
+        assert_eq!(all.len(), 9, "{all:?}");
+
+        // Turn 1 of the current run: the third ask and the third reply,
+        // and nothing from the run before the resume.
+        let forked = fork_at_turn(&home, &id, 1, "test-model").expect("the fork");
+        let new_id = forked["id"].as_str().expect("an id").to_string();
+        let got = crate::session::replay(&crate::session::session_path(&home, &new_id))
+            .expect("the fork's log");
+        // The fork's own start line stands in for the source's; every
+        // record after it is the source's, in order, to the cut.
+        let mut expected = vec![String::from("start")];
+        for record in &all[1..8] {
+            expected.push(serde_json::to_string(record).expect("a record"));
+        }
+        let mut seen = vec![String::from("start")];
+        for record in &got[1..] {
+            seen.push(serde_json::to_string(record).expect("a record"));
+        }
+        assert_eq!(seen, expected, "the fork is the source's own prefix");
+        let first_line = std::fs::read_to_string(crate::session::session_path(&home, &new_id))
+            .expect("the fork's log")
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            first_line.contains(&format!("\"forked_from\":\"{id}\"")),
+            "{first_line}"
+        );
+        // The source is whole: nine records, the last two still there.
+        assert_eq!(
+            crate::session::replay(&source_path)
+                .expect("the source")
+                .len(),
+            9
+        );
+
+        // Turn 2 is the run's last: the whole log copies.
+        let full = fork_at_turn(&home, &id, 2, "test-model").expect("the full fork");
+        let full_id = full["id"].as_str().expect("an id").to_string();
+        assert_eq!(
+            crate::session::replay(&crate::session::session_path(&home, &full_id))
+                .expect("the full fork's log")
+                .len(),
+            9
+        );
+
+        // The refusals name themselves: turn 0 and a turn the run does not
+        // hold both say so rather than cutting somewhere plausible.
+        let zero = fork_at_turn(&home, &id, 0, "test-model").expect_err("turn 0 refuses");
+        assert!(zero.contains("turns start at 1"), "{zero}");
+        let past = fork_at_turn(&home, &id, 9, "test-model").expect_err("turn 9 refuses");
+        assert!(past.contains("no turn 9"), "{past}");
+        let missing =
+            fork_at_turn(&home, "nope-not-real", 1, "test-model").expect_err("a missing log");
+        assert!(missing.contains("no conversation"), "{missing}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn row_json_shapes_the_calibration_lens_ops() {
         // The sinkhole audit (2026-11-14): the seven ops the lens gained

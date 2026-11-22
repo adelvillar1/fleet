@@ -354,12 +354,18 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   past tense; a fork opens a new
   conversation carrying this point's history with the source left
   whole; a hook seeds a scheduled job from the ask the turn answered,
-  and the owner arms it in the drawer before anything is written. The
-  composer's foot carries the run's two beside-verbs as icons beside
-  paste, attach and plan: the **steering wheel** fills the composer with
-  `/steer` and the **bifurcation** with `/btw` — the owner types the
-  instruction, and the slash parser, the only parser, takes it from
-  there. The icon buttons carry the face's own hover tooltip — instant
+  and the owner arms it in the drawer before anything is written. Every
+  turn mark carries its own **fork** as well: the new conversation is
+  seeded from the log through that turn — the records are copied, never
+  moved, so the source keeps every row — and the turn is counted from the
+  log's last `resume`, which is where the face's own turn counter
+  restarts. A turn the log does not hold and a fork while a run is in
+  flight are both refused by name (the affordance is hidden until the run
+  ends, because the log is live while it writes). The composer's foot is
+  the one field, the two icon doors and `send`; the old beside-verbs
+  (steer, btw, paste, dictate, add-bot, plan, dispatch) are `/` commands
+  now, each named in the type-ahead with its sentence. The icon buttons
+  that remain carry the face's own hover tooltip — instant
   and themed, the words in `data-tip`, the accessible name in
   `aria-label` — where the native title needed a long hover and
   rendered browser-default. A send beside driving work queues above the

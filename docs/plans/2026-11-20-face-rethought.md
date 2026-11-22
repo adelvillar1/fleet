@@ -210,6 +210,36 @@ paste`. Eight existing cases were rewritten to drive the commands instead
 of the ids they used to press (the VERBS case flipped whole, from icons to
 commands). Harness 1672 checks across 235 cases.
 
+**P1, fork-at-turn: built on the log's own turn boundary.** A turn is one
+model call, so the cut is the record where the *next* model call's
+assistant record begins: everything through the turn, and nothing of the
+turn after it. The face's turn counter restarts when a conversation is
+resumed, so the count starts after the log's last `Resume` record — the
+press, the log and the new conversation name the same turn. `fork_at_turn`
+shares the copy path with the reply's exchange fork (`fork_copy`), so the
+lineage line, the furniture (folder, goal, title) and the "source left
+whole" rule cannot drift between the two doors. The route takes `{turn}`
+beside `{exchange}`; a body with neither is a 400, not a guess.
+
+Refusals are by name: turn 0 ("a conversation's turns start at 1"), a turn
+past the run's last ("holds no turn 9 to fork at — its run has 2"), a
+missing log, and a run in flight (the bridge's existing guard). The face
+hides the `⋔` while the run is live — the log is being written — and
+unhides it at the run's end with the rewind's own sweep.
+
+Coverage: the unit test `a_fork_at_a_turn_copies_the_logs_own_prefix`
+builds a two-run log and asserts the fork's records are the source's own
+prefix (the fork's start line aside), that turn 2 copies the whole log,
+that the source is still nine records, and all three refusals. The harness
+case `P1 fork a turn mark forks at its own turn` drives the press from the
+mark and asserts the body carries `{turn:1}` with the session, that the
+fork opens, and that a 409's words land as a notice without moving the
+view. Red-proved twice: cutting at the turn's own assistant record (instead
+of the next one) failed the unit test with the fork one record short of its
+answer, and dropping the turn from the post failed
+`the press names the turn and the session — /api/session/fork?session=fork-1 {}`.
+Harness 1678 checks across 236 cases.
+
 **P1, the door: measured, then covered.** The door already existed
 (`paintOnboard` → `#onboard-door`, the landing token `data-onboard="door"`), so
 the work was the case the plan asked for, not a screen. It now asserts:

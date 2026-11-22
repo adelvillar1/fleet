@@ -1625,19 +1625,28 @@ async fn serve_connection(
             }
         }
         // A fork: a new conversation whose log is this one's records
-        // through the exchange's reply. The source is left whole — the
-        // cut is the new file's own — and the face opens the fork.
+        // through the exchange's reply (the reply's own fork) or through
+        // a turn of the current run (a turn mark's fork). The source is
+        // left whole — the cut is the new file's own — and the face opens
+        // the fork.
         ("POST", "/api/session/fork") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
-            let exchange = match exchange_of(&body) {
-                Ok(exchange) => exchange,
+            let turn = match fork_turn_of(&body) {
+                Ok(turn) => turn,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
             let session = asked_session(bridge, &request);
-            match bridge.fork(&session, exchange).await {
+            let forked = match turn {
+                Some(turn) => bridge.fork_turn(&session, turn).await,
+                None => match exchange_of(&body) {
+                    Ok(exchange) => bridge.fork(&session, exchange).await,
+                    Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+                },
+            };
+            match forked {
                 Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
@@ -3292,6 +3301,23 @@ fn exchange_of(body: &str) -> Result<u64, String> {
         .ok_or_else(|| "a fork's body is a JSON object with an exchange number".to_string())
 }
 
+/// The turn a fork names, when it names one (the face rethink's P1): the
+/// reply's own fork sends `exchange`, a turn mark's sends `turn`. A body
+/// with neither is refused by name rather than guessed at. Named apart
+/// from `turn_of` because a rewind's body carries the same key with a
+/// different contract (a turn is required there).
+fn fork_turn_of(body: &str) -> Result<Option<u64>, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the fork's body: {e}"))?;
+    match parsed.get("turn") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| "a fork's turn is a whole number".to_string()),
+    }
+}
+
 /// The decision an approval's body carries, in the seat's four words.
 fn decision_of(body: &str) -> Result<String, String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
@@ -3703,7 +3729,11 @@ pub(crate) fn bot_worker() -> Reply {
             ("Service-Worker-Allowed".to_string(), "/".to_string()),
             ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
         ],
-        body: BOT_WORKER.to_string(),
+        // The build stamp, the console worker's own rule: the worker's
+        // cache name and its precache URLs are the build's, not the
+        // registration URL's — registering without ?v= used to yield the
+        // literal `fleet-bot-` (KI-588).
+        body: BOT_WORKER.replace("__FLEET_ASSET_HASH__", ASSET_HASH),
     }
 }
 

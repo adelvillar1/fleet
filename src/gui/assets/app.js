@@ -1928,6 +1928,26 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
+  // The fork at a turn (P1): the same copy, cut at the log's own turn
+  // boundary. The turn is the run's counter, which is what the server
+  // counts from the log's last resume — so the press, the log and the new
+  // conversation all name the same turn.
+  function forkTurn(turn) {
+    var path = '/api/session/fork' +
+      (face.session ? '?session=' + encodeURIComponent(face.session) : '');
+    post(path, { turn: turn }).then(function (reply) {
+      if (reply.status !== 200 || !reply.body || !reply.body.id) {
+        notice('the fork did not land',
+          (reply.body && reply.body.error) || 'the server refused it');
+        return;
+      }
+      notice('forked', 'the new conversation carries the log through that turn');
+      openWork(reply.body.id);
+    }).catch(function () {
+      notice('the fork did not land', 'the server did not answer');
+    });
+  }
+
   // The hook as fleet can honestly arm it: a scheduled job seeded from
   // this turn. A job sees its task and nothing else, so the task is
   // the ask itself and the owner edits before arming — the write is
@@ -2118,6 +2138,21 @@ import { node, svg, clip } from './core/dom.js';
       rewind.dataset.live = 'true';
     }
     el0.appendChild(rewind);
+    // The turn's fork (P1): a new conversation seeded from the log through
+    // this turn — a copy of records, never a mutation, so the source keeps
+    // every row. Refused while a run is live (the log is still being
+    // written) and for a turn the log does not hold; both refusals say so
+    // by name. Like the rewind, the affordance waits for the run's end
+    // rather than inviting a press that cannot land.
+    var fork = node('button', 'row-rewind turn-fork', '\u22d4 fork');
+    fork.type = 'button';
+    fork.title = 'fork a new conversation from this turn \u2014 the log through it is copied, never moved';
+    fork.addEventListener('click', function () { forkTurn(event.turn); });
+    if (face.running) {
+      fork.hidden = true;
+      fork.dataset.live = 'true';
+    }
+    el0.appendChild(fork);
     return row(el0, event);
   }
 

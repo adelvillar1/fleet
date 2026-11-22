@@ -599,6 +599,12 @@ function boot(options) {
       });
     }
     if (pathOnly === '/api/session/fork') {
+      // A case can stage the answer — the new session's id, or the
+      // bridge's refusal (a turn the log does not hold, a run in flight).
+      const given = documents.fork;
+      if (given) {
+        return Promise.resolve({ status: given.status || 200, json: () => Promise.resolve(given.body || {}) });
+      }
       return Promise.resolve({
         status: 200,
         json: () => Promise.resolve({ type: 'fork', id: 'fork-from-fb', forked_from: 'fb-1' }),
@@ -832,6 +838,8 @@ function boot(options) {
     if (pathOnly === '/api/session/new') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'session', id: opts.newId || 'new-session-1', created: true }) });
     }
+    // The fork's own route (P1) is answered above, where the feedback
+    // fixtures live: it reads `documents.fork` when a case stages one.
     if (pathOnly === '/api/run') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'run', accepted: true }) });
     }
@@ -18659,6 +18667,87 @@ async function theComposerIsOneFieldAndThreeControls() {
     JSON.stringify(page.calls.slice(before).map((one) => one.url)));
 }
 
+// P1, fork-at-turn: every turn mark carries its own ⋔, and the press asks
+// the server for a fork AT THAT TURN — a new session seeded from the log
+// through it, never a rewrite of the source. The affordance waits for the
+// run to end (the log is live while it runs), and a refusal is the
+// server's own words, shown by name rather than swallowed.
+async function theTurnMarkForksAtItsOwnTurn() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('fork-1', 'completed', { title: 'a conversation to fork' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/fork-1', documents: doc });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'turn', turn: 1 });
+  page.push({ type: 'message', role: 'assistant', text: 'the first turn' });
+  await flush(40);
+  const live = page.rows('.turn-fork')[0];
+  check('P1 fork the mark hides its fork while the run is live',
+    !!live && live.hidden === true, 'hidden=' + (live || {}).hidden);
+  page.push({ type: 'turn', turn: 2 });
+  page.push({ type: 'message', role: 'assistant', text: 'the second turn' });
+  page.push({ type: 'finished', stop_reason: 'completed' });
+  await flush(80);
+  const forks = page.rows('.turn-fork');
+  check('P1 fork every turn mark carries its own fork', forks.length === 2,
+    String(forks.length));
+  check('P1 fork the run\u2019s end unhides the affordance',
+    forks.length === 2 && forks.every((one) => one.hidden === false),
+    forks.map((one) => one.hidden).join(','));
+  forks[0].click();
+  await flush(80);
+  const posted = page.calls.filter((one) => one.url.startsWith('/api/session/fork') && one.method === 'POST');
+  check('P1 fork the press names the turn and the session',
+    posted.length === 1 && JSON.parse(posted[0].body).turn === 1 &&
+      posted[0].url.includes('session=fork-1'),
+    posted.length ? posted[0].url + ' ' + posted[0].body : 'no post');
+  check('P1 fork the fork opens as the conversation',
+    page.window.location.hash === '#/sessions/fork-from-fb', page.window.location.hash);
+
+  // A refused fork says why, in the server's own words: a turn the log
+  // does not hold is never cut somewhere plausible.
+  const refused = boot({
+    width: 1440, hash: '#/sessions/fork-2',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('fork-2', 'completed', { title: 'a conversation to fork' })],
+      },
+      state: (asked) => ({
+        ...emptyState(asked), session: asked,
+        events: [{ type: 'message', role: 'owner', text: 'the ask' }],
+      }),
+      fork: {
+        status: 409,
+        body: { error: 'this conversation\u2019s log holds no turn 7 to fork at \u2014 its run has 2' },
+      },
+    },
+  });
+  await flush();
+  refused.open();
+  await flush();
+  refused.push({ type: 'turn', turn: 1 });
+  refused.push({ type: 'message', role: 'assistant', text: 'the only turn' });
+  refused.push({ type: 'finished', stop_reason: 'completed' });
+  await flush(80);
+  const only = refused.rows('.turn-fork')[0];
+  if (only) only.click();
+  await flush(80);
+  const notices = refused.rows('.card-row').filter((one) => one.dataset.kind === 'notice');
+  check('P1 fork a refusal names the reason and moves nothing',
+    notices.some((one) => /no turn 7/.test(one.textContent)) &&
+      refused.window.location.hash === '#/sessions/fork-2',
+    refused.window.location.hash + ' :: ' + notices.map((one) => one.textContent).join(' | ').slice(0, 160));
+}
+
 const cases = [
   ['DEAD every visible button on every lens does something',
     everyButtonOnEveryLensDoesSomething],
@@ -18920,6 +19009,7 @@ const cases = [
   ['U13 the drawer waits for the owner on desk and learning', theDrawerWaitsForTheOwnerOnDeskAndLearning],
   ['P1 gutter the rail counts each turn\u2019s receipts from the log', theGutterCountsEachTurnsReceipts],
   ['P1 composer one field and three controls at most', theComposerIsOneFieldAndThreeControls],
+  ['P1 fork a turn mark forks at its own turn', theTurnMarkForksAtItsOwnTurn],
 ];
 
 process.on('unhandledRejection', (reason) => console.error('UNHANDLED:', reason && reason.stack || reason));
