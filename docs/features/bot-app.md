@@ -125,7 +125,9 @@ The scope is the point: a client under `/bot/` is matched by the longest
 registered scope, so the console's `/sw.js` (scope `/`) can never control
 the bot app, and a phone with both apps installed sees the bot's own
 retry page — *"the run keeps going without you"* — offline, never the
-console's. Measured 2026-11-21 at 390x844 with both workers registered on
+console's. The face's root (`/`) stays what it was: the pairing entry,
+deliberately outside the worker's scope — the installed app's `start_url`
+is `/bot/`, and that is the page the worker owns. Measured 2026-11-21 at 390x844 with both workers registered on
 one origin: bot page controlled by `/bot/bot-sw.js?v=<hash>`, caches
 `fleet-bot-<hash>` (2 entries at install); offline, the bot's page is the
 bot's, the console's is the console's; a hash bump reloads clean
