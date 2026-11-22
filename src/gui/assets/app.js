@@ -13933,6 +13933,20 @@ import { node, svg, clip } from './core/dom.js';
     else if (cov && cov.material_gap) flag.appendChild(dkPill('material gap', 'warn'));
     else if (!desk.project) flag.appendChild(dkPill('bind a project', ''));
     wrap.appendChild(flag);
+    // The refuse-to-end gate, on the card where the work is (the gated
+    // mockup): while a claim is unsourced or a refusal stands, the desk's
+    // own rule says the work is not done — the line is the desk's counts
+    // saying so, not a decoration.
+    var counts = deskCounts(desk);
+    var held = counts.unsourced > 0 || (desk.refusals || []).length > 0 ||
+      (desk.number_refusals || []).length > 0;
+    if (held) {
+      var gate = node('span', 'dk-gate');
+      gate.appendChild(node('span', 'g-mark', '\u2691'));
+      gate.appendChild(node('span', 'g-text',
+        'the refuse-to-end gate holds \u2014 the work is not done while a claim is unsourced'));
+      wrap.appendChild(gate);
+    }
     return wrap;
   }
 
@@ -14762,15 +14776,20 @@ import { node, svg, clip } from './core/dom.js';
     // work is, not only in the detail view.
     var stages = desk.stages || [];
     if (stages.length) {
+      // The track carries its stage NAMES under the beads (the gated
+      // mockup): a numbered bead alone asks the owner to hover for what
+      // the stage is, and the names are the document's own.
       var track = node('div', 'dk-track');
       stages.forEach(function (entry, index) {
         var mark = entry.state === 'done' ? 'done' : entry.state === 'running' ? 'run'
           : entry.state === 'refused' ? 'refused' : 'pending';
+        var cell = node('span', 'dk-stage');
         var bead = node('span', 'dk-tb ' + mark, mark === 'done' ? '\u2713'
           : mark === 'refused' ? '!' : String(index + 1));
         bead.title = entry.stage + ' \u00b7 ' + mark;
-        track.appendChild(bead);
-        if (index < stages.length - 1) track.appendChild(node('span', 'dk-tl'));
+        cell.appendChild(bead);
+        cell.appendChild(node('span', 'dk-stage-name', entry.stage || ('stage ' + (index + 1))));
+        track.appendChild(cell);
       });
       card.appendChild(track);
     }

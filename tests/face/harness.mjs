@@ -6531,6 +6531,27 @@ async function theDeskOrganisesByProjectAndThread() {
   check('PWS the project lists its deliverable',
     kid.length === 1 && /landing page/.test(kid[0].textContent),
     kid.map((k) => k.textContent).join('|'));
+
+  // Pass 3 (the gated mockup): the shelf's deliverable card carries the
+  // stage NAMES under the beads - a numbered bead alone asks the owner to
+  // hover for what the stage is - and the refuse-to-end gate stands on
+  // the card while a number is unsourced, in the desk's own words. The
+  // shelf paints after its own reads, so the pins wait for it.
+  await flush(300);
+  const stageNames = page.rows('.dk-stage-name').map((one) => one.textContent);
+  check('PWS the stage track carries the stage names in order',
+    stageNames.join('|') === 'claims|outline|render|review|knowledge',
+    stageNames.join('|'));
+  const refusedBead = page.rows('.dk-tb.refused');
+  check('PWS the refused stage\u2019s bead reads as refused',
+    refusedBead.length === 1 && refusedBead[0].textContent === '!',
+    refusedBead.map((b) => b.textContent).join('|'));
+  const gateLine = page.rows('.dk-gate .g-text');
+  check('PWS the refuse-to-end gate stands on the card',
+    gateLine.length === 1 &&
+      gateLine[0].textContent.includes('the work is not done while a claim is unsourced'),
+    gateLine.map((g) => g.textContent).join('|'));
+
   kid[0].click();
   await flush(120);
   check('PWS the deliverable opens its work',
