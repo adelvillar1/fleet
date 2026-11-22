@@ -5311,12 +5311,21 @@ import { node, svg, clip } from './core/dom.js';
   var LANDING_LOOK = 'fleet-landing-look';
 
   function landingLook() {
+    // The board's own rule: read once per page load, so a repaint cannot
+    // compare the rows against a stamp the first paint wrote.
+    if (face.landingLookAt != null) return face.landingLookAt;
     try {
-      return Number(window.localStorage.getItem(LANDING_LOOK)) || 0;
-    } catch (error) { return 0; }
+      face.landingLookAt = Number(window.localStorage.getItem(LANDING_LOOK)) || 0;
+    } catch (error) { face.landingLookAt = 0; }
+    return face.landingLookAt;
   }
 
   function markLandingLook() {
+    // Once per page load, the board's own rule: the landing repaints on
+    // every stream event, and a stamp written on each paint would mark the
+    // rows it had just called new.
+    if (face.landingLookMarked) return;
+    face.landingLookMarked = true;
     try {
       window.localStorage.setItem(LANDING_LOOK, String(Date.now()));
     } catch (error) { }
@@ -7952,6 +7961,77 @@ import { node, svg, clip } from './core/dom.js';
     return card;
   }
 
+  /// Whether the trees are open. The owner's own press wins; with no press
+  /// on record they are open UNLESS something is blocked — the blockers are
+  /// the decision, and the trees are the evidence beneath them.
+  function delegationTreesOpen(blocked) {
+    var saved = null;
+    try {
+      saved = window.localStorage.getItem('fleet-delegation-trees');
+    } catch (error) { saved = null; }
+    if (saved === 'open') return true;
+    if (saved === 'collapsed') return false;
+    return !blocked;
+  }
+
+  function setDelegationTreesOpen(open) {
+    try {
+      window.localStorage.setItem('fleet-delegation-trees', open ? 'open' : 'collapsed');
+    } catch (error) { }
+  }
+
+  /// The delegation surface's first block: what is BLOCKED, in the order
+  /// the owner reads it — `never spawned` (the plan declared work nothing
+  /// picked up) before `ran twice` (work that ran more than the graph
+  /// declared) before `running` (work that is moving). Each row names its
+  /// node; the card says how many of each.
+  function delegationBlocked(graph) {
+    var nodes = (graph && graph.nodes) || [];
+    var rows = [];
+    nodes.forEach(function (node) {
+      var word = node.overlay && node.overlay.divergence;
+      if (word) {
+        rows.push({ node: node, word: word, rank: /^never/.test(String(word)) ? 0 : 1 });
+      }
+    });
+    nodes.forEach(function (node) {
+      if (node.overlay && node.overlay.divergence) return;
+      if (node.state === 'running' || node.status === 'running') {
+        rows.push({ node: node, word: 'running', rank: 2 });
+      }
+    });
+    if (!rows.length) return null;
+    rows.sort(function (left, right) { return left.rank - right.rank; });
+    var never = rows.filter(function (row) { return row.rank === 0; }).length;
+    var twice = rows.filter(function (row) { return row.rank === 1; }).length;
+    var card = boardCard(12, 'blocked', null,
+      (never ? never + ' never spawned' : '') +
+      (never && twice ? ' \u00b7 ' : '') +
+      (twice ? twice + ' ran twice' : ''));
+    rows.slice(0, 6).forEach(function (row) {
+      var line = node('button', 'delegation-blocked');
+      line.type = 'button';
+      line.dataset.node = row.node.id || '';
+      line.dataset.word = row.word;
+      line.appendChild(node('span', 'delegation-blocked-word', row.word));
+      line.appendChild(node('span', 'delegation-blocked-node', row.node.id || 'a node'));
+      line.appendChild(node('span', 'delegation-blocked-what',
+        row.node.approach || row.node.state || ''));
+      line.title = row.word + ' \u00b7 ' + (row.node.id || '') +
+        (row.node.approach ? ' \u00b7 ' + row.node.approach : '');
+      line.addEventListener('click', function () {
+        openDrawer(row.node.id || 'a node', [
+          ['what it is', node('p', 'derivation', row.node.approach || row.node.id || '')],
+          ['what the rows say', node('p', 'derivation', row.word)],
+          ['where it stands', node('p', 'derivation',
+            (row.node.state || '') + (row.node.status ? ' \u00b7 ' + row.node.status : ''))]
+        ]);
+      });
+      card.appendChild(line);
+    });
+    return card;
+  }
+
   function paintDelegation() {
     var read = face.delegation;
     el.delegationBoard.textContent = '';
@@ -7993,26 +8073,53 @@ import { node, svg, clip } from './core/dom.js';
       nodes: live ? countNodes(live) : (graph ? graph.nodes.length : 0)
     }));
 
-    var left = node('div', 'surface-column');
-    var wide = cardWide(el.delegationBoard, 8);
-    if (live) {
-      left.appendChild(treeCard(live, 'the run in flight', null, read.depth_cap, wide));
-    } else {
-      var none = boardCard(12, 'the run in flight', null, null);
-      none.appendChild(node('p', 'board-empty',
-        'No readable session log for this run yet. A tree is rebuilt off the logs\u2019 own start ' +
-        'records, so a run that has not written one has no tree to draw.'));
-      left.appendChild(none);
-    }
-    history.forEach(function (root) {
-      left.appendChild(treeCard(root,
-        'run ' + clip(root.id, 22),
-        (root.stop_reason ? 'stopped: ' + root.stop_reason : 'no end record')
-        + foldsWording(root.compactions)
-        + (root.goal ? ' \u00b7 ' + root.goal : ''),
-        read.depth_cap, wide));
+    // What is BLOCKED leads (the relevance pass, 2026-11-22): a node the
+    // plan declared that nothing has picked up, or one that ran twice, is
+    // the decision this surface exists for — and a running node is what is
+    // moving, one step below. The trees are the evidence beneath it, so
+    // they fold when there is something to decide.
+    var blocked = delegationBlocked(graph);
+    if (blocked) el.delegationBoard.appendChild(blocked);
+    var treesOpen = delegationTreesOpen(!!blocked);
+    var trees = node('div', 'delegation-trees');
+    var treeHead = node('button', 'delegation-fold');
+    treeHead.type = 'button';
+    treeHead.setAttribute('aria-expanded', treesOpen ? 'true' : 'false');
+    treeHead.dataset.collapsed = treesOpen ? 'false' : 'true';
+    treeHead.title = treesOpen ? 'fold the trees' : 'open the trees';
+    treeHead.appendChild(node('span', 'delegation-fold-mark',
+      (treesOpen ? '\u25be ' : '\u25b8 ') + 'the trees'));
+    treeHead.appendChild(node('span', 'delegation-fold-count',
+      (live ? 'the run in flight \u00b7 ' : '') + history.length +
+      (history.length === 1 ? ' past run' : ' past runs')));
+    treeHead.addEventListener('click', function () {
+      setDelegationTreesOpen(!delegationTreesOpen(!!blocked));
+      paintDelegation();
     });
-    el.delegationBoard.appendChild(left);
+    el.delegationBoard.appendChild(treeHead);
+    if (treesOpen) {
+      var left = node('div', 'surface-column');
+      var wide = cardWide(el.delegationBoard, 8);
+      if (live) {
+        left.appendChild(treeCard(live, 'the run in flight', null, read.depth_cap, wide));
+      } else {
+        var none = boardCard(12, 'the run in flight', null, null);
+        none.appendChild(node('p', 'board-empty',
+          'No readable session log for this run yet. A tree is rebuilt off the logs\u2019 own start ' +
+          'records, so a run that has not written one has no tree to draw.'));
+        left.appendChild(none);
+      }
+      history.forEach(function (root) {
+        left.appendChild(treeCard(root,
+          'run ' + clip(root.id, 22),
+          (root.stop_reason ? 'stopped: ' + root.stop_reason : 'no end record')
+          + foldsWording(root.compactions)
+          + (root.goal ? ' \u00b7 ' + root.goal : ''),
+          read.depth_cap, wide));
+      });
+      trees.appendChild(left);
+      el.delegationBoard.appendChild(trees);
+    }
 
     var summary = boardCard(12, 'what the read saw', live ? 'live' : 'idle',
       'the tree is rebuilt off the start records\u2019 own parent ids; the graph is a file the plan\u2019s work writes.');
@@ -10439,6 +10546,15 @@ import { node, svg, clip } from './core/dom.js';
     try { window.localStorage.setItem('fleet-board-project', id); } catch (error) { }
   }
 
+  /// The board's own door to one plan: the rail's pick, by address, so a
+  /// leading row and a rail row reach the same place. One verb, one state.
+  function openPlan(id) {
+    if (!id) return;
+    rememberBoardProject(id);
+    window.location.hash = '#/board/' + encodeURIComponent(id);
+    paintBoard();
+  }
+
   function paintBoardRail() {
     if (!el.boardRail) return;
     var sections = boardSections();
@@ -10524,8 +10640,96 @@ import { node, svg, clip } from './core/dom.js';
       var inPlan = plans.reduce(function (sum, plan) { return sum + (plan.tasks || []).length; }, 0);
       el.boardBoard.appendChild(selectedLine('board', { plan: plans[0].id, tasks: inPlan }));
     }
+    // The board leads with what CHANGED and what DISAGREED (the relevance
+    // pass, 2026-11-22). The plans arrive with their own `updated` stamp;
+    // the newest change is the first card, and the rows the day's
+    // delegation log disagrees with are named above the columns. Both
+    // facts are the document's — the page sorts by the stamp it was given
+    // and never invents a clock of its own.
+    plans = plans.slice().sort(function (left, right) {
+      return String(right.updated || '').localeCompare(String(left.updated || ''));
+    });
+    // The leading block is the BOARD's, not a plan's: once the owner has
+    // picked a plan the rail has already answered "which one", so the
+    // scoped view is that plan's card alone.
+    var lead = scope === 'all' ? boardLead(plans, read.divergences) : null;
+    if (lead) el.boardBoard.appendChild(lead);
     plans.forEach(function (plan) { el.boardBoard.appendChild(planCard(plan)); });
     if (loose.length) el.boardBoard.appendChild(looseCard(loose));
+    markBoardLook();
+  }
+
+  // The board's own last look, the landing's idiom: a day stamp, because
+  // that is what a plan's frontmatter carries. Written after the block
+  // paints, so the next visit marks the plans that moved since.
+  var BOARD_LOOK = 'fleet-board-look';
+
+  function boardLook() {
+    // Read once per page load and held: the board repaints on every stream
+    // event, and a look re-read after the stamp was written would empty
+    // the block it had just painted. The visit's "last look" is fixed at
+    // the visit's start, which is what the words promise.
+    if (face.boardLookAt != null) return face.boardLookAt;
+    try {
+      face.boardLookAt = window.localStorage.getItem(BOARD_LOOK) || '';
+    } catch (error) { face.boardLookAt = ''; }
+    return face.boardLookAt;
+  }
+
+  function markBoardLook() {
+    // Once per page load: the board repaints on every stream event, and a
+    // stamp written on each paint would erase the block it just painted.
+    if (face.boardLookMarked) return;
+    face.boardLookMarked = true;
+    try {
+      window.localStorage.setItem(BOARD_LOOK, new Date().toISOString().slice(0, 10));
+    } catch (error) { }
+  }
+
+  /// The board's first block: the plan whose state moved since the owner
+  /// last looked, then the rows that disagree with what the plan declared
+  /// (`never spawned`, `ran twice`). One card, and each row is a press to
+  /// the thing it names — the card is the board's sentence, its rows are
+  /// the evidence.
+  function boardLead(plans, divergences) {
+    var look = boardLook();
+    var moved = plans.filter(function (plan) {
+      return plan.updated && (!look || String(plan.updated) > look);
+    });
+    var rows = (divergences && divergences.rows) || [];
+    if (!moved.length && !rows.length) return null;
+    var card = boardCard(12, 'changed since you last looked', null,
+      (divergences && divergences.basis)
+        ? 'divergence rests on ' + divergences.basis
+        : null);
+    moved.slice(0, 3).forEach(function (plan) {
+      var line = node('button', 'board-changed');
+      line.type = 'button';
+      line.dataset.plan = plan.id;
+      line.appendChild(node('span', 'board-changed-when', String(plan.updated)));
+      line.appendChild(node('span', 'board-changed-name', plan.id));
+      line.appendChild(node('span', 'board-changed-what',
+        (plan.status || 'approved') + ' \u00b7 ' + ((plan.tasks || []).length) +
+        ((plan.tasks || []).length === 1 ? ' task' : ' tasks')));
+      line.addEventListener('click', function () { openPlan(plan.id); });
+      card.appendChild(line);
+    });
+    rows.forEach(function (row) {
+      var line = node('button', 'board-divergence');
+      line.type = 'button';
+      line.dataset.plan = row.plan || '';
+      line.dataset.node = row.node || '';
+      line.appendChild(node('span', 'board-divergence-word', row.word || 'diverged'));
+      line.appendChild(node('span', 'board-divergence-node', row.node || 'a node'));
+      line.appendChild(node('span', 'board-divergence-plan', 'in ' + (row.plan || 'the plan')));
+      line.title = (row.word || 'diverged') + ' \u00b7 ' + (row.node || '') +
+        ' in ' + (row.plan || '');
+      line.addEventListener('click', function () {
+        if (row.plan) openPlan(row.plan);
+      });
+      card.appendChild(line);
+    });
+    return card;
   }
 
   /// The three columns a task stands in, in the order work moves through
@@ -10546,10 +10750,31 @@ import { node, svg, clip } from './core/dom.js';
       var rows = (plan.tasks || []).filter(function (task) { return task.column === state[0]; });
       var column = node('div', 'board-col');
       column.dataset.status = state[0];
-      var head = node('div', 'board-col-head');
-      head.appendChild(node('span', 'board-col-name', state[1]));
+      // The done column is the inventory (the relevance pass): it collapses
+      // to its own count under the existing fold idiom, one press away.
+      // Queued and in-process never fold — they are the decisions.
+      var folded = state[0] === 'done' && rows.length > 0 && !boardDoneOpen();
+      if (state[0] === 'done') column.dataset.collapsed = folded ? 'true' : 'false';
+      var head = node(folded ? 'button' : 'div', 'board-col-head');
+      if (folded) {
+        head.type = 'button';
+        head.setAttribute('aria-expanded', 'false');
+        head.dataset.collapsed = 'true';
+        head.title = 'open the done column';
+      }
+      head.appendChild(node('span', 'board-col-name', (folded ? '\u25b8 ' : '') + state[1]));
       head.appendChild(node('span', 'board-col-count', String(rows.length)));
+      if (folded) {
+        head.addEventListener('click', function () {
+          setBoardDoneOpen(true);
+          paintBoard();
+        });
+      }
       column.appendChild(head);
+      if (folded) {
+        columns.appendChild(column);
+        return;
+      }
       var well = node('div', 'board-col-well');
       well.title = state[2];
       if (!rows.length) well.appendChild(node('p', 'board-col-empty', 'nothing ' + state[1]));
@@ -10559,6 +10784,21 @@ import { node, svg, clip } from './core/dom.js';
     });
     card.appendChild(columns);
     return card;
+  }
+
+  /// Whether the done column is open. The owner's own press wins; with no
+  /// press on record it is folded, because done is the inventory and the
+  /// queued and in-process columns are the decisions.
+  function boardDoneOpen() {
+    try {
+      return window.localStorage.getItem('fleet-board-done') === 'open';
+    } catch (error) { return false; }
+  }
+
+  function setBoardDoneOpen(open) {
+    try {
+      window.localStorage.setItem('fleet-board-done', open ? 'open' : 'collapsed');
+    } catch (error) { }
   }
 
   /// One atomic task: its line, who it is for, and what it waits on. The

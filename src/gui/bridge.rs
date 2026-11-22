@@ -11353,6 +11353,44 @@ fn board_read(home: &std::path::Path, root: &std::path::Path) -> Value {
                 .filter(|task| task.column == column)
                 .count()
     };
+    // The relevance pass's leading block (2026-11-22): which plan's state
+    // CHANGED, and any divergence between what the plan declared and what
+    // the day's delegation rows say ran. Both are read here, once, so the
+    // card leads with a decision instead of a wall of columns.
+    //
+    // The divergence claim is made only for plans the owner touched today:
+    // the join is today's delegation rows, so a plan from last week would
+    // read `never spawned` for every node it owns — a claim the rows cannot
+    // support. `basis` rides the document and says exactly that.
+    let today = crate::calib::today();
+    let mut divergences: Vec<Value> = Vec::new();
+    let mut per_plan: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for plan in &read.plans {
+        if !plan.updated.starts_with(&today[..10.min(today.len())]) {
+            continue;
+        }
+        let ids: Vec<String> = plan.tasks.iter().map(|task| task.id.clone()).collect();
+        let (overlays, counts) = crate::boards::divergences_for_ids(home, &ids);
+        let touched = counts.never_spawned + counts.ran_twice;
+        if touched == 0 {
+            continue;
+        }
+        per_plan.insert(plan.id.clone(), touched);
+        // One row per divergent node, the plan's own id beside it, so the
+        // card names what disagreed rather than only how many.
+        let mut ids: Vec<&String> = overlays.keys().collect();
+        ids.sort();
+        for id in ids {
+            if let Some(word) = overlays[id].divergence.as_deref() {
+                divergences.push(json!({
+                    "plan": &plan.id,
+                    "node": id,
+                    "word": word,
+                    "spawns": overlays[id].spawn_count,
+                }));
+            }
+        }
+    }
     let plans: Vec<Value> = read
         .plans
         .iter()
@@ -11364,6 +11402,9 @@ fn board_read(home: &std::path::Path, root: &std::path::Path) -> Value {
                 "updated": &plan.updated,
                 "workload": &plan.workload,
                 "queued": plan.queued,
+                // The plan's own count of divergent nodes, or nothing when
+                // the read made no claim about it.
+                "divergences": per_plan.get(&plan.id).copied(),
                 "tasks": plan.tasks.iter().map(|task| json!({
                     "id": &task.id,
                     "title": &task.title,
@@ -11409,6 +11450,15 @@ fn board_read(home: &std::path::Path, root: &std::path::Path) -> Value {
         },
         "plans": plans,
         "tasks": tasks,
+        // The leading block's two facts: the rows that disagreed, and what
+        // the claim rests on. `changed` is the plans' own newest-updated
+        // order — the page reads it, it does not re-sort (the plan's stamp
+        // is the fact; a browser clock is not).
+        "divergences": {
+            "basis": crate::boards::Divergences::BASIS,
+            "day": today,
+            "rows": divergences,
+        },
         "refused": read.refused,
     })
 }

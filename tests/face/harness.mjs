@@ -5326,6 +5326,139 @@ async function theDoorIsOrderedByTheAgeOfTheHold() {
     'hidden=' + page.IDS['ib-total'].hidden + ' text=' + page.IDS['ib-total'].textContent);
 }
 
+// RP5 (the relevance pass, 2026-11-22): the board leads with the plan
+// whose state changed since the owner last looked, then the rows that
+// disagree with what the plan declared (`never spawned`, `ran twice`), and
+// the done column — the inventory — folds beneath them. Each block is
+// red-proved by its own check: drop it and the check names the row that
+// vanished.
+async function theBoardLeadsWithChangeAndDivergence() {
+  const task = (id, column) => ({
+    id, title: id, column, state: column === 'done' ? 'verified' : 'ready',
+    status: 'pending', cost: 1, assignee: 'fleet', depends_on: [],
+    waiting_on: [], reason: null,
+  });
+  const doc = {
+    board: {
+      type: 'board',
+      counts: { queued: 2, 'in-process': 0, done: 1, plans: 2 },
+      plans: [
+        { id: 'the-older-plan', plan: 'a.md', status: 'approved', updated: '2026-11-10',
+          workload: null, queued: 1, divergences: null,
+          tasks: [task('old-q', 'queued'), task('old-d', 'done')] },
+        { id: 'the-newer-plan', plan: 'b.md', status: 'approved', updated: '2026-11-22',
+          workload: null, queued: 1, divergences: 2,
+          tasks: [task('new-q', 'queued'), task('new-d', 'done')] },
+      ],
+      tasks: [], refused: [],
+      divergences: {
+        basis: "the day's delegation rows", day: '2026-11-22',
+        rows: [
+          { plan: 'the-newer-plan', node: 'n2', word: 'never spawned', spawns: 0 },
+          { plan: 'the-newer-plan', node: 'n3', word: 'ran twice', spawns: 2 },
+        ],
+      },
+    },
+  };
+  const page = boot({ width: 1440, hash: '#/board', storage: { 'fleet-board-look': '2026-11-01' }, documents: doc });
+  await flush();
+  page.open();
+  await flush(160);
+
+  const changed = page.rows('.board-changed');
+  check('RP5 the board leads with the plan that changed', changed.length >= 1 &&
+    (changed[0].textContent || '').includes('the-newer-plan'),
+    changed.length ? changed.map((r) => r.textContent).join(' | ')
+      : 'the lead is empty: the-newer-plan (2026-11-22) should have led it');
+  // The divergence rows name the node and the word — never a count alone.
+  const diverged = page.rows('.board-divergence');
+  const words = diverged.map((r) => r.dataset.word || r.textContent || '');
+  check('RP5 the board names the divergent nodes', diverged.length === 2 &&
+    (diverged[0].textContent || '').includes('never spawned') &&
+    (diverged[0].textContent || '').includes('n2') &&
+    (diverged[1].textContent || '').includes('ran twice') &&
+    (diverged[1].textContent || '').includes('n3'),
+    diverged.length ? diverged.map((r) => r.textContent).join(' | ')
+      : 'no divergence row: n2 (never spawned) and n3 (ran twice) are missing');
+  // The done column folds under both: the inventory, one press away.
+  const done = page.rows('.board-col[data-status="done"] .board-col-head')[0];
+  check('RP5 the done column folds beneath the decisions',
+    !!done && done.dataset.collapsed === 'true' &&
+      page.rows('.board-col[data-status="done"] .board-task').length === 0,
+    done ? done.dataset.collapsed + ' rows=' +
+      page.rows('.board-col[data-status="done"] .board-task').length : 'no done column');
+}
+
+// RP6 (the relevance pass, 2026-11-22): delegation leads with what is
+// blocked — `never spawned` before `ran twice` before `running` — and the
+// trees fold beneath the blockers. Drop the block and the case names the
+// node that vanished.
+async function theDelegationSurfaceLeadsWithTheBlockers() {
+  const graph = {
+    nodes: [
+      { id: 'n1', cost: 1, score: 0, peak: 1, status: 'done', state: 'done',
+        approach: 'the first', paths: [], capabilities: '', prereqs: [],
+        summary: false, declared_workload: null, reason: null,
+        unlock: { score_zero: true, resource_free: true, deps_verified: true,
+          unlocked: true, waiting: [], failed: [], unresolved: [], held: [] },
+        overlay: { spawned_sessions: ['s1'], spawn_count: 1, divergence: null,
+          brief_shape: '', provider: '', outcome: '' } },
+      { id: 'n2', cost: 1, score: 1, peak: 2, status: 'queued', state: 'ready',
+        approach: 'the second', paths: [], capabilities: '', prereqs: ['n1'],
+        summary: false, declared_workload: null, reason: null,
+        unlock: { score_zero: false, resource_free: true, deps_verified: true,
+          unlocked: true, waiting: [], failed: [], unresolved: [], held: [] },
+        overlay: { spawned_sessions: [], spawn_count: 0, divergence: 'never spawned',
+          brief_shape: '', provider: '', outcome: '' } },
+      { id: 'n3', cost: 1, score: 1, peak: 2, status: 'running', state: 'running',
+        approach: 'the third', paths: [], capabilities: '', prereqs: ['n1'],
+        summary: false, declared_workload: null, reason: null,
+        unlock: { score_zero: false, resource_free: true, deps_verified: true,
+          unlocked: true, waiting: [], failed: [], unresolved: [], held: [] },
+        overlay: { spawned_sessions: ['s2', 's3'], spawn_count: 2, divergence: 'ran twice',
+          brief_shape: '', provider: '', outcome: '' } },
+      { id: 'n4', cost: 1, score: 1, peak: 2, status: 'running', state: 'running',
+        approach: 'the fourth', paths: [], capabilities: '', prereqs: ['n1'],
+        summary: false, declared_workload: null, reason: null,
+        unlock: { score_zero: false, resource_free: true, deps_verified: true,
+          unlocked: true, waiting: [], failed: [], unresolved: [], held: [] },
+        overlay: { spawned_sessions: ['s4'], spawn_count: 1, divergence: null,
+          brief_shape: '', provider: '', outcome: '' } },
+    ],
+    edges: [{ from: 0, to: 1 }, { from: 0, to: 2 }, { from: 0, to: 3 }],
+    critical_path: ['n1', 'n2'], blocks_most_work: 'n1',
+    weakness: null, revisions: 0, diff_score: 0, replan: null,
+    divergences: { never_spawned: 1, ran_twice: 1, basis: "the day's delegation rows" },
+  };
+  const page = boot({
+    width: 1440, hash: '#/delegation',
+    documents: {
+      delegation: { type: 'delegation', depth_cap: 2, live: null, history: [], graph,
+        refused: [] },
+      state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(200);
+  const rows = page.rows('.delegation-blocked');
+  const order = rows.map((r) => r.dataset.word);
+  check('RP6 delegation leads with what is blocked',
+    rows.length === 3 &&
+      order[0] === 'never spawned' && order[1] === 'ran twice' && order[2] === 'running',
+    rows.length ? JSON.stringify(order)
+      : 'no blockers: n2 (never spawned) should lead, then n3 (ran twice), then n4');
+  check('RP6 the blocked rows name their nodes',
+    rows.length >= 2 && (rows[0].textContent || '').includes('n2') &&
+      (rows[1].textContent || '').includes('n3'),
+    rows.map((r) => r.textContent).join(' | '));
+  // The trees fold beneath the blockers.
+  const fold = page.rows('.delegation-fold')[0];
+  check('RP6 the trees fold beneath the blockers',
+    !!fold && fold.dataset.collapsed === 'true', fold ? fold.dataset.collapsed : 'no fold');
+}
+
 // New mints a real conversation at the press (the owner's 2026-11-05
 // ruling, replacing N2's create-then-send): the log exists before any
 // words, so the send that follows can only name this conversation —
@@ -13512,6 +13645,14 @@ async function theFreshnessSurfacesReadTheFoldCount() {
   page.open();
   await flush(120);
 
+  // The trees fold beneath the blockers (the relevance pass): one press,
+  // and the tree cards are the same cards they were.
+  const treeFold = page.rows('.delegation-fold')[0];
+  check('FOLD the trees fold beneath the blockers',
+    !!treeFold && treeFold.dataset.collapsed === 'true',
+    treeFold ? treeFold.dataset.collapsed : 'no fold');
+  if (treeFold) { treeFold.click(); await flush(160); }
+
   const text0 = page.text('delegation-board');
   check('FOLD the tree cards read the fold count',
     text0.includes('3 folds') && text0.includes('never folded'),
@@ -14187,6 +14328,11 @@ async function theBoardColumnsEqualTheDerivedStates() {
   await flush();
   page.open();
   await flush(120);
+  // The done column is the inventory and starts folded (the relevance
+  // pass): open it, then read the columns it holds.
+  page.rows('.board-col[data-status="done"] .board-col-head')
+    .forEach((head) => head.click());
+  await flush(160);
 
   const cards = page.rows('.board-card').filter((card) => {
     const head = card.querySelector('h2');
@@ -16972,6 +17118,13 @@ async function theBoardRendersColumnsAndSettlesMoves() {
   await flush(200);
   const cols = page.rows('.board-col');
   check('S4 the board renders three columns', cols.length === 3, 'cols=' + cols.length);
+  // The done column is the inventory and starts folded (the relevance
+  // pass): one press, and its rows are where they always were.
+  const doneFold = page.rows('.board-col[data-status="done"] .board-col-head')[0];
+  check('S4 the done column starts folded',
+    !!doneFold && doneFold.dataset.collapsed === 'true',
+    doneFold ? doneFold.dataset.collapsed : 'no fold');
+  if (doneFold) { doneFold.click(); await flush(160); }
   check('S4 the tasks land in their columns',
     page.text('board-board').includes('write the release notes') &&
       page.rows('.board-task').length === 3,
@@ -17736,6 +17889,9 @@ async function theBoardShowsQueuedWorkWithItsAssignment() {
   page.open();
   await flush(220);
 
+  // The done column folds (the relevance pass): open it before counting.
+  const doneFold = page.rows('.board-col[data-status="done"] .board-col-head')[0];
+  if (doneFold) { doneFold.click(); await flush(160); }
   const rows = page.rows('.board-task');
   check('BOARD every atomic task is a row', rows.length === 4,
     'rows=' + rows.length);
@@ -20778,6 +20934,8 @@ const cases = [
   ['RP2 the changed block names the newest events, newest first', theChangedBlockNamesTheNewestEvents],
   ['RP3 the work list reads approval, running, then idle', theWorkListReadsInTheOwnersOrder],
   ['RP4 the door is ordered by the age of the hold', theDoorIsOrderedByTheAgeOfTheHold],
+  ['RP5 the board leads with change and divergence', theBoardLeadsWithChangeAndDivergence],
+  ['RP6 delegation leads with the blockers', theDelegationSurfaceLeadsWithTheBlockers],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],

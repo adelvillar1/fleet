@@ -1235,6 +1235,29 @@ pub fn delegation_overlay(
     home: &Path,
     nodes: &[GraphNode],
 ) -> (HashMap<String, NodeOverlay>, Divergences) {
+    // Summary nodes are never dispatched (P6), so they carry no overlay and
+    // are never counted — the same rule whether the caller hands over a
+    // graph or a bare list of node ids.
+    let ids: Vec<String> = nodes
+        .iter()
+        .filter(|node| !node.summary)
+        .map(|node| node.id.clone())
+        .collect();
+    divergences_for_ids(home, &ids)
+}
+
+/// The same overlay, joined on node ids alone. The board reads its plans as
+/// rows, not graphs, and its node ids are the plan's own — so this is the
+/// one join both surfaces use rather than a second reading of the day's
+/// rows. The basis is today's delegation rows, which is what the document
+/// says beside the counts: a node that has not been dispatched today reads
+/// `never spawned`, and a surface that would be misled by that omits the
+/// claim rather than making it (the board asks only about plans it touched
+/// today).
+pub fn divergences_for_ids(
+    home: &Path,
+    ids: &[String],
+) -> (HashMap<String, NodeOverlay>, Divergences) {
     // The OP-bounded read, the same one the LayerFS view uses for its
     // branch join: a busy day's file is mixed-op, and a whole-stream
     // tail can hold no delegation row at all.
@@ -1262,11 +1285,8 @@ pub fn delegation_overlay(
     }
     let mut overlays: HashMap<String, NodeOverlay> = HashMap::new();
     let mut divergences = Divergences::default();
-    for node in nodes {
-        if node.summary {
-            continue;
-        }
-        let spawned = spawned_by_node.remove(&node.id).unwrap_or_default();
+    for id in ids {
+        let spawned = spawned_by_node.remove(id).unwrap_or_default();
         let spawn_count = spawned.len();
         let divergence = match spawn_count {
             0 => {
@@ -1286,7 +1306,7 @@ pub fn delegation_overlay(
         // The judged shape is the latest child's: the last row wins.
         let latest = spawned.last();
         overlays.insert(
-            node.id.clone(),
+            id.clone(),
             NodeOverlay {
                 spawned_sessions: spawned
                     .iter()
