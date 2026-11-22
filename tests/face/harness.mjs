@@ -36,6 +36,7 @@ const RUST = fs.readFileSync(path.join(ROOT, 'src/gui/bridge.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/remote/listener.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/gui/mod.rs'), 'utf8');
 const BOTJS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/bot.js'), 'utf8');
+const BOT = fs.readFileSync(path.join(ROOT, 'src/gui/assets/bot.css'), 'utf8');
 const CSS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.css'), 'utf8');
 // The desktop shell's own source: the window builder is the one place a
 // webview-level drag handler is switched off, and no asset check can see
@@ -8008,6 +8009,27 @@ async function theStrategyStepShowsItsPreview() {
       'bot attachments');
     check('C7 the bot inserts clipboard text at the caret',
       BOTJS.indexOf('textarea.setSelectionRange(caret, caret)') !== -1, 'bot caret');
+  // Pass 3 (the gated mockups 30/31): the iPad split view composes the
+  // sidebar, the conversation and the receipts at landscape; the
+  // receipts derive from the conversation's own cards; the touch floor
+  // stands on the seat's presses.
+  check('bot the split view composes at landscape and folds below',
+    BOTJS.includes("window.matchMedia('(min-width: 1024px)').matches") &&
+      BOTJS.includes('function renderSplit()') &&
+      BOT.includes('grid-template-columns: 280px minmax(0, 1fr) 300px') &&
+      BOT.includes('@media (min-width: 1024px)') &&
+      BOT.includes('.receipts-press { display: none; }'),
+    'split');
+  check('bot the receipts derive from the conversation\u2019s own cards',
+    BOTJS.includes('function receiptsRows()') &&
+      BOTJS.indexOf("card.type === 'tool_call'") !== -1 &&
+      BOTJS.indexOf("card.type === 'plan'") !== -1 &&
+      BOTJS.includes('nothing made yet'),
+    'receipts');
+  check('bot the touch floor stands on the seat\u2019s presses',
+    BOT.includes('.btn {\n  flex: 1 1 0;\n  min-height: 44px;') &&
+      BOT.includes('min-height: 46px'),
+    'touch');
   }
 
 

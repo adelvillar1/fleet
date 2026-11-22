@@ -287,8 +287,50 @@ const state = {
 };
 
 function render() {
+  // The iPad split view (the gated mockup 31): at landscape widths the
+  // shell composes the sidebar, the conversation and the receipts as one
+  // surface; below it the phone's one-pane navigation stands. matchMedia
+  // is read per render, so a rotate re-composes on the next paint.
+  if (window.matchMedia('(min-width: 1024px)').matches) { renderSplit(); return; }
   if (state.view === 'inbox') renderInbox();
   else renderConversation();
+}
+
+/// The made-here rows, derived from the conversation's own cards - the
+/// records the log carries, never invented: the tools the run called,
+/// the plan it declared, the members that joined. A card kind that is
+/// not one of these is not a receipt.
+function receiptsRows() {
+  const cards = (state.conversation || {}).cards || [];
+  const tools = {};
+  let plans = 0;
+  let joins = 0;
+  for (const card of cards) {
+    if (card.type === 'tool_call' && card.tool) tools[card.tool] = (tools[card.tool] || 0) + 1;
+    if (card.type === 'plan') plans += 1;
+    if (card.type === 'join') joins += 1;
+  }
+  const rows = [];
+  const names = Object.keys(tools);
+  if (names.length) {
+    rows.push({ what: names.length + ' tool' + (names.length === 1 ? '' : 's') + ' called',
+      detail: names.slice(0, 4).join(', ') });
+  }
+  if (plans) rows.push({ what: 'the plan declared', detail: plans + ' node' + (plans === 1 ? '' : 's') });
+  if (joins) rows.push({ what: joins + ' member' + (joins === 1 ? '' : 's') + ' joined', detail: '' });
+  return rows;
+}
+
+function receiptsHtml() {
+  const rows = receiptsRows();
+  if (!rows.length) {
+    return '<p class="receipts-empty">nothing made yet - the run\u2019s receipts land here as it works.</p>';
+  }
+  return rows.map((row) => `
+    <div class="receipts-row">
+      <span class="what">${escapeHtml(row.what)}</span>
+      ${row.detail ? `<span class="detail mono">${escapeHtml(row.detail)}</span>` : ''}
+    </div>`).join('');
 }
 
 // ---------- the inbox ----------
@@ -508,6 +550,16 @@ const runState = () => {
 };
 
 function renderConversation() {
+  const view = conversationView(true);
+  app.innerHTML = '';
+  app.appendChild(view);
+  bindConversation(view, true);
+}
+
+/// The conversation's own view, parameterized by the back button (the
+/// split view navigates from the sidebar, so its conversation carries no
+/// back - the phone's carries the way home).
+function conversationView(withBack) {
   const conversation = state.conversation;
   const view = document.createElement('div');
   view.className = 'conv';
@@ -520,12 +572,13 @@ function renderConversation() {
 
   view.innerHTML = `
     <header class="app-head">
-      <button class="act" id="back" aria-label="Back to the inbox">${ICON_BACK}</button>
+      ${withBack ? `<button class="act" id="back" aria-label="Back to the inbox">${ICON_BACK}</button>` : ''}
       ${personas.length ? stack(personas.slice(0, 2), 'md') : mark('everyone', 'md')}
       <div class="titles">
         <h1 id="who">${escapeHtml(personas.length > 1 ? personas.join(' + ') : personas[0] || 'fleet')}</h1>
         <p class="head-state"><span class="dot"></span><span id="headstate">${escapeHtml(headState())}</span></p>
       </div>
+      <button class="act receipts-press" id="made" aria-label="what this conversation made" style="width:44px">\u2727</button>
       <button class="act" id="add" aria-label="Add a persona to this conversation" style="width:44px">${ICON_PLUS}</button>
     </header>
     ${goal ? `<p class="goal"><b>goal</b><span class="text">${escapeHtml(goal)}</span></p>` : ''}
@@ -546,10 +599,16 @@ function renderConversation() {
       </div>
     </div>`;
 
-  app.innerHTML = '';
-  app.appendChild(view);
+  return view;
+}
 
-  view.querySelector('#back').addEventListener('click', () => {
+/// The conversation's binds, read off the view they belong to - the same
+/// verbs the phone binds, on the split's main pane too.
+function bindConversation(view, withBack) {
+  const seat = seatOf();
+  const running = runState() === 'running';
+  const back = view.querySelector('#back');
+  if (back) back.addEventListener('click', () => {
     state.events?.close();
     state.events = null;
     state.view = 'inbox';
@@ -558,6 +617,12 @@ function renderConversation() {
     loadInbox();
   });
   view.querySelector('#add').addEventListener('click', renderAddSheet);
+  // The portrait receipts slide-over (the gated mockup 31): the press
+  // opens the made-here sheet; the landscape pane is its own answer, so
+  // the stylesheet hides the press where the pane already stands.
+  view.querySelector('#made')?.addEventListener('click', () => {
+    sheetShell('made here', receiptsHtml());
+  });
   view.querySelector('#stop')?.addEventListener('click', async () => {
     try { await post('/api/stop'); } catch (error) { toast(error.message); }
   });
@@ -637,6 +702,94 @@ function renderConversation() {
   // The working chip's clock, from the run's start stamp if the state
   // carries one; a chip without a clock is a chip without a story.
   if (running) startClock(view.querySelector('#clock'));
+}
+
+/// The iPad split view (the gated mockup 31): the sidebar carries the
+/// inbox's own list, the main carries the conversation, and the
+/// receipts aside carries what the conversation made - three panes at
+/// landscape, the grammar the phone's one-pane navigation folds into.
+/// The sidebar's rows navigate; the conversation binds as usual, minus
+/// the back button the sidebar replaces.
+function renderSplit() {
+  const inbox = state.inbox || { sessions: [], bound: 50 };
+  const needs = (inbox.sessions || []).filter(
+    (row) => row.state === 'seat' || row.state === 'failed',
+  );
+  const shell = document.createElement('div');
+  shell.className = 'split';
+
+  const side = document.createElement('aside');
+  side.className = 'split-side';
+  const needsBlock = needs.length ? `
+    <div class="split-needs">
+      <div class="bar">Needs you \u00b7 ${needs.length}</div>
+      ${needs.map((row) => `
+        <button class="row ${row.state}" data-session="${row.id}">
+          ${stack(row.personas?.slice(0, 1) || [], 'sm')}
+          <span class="title">${escapeHtml(row.goal || rowTitle(row))}</span>
+          <span class="age">${age(row.at)}</span>
+        </button>`).join('')}
+    </div>` : '';
+  const rows = (inbox.sessions || []).filter((row) => {
+    if (state.filter === 'everyone') return true;
+    return (row.personas || []).includes(state.filter);
+  });
+  side.innerHTML = `
+    <div class="split-head"><span class="mark sm">f</span><b>fleet</b></div>
+    ${needsBlock}
+    <nav class="persona-rail" aria-label="Personas">
+      <button class="persona" data-persona="everyone" aria-pressed="${state.filter === 'everyone'}">
+        ${mark('everyone', 'sm')}Everyone <span class="n">${inbox.sessions.length}</span>
+      </button>
+      ${Object.keys(PERSONAS).filter((name) => personaCounts(inbox)[name]).map((name) => `
+        <button class="persona" data-persona="${name}" aria-pressed="${state.filter === name}">
+          ${mark(name, 'sm')}${name} <span class="n">${personaCounts(inbox)[name]}</span>
+        </button>`).join('')}
+    </nav>
+    <div class="scroll split-rows">
+      ${rows.length ? groupedRows(rows) : `
+        <div class="empty">${mark('everyone', 'lg')}
+          <h2>Nothing running.</h2></div>`}
+    </div>`;
+  shell.appendChild(side);
+
+  const main = document.createElement('section');
+  main.className = 'split-main';
+  if (state.session) {
+    main.appendChild(conversationView(false));
+  } else {
+    main.innerHTML = `
+      <div class="empty split-empty">${mark('everyone', 'lg')}
+        <h2>Nothing open.</h2>
+        <p>Open a conversation from the rail - it lands here with its seat, its goal and its thread.</p>
+      </div>`;
+  }
+  shell.appendChild(main);
+
+  const aside = document.createElement('aside');
+  aside.className = 'split-receipts';
+  aside.innerHTML = `
+    <div class="drawer-head-wrap">
+      <div class="drawer-kicker">made here</div>
+      <div class="drawer-title">what this conversation made</div>
+    </div>
+    <div class="split-receipts-body">${receiptsHtml()}</div>`;
+  shell.appendChild(aside);
+
+  app.innerHTML = '';
+  app.appendChild(shell);
+
+  for (const button of shell.querySelectorAll('[data-persona]')) {
+    button.addEventListener('click', () => {
+      state.filter = button.dataset.persona;
+      render();
+    });
+  }
+  for (const row of shell.querySelectorAll('[data-session]')) {
+    row.addEventListener('click', () => openConversation(row.dataset.session));
+  }
+  const conversation = shell.querySelector('.conv');
+  if (conversation) bindConversation(conversation, false);
 }
 
 function headState() {

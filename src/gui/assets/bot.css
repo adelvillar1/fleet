@@ -758,3 +758,93 @@ button {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* --- the iPad split view (the gated mockup 31): three panes at
+   landscape - the sidebar, the conversation, the receipts; the phone's
+   one-pane navigation stands below it. The receipts press is a portrait
+   affordance (the slide-over); the pane is landscape's own third column. */
+.split {
+  display: none;
+  grid-template-columns: 280px minmax(0, 1fr) 300px;
+  height: 100dvh;
+}
+.receipts-press { display: none; }
+@media (min-width: 1024px) {
+  .split { display: grid; }
+  .receipts-press { display: grid; }
+}
+.split-side {
+  border-right: 1px solid var(--hairline);
+  background: var(--surface);
+  overflow-y: auto;
+  padding: 14px 10px 20px;
+  min-width: 0;
+}
+.split-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px 12px;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+.split-needs { margin-bottom: 12px; }
+.split-needs .bar {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--accent-deep);
+  padding: 4px 10px;
+}
+.split-rows { overflow-y: auto; }
+.split-main { min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.split-main .conv { display: flex; flex-direction: column; height: 100dvh; }
+.split-receipts {
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
+  padding: 16px 14px;
+  overflow-y: auto;
+  min-width: 0;
+}
+.drawer-kicker {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.drawer-title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  margin-bottom: 12px;
+}
+.split-receipts-body { display: flex; flex-direction: column; gap: 8px; }
+.receipts-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.receipts-row .what { font-size: 13px; font-weight: 500; color: var(--ink); }
+.receipts-row .detail {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.receipts-empty { font-size: 12.5px; color: var(--muted); padding: 6px 2px; }
+/* the portrait slide-over opens through sheetShell - its body reuses the
+   same receipts rows. The press hides at landscape, where the pane is. */
+@media (min-width: 1024px) {
+  .receipts-press { display: none; }
+}
