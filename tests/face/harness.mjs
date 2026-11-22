@@ -4804,8 +4804,13 @@ async function theTurnControlsGradeForkAndHook() {
   page.open();
   await flush();
 
+  // The log's shape for one turn: the boundary, the routing decision,
+  // then the reply — the route line reads the turn's own routed record,
+  // so the fixture carries the records the real log writes.
+  page.push({ type: 'turn', turn: 1 });
+  page.push({ type: 'routed', provider: 'acme', model: 'm', how: 'judged' });
   page.push({ type: 'message', role: 'owner', text: 'grade me' });
-  page.push({ type: 'message', role: 'assistant', text: 'the answer to grade' });
+  page.push({ type: 'message', role: 'assistant', text: 'the answer to grade', turn: 1 });
   await flush(40);
 
   // One footer, five controls — and the owner's own bubble keeps only
@@ -4822,6 +4827,26 @@ async function theTurnControlsGradeForkAndHook() {
   check('turn the owner bubble keeps only edit and copy',
     ownerTools.length === 1 && ownerTools[0].querySelectorAll('.msg-fb').length === 0,
     ownerTools.length + ' owner footers');
+
+  // Pass 3: the reply carries the turn's own route line — the nearest
+  // routed record read from the receipts walk, never invented. A turn
+  // with no routed record carries none.
+  const routeLine = footers[0] && footers[0].querySelector('.msg-route');
+  check('turn the reply carries the route that served it',
+    routeLine && routeLine.textContent.includes('routed') &&
+      routeLine.textContent.includes('judged') &&
+      routeLine.textContent.includes('acme'),
+    routeLine ? routeLine.textContent : 'no line — debug=' +
+      (footers[0] ? footers[0].dataset.routeDebug : 'no footer'));
+
+  page.push({ type: 'turn', turn: 2 });
+  page.push({ type: 'message', role: 'owner', text: 'again, with no reroute' });
+  page.push({ type: 'message', role: 'assistant', text: 'the second answer', turn: 2 });
+  await flush(40);
+  const secondFooter = page.rows('.assistant .msg-tools')[1];
+  check('turn a turn with no routed record carries no route line',
+    secondFooter && secondFooter.querySelectorAll('.msg-route').length === 0,
+    secondFooter ? String(secondFooter.querySelectorAll('.msg-route').length) : 'no footer');
 
   // The seeded verdict rehydrates: the like button reads as pressed
   // from the state document, not from the click that never happened.

@@ -12318,3 +12318,18 @@ section.board-card > .board-head {
   color: var(--dsw-alias-ink);
   overflow-wrap: anywhere;
 }
+
+/* --- the reply's route line (Pass 3, Conversations): the turn's own
+   routing decision, read from the log — mono, quiet, left of the
+   footer's controls. A turn with no routed record draws nothing. */
+.msg-route {
+  margin-right: auto;
+  align-self: center;
+  font: 500 11px/1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-ink-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}

@@ -1822,8 +1822,30 @@ import { node, svg, clip } from './core/dom.js';
   // the state document. The words stay on the button as the tooltip
   // and the accessible name; the pressed verdict is the accent plus
   // aria-pressed.
-  function assistantFooter(getText, ex) {
+  /// The route line a reply carries (Pass 3, the Conversations re-skin):
+  /// the turn's own routed record, read from the same walk the receipts
+  /// gutter makes — routing precedes the model call that produced the
+  /// reply, so the turn's route IS the decision that served it. A turn
+  /// with no routed record says nothing; a line is never invented.
+  function routeLineForTurn(turn) {
+    var turns = gutterTurns();
+    for (var i = 0; i < turns.length; i++) {
+      if (turns[i].turn !== turn) continue;
+      var routes = turns[i].events.route || [];
+      if (!routes.length) return '';
+      return 'routed \u00b7 ' + stripLine(routes[routes.length - 1]);
+    }
+    return '';
+  }
+
+  function assistantFooter(getText, ex, turn) {
     var tools = node('div', 'msg-tools');
+    var routeLine = turn != null ? routeLineForTurn(turn) : '';
+    if (routeLine) {
+      var route = node('span', 'msg-route', routeLine);
+      route.title = 'the routing decision that served this reply';
+      tools.appendChild(route);
+    }
     tools.appendChild(makeCopy(getText, 'copy this reply'));
     var held = (face.feedback || {})[String(ex)] || '';
     var up = iconButton(MSG_ICONS.like, 'row-rewind msg-fb', 'like',
@@ -2319,7 +2341,7 @@ import { node, svg, clip } from './core/dom.js';
       highlightMentions(body);
       el0.appendChild(body);
     }
-    el0.appendChild(assistantFooter(function () { return text; }, exchanges()));
+    el0.appendChild(assistantFooter(function () { return text; }, exchanges(), face.turn));
   }
 
   // The value a call actually names — the command, the path, the content.
@@ -3569,7 +3591,7 @@ import { node, svg, clip } from './core/dom.js';
           var answer = markdown(event.text);
           highlightMentions(answer);
           said.appendChild(answer);
-          said.appendChild(assistantFooter(function () { return event.text; }, exchanges()));
+          said.appendChild(assistantFooter(function () { return event.text; }, exchanges(), event.turn));
           row(said, event);
         }
         // The board's conversation records the designer's own words: the
