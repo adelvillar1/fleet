@@ -12,6 +12,63 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.9.0 — 2026-11-22
+
+**The milestone cut.** Fifty-three commits past v0.8.24 finish what that cut
+promised and start three new lines of product, so the minor segment moves:
+the face-rethought plan is **complete** — every row of every phase landed with
+its own red-proof, verified against the whole table (this repo's numbering law
+resumes third-segment discipline for ordinary user-facing changes after this
+cut).
+
+**The face plan closed.** P1's remainder (the receipts gutter, the composer's
+nine controls decided and recorded in `UI-DECISIONS.md`, fork-at-turn, artifact
+preview cards), P6's six system surfaces (settings' five postures over the
+32-key mapping, the vault unlock map with its test-this-key probe, the plugins
+manifest diff over a recorded ask ledger, the calibration scorecard with a
+red-proved counterfactual replay, about folded, the armada deployment map),
+P7's visual pass — the token tier, the display ladder, the card vocabulary,
+the motion budget, the no-hex guard, the four sentences per surface, and the
+hand walk measured at four breakpoints. Closing gate: **2814 units, 0 failed;
+face 1839 checks across 271 cases**.
+
+**The terminal got its intelligence panels.** The TUI's delegation panel joins
+the face's graph document (per-node divergence words and the why-this-child
+line), a **kanban panel** reads the work board the face reads, and a
+**second-brain panel** carries the morning read — all through one law: the
+same document the face reads, never a rederivation.
+
+**The wire got 73 % smaller.** Every text asset the faces serve carries a
+build-time gzip twin negotiated by `Accept-Encoding`: 4.0 MB → 1.08 MB across
+19 assets; the shell path 2.05 MB → **555 KB**; a cold phone load at 1.5 Mbps
+paints in **3.6 s** where it took 11.5 — measured, with the KI-587 clocks
+re-verified as the regression floor.
+
+**The phone got a third face.** The **mini console**: a 52 KB terminal-shaped
+PWA under the relay with command-line navigation, reading the TUI panels' own
+documents — cold through the paired listener: **436 ms painted, 19.7 KB on
+the wire**. It carries the full KI-587 clock set (a stalled update answers
+from the previous generation; nothing hangs), and two real defects were
+caught while landing it: a boot clock that only lived in the script (a stalled
+script left 47 s of silence) and a registration gated on `load`.
+
+**The bot PWA became real.** Its worker registers versioned and precached,
+the conversation view got the flex rule its composer needed (the dock sat
+132 px below the fold on a phone), and the app lives under **`/bot/`** with
+its own worker scope, so the console's worker can never claim it — measured
+with both workers on one origin.
+
+**The frozen PWA is fixed by three red-proved clocks.** The diagnosis
+measured the freeze exactly: a stalled new asset plus a boot watchdog that
+could not fire (it armed on `DOMContentLoaded`, which a pending module blocks)
+plus a service worker that only handled rejection, never silence. Now every
+shell fetch carries a deadline, the watchdog arms at script evaluation, and
+an update claims its clients and sweeps one generation late.
+
+**Fleet watches your multiplexer.** tuios (installed this day) now appears in
+the armada map: sessions, windows by their agent words, Fleet's own pane
+marked — by the **live command line only**; history and cwd are not evidence.
+
 ## v0.8.24 — 2026-11-21
 
 Sixty-one commits inside the face-rethought plan: every clause of **P2 through
