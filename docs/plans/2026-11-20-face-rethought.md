@@ -1,7 +1,7 @@
 ---
 status: active
 created: 2026-11-20
-updated: 2026-11-20
+updated: 2026-11-21
 slug: face-rethought
 ---
 
@@ -792,6 +792,87 @@ The remaining `surface-*.jpg` (`settings`, `vault`, `plugins`,
 `landing`) date from 2026-11-04 and belong to surfaces P6 is rewriting
 now — re-shooting them mid-phase would capture a half-built surface, so
 their refresh is P6's own AC, not this wave's.
+
+## Status pass, 2026-11-21 — P6: the six system surfaces
+
+**Landed.** Settings `6ca7a555`, vault `3c5c14bd`, plugins `5d6007db`,
+calibration `93a6d04a`, about `fea55e0f`, armada `4fa28ebd`. Every one
+carries its own red-proof, read by name from a red tree, and the harness
+moved 1720/245 → **1811/264** across the phase.
+
+| surface | commit | measured | red-proof, by name |
+|---|---|---|---|
+| settings | `6ca7a555` | first paint is five postures and no count strip; the map proved both ways against the registry's own 32 keys (each row expands to its declared keys, every knob reachable from exactly one row, no row invents a knob, no knob claimed twice); harness 1744/249 | `appetite` dropped from the model posture → *the model row declares/expands to exactly those knobs*; `pin` added to approval → *no knob is claimed by two postures — twice: pin*; the selected sentence's tail deleted → *settings selected names the section under the postures* |
+| vault | `3c5c14bd` | every sealed name beside what it unlocks and what its absence costs, both derived (catalog `key_env` · router tiers · MCP `env_names` · the channel's token); "test this key" is the router's own `provider-discover`; harness 1763/254 | "without it" reworded → *the map names what breaks without the key*; the press pointed at `provider` → *the press runs the provider probe the router owns — []*; step 3's sentence replaced → *a sealed name sits on the delete-the-plaintext step* |
+| plugins | `5d6007db` | the bridge records every sandboxed ask (bounded `plugins/<name>/asks.jsonl`, newest 200, a corrupt line counted and named); one manifest diff per bundle with all five rows named, never an empty cell; the three tiers as a table; harness 1777/257 | the refused-not-declared sentence blanked → *refused-but-not-declared is a named row, not an empty cell — usageundeclared*; the privileged tier row deleted → *the tier table has three rows — draft,untrusted* |
+| calibration | `93a6d04a` | precision per beat under `calib::summarize` unchanged (agreed stands, disagreed inverts, waived grades nothing); every other op NAMED as recording no verdict, never scored at zero; the counterfactual is face arithmetic over the bridge's own judged rows (confidence · workload · stamp · floor in force); harness 1794/261 | flip guard neutered to "flip anything below the asked floor" → *the replay names how many decisions would have flipped — at 0.7, 4 of 5* plus the invented 0.44 row; the disagreed inversion dropped → *the judge's precision is the graded rows' own — 5 graded · 3 right · 1 wrong · 1 insufficient · 60%*; the empty sentence deleted → *calibration empty says the day holds no rows* |
+| about | `fea55e0f` | folded into Settings → system; `#/about` walks to `#/settings/system` (the address follows the fold, so a saved link and a reload land on the receipt); the rail is nine destinations and the waiting release's badge moved onto the gear; the receipt still carries the apply press; harness 1796/261 | the fold disabled in `showRoute` → *P6 #/about folds to the receipt's address — hash=#/about*, taking the receipt, the apply press and all four KI-483/C6 checks with it |
+| armada | `4fa28ebd` | a deployment map — instance · health · role · what it carries — with the dispatch bar under it; every cell from the read already served (no second store); role is measured (`dispatchable` when settled, `observing` when not, D49); the count strip and the roster list it duplicated retire; harness 1811/264 | the map removed → six checks by name (*no .deploy-map-head*, *0 rows*, *no sid-a row*, *no role cell*); the zero strip restored → *P6 the empty armada never prints a zero as a reading* |
+
+**The About fold's boot red, and what it actually was.** The first
+mid-flight tree had `#/about` arriving with no receipt at all. Two
+faults, and neither was the route: (1) `askFeed` assigned the
+update-check answer to `face.settings` wholesale, and the settings board
+guards on `scalars` — so an answer carrying only `update` painted the
+loading card over the receipt it was answering, in the browser as well as
+the harness; (2) the arrival painted before it asked, so a surface with a
+read already in hand could say "nothing newer" for the moment before the
+check was marked pending. The fix is the identity rule — the check
+replaces the read only when it carries the surface, and otherwise folds
+its `update` into the read at hand (the receipt merges `face.feedUpdate`,
+so the answer survives a later read) — and the ask is now the paint: the
+receipt is marked pending before anything is drawn. KI-488 / deep dive D3
+is the clause that made this a defect rather than a cosmetic one.
+
+**P6's ACs, and where each is pinned.** Settings' first paint (five rows,
+no strip) — `P6 settings opens on five postures`; the mapping both ways —
+`P6 the postures map both ways` + `P6 an unmapped knob is named, never
+dropped`; the vault map's resolver path and test result per name —
+`P6 the vault map names what each key unlocks`, `P6 test this key runs the
+provider probe`, `P6 a refused probe names its reason`; the manifest diff
+from a fixture ledger — `P6 the manifest diff names all five rows` + the
+three-tier case; the counterfactual never invents a flip — `P6 the
+counterfactual names every flip and invents none` (red-proved); About's
+route redirects and the rail drops it — `P6 About folds into the build
+receipt, and a waiting release says so`; armada's map and bar —
+`P6 the armada draws a deployment map with the dispatch bar` +
+`P6 an armada with no roster says so, and never a zero`; screenshots —
+below. Every P6 surface also carries its four sentences in `SENTENCES`
+and a case that pins the wording (`P6 settings/vault/plugins/calibration/
+armada names its four sentences`).
+
+**KIs this phase touches.** KI-568 (About's rail row) is superseded, not
+reverted: the row is gone because the receipt is a section, and the
+waiting release's badge moved onto the gear so nothing findable was lost
+— the 0.8.12 regression ("we lost the about option on the rail") is the
+case the fold's redirect pin exists to prevent. KI-488 / D3 is the
+honesty clause the receipt's three feed states answer. KI-447 is why the
+dispatch bar's note is state, not a DOM write. KI-424 (the plugins
+slivers) stays closed — the shot that found it is re-taken below. KI-586
+(the phone stage collapse) is the rig's guard, and it passed on all four
+new shots.
+
+**The gallery.** Four shots re-taken from the built tree on `:3099`
+through the committed rig, JPEG q82, all **2880×1800** (1440×900 @2x):
+`surface-settings` (251,856 B), `surface-vault` (282,958 B),
+`surface-plugins` (279,273 B), `surface-calibration` (232,139 B). Each
+passed a readiness predicate naming the block the shot exists to show —
+the five postures plus the painted section; the unlock map's three rows;
+the manifest diff's rows plus the three-tier table; the grader
+scorecard's beats — and the KI-586 stage guard. The text read back from
+the served page: settings 2,045 chars, vault 2,809, plugins 1,618,
+calibration 1,685. The seed gained the two fixtures these surfaces need
+and did not have: three keys sealed through the CLI's own writer (the
+vault is AES-GCM, so a fabricated file would not be the format the app
+reads) with two `.env` lines left plaintext for the migration card, and
+one installed untrusted bundle with a manifest, a registry row and a
+ledger carrying answered, refused and undeclared asks.
+
+**Still open on this plan.** P5's "design run's review loop" AC still
+needs an eval rig of its own, so the plan's `status:` stays `active` —
+every phase's surfaces are landed, but the plan's own rule is that no
+phase is complete until its rows and its screenshot clauses both say so,
+and that one row does not.
 
 ## Files to be touched
 
