@@ -157,6 +157,44 @@ const SHOTS = {
     ready: 'const p = document.getElementById("panel-memory");'
       + 'return !!p && !p.hidden && p.textContent.trim().length > 40;',
   },
+  // P6's four system surfaces. Each readiness predicate names the block
+  // the shot exists to show, never a generic text length: settings is the
+  // five postures AND the painted section under them, the vault is the
+  // unlock map's rows (seeded keys — `scripts/gallery-seed.py` seals
+  // three), plugins is the manifest diff's rows AND the tier table, and
+  // calibration is the grader scorecard.
+  'surface-settings': {
+    route: 'settings',
+    ready: 'const p = document.getElementById("panel-settings");'
+      + 'const board = document.getElementById("settings-board");'
+      + 'const postures = board && board.querySelectorAll(".posture-card");'
+      + 'const body = board && board.querySelectorAll(".section-body");'
+      + 'return !!p && !p.hidden && !!postures && postures.length === 1'
+      + ' && postures[0].querySelectorAll(".posture").length >= 5'
+      + ' && !!body && body.length > 0 && body[0].textContent.trim().length > 80;',
+  },
+  'surface-vault': {
+    route: 'vault',
+    ready: 'const p = document.getElementById("panel-vault");'
+      + 'const map = document.querySelector(".vault-map");'
+      + 'const rows = map ? map.querySelectorAll(".vault-map-row") : [];'
+      + 'return !!p && !p.hidden && !!map && rows.length >= 3;',
+  },
+  'surface-plugins': {
+    route: 'plugins',
+    ready: 'const p = document.getElementById("panel-plugins");'
+      + 'const diff = document.querySelector(".manifest-diff");'
+      + 'const rows = diff ? diff.querySelectorAll(".manifest-row") : [];'
+      + 'const tiers = document.querySelectorAll(".plugins-tier-table .plugins-tier-row");'
+      + 'return !!p && !p.hidden && !!diff && rows.length >= 3 && tiers.length === 3;',
+  },
+  'surface-calibration': {
+    route: 'calibration',
+    ready: 'const p = document.getElementById("panel-calibration");'
+      + 'const card = document.querySelector(".grader-scorecard");'
+      + 'const beats = card ? card.querySelectorAll(".grader-beat") : [];'
+      + 'return !!p && !p.hidden && !!card && beats.length >= 2;',
+  },
   // The phone precedent: 390x844 @2x (the pairing picker's 780x1688).
   // WIRED BUT NOT COMMITTED as of this rig's proof: the shell's mobile
   // tracks collapse the visible stage to 0px at 390 (the room's nodes

@@ -44,6 +44,13 @@ Fixture contents, mapped to the surfaces the gallery needs:
     failed; nodes carry tools/skills/workflows/loops and peak).
   - canvas versions on the landing frame, each naming its own captured
     raster under `canvas/<slug>/versions/` (the P5 version-diff fixture).
+  - a vault with three of the five placeholder keys sealed through the
+    CLI's own writer (`fleet vault set`, under a fixture passphrase) and
+    two left as plaintext `.env` lines, so the P6 unlock map has rows and
+    the migration card still names a line to delete.
+  - one installed untrusted bundle (`plugins/galley`) with a manifest, a
+    registry row and an ask ledger carrying answered, refused and
+    undeclared asks — the three honest shapes the P6 manifest diff draws.
 """
 
 import argparse
@@ -890,6 +897,82 @@ def seed_env_and_config(home: str) -> None:
     write_json(os.path.join(home, "config.json"), {})
 
 
+def seed_vault(home: str) -> None:
+    """Seal three of the five placeholder keys, so the vault's unlock map
+    has rows to draw and the .env migration card still has plaintext left
+    to name. Sealing is the CLI's own writer (`fleet vault set`), never a
+    hand-written vault file: the file is AES-GCM under the passphrase, and
+    a fixture that fabricated one would not be the format the app reads.
+
+    No binary on disk means no vault — named, never silent: the map then
+    paints its own empty sentence and the shot still passes readiness
+    (the migration card is the populated half).
+    """
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    binary = next((one for one in (
+        os.path.join(repo, "target", "debug", "fleet"),
+        os.path.join(repo, "target", "release", "fleet"),
+    ) if os.path.exists(one)), None)
+    if not binary:
+        print("gallery-seed: no fleet binary under target/ — the vault map "
+              "will paint its empty sentence (build first to shoot a sealed map)")
+        return
+    sealed = [
+        ("ZAI_CODING_API_KEY", "gallery-placeholder-zai"),
+        ("XIAOMI_MIMO_API_KEY", "gallery-placeholder-mimo"),
+        ("STEPFUN_API_KEY", "gallery-placeholder-stepfun"),
+    ]
+    env = dict(os.environ)
+    env["FLEET_HOME"] = home
+    env["FLEET_VAULT_PASSPHRASE"] = "gallery-fixture-passphrase"
+    for name, value in sealed:
+        done = subprocess.run(
+            [binary, "vault", "set", name, value],
+            env=env, capture_output=True, text=True)
+        if done.returncode != 0:
+            print(f"gallery-seed: sealing {name} failed: {done.stderr.strip()}")
+            return
+    print(f"gallery-seed: sealed {len(sealed)} keys into the vault")
+
+
+# --- a bundle for the plugins surface ---------------------------------------
+
+PLUGIN_NAME = "galley"
+PLUGIN_MANIFEST = {
+    "name": PLUGIN_NAME,
+    "tier": "untrusted",
+    "version": "0.3.1",
+    "entry": {"group": "system", "label": "the galley board"},
+    "queries": ["sessions", "memory", "usage"],
+    "provenance": "creator:gallery-fixture",
+}
+PLUGIN_ASKS = [
+    # answered — the ordinary case
+    {"at": "2026-11-21T09:12:00Z", "query": "sessions", "answered": True},
+    # refused by the bridge, named
+    {"at": "2026-11-21T09:14:00Z", "query": "memory", "answered": False,
+     "reason": "the memory index is locked for this run"},
+    # asked for something the manifest never declared: the sandbox refused it
+    {"at": "2026-11-21T09:15:00Z", "query": "preview", "answered": False,
+     "reason": "the manifest declares no `preview` query"},
+]
+
+
+def seed_plugins(home: str) -> None:
+    """One installed untrusted bundle, its registry row and its ask ledger —
+    the three things the manifest diff reads. The ledger carries all three
+    of its honest shapes: answered, refused with a reason, and asked for a
+    query the manifest never declared (so the diff's undeclared row is a
+    fixture, not a hope)."""
+    bundle = os.path.join(home, "plugins", PLUGIN_NAME)
+    os.makedirs(bundle, exist_ok=True)
+    write_json(os.path.join(bundle, "manifest.json"), PLUGIN_MANIFEST)
+    jsonl(os.path.join(bundle, "asks.jsonl"), PLUGIN_ASKS)
+    write_json(os.path.join(home, "plugins.json"), {
+        "plugins": {PLUGIN_NAME: {"enabled": True, "promotions": []}},
+    })
+
+
 def seed_substrate(home: str, port: int) -> None:
     """The health loop's layerfs probe: with no machine record it reads the
     conventional `<home>/layerfs-home/worker/endpoint.json`. The fixture
@@ -938,6 +1021,8 @@ def main() -> None:
                 "seeded_at": utc_at(0), "sessions": {}}
     seed_env_and_config(home)
     seed_substrate(home, args.port)
+    seed_vault(home)
+    seed_plugins(home)
     seed_sessions(home, manifest)
     seed_knowledge(home, manifest)
     seed_calibration(home)
