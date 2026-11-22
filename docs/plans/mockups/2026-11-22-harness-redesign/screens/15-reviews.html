@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reviews</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="calibration" data-title="Reviews">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Reviews</h1><span class="say">was it right — the gate first, then routing, then the day's graded ops (U44's amendment: routing rides here)</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:flex;flex-direction:column;gap:14px">
+
+    <div class="card">
+      <div class="card-head">The gate <span class="right"><span class="chip ok">fit · 4 of 6 cells</span></span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12.5px">
+        <span class="chip ok">code × glm · fit</span>
+        <span class="chip ok">prose × glm · fit</span>
+        <span class="chip warn">deep-context × kimi · 3 graded</span>
+        <span class="chip down">vision · no judged cell</span>
+        <span class="chip ghost">composed · off</span>
+        <span class="chip ghost">quick · 1 graded</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary">run a gate review</button><span style="font-size:12px;color:var(--muted);align-self:center">the failover learns only from cells a review has graded</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Routing — the live decision and the chains <span class="right">pinned to none — the judge picks per call</span></div>
+      <div class="row">
+        <div class="row-main">
+          <div class="row-title">the deploy conversation's turn</div>
+          <div class="row-sub">judged <span class="mono">hard</span> → walked <span class="mono">glm-4.7</span> · 412ms · cache read 10,176/20,519</div>
+        </div>
+        <span class="evidence verified">⦿ graded · agreed</span>
+      </div>
+      <div class="row">
+        <div class="row-main">
+          <div class="row-title">Tuesday 09:41 · the corpus-refresh catch-up</div>
+          <div class="row-sub">walked <span class="mono">glm → kimi → deepseek-flash</span> · served by the failover tail</div>
+        </div>
+        <span class="evidence asserted">△ graded · disagreed once</span>
+      </div>
+      <div class="row"><div class="row-main"><div class="row-title">the workloads <span class="mono" style="font-weight:400;font-size:11.5px;color:var(--muted)">quick · standard code · hard · prose · deep context · vision · composed</span></div><div class="row-sub">each chain is one editable row in its drawer</div></div><button class="btn ghost sm">open the chains</button></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Today's graded ops <span class="right">routes 215 · judgments 9 · delegations 3 · explains 1 · recall hits 96</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">the seat's answer on pricing</div><div class="row-sub">graded against the owner's later edit · agreed</div></div><span class="chip ok">agreed</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">the sweep's “60 GiB freed”</div><div class="row-sub">graded against the disk read · agreed</div></div><span class="chip ok">agreed</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">“the tail costs nothing when idle”</div><div class="row-sub">graded · the desk refused the number first</div></div><span class="chip down">refused</span></div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Reviews · routing</div><div class="drawer-title">the hard chain</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">The chain, in order <span class="right">drag to reorder</span></div>
+      <div class="row"><span class="mono" style="color:var(--muted)">1</span><div class="row-main"><div class="row-title">glm-4.7</div><div class="row-sub">chain head · 412ms p50 today</div></div><span class="chip ok">fit</span></div>
+      <div class="row"><span class="mono" style="color:var(--muted)">2</span><div class="row-main"><div class="row-title">kimi</div><div class="row-sub">recovered 2 demotions this week</div></div><span class="chip ok">fit</span></div>
+      <div class="row" style="opacity:.8"><span class="mono" style="color:var(--muted)">3</span><div class="row-main"><div class="row-title">deepseek-flash</div><div class="row-sub">the failover tail — every walk closes on it</div></div><span class="chip ghost">tail</span></div>
+    </div>
+    <div style="font-size:12.5px;color:var(--muted)">A pin is the owner's standing choice, never a default baked in — and every standing choice is graded like any other routing decision.</div>
+  </div>
+  <div class="drawer-foot"><button class="btn secondary">pin a provider</button><button class="btn ghost">open settings</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversations</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="sessions" data-title="Conversations">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Conversations</h1><span class="say">the home and the workbench — what needs you, then what changed</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:grid;grid-template-columns:300px minmax(0,1fr);gap:24px;align-items:start">
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="card" style="padding:10px 8px">
+        <div class="rail-label" style="color:var(--down)">needs you</div>
+        <a class="rail-row tone-needs current">✦ the deploy conversation<span class="count">1</span></a>
+        <div class="rail-label" style="color:var(--warn)">working</div>
+        <a class="rail-row tone-working">▦ the pricing table run<span class="count">·</span></a>
+        <div class="rail-sep"></div>
+        <div class="rail-label">earlier · by project</div>
+        <div style="font-size:11px;color:var(--faint);padding:2px 10px 4px">fleet</div>
+        <a class="rail-row">✦ relevance pass retro</a>
+        <a class="rail-row">✦ harness redesign brief</a>
+        <div style="font-size:11px;color:var(--faint);padding:2px 10px 4px">design-canvas</div>
+        <a class="rail-row">✦ publish moderation drill</a>
+        <a class="rail-row" style="color:var(--muted);justify-content:center">folded archive · 178 more ▾</a>
+      </div>
+      <div class="state-line" data-state="selected">showing fleet · 41 conversations — every one is one press away</div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="composer">
+        <textarea placeholder="What do you want to work on?" rows="1">Summarize what the relevance pass changed on the landing, then draft the release note.</textarea>
+        <div class="composer-bar">
+          <button class="iconbtn" aria-label="attach a document">📄</button>
+          <button class="iconbtn" aria-label="attach a file">📎</button>
+          <span class="chip">Ask before</span>
+          <span class="chip ghost">Auto</span>
+          <span class="chip ghost">~/Projects/fleet</span>
+          <span class="spacer"></span>
+          <button class="btn primary">send <span class="kbd" style="border-color:transparent;background:color-mix(in oklab,var(--on-accent) 22%,transparent);color:var(--on-accent)">⏎</span></button>
+        </div>
+      </div>
+
+      <div class="turn owner">
+        <div class="who-line"><span class="persona"><span class="disc tint-1">A</span><span class="name">you</span></span><span>· 14:02</span></div>
+        <div class="prose"><p>Read the last three route rows and tell me whether the failover ever reached the deepseek tail this week.</p></div>
+      </div>
+
+      <div class="turn assistant">
+        <div class="who-line"><span class="persona"><span class="disc tint-5">F</span><span class="name">fleet</span></span><span>· 14:02 · routed <span class="mono">glm-4.7 · hard</span></span></div>
+        <div class="event-card"><span class="glyph">≡</span><div class="body"><div class="kind">route</div><div class="what">judged <span class="mono">hard</span> → walked <span class="mono">glm-4.7 → kimi → deepseek-flash (tail)</span></div></div><button class="iconbtn" aria-label="open in the drawer">›</button></div>
+        <div class="event-card"><span class="glyph">✳</span><div class="body"><div class="kind">recall</div><div class="what">6 facts · failover · demotion · the pin</div></div></div>
+        <div class="prose"><p>It reached the tail once. On <b>Tuesday 09:41</b> the night's corpus-refresh run walked every routed candidate into a 429 and landed on <code>deepseek-flash</code>, which served the row. The decision row names it: <code>served by the failover tail</code>. Every other call this week settled on the chain's head, and the pin was off the whole time.</p>
+        <p>Two demotions happened before that call — both on <code>glm-4.7</code>, both recovered by <code>kimi</code> without reaching the tail.</p></div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <span class="evidence verified">⦿ verified · calibration rows + log</span>
+          <span class="evidence asserted">△ the 429 count is the ledger's, not the provider's</span>
+        </div>
+      </div>
+
+      <div class="turn assistant" style="opacity:.75">
+        <div class="who-line"><span class="persona"><span class="disc tint-5">F</span><span class="name">fleet</span></span><span>· drafting…</span></div>
+        <div class="prose" style="color:var(--muted)">The relevance pass touched seven surfaces; the note should lead with<span style="border-left:2px solid var(--accent);margin-left:2px;animation:pulse 1s infinite"> </span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Conversations · made here</div><div class="drawer-title">the deploy conversation</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-tabs">
+    <button class="drawer-tab">read</button><button class="drawer-tab">act</button><button class="drawer-tab">connections</button><button class="drawer-tab on">made here</button>
+  </div>
+  <div class="drawer-body">
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">What this conversation made <span class="right">live</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">route-analysis brief</div><div class="row-sub">desk deliverable · review stage · gate held</div></div><span class="chip warn">review</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">3 facts superseded</div><div class="row-sub">memory · provenance carried</div></div><span class="chip accent">memory</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">1 child ran</div><div class="row-sub">scout · 6 turns · merged home</div></div><span class="chip">delegation</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">skills drawn on</div><div class="row-sub">routing-follows-measured-cache · ki-ledger-pipes</div></div><span class="chip gold">skills</span></div>
+    </div>
+    <div style="font-size:12.5px;color:var(--muted)">A conversation that generates objects shows them accumulating where you are talking. A row pivots its surface — the desk opens the deliverable, Intelligence opens the fact.</div>
+  </div>
+  <div class="drawer-foot"><button class="btn secondary sm">rename</button><button class="btn ghost sm">fork at turn</button><span style="flex:1"></span><span class="mono" style="font-size:11px;color:var(--muted)">turn 12 · 41k ctx</span></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

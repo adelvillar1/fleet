@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistants</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="bots" data-title="Assistants">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Assistants</h1><span class="say">the named helpers and their channels — personas that own threads, and the doors work arrives through</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px;align-items:start">
+
+    <div class="card" style="padding:10px 8px">
+      <div class="rail-label">personas</div>
+      <div class="row" style="border:none;background:var(--accent-soft);border-radius:8px"><div class="row-main"><div class="row-title" style="color:var(--accent-ink)"><span class="persona"><span class="disc tint-5">F</span><span class="name">fleet</span></span></div><div class="row-sub">orchestrator · hard chain · owns 41 threads</div></div></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title"><span class="persona"><span class="disc tint-4">L</span><span class="name">laya</span></span></div><div class="row-sub">prose · walks the prose chain · owns 9 threads</div></div></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title"><span class="persona"><span class="disc tint-2">K</span><span class="name">kiri</span></span></div><div class="row-sub">ops · standard code · owns 14 threads</div></div></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title"><span class="persona"><span class="disc tint-3">W</span><span class="name">warden</span></span></div><div class="row-sub">judgment · sys1 · convenes when a room names a gap</div></div></div>
+      <div class="rail-sep"></div>
+      <div class="rail-label">channels</div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">telegram</div><div class="row-sub">off by default · nothing outside reaches the agent without a person letting it in</div></div><span class="chip ghost">off</span></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">webhook peers</div><div class="row-sub">1 paired · may act</div></div><span class="chip ok">on</span></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card">
+        <div class="card-head">kiri <span class="right"><span class="chip ok">owns 14 threads end-to-end</span></span></div>
+        <div class="track"><div class="step done" data-label="hired"></div><div class="step done" data-label="working"></div><div class="step now" data-label="review"></div><div class="step" data-label="hand-over"></div><div class="step" data-label="archive"></div></div>
+        <div style="display:flex;flex-direction:column;gap:4px;margin-top:12px;font-size:12.5px;color:var(--ink-soft)">
+          <div>workload: <span class="mono">standard code</span> — every run dispatched under kiri walks that chain, judged and graded like any other routing decision</div>
+          <div>attribution: the index is the record — live, ended, archived threads all carry kiri's name</div>
+          <div>hub-and-spoke: kiri addresses the orchestrator, never a sibling; a peer address reroutes to the lead with the unresolved-dependency signal</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary sm">dispatch to kiri</button><button class="btn secondary sm">open its work graph</button><button class="btn ghost sm">edit the role</button></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Hire for a gap <span class="right">a capability gap is an opportunity, not a reason to abandon the brief</span></div>
+        <div style="font-size:13px;color:var(--ink-soft)">When a bot names a capability the room lacks, convene a role the home keeps or hire a persona for it. The hire names its workload; the persona owns its threads end-to-end from the first turn.</div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn secondary sm">hire a persona</button><button class="btn ghost sm">convene a role</button></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Assistants · persona</div><div class="drawer-title">kiri's work graph</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">Owned threads <span class="right">14 · newest first</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">deploy.yml approval follow-through</div><div class="row-sub">live · the conversation's delegated child</div></div><span class="chip warn">live</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">release feed 404 diagnosis</div><div class="row-sub">ended · graded agreed</div></div><span class="chip ok">ended</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">kanzo board relay</div><div class="row-sub">archived · taught 2 facts</div></div><span class="chip ghost">archived</span></div>
+    </div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">The role's file <span class="right">~/.fleet/roles/kiri.md</span></div>
+      <div style="font-size:12.5px;color:var(--ink-soft)">workload: standard-code · tools: the declared set · skills: routing-follows-measured-cache, ki-ledger-pipes · the narrowed declaration rides every delegation kiri spawns.</div>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn secondary">edit role</button><button class="btn ghost">retire the persona</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Versions</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="workspace-history" data-title="Versions">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Versions</h1><span class="say">every version of the work — the spine's branches, the store, and the files' instruments</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:flex;flex-direction:column;gap:14px">
+
+    <div class="card">
+      <div class="card-head">The spine <span class="right">fleet · 6 weeks · layers on main, branches at their fork, leaves for commits</span></div>
+      <div style="border:1px solid var(--line);border-radius:var(--r-md);background:var(--page);padding:16px;position:relative;height:230px;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)">
+        <div style="position:absolute;left:20px;top:20px;bottom:20px;width:3px;border-radius:2px;background:var(--accent)"></div>
+        <div style="position:absolute;left:18px;top:26px"><span class="chip accent">Layer C14 · main</span></div>
+        <div style="position:absolute;left:18px;top:110px"><span class="chip accent">Layer C15 · main</span></div>
+        <svg style="position:absolute;inset:0" width="100%" height="100%">
+          <path d="M22 70 C 80 70, 80 56, 140 56" stroke="var(--tint-2)" fill="none" stroke-width="2"/>
+          <path d="M22 160 C 90 160, 90 140, 160 140" stroke="var(--tint-4)" fill="none" stroke-width="2"/>
+          <path d="M160 150 C 200 150, 200 190, 60 190" stroke="var(--tint-4)" fill="none" stroke-width="2" stroke-dasharray="5 3"/>
+        </svg>
+        <div style="position:absolute;left:140px;top:48px"><span class="chip">kiri/seat-rows · <span class="mono">C14↓L3</span></span></div>
+        <div style="position:absolute;left:160px;top:132px"><span class="chip">scout/inventory · <span class="mono">C15↓L2</span></span></div>
+        <div style="position:absolute;left:60px;top:182px"><span class="chip ok">grafted home · merged 11:02</span></div>
+        <div style="position:absolute;right:24px;bottom:16px;color:var(--faint)">idle chip: docs/review — no work this window</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px">
+      <div class="card">
+        <div class="card-head">The store <span class="right">the accounting</span></div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--ink-soft)">
+          <div class="row" style="border:none;min-height:34px"><div class="row-title">on disk</div><span class="mono" style="color:var(--muted)">2.41 GiB</span></div>
+          <div class="row" style="border:none;min-height:34px"><div class="row-title">unique after dedup</div><span class="mono" style="color:var(--muted)">880 MiB</span></div>
+          <div class="row" style="border:none;min-height:34px"><div class="row-title">SQLite overhead, named separately</div><span class="mono" style="color:var(--muted)">64 MiB</span></div>
+          <div class="row" style="border:none;min-height:34px"><div class="row-title">this commit cost</div><span class="mono" style="color:var(--muted)">312 KiB · 4 files</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">What came home <span class="right">the settle's own read</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">kiri/seat-rows → main</div><div class="row-sub">merged through the parent's gated write path · held nothing the owner touched since the fork</div></div><span class="chip ok">merged</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">scout/inventory → main</div><div class="row-sub">still open · 2 commits ahead</div></div><span class="chip warn">open</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Versions · file instruments</div><div class="drawer-title">src/gui/assets/app.js</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-tabs"><button class="drawer-tab on">text</button><button class="drawer-tab">blame</button><button class="drawer-tab">revisions</button><button class="drawer-tab">diff</button></div>
+  <div class="drawer-body">
+    <div style="font-family:var(--font-mono);font-size:11.5px;line-height:1.7;background:var(--page);border:1px solid var(--line);border-radius:var(--r-md);padding:12px;color:var(--ink-soft);overflow-x:auto">
+      <div><span style="color:var(--ok)">+ function paintDrawer(focus) {</span></div>
+      <div><span style="color:var(--ok)">+   // one drawer per stage; opens by press (U13)</span></div>
+      <div><span style="color:var(--down)">− paintPane(focus);</span></div>
+      <div>&nbsp;&nbsp;var tabs = drawerTabs(focus.kind);</div>
+      <div>&nbsp;&nbsp;…</div>
+    </div>
+    <div style="font-size:12px;color:var(--muted)">read at ref <span class="mono">scout/inventory@C15↓L2</span> — the tree's click lands here; the ref is named, never guessed</div>
+  </div>
+  <div class="drawer-foot"><button class="btn secondary">restore this ref</button><span style="flex:1"></span><span class="mono" style="font-size:11px;color:var(--muted)">a read whose version still holds answers in 1ms</span></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

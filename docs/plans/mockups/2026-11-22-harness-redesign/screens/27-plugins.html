@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plugins</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="plugins" data-title="Plugins">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Plugins</h1><span class="say">surfaces installed on top of fleet — grouped status-first, with the whole trust decision on the surface</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:grid;grid-template-columns:260px minmax(0,1fr);gap:24px;align-items:start">
+
+    <div class="card" style="padding:10px 8px">
+      <div class="rail-label">status-first</div>
+      <div class="row" style="border:none;border-radius:8px"><div class="row-main"><div class="row-title">drafts awaiting review</div><div class="row-sub">a creator draft never applies silently</div></div><span class="chip down">2</span></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">installed bundles</div></div><span class="mono" style="font-size:11px;color:var(--muted)">2</span></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">MCP servers</div></div><span class="mono" style="font-size:11px;color:var(--muted)">4</span></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">lanes</div><div class="row-sub">resolved now</div></div><span class="chip ok">5</span></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">tool plugin</div><div class="row-sub">what fleet attaches to, never reimplements</div></div></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card">
+        <div class="card-head">Installed <span class="right">tier marks and provenance are the trust decision</span></div>
+        <div class="row"><div class="row-main">
+          <div class="row-title">Telemetry <span class="chip ghost" style="margin-left:6px">untrusted · sandboxed</span></div>
+          <div class="row-sub">srcdoc frame · 8 strata from live counts · <span class="mono">n asked · n answered · n refused</span></div>
+        </div><button class="btn ghost sm">open</button></div>
+        <div class="row"><div class="row-main">
+          <div class="row-title">kanzo board <span class="chip accent" style="margin-left:6px">privileged · in the face's window</span></div>
+          <div class="row-sub">the owner's intent backlog · installed from a path · blast radius named at install</div>
+        </div><button class="btn ghost sm">open</button></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Drafts <span class="right">the gate, again</span></div>
+        <div class="row" style="border-left:3px solid var(--down)"><div class="row-main">
+          <div class="row-title">“budget-notes” <span class="chip down" style="margin-left:6px">declares 3 queries</span></div>
+          <div class="row-sub">creator draft · the bridge enforces the declared set; nothing outside it answers</div>
+        </div><button class="btn primary sm">review</button></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">How trust works <span class="right">one disclosure, in the head</span></div>
+        <div style="font-size:12.5px;color:var(--ink-soft)">Untrusted bundles mount as sandboxed frames with no same-origin and no network except the host's relay of declared read-only queries. Privileged bundles run in the face's window and say so on every surface they render. The host decides what a bundle may reach, never the bundle.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Plugins · draft</div><div class="drawer-title">budget-notes — the review</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">What it asks for <span class="right">the manifest, diffed against the last review</span></div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-family:var(--font-mono);font-size:11.5px;color:var(--ink-soft)">
+        <div><span style="color:var(--ok)">+ queries.read: calib.rows.today</span></div>
+        <div><span style="color:var(--ok)">+ queries.read: home.spend</span></div>
+        <div><span style="color:var(--down)">+ queries.read: sessions.list.all</span> <span class="chip down" style="font-family:var(--font-text)">wider than its brief</span></div>
+      </div>
+    </div>
+    <div class="state-line">Approving grants exactly these queries and nothing else. A refused query is named inside the bundle's own frame, never rendered as a zero.</div>
+  </div>
+  <div class="drawer-foot"><button class="btn primary">approve as declared</button><button class="btn secondary">narrow it</button><button class="btn ghost">decline</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

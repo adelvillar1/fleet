@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helpers</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="" data-title="Helpers">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Helpers</h1><span class="say">the helpers a task can be given to — the run's tree of children, and the declared graph</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:flex;flex-direction:column;gap:14px">
+
+    <div class="card">
+      <div class="card-head">The run in flight <span class="right">3 nodes · depth 2 of 3 · routed over each brief</span></div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:12.5px">
+        <div class="row"><span class="persona"><span class="disc tint-5">F</span></span><div class="row-main"><div class="row-title">the harness redesign brief</div><div class="row-sub">parent goal · 12 turns · walked <span class="mono">glm-4.7</span></div></div></div>
+        <div class="row" style="margin-left:28px;border-left:2px solid var(--accent-soft)"><span class="persona"><span class="disc tint-2">S</span></span><div class="row-main"><div class="row-title">scout — read every surface, draft the inventory</div><div class="row-sub">6/9 turns · declared tools <span class="mono">read_file, list_dir, search</span> · the declaration is the scope</div></div><span class="chip warn">running</span></div>
+        <div class="row" style="margin-left:28px;border-left:2px solid var(--accent-soft)"><span class="persona"><span class="disc tint-4">L</span></span><div class="row-main"><div class="row-title">laya — write the phone drawer's prose</div><div class="row-sub">4/4 turns · returned partial with a typed reason: <span class="mono">awaiting seat rows spec</span></div></div><span class="chip ok">returned</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">The declared graph <span class="right">a file the plan's work writes — nothing inferred</span></div>
+      <div style="border:1px solid var(--line);border-radius:var(--r-md);background:var(--page);padding:18px;position:relative;height:190px;font-family:var(--font-mono);font-size:11px;color:var(--muted)">
+        <svg style="position:absolute;inset:0" width="100%" height="100%"><line x1="24%" y1="34%" x2="40%" y2="62%" stroke="var(--line-strong)"/><line x1="52%" y1="34%" x2="44%" y2="62%" stroke="var(--line-strong)"/><line x1="66%" y1="36%" x2="80%" y2="64%" stroke="var(--accent)" stroke-dasharray="4 3"/></svg>
+        <div style="position:absolute;left:16%;top:14%"><span class="chip accent">plan: harness-redesign</span></div>
+        <div style="position:absolute;left:34%;top:62%;text-align:center"><span class="chip">scout</span><div style="margin-top:4px">holds <span class="mono">docs/*</span></div></div>
+        <div style="position:absolute;left:52%;top:24%"><span class="chip">laya</span></div>
+        <div style="position:absolute;left:76%;top:64%;text-align:center"><span class="chip warn">kiri</span><div style="margin-top:4px">holds <span class="mono">bot/*</span></div></div>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-top:8px">Two nodes naming one path never run together — the dispatch lock. What a running child may write is its own enforcement row, the OMH finding this redesign keeps visible: the declaration is the scope, tool names admitted by name, paths the graph's next enforcement step.</div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Helpers · child</div><div class="drawer-title">scout — read every surface, draft the inventory</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-tabs"><button class="drawer-tab on">read</button><button class="drawer-tab">act</button><button class="drawer-tab">connections</button></div>
+  <div class="drawer-body">
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">What it was told <span class="right">the brief, verbatim</span></div>
+      <div style="font-size:12.5px;color:var(--ink-soft)">Read the nineteen destinations of the face, the bot, and the console. For each: what it is for, what it leads with, and where its reading surface lives. Draft the inventory as one document. Do not write code.</div>
+    </div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">Scope, enforced</div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--ink-soft)">
+        <div>tools: <span class="mono">read_file · list_dir · search</span> — undeclared ones are refused by name</div>
+        <div>paths: <span class="mono">docs/**</span> — the write boundary rides the graph's enforcement row</div>
+        <div>turn cap 9 · depth 2 · routed over this brief, under the parent's pin</div>
+      </div>
+    </div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">What it returned so far</div>
+      <div class="row"><div class="row-main"><div class="row-title">surface-inventory.md</div><div class="row-sub">6/9 turns · partial rows readable now</div></div><button class="btn ghost sm">read</button></div>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn primary">steer</button><button class="btn secondary">stop the child</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The harness redesign — the mockup set</title>
+<link rel="stylesheet" href="system.css">
+<style>
+  .gallery { max-width: 1080px; margin: 0 auto; padding: 32px 24px 64px; display: flex; flex-direction: column; gap: 28px; }
+  .gallery h1 { font-family: var(--font-display); font-size: clamp(26px,3vw,36px); font-weight: 600; letter-spacing: -0.03em; }
+  .gallery .lead { color: var(--ink-soft); max-width: 680px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .tile { display: block; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--raised); box-shadow: var(--shadow-1); overflow: hidden; color: var(--ink); }
+  .tile:hover { border-color: var(--accent); }
+  .tile .frame { height: 150px; background: var(--page); border-bottom: 1px solid var(--line); display: grid; place-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+  .tile .meta { padding: 10px 14px; }
+  .tile .meta b { font-family: var(--font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; display: block; }
+  .tile .meta span { font-size: 12px; color: var(--muted); }
+  .group-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .14em; color: var(--faint); margin: 8px 0 -8px; }
+</style>
+</head>
+<body>
+<div class="gallery">
+  <h1>The harness redesign — the mockup set</h1>
+  <p class="lead">One design system borrowed from design-canvas ("Indigo Studio": cool graphite neutrals, one indigo-violet accent, hairlines, three soft elevations, Space Grotesk / Inter / mono), carried by <b>every</b> experience — the rail and the contextual drawer are prevalent on all of them. The theme switcher rides every screen; every screen is measured and read in night and day. The owner's gate comes before any code (house-mockups-first). Plan: <span class="mono">docs/plans/2026-11-22-harness-redesign.md</span>.</p>
+
+  <div class="group-label">the system</div>
+  <div class="grid">
+    <a class="tile" href="screens/00-design-system.html"><div class="frame">tokens · type · components · states</div><div class="meta"><b>M1 — the design system</b><span>the token contract every screen reads</span></div></a>
+    <a class="tile" href="screens/01-shell-navigation.html"><div class="frame">rail | stage | drawer · palette</div><div class="meta"><b>M2 — the shell</b><span>state-grouped rail, drawer tabs, two doors</span></div></a>
+  </div>
+
+  <div class="group-label">the nine lenses</div>
+  <div class="grid">
+    <a class="tile" href="screens/10-conversations.html"><div class="frame">landing · transcript · work list</div><div class="meta"><b>Conversations</b><span>needs you → changed → archive · made here drawer</span></div></a>
+    <a class="tile" href="screens/11-board.html"><div class="frame">needs you · working · settled</div><div class="meta"><b>Board</b><span>leads with change and divergence</span></div></a>
+    <a class="tile" href="screens/12-desk.html"><div class="frame">shelf · stages · claims</div><div class="meta"><b>Desk</b><span>the refuse-to-end gate on the card</span></div></a>
+    <a class="tile" href="screens/13-intelligence.html"><div class="frame">memories · skills · the gate</div><div class="meta"><b>Intelligence</b><span>U40: everything it knows and can do</span></div></a>
+    <a class="tile" href="screens/14-learning.html"><div class="frame">lesson · graph · practice</div><div class="meta"><b>Learning</b><span>what the learner holds, what held</span></div></a>
+    <a class="tile" href="screens/15-reviews.html"><div class="frame">gate · routing · graded ops</div><div class="meta"><b>Reviews</b><span>the gate first; routing rides here (U44 am.)</span></div></a>
+    <a class="tile" href="screens/16-inbox.html"><div class="frame">channels · holds · threads</div><div class="meta"><b>Inbox</b><span>ordered by the age of the hold</span></div></a>
+    <a class="tile" href="screens/17-health.html"><div class="frame">atlas · lanes · doctor</div><div class="meta"><b>Health</b><span>is the machine well</span></div></a>
+    <a class="tile" href="screens/18-fleet.html"><div class="frame">instances · map · relay</div><div class="meta"><b>Fleet</b><span>the container is the instance</span></div></a>
+  </div>
+
+  <div class="group-label">rooms + the advanced set</div>
+  <div class="grid">
+    <a class="tile" href="screens/28-huddles.html"><div class="frame">rooms · transcript · knowledge</div><div class="meta"><b>Rooms (huddles)</b><span>inside Conversations, not a second surface</span></div></a>
+    <a class="tile" href="screens/20-settings.html"><div class="frame">eight sections · cards</div><div class="meta"><b>Settings</b><span>no form asks for a value fleet has</span></div></a>
+    <a class="tile" href="screens/22-helpers.html"><div class="frame">tree · declared graph · scope</div><div class="meta"><b>Helpers</b><span>the declaration is the scope</span></div></a>
+    <a class="tile" href="screens/23-assistants.html"><div class="frame">personas · channels · hire</div><div class="meta"><b>Assistants</b><span>personas own threads end-to-end</span></div></a>
+    <a class="tile" href="screens/24-versions.html"><div class="frame">spine · store · instruments</div><div class="meta"><b>Versions</b><span>what the isolation kept and what came home</span></div></a>
+    <a class="tile" href="screens/25-secrets.html"><div class="frame">names · seals · never values</div><div class="meta"><b>Secrets</b><span>a value is never rendered</span></div></a>
+    <a class="tile" href="screens/27-plugins.html"><div class="frame">tiers · bundles · drafts</div><div class="meta"><b>Plugins</b><span>the trust decision on the surface</span></div></a>
+    <a class="tile" href="screens/26-design.html"><div class="frame">canvas · frames · pins · tweaks</div><div class="meta"><b>Design</b><span>the design-canvas language at home</span></div></a>
+  </div>
+
+  <div class="group-label">the bot experience (D5)</div>
+  <div class="grid">
+    <a class="tile" href="screens/30-bot-phone.html"><div class="frame">390×844 · needs-you strip · 44px seats</div><div class="meta"><b>The bot — phone</b><span>evidence labels · suggestion lines · receipts</span></div></a>
+    <a class="tile" href="screens/31-bot-ipad.html"><div class="frame">1180×820 · landscape split view</div><div class="meta"><b>The bot — iPad</b><span>sidebar | conversation | drawer</span></div></a>
+    <a class="tile" href="screens/32-console.html"><div class="frame">one column · command line · panels</div><div class="meta"><b>The mini console</b><span>the same tokens, the composer's sibling</span></div></a>
+  </div>
+</div>
+<script>
+  // the gallery stands alone: it sets the theme but mounts no shell
+  try { document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') || localStorage.getItem('fleet-theme-2') || 'night'; } catch (e) {}
+</script>
+</body>
+</html>

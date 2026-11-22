@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M1 — the design system</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="" data-title="design system">
+<div data-stage>
+  <div class="section-head"><h1>The design system</h1><span class="say">one accent, three elevations, two rails — borrowed from design-canvas, adapted to fleet</span></div>
+  <div class="stage-inner" style="display:flex;flex-direction:column;gap:28px;">
+
+    <div class="card">
+      <div class="card-head">Colour — the alias tier <span class="right">night default · themes re-point here only</span></div>
+      <div class="spec-grid">
+        <div class="swatch"><div class="fill" style="background:var(--page)"></div><div class="meta"><b>page</b>the ground everything sits on</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--surface)"></div><div class="meta"><b>surface</b>chrome: rail, topbar, drawer</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--raised)"></div><div class="meta"><b>raised</b>cards and panels</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--accent)"></div><div class="meta"><b>accent</b>indigo-violet — the one accent</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--accent-soft)"></div><div class="meta"><b>accent-soft</b>selection, current row, focus</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--ok)"></div><div class="meta"><b>ok</b>verified · live · done</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--warn)"></div><div class="meta"><b>warn</b>waiting · working · pending</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--down)"></div><div class="meta"><b>down</b>blocked · refused · breach</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--gold)"></div><div class="meta"><b>gold</b>lessons · graded gold rows</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--tint-1)"></div><div class="meta"><b>seat 1</b>persona tints 1–6</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--tint-4)"></div><div class="meta"><b>seat 4</b>AA-checked on their discs</div></div>
+        <div class="swatch"><div class="fill" style="background:var(--line-strong)"></div><div class="meta"><b>line-strong</b>hairlines at rest/hover</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Type <span class="right">display / text / mono · three voices, nothing else may look like a title</span></div>
+      <div class="type-row"><div class="label">surface title · display 600 · −0.03em</div><div style="font-family:var(--font-display);font-size:clamp(24px,2.6vw,32px);font-weight:600;letter-spacing:-0.03em">Conversations</div></div>
+      <div class="type-row"><div class="label">drawer title · display 600 · −0.02em</div><div style="font-family:var(--font-display);font-size:19px;font-weight:600;letter-spacing:-0.02em">deploy.yml · approval held</div></div>
+      <div class="type-row"><div class="label">card head · display 600</div><div style="font-family:var(--font-display);font-size:15px;font-weight:600">The deliverable's claim</div></div>
+      <div class="type-row"><div class="label">body · text 13.5/1.6</div><div style="font-size:13.5px">Fleet is a harness that works the way you do: local first, every recipient named, and nothing applied without a decision you can read.</div></div>
+      <div class="type-row"><div class="label">transcript · 14.5/1.7</div><div style="font-size:14.5px;line-height:1.7">The run answered with the numbers canonicalized and the sources named beside each claim.</div></div>
+      <div class="type-row"><div class="label">measured · mono tabular</div><div class="mono" style="font-size:12.5px">p95 412ms · 2,815 units · $0.0417</div></div>
+      <div class="type-row" style="border:none"><div class="label">eyebrow · 10.5 600 caps .14em</div><div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.14em;color:var(--faint)">Needs a decision</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Components <span class="right">the vocabulary every surface is built from</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+        <button class="btn primary">send</button>
+        <button class="btn secondary">open the door</button>
+        <button class="btn ghost">quiet</button>
+        <button class="btn danger">revoke</button>
+        <button class="btn sm secondary">small</button>
+        <span class="chip accent">current</span>
+        <span class="chip ok">done</span>
+        <span class="chip warn">working</span>
+        <span class="chip down">blocked</span>
+        <span class="chip gold">lesson</span>
+        <span class="chip">plain chip</span>
+        <span class="evidence verified">⦿ verified · 2 sources</span>
+        <span class="evidence asserted">△ asserted</span>
+        <span class="evidence contested">▽ contested</span>
+        <span class="kbd">⌘K</span>
+        <span class="persona"><span class="disc tint-2">S</span><span class="name">Scout</span></span>
+        <span class="persona"><span class="disc tint-5">W</span><span class="name">Warden</span></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Elevation + selection <span class="right">hairline + shadow-1 for a card · shadow-2 frames · shadow-3 doors · selection is a ring, never a shadow change</span></div>
+      <div style="display:flex;gap:16px;align-items:stretch">
+        <div class="card" style="flex:1">card · shadow-1</div>
+        <div style="flex:1;border-radius:var(--r-md);background:var(--raised);border:1px solid var(--line);box-shadow:var(--shadow-2);padding:14px 16px">frame on canvas · shadow-2</div>
+        <div style="flex:1;border-radius:var(--r-md);background:var(--raised);border:1px solid var(--line);box-shadow:var(--shadow-3);padding:14px 16px">door · shadow-3</div>
+        <div style="flex:1;border-radius:var(--r-md);background:var(--raised);outline:2px solid var(--accent);outline-offset:2px;padding:14px 16px">selected · ring + offset</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Meters and tracks <span class="right">gradient tracks, no decorative borders</span></div>
+      <div style="display:flex;flex-direction:column;gap:14px;max-width:520px">
+        <div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">coverage · 82%</div><div class="meter"><i style="width:82%"></i></div></div>
+        <div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">reliability · below the bar</div><div class="meter warn"><i style="width:63%"></i></div></div>
+        <div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">gate · refused</div><div class="meter down"><i style="width:24%"></i></div></div>
+        <div class="track">
+          <div class="step done" data-label="claims"></div><div class="step done" data-label="outline"></div>
+          <div class="step now" data-label="render"></div><div class="step" data-label="review"></div><div class="step" data-label="knowledge"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">States — four sentences, never a skeleton <span class="right">empty · loading · refused · selected</span></div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="state-line">No route rows today. The day's calls land here as they are made.</div>
+        <div class="state-line"><span class="spin"></span>Still loading. This comes from the session logs and the graph file, both of which are this machine's own.</div>
+        <div class="state-line" data-state="refused">The archive could not be read: the read refused with reason ENOENT.</div>
+        <div class="state-line" data-state="selected">showing routing · 14 rows today — the pin is the surface's one standing choice</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Geometry + motion <span class="right">the numbers a builder needs</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;font-size:12.5px;color:var(--ink-soft)">
+        <div class="mono">rail 232px · 72 folded</div>
+        <div class="mono">drawer 420px · 300–720</div>
+        <div class="mono">topbar 56px</div>
+        <div class="mono">radii 7 / 10 / 14 / 20</div>
+        <div class="mono">spacing 4…48 step 4</div>
+        <div class="mono">motion 140/220ms ease(.2,0,0,1)</div>
+        <div class="mono">breakpoints 1180 / 900 / 720 / 460</div>
+        <div class="mono">type floor 11px · body 13.5</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<script src="../shell.js"></script>
+</body>
+</html>

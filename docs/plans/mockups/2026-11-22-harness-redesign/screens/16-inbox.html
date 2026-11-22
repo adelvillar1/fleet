@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inbox</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="inbox" data-title="Inbox">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Inbox</h1><span class="say">who is talking to it, and what needs an answer — every principal resolved, every reply's journey visible</span></div>
+  <div class="stage-inner" style="max-width:1120px">
+    <div class="state-line" data-state="selected" style="margin-bottom:14px">2 need an answer · 1 arrived since you last looked · the door is ordered by the age of the hold</div>
+    <div class="card" style="padding:8px 6px">
+      <div class="row">
+        <span class="chip">telegram</span>
+        <div class="row-main">
+          <div class="row-title">Kiri — “deploy went green, but the release feed 404s”</div>
+          <div class="row-sub"><span class="persona"><span class="disc tint-2">K</span><span class="name">kiri</span></span> · resolved to device <span class="mono">kiri-phone</span> · waited 1h 12m</div>
+        </div>
+        <span class="chip warn">queued for you</span>
+      </div>
+      <div class="row">
+        <span class="chip">webhook</span>
+        <div class="row-main">
+          <div class="row-title">openship — “fleet instance provisioning report attached”</div>
+          <div class="row-sub">resolved to peer <span class="mono">openship-ci</span> · may act · delivered ✓ 2h ago</div>
+        </div>
+        <span class="chip ok">answered</span>
+      </div>
+      <div class="row">
+        <span class="chip">relay</span>
+        <div class="row-main">
+          <div class="row-title">Laya — “the relevance pass reads right on the phone”</div>
+          <div class="row-sub"><span class="persona"><span class="disc tint-4">L</span><span class="name">laya</span></span> · listen-only · delivered ✓ yesterday</div>
+        </div>
+        <span class="chip ok">read</span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-head">The thread with Kiri <span class="right">one press opens it in the drawer</span></div>
+      <div class="row"><div class="row-main">
+        <div class="row-title">“deploy went green, but the release feed 404s”</div>
+        <div class="row-sub">the reply will name the release's asset row and the feed's read-back — the same three releases that were missing latest.json last week</div>
+      </div><span class="chip warn">draft ready</span></div>
+    </div>
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Inbox · telegram · kiri</div><div class="drawer-title">the release feed 404s</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="turn owner"><div class="who-line"><span class="persona"><span class="disc tint-2">K</span><span class="name">kiri</span></span><span>· 12:48</span></div>
+      <div class="prose" style="font-size:13.5px"><p>deploy went green, but the release feed 404s when the updater asks. is that us or the release?</p></div></div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">fleet's draft reply <span class="right">from the run's evidence</span></div>
+      <div class="prose" style="font-size:13.5px;color:var(--ink-soft)"><p>Ours. The cut landed at <span class="mono">34d8ea81</span> and the six assets server-verified, but the feed's alias row still names the wrong asset. The fix is a delete + reupload of <span class="mono">latest.json</span>; I have not touched the release without your word.</p></div>
+      <div style="display:flex;gap:6px;margin-top:8px"><span class="evidence verified">⦿ verified · release read-back</span></div>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn primary">send the draft</button><button class="btn secondary">edit</button><button class="btn ghost">hold</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

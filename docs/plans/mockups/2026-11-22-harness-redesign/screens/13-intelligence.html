@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intelligence</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="memory" data-title="Intelligence">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Intelligence</h1><span class="say">everything it knows and can do — memories and skills, one place (U40)</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px;align-items:start">
+
+    <div class="card" style="padding:10px 8px">
+      <div class="rail-label" style="color:var(--down)">needs you</div>
+      <div class="row" style="border:none;border-radius:8px"><div class="row-main"><div class="row-title">3 skill proposals</div><div class="row-sub">drafted from session evidence</div></div><span class="chip down">3</span></div>
+      <div class="rail-label" style="margin-top:8px">memories</div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">verified</div><div class="row-sub">the corpus's strongest basis</div></div><span class="mono" style="font-size:11px;color:var(--muted)">41</span></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">stated</div></div><span class="mono" style="font-size:11px;color:var(--muted)">52</span></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">inferred</div></div><span class="mono" style="font-size:11px;color:var(--muted)">21</span></div>
+      <div class="row" style="border:none;color:var(--muted)"><div class="row-main"><div class="row-title" style="font-weight:400">retired · archived · today's recall</div></div></div>
+      <div class="rail-sep"></div>
+      <div class="rail-label">skills</div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">library</div></div><span class="mono" style="font-size:11px;color:var(--muted)">452</span></div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">declined · curation · retired</div></div></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card">
+        <div class="card-head">Verified facts <span class="right">41 of 114 · shown by basis ladder</span></div>
+        <div class="row" style="border-left:3px solid var(--ok)"><div class="row-main">
+          <div class="row-title">failover always closes on the deepseek tail</div>
+          <div class="row-sub">recalled 14× today · basis: validated · last touched 2026-11-20</div></div>
+          <button class="btn ghost sm">open</button></div>
+        <div class="row" style="border-left:3px solid var(--ok)"><div class="row-main">
+          <div class="row-title">the drawer is the owner's to open</div>
+          <div class="row-sub">recalled 6× · no arrival opens it (U13, amended)</div></div>
+          <button class="btn ghost sm">open</button></div>
+        <div class="row" style="border-left:3px solid var(--warn)"><div class="row-main">
+          <div class="row-title">release cut needs the bare-name check</div>
+          <div class="row-sub">stated by the owner 2026-11-22</div></div>
+          <button class="btn ghost sm">open</button></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Skills — proposals wait at the gate <span class="right">applies only through the gate, never silently</span></div>
+        <div class="row"><div class="row-main">
+          <div class="row-title">run-a-release-room <span class="chip gold" style="margin-left:8px">proposed</span></div>
+          <div class="row-sub">drafted from the release-prep room's procedure · 2 uses of its evidence</div></div>
+          <button class="btn primary sm">approve</button><button class="btn ghost sm">read</button></div>
+        <div class="row"><div class="row-main">
+          <div class="row-title">routing-follows-measured-cache <span class="chip ok" style="margin-left:8px">active</span></div>
+          <div class="row-sub">32 uses · last loaded this morning</div></div>
+          <button class="btn ghost sm">retire from prompts</button></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Memory · verified</div><div class="drawer-title">failover always closes on the deepseek tail</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div style="font-size:13.5px;line-height:1.7;color:var(--ink-soft)">No workload targets deepseek-flash; the router appends it as the last entry of every order it builds — judged, fallback, pinned, side-routes. It serves only after every routed candidate has failed, and the decision row names it when it does: <span class="mono">served by the failover tail</span>.</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <span class="evidence verified">⦿ verified · route.rs</span><span class="evidence verified">⦿ 214 route rows</span><span class="chip">recalled 14×</span>
+    </div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">Connections <span class="right">what this fact touches</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">routing-follows-measured-cache</div><div class="row-sub">skill · loaded 32×</div></div></div>
+      <div class="row"><div class="row-main"><div class="row-title">the route rows that named the tail</div><div class="row-sub">Reviews · Tuesday 09:41</div></div></div>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn secondary">edit in place</button><button class="btn secondary">supersede</button><span style="flex:1"></span><span class="mono" style="font-size:11px;color:var(--muted)">git-tracked</span></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

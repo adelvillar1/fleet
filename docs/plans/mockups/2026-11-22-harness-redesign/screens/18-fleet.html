@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="armada" data-title="Fleet">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Fleet</h1><span class="say">the machines in this fleet — instances, deployment, the relay; armada on</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:flex;flex-direction:column;gap:14px">
+
+    <div class="card">
+      <div class="card-head">Instances <span class="right">2 live · 1 provisioning</span></div>
+      <div class="row">
+        <span class="persona"><span class="disc tint-5" style="width:28px;height:28px;font-size:12px">L1</span></span>
+        <div class="row-main">
+          <div class="row-title">laya-desk <span class="chip ok" style="margin-left:6px">live</span></div>
+          <div class="row-sub">heartbeat 6s ago · capacity <span class="mono">62%</span> · reliability <span class="mono">94%</span> · v0.9.1</div>
+        </div>
+        <div class="meter ok" style="width:90px"><i style="width:94%"></i></div>
+        <button class="btn secondary sm">dispatch</button>
+      </div>
+      <div class="row">
+        <span class="persona"><span class="disc tint-2" style="width:28px;height:28px;font-size:12px">K1</span></span>
+        <div class="row-main">
+          <div class="row-title">kiri-vps <span class="chip ok" style="margin-left:6px">live</span></div>
+          <div class="row-sub">heartbeat 14s ago · capacity <span class="mono">31%</span> · reliability <span class="mono">88%</span> · v0.9.1</div>
+        </div>
+        <div class="meter ok" style="width:90px"><i style="width:88%"></i></div>
+        <button class="btn secondary sm">dispatch</button>
+      </div>
+      <div class="row" style="opacity:.8">
+        <span class="persona"><span class="disc tint-4" style="width:28px;height:28px;font-size:12px;outline:2px dashed var(--faint);outline-offset:2px">S1</span></span>
+        <div class="row-main">
+          <div class="row-title">staging-do <span class="chip warn" style="margin-left:6px">provisioning</span></div>
+          <div class="row-sub">container pulled · inheriting the shared mind · joins un-calibrated, earns its heartbeat (U38)</div>
+        </div>
+        <span class="chip ghost">un-calibrated</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">The deployment map <span class="right">the multiplexer's own words</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12.5px;align-items:center">
+        <span class="chip accent">this home · flagship</span><span>→</span>
+        <span class="chip ok">laya-desk · relay :4242</span><span>→</span>
+        <span class="chip ok">kiri-vps · container <span class="mono">fleet@sha256:9f79…</span></span><span>→</span>
+        <span class="chip warn">staging-do · provisioning</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px">the instance is a container; deployment is armada making containerized fleet instances live on a platform — openship, a VPS, the desk</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Relay traffic <span class="right">last hour</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">laya-desk → flagship</div><div class="row-sub">the phone drawer's seat rows rode the relay · 3 conversations</div></div><span class="chip ok">paired</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">kiri-vps → flagship</div><div class="row-sub">kanzo board sync · 4242</div></div><span class="chip ok">paired</span></div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Fleet · instance</div><div class="drawer-title">staging-do</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="state-line" data-state="selected">provisioning · the instance node is dashed until its first settle</div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">Provision <span class="right">one gesture, gated by steps</span></div>
+      <div style="display:flex;flex-direction:column;gap:10px;font-size:12.5px">
+        <div style="display:flex;gap:8px;align-items:center"><span class="chip ok">1</span><span>container pulled · <span class="mono">fleet@sha256:9f79…</span></span></div>
+        <div style="display:flex;gap:8px;align-items:center"><span class="chip warn">2</span><span>the shared-mind edge — inherits the mind, not the identity</span></div>
+        <div style="display:flex;gap:8px;align-items:center"><span class="chip ghost">3</span><span>registered · un-calibrated</span></div>
+        <div style="display:flex;gap:8px;align-items:center"><span class="chip ghost">4</span><span>first settle → the pulse lights, the reliability meter is born</span></div>
+      </div>
+    </div>
+    <div style="font-size:12.5px;color:var(--muted)">Autonomy is earned: a provisioned instance is trusted only after its first settle grades against outcome.</div>
+  </div>
+  <div class="drawer-foot"><button class="btn secondary">open the log</button><button class="btn danger">abort provisioning</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

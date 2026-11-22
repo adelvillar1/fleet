@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="design" data-title="Design">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Design</h1><span class="say">the canvas — pages side by side, each an opaque page in its own frame; the frame is sacred</span></div>
+  <div class="stage-inner" style="max-width:1120px">
+    <div class="state-line" data-state="selected" style="margin-bottom:14px">board: pricing site · 4 frames · the composer floats in the center frame</div>
+    <div style="position:relative;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--page);padding:28px;overflow:hidden">
+      <div style="position:absolute;inset:0;background-image:radial-gradient(var(--line-strong) 1px, transparent 1px);background-size:22px 22px;opacity:.5"></div>
+      <div style="display:flex;gap:26px;position:relative;flex-wrap:wrap">
+        <div style="width:250px">
+          <div style="display:flex;align-items:center;gap:8px;height:30px;background:var(--surface-2,var(--raised));border:1px solid var(--line);border-radius:8px 8px 0 0;padding:0 10px;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)">landing <span class="mono">{1280w}</span></div>
+          <div style="height:160px;background:var(--raised);border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;box-shadow:var(--shadow-2);padding:14px">
+            <div style="font-family:var(--font-display);font-weight:600;font-size:16px;letter-spacing:-.02em;margin-bottom:6px">Ship pricing <span style="color:var(--accent)">on the canvas</span></div>
+            <div style="height:5px;width:70%;background:var(--line-strong);border-radius:3px;margin-bottom:5px"></div>
+            <div style="height:5px;width:55%;background:var(--line-strong);border-radius:3px;margin-bottom:12px"></div>
+            <div style="display:flex;gap:8px"><div style="flex:1;height:44px;background:var(--accent-soft);border-radius:7px"></div><div style="flex:1;height:44px;background:var(--page);border-radius:7px"></div><div style="flex:1;height:44px;background:var(--page);border-radius:7px"></div></div>
+          </div>
+        </div>
+        <div style="width:250px">
+          <div style="display:flex;align-items:center;gap:8px;height:30px;background:var(--raised);border:1px solid var(--accent);border-radius:8px 8px 0 0;padding:0 10px;font-family:var(--font-mono);font-size:10.5px;color:var(--accent-ink)">pricing-table <span class="mono">{1280w}</span><span style="margin-left:auto;color:var(--accent)">selected</span></div>
+          <div style="height:160px;background:var(--raised);border:1px solid var(--accent);border-top:none;border-radius:0 0 8px 8px;box-shadow:var(--shadow-2);outline:2px solid var(--accent);outline-offset:2px;padding:12px">
+            <div style="display:flex;gap:8px;height:100%">
+              <div style="flex:1;border:1px solid var(--line);border-radius:7px;padding:8px"><div style="height:5px;width:60%;background:var(--accent);border-radius:3px;margin:4px 0 8px"></div><div style="height:4px;background:var(--line-strong);border-radius:2px;margin-bottom:4px"></div><div style="height:4px;background:var(--line-strong);border-radius:2px;width:80%"></div></div>
+              <div style="flex:1;border:1px solid var(--accent);border-radius:7px;padding:8px"><div style="height:5px;width:60%;background:var(--accent);border-radius:3px;margin:4px 0 8px"></div><div style="height:4px;background:var(--line-strong);border-radius:2px;margin-bottom:4px"></div><div style="height:4px;background:var(--line-strong);border-radius:2px;width:70%"></div></div>
+            </div>
+          </div>
+        </div>
+        <div style="width:250px;opacity:.85">
+          <div style="display:flex;align-items:center;gap:8px;height:30px;background:var(--raised);border:1px solid var(--line);border-radius:8px 8px 0 0;padding:0 10px;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)">component-sheet <span class="mono">{1440w}</span></div>
+          <div style="height:160px;background:var(--raised);border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;box-shadow:var(--shadow-2);padding:12px;display:flex;flex-wrap:wrap;gap:8px">
+            <span class="chip">chip</span><span class="chip accent">chip</span><span class="chip ok">chip</span><span class="chip warn">chip</span><span class="chip down">chip</span>
+            <div style="width:100%;height:30px;border:1px solid var(--line-strong);border-radius:7px;display:flex;align-items:center;padding:0 8px;font-size:10.5px;color:var(--muted)">input field</div>
+            <div style="width:100%;height:30px;background:var(--accent);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--on-accent)">primary button</div>
+          </div>
+        </div>
+      </div>
+      <div class="composer" style="position:absolute;left:50%;transform:translateX(-50%);bottom:18px;width:min(560px,90%)">
+        <textarea rows="1" placeholder="brief the board — what to design, for whom, in which style direction">Refine the pricing table: lift the recommended tier, tighten the column padding, keep the indigo accent.</textarea>
+        <div class="composer-bar"><span class="chip">design run</span><span class="chip ghost">2 models fan-out</span><span class="spacer"></span><button class="btn primary">generate</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Design · frame</div><div class="drawer-title">pricing-table</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-tabs"><button class="drawer-tab on">tweaks</button><button class="drawer-tab">review</button><button class="drawer-tab">versions</button><button class="drawer-tab">export</button><button class="drawer-tab">pins</button></div>
+  <div class="drawer-body">
+    <div class="field"><label>--accent · live, no model call</label><div style="display:flex;gap:8px;align-items:center"><input type="color" value="#645FDF" style="height:36px;width:52px;padding:2px"><input class="mono" style="flex:1" value="oklch(0.56 0.19 280)"></div></div>
+    <div class="field"><label>type scale</label><input value="1.25 — minor third"></div>
+    <div class="field"><label>column padding</label><input value="10px 12px"></div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">Review — the page's own measured checks <span class="right"><span class="chip ok">contrast</span><span class="chip warn">viewport</span></span></div>
+      <div style="font-size:12.5px;color:var(--ink-soft);display:flex;flex-direction:column;gap:4px">
+        <div>token contrast · AA on both tiers</div>
+        <div>alt text · 2 figures missing</div>
+        <div>focus · all controls ringed</div>
+        <div>viewport · 1280 only — add 390 and 820 for the responsive score</div>
+      </div>
+    </div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">Pins <span class="right">1 open</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">“recommended tier should own the accent”</div><div class="row-sub">you · 12:04 · 1 reply · fix this pin → refines as a new version</div></div><button class="btn primary sm">fix</button></div>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn secondary">export page</button><button class="btn secondary">hand-off packet</button><button class="btn ghost">host locally</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

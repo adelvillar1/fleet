@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huddles — inside Conversations</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="sessions" data-title="Conversations · huddles">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Rooms</h1><span class="say">huddles inside Conversations — the rooms column is the work column's other tenant, not a second surface</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:grid;grid-template-columns:300px minmax(0,1fr);gap:24px;align-items:start">
+
+    <div class="card" style="padding:10px 8px">
+      <div class="rail-label">active</div>
+      <div class="row" style="border:none;background:var(--accent-soft);border-radius:8px">
+        <div class="row-main"><div class="row-title" style="color:var(--accent-ink)">release prep</div><div class="row-sub">3 members · laya spoke last · 12m</div></div>
+        <div style="display:flex"><span class="disc tint-4" style="margin-left:-6px">L</span><span class="disc tint-5" style="margin-left:-6px">F</span><span class="disc tint-2" style="margin-left:-6px">K</span></div>
+      </div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">pricing research</div><div class="row-sub">2 members · produced 1 file</div></div></div>
+      <div class="rail-label" style="margin-top:6px">parked</div>
+      <div class="row" style="border:none"><div class="row-main"><div class="row-title">harness redesign brief</div><div class="row-sub">paused · taught 3 facts</div></div></div>
+      <div class="rail-label" style="margin-top:6px">ended <span style="color:var(--faint)">· folded until asked ▾</span></div>
+      <div class="row" style="border:none;color:var(--muted)"><div class="row-main"><div class="row-title" style="font-weight:400">12 rooms</div></div></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card">
+        <div class="card-head">release prep <span class="right"><span class="chip ok">live</span></span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-bottom:6px">
+          <span class="persona"><span class="disc tint-5">F</span><span class="name">fleet</span> orchestrator</span>
+          <span class="persona"><span class="disc tint-4">L</span><span class="name">laya</span> prose</span>
+          <span class="persona"><span class="disc tint-2">K</span><span class="name">kiri</span> ops</span>
+        </div>
+        <div style="font-size:12.5px;color:var(--muted)">goal: cut v0.9.2 with the drawer grammar — the room's own door to the members' threads stays in the head</div>
+      </div>
+
+      <div class="card" style="padding:8px 4px">
+        <div class="turn" style="padding:8px 14px"><div class="who-line"><span class="persona"><span class="disc tint-4">L</span><span class="name">laya</span></span><span>· the drawer on the phone needs bigger seats</span></div>
+          <div class="prose" style="font-size:13.5px"><p>the seat's digit keys read fine on the desk but 44px is the touch floor — the phone drawer should carry the press buttons, not the digits.</p></div></div>
+        <div class="event-card" style="margin:6px 14px"><span class="glyph">⚑</span><div class="body"><div class="kind">unresolved dependency</div><div class="what">kiri addressed laya directly — rerouted to the lead; the breakdown missed a dependency, the fix is re-planning through the hub</div></div></div>
+        <div class="turn" style="padding:8px 14px"><div class="who-line"><span class="persona"><span class="disc tint-5">F</span><span class="name">fleet</span></span><span>· lead</span></div>
+          <div class="prose" style="font-size:13.5px"><p>Taken. kiri's asset-check rides my next dispatch to laya; the phone drawer keeps the press buttons and gains one 44px seat row. Splitting the asset-check into its own child room — @kiri owns it there.</p></div></div>
+        <div class="event-card" style="margin:6px 14px"><span class="glyph">⌂</span><div class="body"><div class="kind">shelf</div><div class="what">2 files handed over: <span class="mono">phone-drawer-spec.md</span> · <span class="mono">seat-touch-notes.md</span></div></div></div>
+      </div>
+
+      <div class="composer"><textarea rows="1" placeholder="post @name to address a member"></textarea>
+        <div class="composer-bar"><span class="chip accent">@laya hears this first</span><span class="spacer"></span><button class="btn primary">post</button></div></div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Room · knowledge</div><div class="drawer-title">release prep — what it learned</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-tabs"><button class="drawer-tab">members</button><button class="drawer-tab on">knowledge</button><button class="drawer-tab">shelf</button></div>
+  <div class="drawer-body">
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">Distilled facts <span class="right">3</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">touch floor is 44px, not 28px</div><div class="row-sub">stated by laya · basis: stated</div></div><span class="chip accent">fact</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">seat digits are a desk register</div><div class="row-sub">inferred from this room · basis: inferred</div></div><span class="chip warn">fact</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">breakdown gaps reroute to the lead</div><div class="row-sub">validated by the room's own signal</div></div><span class="chip ok">fact</span></div>
+    </div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">Skill proposals <span class="right">1 waiting</span></div>
+      <div style="font-size:12.5px;color:var(--ink-soft)">“run-a-release-room” — drafted from the room's procedure; applies only through the gate, never silently.</div>
+      <div style="display:flex;gap:8px;margin-top:8px"><button class="btn primary sm">approve</button><button class="btn ghost sm">read first</button></div>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn secondary">break out a phase</button><button class="btn ghost">archive the room</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en" data-theme="day">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The bot — iPad split view</title>
+<link rel="stylesheet" href="../system.css">
+<style>
+  /* iPad: the same grammar with room to breathe — sidebar | conversation | drawer */
+  .pad { display: grid; grid-template-columns: 260px minmax(0,1fr) 340px; height: 100vh; }
+  .pad-side { border-right: 1px solid var(--line); background: var(--surface); padding: 14px 10px; overflow-y: auto; }
+  .pad-side h2 { font-family: var(--font-display); font-size: 15px; font-weight: 600; padding: 4px 10px 8px; letter-spacing: -0.02em; }
+  .pad-main { display: flex; flex-direction: column; min-width: 0; }
+  .pad-stream { flex: 1; overflow-y: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; }
+  .bubble { max-width: 72%; border-radius: 14px; padding: 11px 14px; font-size: 14.5px; line-height: 1.6; }
+  .bubble.you { align-self: flex-end; background: var(--accent); color: var(--on-accent); border-bottom-right-radius: 5px; }
+  .bubble.bot { align-self: flex-start; background: var(--raised); border: 1px solid var(--line); box-shadow: var(--shadow-1); border-bottom-left-radius: 5px; }
+  .seat-touch { align-self: stretch; max-width: 560px; border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent); background: color-mix(in oklab, var(--warn) 8%, var(--raised)); border-radius: var(--r-md); padding: 14px; box-shadow: var(--shadow-1); }
+  .press-row { display: flex; gap: 10px; }
+  .press-row .btn { flex: 1; height: 44px; }
+  /* the split view owns its third column: the desktop drawer overlay rule does not apply here */
+  .pad .drawer { position: static; width: auto; box-shadow: none; border-radius: 0; top: auto; bottom: auto; right: auto; }
+</style>
+</head>
+<body data-current="sessions" data-title="bot ipad" data-shell="off" data-theme-switch="corner">
+<div class="pad">
+  <aside class="pad-side">
+    <h2>fleet</h2>
+    <div class="rail-label" style="color:var(--down)">needs you</div>
+    <a class="rail-row tone-needs current">the deploy conversation<span class="count">1</span></a>
+    <div class="rail-label" style="color:var(--warn)">working</div>
+    <a class="rail-row tone-working">release note draft<span class="count">·</span></a>
+    <div class="rail-sep"></div>
+    <div class="rail-label">earlier</div>
+    <a class="rail-row">pricing research room</a>
+    <a class="rail-row">feed 404 diagnosis</a>
+    <a class="rail-row">asset compression drill</a>
+    <div class="rail-sep"></div>
+    <div class="rail-label">channels</div>
+    <a class="rail-row">▣ inbox <span class="count">2</span></a>
+    <a class="rail-row">⌂ goals <span class="count">1</span></a>
+  </aside>
+
+  <main class="pad-main">
+    <header class="topbar" style="border-left:none;border-right:none">
+      <div><div style="font-family:var(--font-display);font-weight:600;font-size:15px;letter-spacing:-.02em">the deploy conversation</div><div style="font-size:11px;color:var(--muted)">fleet · routed glm-4.7 · iPad split view</div></div>
+      <span style="flex:1"></span>
+      <span class="chip ok">live</span>
+    </header>
+    <div class="pad-stream">
+      <div class="bubble you">is the release safe to cut tonight?</div>
+      <div class="bubble bot">
+        <p>Yes, with one open item. The gate is green at <span class="mono" style="font-size:12.5px">34d8ea81</span> — 2,815 units, 0 failed — and the six assets server-verified. The open item is the feed's alias row naming the wrong asset.</p>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+          <span class="evidence verified">⦿ verified · release read-back</span>
+          <span class="done-mark">✓ gate green — <a href="#">the receipt</a></span>
+        </div>
+      </div>
+      <div class="seat-touch">
+        <div style="font-size:12.5px;font-weight:600;color:var(--warn)">⚑ approval held 2h — the run is paused on this</div>
+        <div class="cmd" style="font-family:var(--font-mono);font-size:12px;background:var(--page);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0">cargo build --release && fleet deploy --env prod</div>
+        <div class="press-row"><button class="btn primary">approve</button><button class="btn secondary">edit</button><button class="btn ghost">refuse</button></div>
+      </div>
+    </div>
+    <div style="padding:12px 22px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface)">
+      <div class="suggest"><span class="chip">fix the feed alias</span><span class="chip">hold the cut</span><span class="chip">what changed today</span></div>
+      <div class="composer" style="max-width:none"><textarea rows="1" placeholder="message fleet"></textarea>
+        <div class="composer-bar"><button class="iconbtn">📎</button><span class="chip ghost">Ask before</span><span class="spacer"></span><button class="btn primary">send</button></div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="drawer" data-drawer style="width:auto">
+    <div class="drawer-head">
+      <div><div class="drawer-kicker">made here</div><div class="drawer-title">what this conversation made</div></div>
+    </div>
+    <div class="drawer-body">
+      <div class="row"><div class="row-main"><div class="row-title">route-analysis brief</div><div class="row-sub">desk · render · gate held</div></div><span class="chip warn">review</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">3 facts superseded</div><div class="row-sub">memory · provenance carried</div></div><span class="chip accent">memory</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">1 child ran</div><div class="row-sub">scout · merged home</div></div><span class="chip">delegation</span></div>
+      <div style="font-size:12.5px;color:var(--muted);margin-top:4px">The receipts ride the same drawer grammar as the desk — the bot is not a second product (U29's law, at touch scale).</div>
+    </div>
+    <div class="drawer-foot"><button class="btn secondary sm">open on the desk</button></div>
+  </aside>
+</div>
+<script src="../shell.js"></script>
+</body>
+</html>

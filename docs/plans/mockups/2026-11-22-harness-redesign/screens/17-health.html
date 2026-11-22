@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Health</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="second-brain" data-title="Health">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Health</h1><span class="say">is the machine well — the atlas, the lanes' live probe, and the doctor's checks</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:flex;flex-direction:column;gap:14px">
+
+    <div class="state-line" data-state="selected">1 decision needs a person · the lanes answered in 1.9s · doctor: 12 checks green, 1 warning</div>
+
+    <div class="card">
+      <div class="card-head">The atlas — every project's pulse <span class="right">six weeks</span></div>
+      <div class="row"><div class="row-main">
+        <div class="row-title">fleet <span class="chip ok" style="margin-left:8px">live</span></div>
+        <div class="row-sub">last session: “two milestone releases, the relevance pass, and the contract” · 4 open plans · 3 commits today</div>
+      </div>
+      <div style="display:flex;gap:2px;align-items:flex-end;height:26px">
+        <i style="width:6px;height:40%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:70%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:55%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:90%;background:var(--accent);border-radius:2px"></i><i style="width:6px;height:75%;background:var(--accent);border-radius:2px"></i><i style="width:6px;height:100%;background:var(--accent);border-radius:2px"></i>
+      </div></div>
+      <div class="row"><div class="row-main">
+        <div class="row-title">design-canvas <span class="chip ok" style="margin-left:8px">live</span></div>
+        <div class="row-sub">moderation enforcing · 1 open plan · dirty 2h ago</div>
+      </div>
+      <div style="display:flex;gap:2px;align-items:flex-end;height:26px">
+        <i style="width:6px;height:30%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:45%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:60%;background:var(--accent);border-radius:2px"></i><i style="width:6px;height:40%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:35%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:50%;background:var(--accent);border-radius:2px"></i>
+      </div></div>
+      <div class="row"><div class="row-main">
+        <div class="row-title">second-brain <span class="chip warn" style="margin-left:8px">idle 3d</span></div>
+        <div class="row-sub">the tower's own repo · no commits in 6 days</div>
+      </div>
+      <div style="display:flex;gap:2px;align-items:flex-end;height:26px">
+        <i style="width:6px;height:50%;background:var(--warn);border-radius:2px"></i><i style="width:6px;height:25%;background:var(--warn);border-radius:2px"></i><i style="width:6px;height:10%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:5%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:3%;background:var(--accent-soft);border-radius:2px"></i><i style="width:6px;height:2%;background:var(--accent-soft);border-radius:2px"></i>
+      </div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Needs a person <span class="right">the decisions the tower kept beside them</span></div>
+      <div class="row"><div class="row-main">
+        <div class="row-title">rule on the three supersession candidates</div>
+        <div class="row-sub">turn-feedback · workspace-history-truth · the-steward-idle-cycle — drafts at 24 days</div>
+      </div><span class="chip warn">24d</span></div>
+      <div class="row"><div class="row-main">
+        <div class="row-title">ledger drift, one cell</div>
+        <div class="row-sub">the guard doc says 10,050; the code says 10,800 — the published number loses (OMH finding 3, named here)</div>
+      </div><span class="chip down">drift</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">The lanes <span class="right">probed live · 1.9s</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12.5px">
+        <span class="chip ok">sys1 · 210ms</span><span class="chip ok">sdm1 · 340ms</span><span class="chip ok">sem1 · 96ms</span><span class="chip ok">gen1 · 1.2s</span><span class="chip warn">blend1 · composed, warm</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Health · needs a person</div><div class="drawer-title">ledger drift, one cell</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="state-line" data-state="refused">The published number and the code disagree. One of them is a lie; the code is the one measured.</div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">The two documents</div>
+      <div style="display:flex;flex-direction:column;gap:8px;font-size:12.5px">
+        <div><span class="chip down">guard doc</span> <span class="mono">MAX_DEFINITION_TOKENS = 10,050</span></div>
+        <div><span class="chip ok">code</span> <span class="mono">agent.rs: MAX_DEFINITION_TOKENS: usize = 10_800</span></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px">The fix is the doc: the code is what runs, the doc is what the guard promises. Budgeted values drift from their published documents when nobody re-measures — this is the drift doctor's check firing as designed.</div>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn primary">fix the doc</button><button class="btn ghost">re-measure first</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

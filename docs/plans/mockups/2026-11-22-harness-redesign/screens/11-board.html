@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="board" data-title="Board">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Board</h1><span class="say">what is waiting, moving, or stuck — leads with change and divergence</span></div>
+  <div class="stage-inner" style="max-width:1120px">
+    <div class="state-line" data-state="selected" style="margin-bottom:14px">3 need you · 2 changed since you last looked · the held approval is the oldest hold on this board</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:14px;align-items:start">
+
+      <div class="card" style="padding:12px">
+        <div class="card-head" style="font-size:13px;color:var(--down)">⚑ needs you <span class="right">3</span></div>
+        <div class="row" style="border:none;border-radius:8px;border:1px solid color-mix(in oklab,var(--down) 30%,transparent);background:color-mix(in oklab,var(--down) 6%,var(--raised))">
+          <div class="row-main">
+            <div class="row-title">approve deploy.yml</div>
+            <div class="row-sub">held 2h 14m · scout · task-114</div>
+          </div>
+          <span class="chip down">destructive</span>
+        </div>
+        <div class="row" style="border:none;border-radius:8px;border:1px solid var(--line);margin-top:8px">
+          <div class="row-main"><div class="row-title">answer the seat on pricing</div><div class="row-sub">held 46m · the run is paused mid-turn</div></div>
+          <span class="chip warn">seat</span>
+        </div>
+        <div class="row" style="border:none;border-radius:8px;border:1px solid var(--line);margin-top:8px">
+          <div class="row-main"><div class="row-title">accept or retire 3 skill proposals</div><div class="row-sub">waiting 2d · drafted from session evidence</div></div>
+          <span class="chip gold">proposals</span>
+        </div>
+      </div>
+
+      <div class="card" style="padding:12px">
+        <div class="card-head" style="font-size:13px;color:var(--warn)">⟳ working <span class="right">4</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">render the pricing table page</div><div class="row-sub">design run · 6/9 turns · 38s</div></div><span class="chip warn">render</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">rebuild the composer's chips</div><div class="row-sub">delegated child · scout · 2/6 turns</div></div><span class="chip">child</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">nightly corpus-refresh</div><div class="row-sub">scheduled · 03:20 · recovered once</div></div><span class="chip ghost">cron</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">watch the gate</div><div class="row-sub">calibration review · queued</div></div><span class="chip ghost">queued</span></div>
+      </div>
+
+      <div class="card" style="padding:12px">
+        <div class="card-head" style="font-size:13px">✓ settled <span class="right">today · graded</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">migrate the vault names</div><div class="row-sub">graded against outcome · lesson born</div></div><span class="chip ok">done</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">sweep target/debug</div><div class="row-sub">60 GiB freed · graded pass</div></div><span class="chip ok">done</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">reconcile stale port records</div><div class="row-sub">graded pass · 60207 → 57888</div></div><span class="chip ok">done</span></div>
+      </div>
+
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-head">Divergence — where plans and outcomes disagree <span class="right">one row, the divergence the day carries</span></div>
+      <div class="row"><div class="row-main">
+        <div class="row-title">harness-redesign M3 vs the tree</div>
+        <div class="row-sub">the plan's drawer width says 420; the face's pane still ships 440 — implementation will reconcile</div>
+      </div><span class="chip warn">watch</span></div>
+    </div>
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Board · needs you</div><div class="drawer-title">approve deploy.yml</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-tabs"><button class="drawer-tab on">read</button><button class="drawer-tab">act</button><button class="drawer-tab">connections</button></div>
+  <div class="drawer-body">
+    <div class="seat">
+      <div class="seat-head">⚑ approval held</div>
+      <div class="cmd">cargo build --release && ./target/release/fleet deploy --env prod</div>
+      <div class="seat-actions"><button class="btn primary sm">approve</button><button class="btn secondary sm">edit</button><button class="btn ghost sm">refuse</button>
+        <div class="digit"><span class="kbd">1</span> <span class="kbd">2</span> <span class="kbd">3</span></div></div>
+    </div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">The command's read <span class="right">what the gate classed</span></div>
+      <div style="font-size:12.5px;color:var(--ink-soft);display:flex;flex-direction:column;gap:6px">
+        <div><span class="chip down">destructive-service</span> — ask mode always brings this class to the seat</div>
+        <div>declared paths <span class="mono">deploy/*</span> · working folder <span class="mono">~/Projects/fleet</span></div>
+        <div>the run holds one sibling lock on <span class="mono">deploy/</span>, so nothing else writes there while this is held</div>
+      </div>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn primary">approve</button><button class="btn secondary">edit first</button><button class="btn ghost">refuse</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

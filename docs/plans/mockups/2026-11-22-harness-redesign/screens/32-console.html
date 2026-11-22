@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-theme="console">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The mini console</title>
+<link rel="stylesheet" href="../system.css">
+<style>
+  .console { max-width: 620px; margin: 0 auto; padding: 16px 0 24px; display: flex; flex-direction: column; gap: 12px; }
+  .con-line { display: flex; align-items: center; gap: 8px; height: 42px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--raised); padding: 0 12px; font-family: var(--font-mono); font-size: 13px; }
+  .con-line .prompt { color: var(--accent); font-weight: 600; }
+  .con-panel { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-1); overflow: hidden; }
+  .con-panel .head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); }
+  .con-panel .body { padding: 8px 12px; font-size: 12.5px; color: var(--ink-soft); display: flex; flex-direction: column; gap: 6px; }
+</style>
+</head>
+<body data-current="" data-title="console" data-shell="off">
+<div class="console">
+  <div style="font-family:var(--font-display);font-weight:600;font-size:17px;letter-spacing:-.02em;padding:4px 4px 0">fleet console</div>
+  <div class="con-line"><span class="prompt">›</span> deploy<span style="margin-left:auto;color:var(--muted);font-size:10.5px">⏎ runs · ⌘K surfaces</span></div>
+
+  <div class="con-panel">
+    <div class="head">needs you <span style="margin-left:auto;color:var(--down)">3</span></div>
+    <div class="body">
+      <div class="row" style="min-height:38px"><div class="row-main"><div class="row-title" style="font-size:12.5px">approve deploy.yml — held 2h</div></div><button class="btn primary sm">seat</button></div>
+      <div class="row" style="min-height:38px;border-top:1px solid var(--line)"><div class="row-main"><div class="row-title" style="font-size:12.5px">the seat on pricing — held 46m</div></div><button class="btn secondary sm">answer</button></div>
+    </div>
+  </div>
+
+  <div class="con-panel">
+    <div class="head">working <span style="margin-left:auto;color:var(--warn)">2</span></div>
+    <div class="body">
+      <div class="row" style="min-height:38px"><div class="row-main"><div class="row-title" style="font-size:12.5px">render the pricing table · 6/9 turns</div></div><span class="chip warn">run</span></div>
+      <div class="row" style="min-height:38px;border-top:1px solid var(--line)"><div class="row-main"><div class="row-title" style="font-size:12.5px">rebuild composer chips · child 2/6</div></div><span class="chip">child</span></div>
+    </div>
+  </div>
+
+  <div class="con-panel">
+    <div class="head">the panels' own documents <span style="margin-left:auto;color:var(--muted)">routing · board · health</span></div>
+    <div class="body">
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="chip ok">hard × glm · fit</span><span class="chip warn">vision · unjudged</span><span class="chip ghost">pin · none</span></div>
+      <div style="font-size:11.5px;color:var(--muted)">the console speaks the same tokens; its command line is the composer's sibling, not a second grammar.</div>
+    </div>
+  </div>
+</div>
+<script src="../shell.js"></script>
+</body>
+</html>

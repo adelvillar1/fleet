@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M2 — the shell: rail, drawer, palette</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="board" data-title="shell anatomy">
+<div data-stage>
+  <div class="section-head"><h1>The shell</h1><span class="say">rail | stage | drawer — every experience ≥1080px carries all three; the drawer is the contextual reading surface and opens by your press only</span></div>
+  <div class="stage-inner" style="display:flex;flex-direction:column;gap:20px;">
+
+    <div class="card">
+      <div class="card-head">The rail, read in states <span class="right">needs you → working → the lenses in their own order</span></div>
+      <div style="display:flex;gap:14px;align-items:flex-start">
+        <div style="width:260px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);padding:10px">
+          <div class="rail-group" style="margin-bottom:8px"><div class="rail-label" style="color:var(--down)">needs you</div>
+            <div class="rail-row tone-needs current">◈ Board<span class="count">3</span></div>
+            <div class="rail-row tone-needs">▣ Inbox<span class="count">2</span></div>
+            <div class="rail-row tone-needs">✦ Conversations<span class="count">1</span></div>
+          </div>
+          <div class="rail-group" style="margin-bottom:8px"><div class="rail-label" style="color:var(--warn)">working</div>
+            <div class="rail-row tone-working">⌂ Desk<span class="count">1</span></div>
+          </div>
+          <div class="rail-sep"></div>
+          <div class="rail-group"><div class="rail-label">fleet</div>
+            <div class="rail-row">✦ Conversations</div>
+            <div class="rail-row">▦ Board</div>
+            <div class="rail-row">⌂ Desk</div>
+            <div class="rail-row">✳ Intelligence</div>
+          </div>
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:var(--ink-soft)">
+          <p><b>State first.</b> The first two groups are read off the one needs-you document — a surface files under the strongest state it carries, never both.</p>
+          <p><b>Then the product.</b> The nine lenses, one openable group per category when idle (the relevance pass's fold, carried).</p>
+          <p><b>Then machinery.</b> Advanced keeps Settings, Assistants, Versions, Secrets, Plugins; Routing is Reviews' first section, Skills is Intelligence's second, Huddles lives in Conversations. Every address keeps resolving (U47).</p>
+          <p><b>Collapse.</b> The rail folds to 72px of marks; the choice persists. Below 900px the rail itself is a drawer.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">The drawer, the contextual reading surface <span class="right">one drawer per stage · opens by press · follows the focus (U3)</span></div>
+      <div style="display:flex;flex-direction:column;gap:10px;font-size:12.5px;color:var(--ink-soft)">
+        <p>What the pane did in four mixed duties, the drawer does as one grammar with tabs:</p>
+        <ul style="margin-left:18px;display:flex;flex-direction:column;gap:4px">
+          <li><b>read</b> — a card's, row's, or node's whole document (the pane-body duty)</li>
+          <li><b>act</b> — the actions that belong to the focus (approve, supersede, restore, revoke)</li>
+          <li><b>context</b> — what the focus connects to: the connections tab (U11's tissue, named for what it does — U42)</li>
+          <li><b>made here</b> — what the focused conversation generated (U39's receipts, renamed per U42)</li>
+        </ul>
+        <p>Below 1180px the drawer is the sheet sliding over the stage; the rail stays. Both keep a 30px edge tab as the way back (U12's law: collapsed is a strip, not a vanish).</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Two doors to everything <span class="right">search filters live · ⌘K opens the palette over commands and every object</span></div>
+      <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+        <div style="width:520px">
+          <div class="search" style="display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--page);color:var(--muted);font-size:13px">⌕ approve deploy<span class="kbd" style="margin-left:auto">esc</span></div>
+          <div style="border:1px solid var(--line);border-radius:var(--r-md);background:var(--raised);box-shadow:var(--shadow-1);padding:6px;margin-top:-1px">
+            <div class="palette-row on">◈ approve deploy.yml on Board — held 2h</div>
+            <div class="palette-row">✦ the deploy conversation — 12 turns</div>
+            <div class="palette-row">⚙ a rule: "approve anything touching deploy/"</div>
+          </div>
+        </div>
+        <div style="flex:1;font-size:12.5px;color:var(--ink-soft)">The palette lists commands and objects, kind-typed, and feeds the same focus law: picking anything pivots the stage <i>and</i> the drawer together. No second focus mechanism (U26).</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Board · needs you</div><div class="drawer-title">approve deploy.yml</div></div>
+    <button class="drawer-close" aria-label="close the drawer">✕</button>
+  </div>
+  <div class="drawer-tabs">
+    <button class="drawer-tab on">read</button><button class="drawer-tab">act</button><button class="drawer-tab">connections</button><button class="drawer-tab">made here</button>
+  </div>
+  <div class="drawer-body">
+    <div class="state-line" data-state="selected">held 2h 14m — the oldest hold on this board</div>
+    <div class="seat">
+      <div class="seat-head">⚑ approval held — the run is paused on this</div>
+      <div class="cmd">cargo build --release && ./target/release/fleet deploy --env prod</div>
+      <div class="seat-actions">
+        <button class="btn primary sm">approve</button>
+        <button class="btn secondary sm">edit</button>
+        <button class="btn ghost sm">refuse</button>
+        <div class="digit"><span class="kbd">1</span> yes <span class="kbd">2</span> edit <span class="kbd">3</span> no</div>
+      </div>
+    </div>
+    <div style="font-size:13px;color:var(--ink-soft)">The child that asked is <b>scout</b>, on <span class="mono">task-114</span>, inside the deploy goal. Its declared paths are <span class="mono">deploy/*</span>; this command reads the release dir and touches the service.</div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">Why it stopped <span class="right">from the log</span></div>
+      <div style="font-size:12.5px;color:var(--muted)">the approval gate classed this command <span class="mono">destructive-service</span>, which the ask mode always brings to the seat — the same class three other runs hit today.</div>
+    </div>
+  </div>
+  <div class="drawer-foot">
+    <button class="btn primary">approve <span class="kbd" style="border-color:transparent;background:color-mix(in oklab,var(--on-accent) 22%,transparent);color:var(--on-accent)">1</span></button>
+    <button class="btn secondary">edit first</button>
+    <button class="btn ghost">refuse</button>
+  </div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings</title>
+<link rel="stylesheet" href="../system.css">
+</head>
+<body data-current="settings" data-title="Settings">
+<div data-stage>
+  <div class="section-head" style="max-width:1120px"><h1>Settings</h1><span class="say">every knob the home has — no form asks for a value fleet already has</span></div>
+  <div class="stage-inner" style="max-width:1120px;display:grid;grid-template-columns:240px minmax(0,1fr);gap:24px;align-items:start">
+
+    <div class="card" style="padding:10px 8px">
+      <div class="rail-label">sections</div>
+      <a class="rail-row current">✳ models</a><a class="rail-row">◈ specialists</a><a class="rail-row">◉ roles</a><a class="rail-row">⛨ trust</a><a class="rail-row">$ money</a><a class="rail-row">◷ schedule</a><a class="rail-row">◆ interface</a><a class="rail-row">⌂ environment</a>
+      <div class="rail-sep"></div>
+      <div class="rail-row" style="color:var(--muted)">◇ expert view · off</div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card">
+        <div class="card-head">Models <span class="right">the roster this home knows · 4 providers</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">glm-4.7 <span class="chip ok" style="margin-left:6px">in rotation</span></div><div class="row-sub">chain head on hard · p50 412ms · cache read reported</div></div><button class="btn ghost sm">card</button></div>
+        <div class="row"><div class="row-main"><div class="row-title">kimi <span class="chip ok" style="margin-left:6px">in rotation</span></div><div class="row-sub">recovered 2 demotions this week</div></div><button class="btn ghost sm">card</button></div>
+        <div class="row" style="opacity:.7"><div class="row-main"><div class="row-title">deepseek-flash <span class="chip ghost" style="margin-left:6px">tail only</span></div><div class="row-sub">every walk's last entry; serves only after every candidate fails</div></div><button class="btn ghost sm">card</button></div>
+        <div class="row"><div class="row-main"><div class="row-title">opencode <span class="chip warn" style="margin-left:6px">no cache figures</span></div><div class="row-sub">caches internally; sends no figures — never ranked on an unreported number</div></div><button class="btn ghost sm">card</button></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Money <span class="right">caps this home enforces</span></div>
+        <div class="row"><div class="row-main"><div class="row-title">day cap <span class="mono" style="margin-left:8px">$12.00</span></div><div class="row-sub">$4.17 spent today · the cap names itself before it stops a run</div></div><button class="btn secondary sm">edit</button></div>
+        <div class="row"><div class="row-main"><div class="row-title">per-run cap <span class="mono" style="margin-left:8px">$1.50</span></div><div class="row-sub">delegated children share the parent's cap</div></div><button class="btn secondary sm">edit</button></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Interface <span class="right">the four themes, and the motion switch that always lands</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <button class="btn sm primary">night</button><button class="btn sm secondary">day watch</button><button class="btn sm secondary">console</button><button class="btn sm secondary">contrast</button>
+        </div>
+        <div style="font-size:12.5px;color:var(--muted)">Every text token clears AA in all four themes; the six persona tints clear 4.5:1 on their own discs; reduced-motion is honored until your first press, then your stored choice wins.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<aside class="drawer" data-drawer>
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">Settings · models · card</div><div class="drawer-title">glm-4.7</div></div>
+    <button class="drawer-close" aria-label="close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="field"><label>endpoint</label><input value="https://api.z.ai/api/anthropic (provider default)"></div>
+    <div class="field"><label>models — the provider's own full list; the off list is the deliberate act</label><input value="glm-4.7, glm-4.6, glm-4.5-air"></div>
+    <div class="field"><label>disabled — off is deliberate; re-enabling restores, never deletes (KI-560's law)</label><input value="—"></div>
+    <div class="card" style="box-shadow:none"><div class="card-head" style="font-size:13.5px">What this card may do</div>
+      <div style="font-size:12.5px;color:var(--ink-soft)">Every write rides the same writer the CLI rides — the browser never has a second truth. The card says what its switch will do before it does it.</div>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn primary">save</button><button class="btn ghost">revert</button></div>
+</aside>
+<script src="../shell.js"></script>
+</body>
+</html>
