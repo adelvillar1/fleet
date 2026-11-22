@@ -12,6 +12,38 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.9.1 — 2026-11-22
+
+**The relevance pass — surfaces lead with what needs the owner, then what
+changed, and inventory folds below.** Nine commits past v0.9.0, built as one
+contract (`docs/plans/2026-11-22-relevance-pass.md`) with seven red-proofs
+that each name the item that vanishes when its derivation is removed:
+
+- **One needs-you document** — doors owed an answer, approvals awaited,
+  offers posted, ordered, each row one press away, consumed by every
+  surface (`ab867bea`); plus the changed-since block: the six newest logged
+  events across the owner's sessions, newest first, with a failed read
+  landing as a named refusal, never an empty lie.
+- **The landing leads**: needs-you, then what changed, then the archive
+  collapsed and remembered (`aa9ca82e`).
+- **The work list reads in the owner's order** — approval-needed, then
+  running, then idle folded below (`2f545f7a`).
+- **The door orders by the age of the hold**, and the count strip retires —
+  a number without an action stops leading (`2157b508`).
+- **The board leads with change and divergence; delegation leads with its
+  blockers** — `never spawned` before `ran twice`, the tree beneath
+  (`4e534cbc`).
+- **The rail reads in states** — needs-you / working expanded, the rest in
+  their categories as the idle inventory, filing by the strongest state a
+  surface carries (`c0e4f206`; its red-proof ran close-out: dropping the
+  needs filing dropped the inbox into its workspace category and the case
+  said so by name).
+
+Process made product-shaped in the same window: the **plan contract**
+entered the house rules (a plan row on intake, never an appended thread —
+the owner's ruling), and the **gap audit** reconciled eleven drafted plans
+against what materialized (`6a8af9f2`, `fba8c608`, `f090467c`).
+
 ## v0.9.0 — 2026-11-22
 
 **The milestone cut.** Fifty-three commits past v0.8.24 finish what that cut
