@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover is what makes env(safe-area-inset-*) non-zero;
+     without it the home indicator and the notch are the app's problem. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>fleet console</title>
+<!-- The bar's colour, spelled as a colour function rather than a hex
+     literal: the palette rule holds in the page's head too. -->
+<meta name="theme-color" content="rgb(11, 12, 14)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="fleet">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="/console/console.css?v=__FLEET_ASSET_HASH__">
+</head>
+<body>
+<!-- The shell is built by console.js: the page ships an empty column and
+     the program fills it, so the transcript is the program's own and a
+     reload is the only state it has. A reader without script gets one
+     sentence rather than a blank page. -->
+<div id="app">
+  <noscript>
+    <p style="padding: 18px; color: rgb(158, 166, 178)">
+      the console is a program, not a page — it needs script. Turn it on,
+      or open the full face.
+    </p>
+  </noscript>
+</div>
+<script src="/console/console.js?v=__FLEET_ASSET_HASH__" defer></script>
+</body>
+</html>

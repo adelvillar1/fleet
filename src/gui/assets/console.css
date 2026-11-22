@@ -1,0 +1,292 @@
+/* fleet console — the mini face's own stylesheet.
+   One palette, one type size, one column: the character grid is the
+   layout. Everything below names a token from the block above; the
+   console's own no-hex audit (`tests/console/harness.mjs`) reads this
+   file and refuses a literal anywhere else, the same rule the census
+   holds over the full face's stylesheet.
+
+   The face is a sibling of the bot PWA, not a fork of it: no selector,
+   class or token here is imported from `bot.css` or `app.css`, and
+   nothing in those files can change what this one paints. */
+
+:root {
+  /* the page, four steps of it: the ground, the panel a block sits on,
+     the raised row a press lands on, and the hairline between them. */
+  --page: rgb(11, 12, 14);
+  --panel: rgb(16, 18, 21);
+  --raised: rgb(24, 27, 32);
+  --rule: rgb(255 255 255 / 9%);
+  --rule-strong: rgb(255 255 255 / 20%);
+
+  /* the ink, three weights: what is said, what is scaffolding, what is
+     a footnote. All three clear 4.5:1 on --page. */
+  --ink: rgb(228, 230, 234);
+  --dim: rgb(158, 166, 178);
+  --faint: rgb(122, 130, 142);
+
+  /* the four states a line can carry, and the selection wash. */
+  --accent: rgb(130, 172, 255);
+  --ok: rgb(116, 202, 146);
+  --warn: rgb(230, 180, 96);
+  --down: rgb(238, 126, 118);
+  --sel: rgb(130 172 255 / 13%);
+  --sel-edge: rgb(130 172 255 / 45%);
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace;
+  --step: 13px;
+  --lead: 1.5;
+  --pad: 12px;
+  --home: env(safe-area-inset-bottom, 0px);
+  --notch: env(safe-area-inset-top, 0px);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--page);
+  color: var(--ink);
+}
+
+body {
+  font: var(--step) / var(--lead) var(--mono);
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  padding-top: var(--notch);
+}
+
+/* ---------------------------------------------------------- the head */
+
+.term-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px var(--pad) 9px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel);
+  flex: none;
+}
+
+.term-name {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.term-name b { color: var(--accent); font-weight: 600; }
+
+.term-where {
+  color: var(--faint);
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.term-conn {
+  font-size: 0.85em;
+  color: var(--dim);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.term-conn::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+  display: block;
+}
+
+.term-conn[data-state="live"]::before { background: var(--ok); }
+.term-conn[data-state="down"]::before { background: var(--down); }
+.term-conn[data-state="live"] { color: var(--dim); }
+
+/* ------------------------------------------------------- the scrollback */
+
+#log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px var(--pad) 18px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+}
+
+#log::-webkit-scrollbar { width: 8px; }
+#log::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 4px;
+}
+
+/* One line is one row of the grid, and it never reflows on its own:
+   console.js hands the text already wrapped to the column count the
+   element's own width buys, so a paragraph is a stack of lines the
+   program chose — never a browser decision. */
+.line {
+  margin: 0;
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 2;
+  min-height: calc(var(--step) * var(--lead));
+}
+
+.line + .line { margin-top: 0; }
+
+/* A block's own breathing room: a gap before a heading, never inside a
+   wrapped paragraph. */
+.line[data-gap] { margin-top: 10px; }
+
+.line[data-kind="receipt"] { color: var(--dim); }
+.line[data-kind="answer"] { color: var(--ink); }
+.line[data-kind="heading"] { color: var(--accent); font-weight: 600; }
+.line[data-kind="refusal"] { color: var(--down); }
+.line[data-kind="warn"] { color: var(--warn); }
+.line[data-kind="ok"] { color: var(--ok); }
+.line[data-kind="faint"] { color: var(--faint); }
+.line[data-kind="echo"] { color: var(--faint); }
+.line[data-kind="note"] { color: var(--dim); }
+.line[data-kind="quote"] { color: var(--dim); }
+
+/* The loading line: it says what is being read while it is read, and
+   settles to the same words in the footnote weight — the sentence is
+   never withdrawn, only finished. */
+.line[data-state="pending"] { color: var(--warn); }
+.line[data-state="settled"] { color: var(--faint); }
+
+/* The selection: a wash and a left edge, the one place the page spends
+   colour on anything but a word. */
+.line[data-selected] {
+  background: var(--sel);
+  box-shadow: inset 2px 0 0 var(--sel-edge);
+}
+
+/* A pressable row — a card, a plan, a node, a command chip — is a line
+   that answers a tap. It never looks like a button: the grid stays the
+   grid, and the press is a hover wash. */
+.line[data-press] { cursor: pointer; }
+.line[data-press]:hover { background: var(--raised); }
+.line[data-press]:active { background: var(--sel); }
+
+@media (hover: none) {
+  .line[data-press]:hover { background: none; }
+}
+
+/* ---------------------------------------------------------- the prompt */
+
+.prompt {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px var(--pad) calc(9px + var(--home));
+  border-top: 1px solid var(--rule);
+  background: var(--panel);
+}
+
+.prompt-mark {
+  color: var(--accent);
+  flex: none;
+  font-weight: 600;
+  user-select: none;
+}
+
+#cmd {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  caret-color: var(--accent);
+}
+
+#cmd::placeholder { color: var(--faint); }
+
+#cmd:focus-visible { outline: none; }
+
+.prompt[data-busy="1"] .prompt-mark { color: var(--warn); }
+
+/* --------------------------------------------------------- the keys */
+
+.keys {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 8px var(--pad);
+  overflow-x: auto;
+  border-top: 1px solid var(--rule);
+  background: var(--page);
+  scrollbar-width: none;
+}
+
+.keys::-webkit-scrollbar { display: none; }
+
+.key {
+  flex: none;
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--dim);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.key:hover { color: var(--ink); border-color: var(--rule-strong); }
+.key:active { background: var(--sel); }
+.key:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* --------------------------------------------------------- the notes */
+
+/* A refusal the shell itself makes (no bridge reachable, a command that
+   is not on this surface): the line carries the reason, never a blank. */
+.line[data-kind="refusal"]::before { content: "! "; }
+
+/* The four sentences sit in the transcript like any other line; the
+   dim mark keeps a settled read legible without shouting. */
+.line[data-sentence] { color: var(--dim); }
+
+/* Reduced motion: the only motion here is the caret and the scroll, and
+   a reader who asked for stillness gets it. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+/* A very small screen keeps the same grid at a step that still fits a
+   phone's width in roughly fifty columns. */
+@media (max-width: 380px) {
+  :root { --step: 12px; --pad: 10px; }
+}
+
+/* The one wide layout: on a desktop the transcript is a column, not a
+   full-bleed page — a terminal is a page of paper, not a poster. */
+@media (min-width: 900px) {
+  #log, .prompt, .keys, .term-head {
+    padding-left: max(var(--pad), calc((100% - 780px) / 2));
+    padding-right: max(var(--pad), calc((100% - 780px) / 2));
+  }
+}
