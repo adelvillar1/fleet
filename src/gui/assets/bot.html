@@ -27,5 +27,28 @@
 <body>
 <div id="app"></div>
 <script src="/bot.js?v=__FLEET_ASSET_HASH__" defer></script>
+<script>
+  // Installability. Nothing registered the bot worker before this: the
+  // install was offered and the installed app had no shell at all
+  // (KI-588). The registration is versioned the way the console's is —
+  // the asset hash the server substitutes — so a new build's script is a
+  // new URL, the browser installs it, and its activate deletes the
+  // previous cache. A worker needs a secure context: loopback and the
+  // tailnet HTTPS origin qualify, plain-HTTP LAN does not, and there the
+  // face stays an ordinary page rather than pretending.
+  (function () {
+    if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+    // A relayed page lives under /s/<sid>/ on an origin shared with every
+    // other session there: its assets' paths carry that prefix, so a
+    // worker registered from it could not cache them — and its scope
+    // would be someone else's session. No install there.
+    if (window.location.pathname.indexOf('/s/') === 0) return;
+    window.addEventListener('load', function () {
+      navigator.serviceWorker
+        .register('/bot-sw.js?v=__FLEET_ASSET_HASH__', { scope: '/' })
+        .catch(function () {});
+    });
+  })();
+</script>
 </body>
 </html>

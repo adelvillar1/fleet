@@ -1,19 +1,44 @@
-// The bot worker's cache boundary — the console worker's rule, restated
-// for the bot's assets (plan 2026-10-20-bot-pwa, C16): only the two
-// versioned assets are cached, and only by exact URL. The page asks for
-// them with ?v=<stamp>; a stamp change is a new URL, so an old cache
-// entry can never be served and there is nothing to invalidate. Every
-// other request — HTML, /api/, /events, /pair — goes to the network; a
-// failed *navigation* falls back to the worker's own retry page, which
-// says what is true: the run continues on the machine, and no session
-// data lives on the phone.
-const CACHE = `fleet-bot-${self.location.search}`;
+/* The bot worker's cache boundary — the console worker's rule, restated
+ * for the bot's assets (plan 2026-10-20-bot-pwa, C16): only the two
+ * versioned assets are cached, and only by exact URL. The page asks for
+ * them with ?v=<stamp>; a stamp change is a new URL, so an old cache
+ * entry can never be served and there is nothing to invalidate. Every
+ * other request — HTML, /api/, /events, /pair — goes to the network; a
+ * failed *navigation* falls back to the worker's own retry page, which
+ * says what is true: the run continues on the machine, and no session
+ * data lives on the phone.
+ *
+ * __FLEET_ASSET_HASH__ is replaced by the server at serve time with the
+ * hash build.rs computed over the served assets — the console worker's
+ * own rule. The cache name therefore rolls with the build and NOT with
+ * the registration URL: registering this worker without a query used to
+ * yield the literal `fleet-bot-`, a cache that never rolled and was
+ * empty right after activation (KI-588).
+ */
+const VERSION = '__FLEET_ASSET_HASH__';
+const CACHE = `fleet-bot-${VERSION}`;
+const SHELL = ['/bot.css?v=' + VERSION, '/bot.js?v=' + VERSION];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(self.skipWaiting());
+  // The shell is fetched once, here, so the cache exists and is non-empty
+  // the moment the worker activates — the diagnosis measured the old
+  // worker creating it lazily on the first controlled fetch, which an
+  // installed app that never re-fetched never did (KI-588).
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(CACHE);
+      await Promise.all(
+        SHELL.map((url) => cache.add(url).catch(() => {})),
+      );
+      await self.skipWaiting();
+    })(),
+  );
 });
 
 self.addEventListener('activate', (event) => {
+  // The honest update path: this build's cache replaces the last one, and
+  // every other bot cache is deleted. The name is the build's, so two
+  // builds can never share a cache and an old one can never be served.
   event.waitUntil(
     (async () => {
       const names = await caches.keys();
@@ -73,7 +98,7 @@ self.addEventListener('fetch', (event) => {
   // the URL changes with the build.
   const versioned =
     url.pathname === '/bot.css' || url.pathname === '/bot.js';
-  if (versioned && url.searchParams.get('v')) {
+  if (versioned && url.searchParams.get('v') === VERSION) {
     event.respondWith(
       (async () => {
         const cache = await caches.open(CACHE);
