@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avatars — the persona face</title>
+<link rel="stylesheet" href="../system.css">
+<style>
+  /* the persona face: a rounded head, an antenna, two eyes, a mouth —
+     drawn per state, tinted per persona, riding the token chain.
+     Implementation vendors the MIT robot-face component behind a
+     persona-face seam; this mockup draws the same states as inline SVG. */
+  .pface { display: block; }
+  /* the head's fill is set per-face from TINT_HEX in the script: this build's
+     SVG paint path takes resolved literals only (oklch/var() resolve to black),
+     which is also exactly how the vendored component takes its color attribute
+     at runtime — the token chain resolves, the face receives the value. */
+  .pface .ink { fill: #090D16; }
+  .pface .stroke { stroke: #090D16; stroke-width: 2.4; stroke-linecap: round; fill: none; }
+  .state-cell { display: flex; gap: 12px; align-items: center; padding: 10px 12px; }
+  .state-cell + .state-cell { border-top: 1px solid var(--line); }
+  .demo-stage { display: flex; gap: 24px; align-items: center; }
+  .demo-face { width: 96px; height: 96px; flex: none; }
+  .context-row { display: flex; align-items: center; gap: 10px; }
+</style>
+</head>
+<body data-current="" data-title="avatars">
+<div data-stage>
+  <div class="section-head"><h1>The persona face</h1><span class="say">every bot and persona gets an expressive face — borrowed from an MIT robot-face component, tinted from the token chain</span></div>
+  <div class="stage-inner" style="display:flex;flex-direction:column;gap:20px;">
+
+    <div class="card">
+      <div class="card-head">The six personas, idle <span class="right">flat tint mode — color rides the alias tier, the no-hex guard holds</span></div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;padding:6px 0">
+        <div style="text-align:center"><span data-face="idle" data-tint="tint-5" data-size="56"></span><div style="font-size:12px;color:var(--ink-soft);margin-top:6px">fleet</div><div style="font-size:10.5px;color:var(--muted)">orchestrator</div></div>
+        <div style="text-align:center"><span data-face="idle" data-tint="tint-4" data-size="56"></span><div style="font-size:12px;color:var(--ink-soft);margin-top:6px">laya</div><div style="font-size:10.5px;color:var(--muted)">prose</div></div>
+        <div style="text-align:center"><span data-face="idle" data-tint="tint-2" data-size="56"></span><div style="font-size:12px;color:var(--ink-soft);margin-top:6px">kiri</div><div style="font-size:10.5px;color:var(--muted)">ops</div></div>
+        <div style="text-align:center"><span data-face="idle" data-tint="tint-3" data-size="56"></span><div style="font-size:12px;color:var(--ink-soft);margin-top:6px">warden</div><div style="font-size:10.5px;color:var(--muted)">judgment</div></div>
+        <div style="text-align:center"><span data-face="idle" data-tint="tint-1" data-size="56"></span><div style="font-size:12px;color:var(--ink-soft);margin-top:6px">scout</div><div style="font-size:10.5px;color:var(--muted)">reading</div></div>
+        <div style="text-align:center"><span data-face="sleep" data-tint="tint-6" data-size="56"></span><div style="font-size:12px;color:var(--muted);margin-top:6px">specter</div><div style="font-size:10.5px;color:var(--faint)">retired · asleep</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">The state grid <span class="right">face + word + tone — never the face alone (A2)</span></div>
+      <div>
+        <div class="state-cell"><span data-face="idle" data-tint="tint-5" data-size="44"></span>
+          <div class="row-main"><div class="row-title">idle <span class="chip" style="margin-left:8px">resting</span></div><div class="row-sub">blinks, eyes follow the pointer on desktop; off under reduce (A3)</div></div></div>
+        <div class="state-cell"><span data-face="input" data-tint="tint-5" data-size="44"></span>
+          <div class="row-main"><div class="row-title">streaming <span class="chip accent" style="margin-left:8px">working</span></div><div class="row-sub">the run is mid-turn, tokens landing — the composer's twin state</div></div></div>
+        <div class="state-cell"><span data-face="waiting" data-tint="tint-5" data-size="44"></span>
+          <div class="row-main"><div class="row-title">working <span class="chip warn" style="margin-left:8px">working</span></div><div class="row-sub">a tool runs or a child works; the spin variant loops until stopWaiting()</div></div></div>
+        <div class="state-cell"><span data-face="wary" data-tint="tint-5" data-size="44"></span>
+          <div class="row-main"><div class="row-title">needs you <span class="chip down" style="margin-left:8px">held</span></div><div class="row-sub">an approval or a seat waits — the face the phone's needs-you strip shows</div></div></div>
+        <div class="state-cell"><span data-face="success" data-tint="tint-5" data-size="44"></span>
+          <div class="row-main"><div class="row-title">graded pass <span class="chip ok" style="margin-left:8px">done</span></div><div class="row-sub">the outcome graded against evidence — one-shot, then back to idle</div></div></div>
+        <div class="state-cell"><span data-face="failure" data-tint="tint-5" data-size="44"></span>
+          <div class="row-main"><div class="row-title">refused / down <span class="chip down" style="margin-left:8px">refused</span></div><div class="row-sub">a named refusal or a dead lane — the word names the reason beside it</div></div></div>
+        <div class="state-cell"><span data-face="sleep" data-tint="tint-5" data-size="44"></span>
+          <div class="row-main"><div class="row-title">asleep <span class="chip ghost" style="margin-left:8px">asleep</span></div><div class="row-sub">auto-sleep after the idle window; wake-on-activity; retired personas sleep for good</div></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Sizes <span class="right">one drawing, four sizes — reads at 20px</span></div>
+      <div style="display:flex;gap:26px;align-items:flex-end;padding:6px 0">
+        <div style="text-align:center"><span data-face="input" data-tint="tint-5" data-size="44"></span><div class="mono" style="font-size:10.5px;color:var(--muted);margin-top:6px">44 · seat, phone</div></div>
+        <div style="text-align:center"><span data-face="input" data-tint="tint-5" data-size="28"></span><div class="mono" style="font-size:10.5px;color:var(--muted);margin-top:6px">28 · cards</div></div>
+        <div style="text-align:center"><span data-face="input" data-tint="tint-5" data-size="24"></span><div class="mono" style="font-size:10.5px;color:var(--muted);margin-top:6px">24 · turn heads</div></div>
+        <div style="text-align:center"><span data-face="input" data-tint="tint-5" data-size="20"></span><div class="mono" style="font-size:10.5px;color:var(--muted);margin-top:6px">20 · compact rows</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">In context <span class="right">every place a persona disc renders today (A4)</span></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="context-row"><span data-face="input" data-tint="tint-5" data-size="24"></span><span style="font-size:12.5px"><b>fleet</b> <span style="color:var(--muted)">· 14:02 · routed glm-4.7 · hard</span></span><span class="chip warn">working</span></div>
+        <div class="context-row"><span style="display:flex"><span data-face="idle" data-tint="tint-4" data-size="24" style="margin-left:-6px"></span><span data-face="idle" data-tint="tint-5" data-size="24" style="margin-left:-6px"></span><span data-face="wary" data-tint="tint-2" data-size="24" style="margin-left:-6px"></span></span><span style="font-size:12.5px;color:var(--ink-soft)">release prep · 3 members · kiri needs you</span><span class="chip down">1 hold</span></div>
+        <div class="context-row"><span data-face="wary" data-tint="tint-2" data-size="28"></span><span style="font-size:13px"><b>kiri</b> <span style="color:var(--muted)">asks on task-114</span></span><span class="chip down">approval held</span></div>
+        <div class="context-row"><span data-face="idle" data-tint="tint-4" data-size="28"></span><span style="font-size:13px"><b>laya</b> <span style="color:var(--muted)">· owns 9 threads end-to-end</span></span><span class="chip ok">live</span></div>
+        <div class="context-row"><span data-face="success" data-tint="tint-5" data-size="24"></span><span style="font-size:12.5px;color:var(--ink-soft)">the sweep graded pass — the face bows out, the word stays</span><span class="chip ok">done</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Try it — every press lands <span class="right">the demo swaps the same drawing the implementation vendors</span></div>
+      <div class="demo-stage">
+        <span class="demo-face" id="demoFace" data-face="idle" data-tint="tint-5"></span>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;gap:6px;flex-wrap:wrap" id="demoButtons">
+            <button class="btn sm secondary" data-demo="idle">idle</button>
+            <button class="btn sm secondary" data-demo="input">streaming</button>
+            <button class="btn sm secondary" data-demo="waiting">working</button>
+            <button class="btn sm secondary" data-demo="wary">needs you</button>
+            <button class="btn sm secondary" data-demo="success">pass</button>
+            <button class="btn sm secondary" data-demo="failure">refused</button>
+            <button class="btn sm secondary" data-demo="sleep">asleep</button>
+          </div>
+          <div style="font-size:12.5px;color:var(--muted)">The face never carries the meaning alone: the state word and its tone chip ride beside it everywhere, and <span class="mono">action-state</span> feeds the status line the same words.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">The borrowing, named <span class="right">self-containment, hard rule 12</span></div>
+      <div style="font-size:12.5px;color:var(--ink-soft);display:flex;flex-direction:column;gap:6px">
+        <div>The component is <b>vendored in-repo</b> (single file, zero dependencies, ~56 KB) behind a <span class="mono">persona-face</span> seam; the upstream is MIT and its attribution lives in the vendor notice.</div>
+        <div><b>Flat tint mode is the default (D8)</b> — personas take their color from the token chain at runtime. The 188 skins carry fixed colors that would fight the theme contract; they stay off until you ask per persona, and enabling one records an explicit exemption from the no-hex guard.</div>
+        <div><b>Product copy never names the upstream character</b> (U42) — it is the persona's face, tinted, stateful, and yours.</div>
+        <div><b>Motion (A3):</b> reduced-motion is honored until your first motion press, then the stored choice wins; pointer-follow is desktop-only and off under reduce; auto-sleep after the idle window.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<script>
+(function () {
+  // The face drawing: one anatomy, seven mouths/eyes. The implementation
+  // vendors the MIT component; this draws the same states so the mockup
+  // stands alone.
+  var INK = '<g class="ink">';
+  var EYES = {
+    idle: '<circle cx="18.5" cy="26" r="3.4" class="ink"/><circle cx="29.5" cy="26" r="3.4" class="ink"/>',
+    input: '<circle cx="18.5" cy="24.8" r="3.4" class="ink"/><circle cx="29.5" cy="24.8" r="3.4" class="ink"/>',
+    waiting: '<path d="M14.5 26h7" class="stroke"/><path d="M26.5 26h7" class="stroke"/>',
+    wary: '<circle cx="18.5" cy="26.5" r="3.2" class="ink"/><circle cx="29.5" cy="26.5" r="3.2" class="ink"/><path d="M14.5 20.5l6 2.2M33.5 20.5l-6 2.2" class="stroke"/>',
+    success: '<path d="M15 26.5q3.5-4.5 7 0M26 26.5q3.5-4.5 7 0" class="stroke"/>',
+    failure: '<path d="M15 25l6 3M33 25l-6 3" class="stroke"/>',
+    sleep: '<path d="M15 26.5h6.5M26.5 26.5h6.5" class="stroke"/>'
+  };
+  var MOUTH = {
+    idle: '<path d="M19 33.5q5 4 10 0" class="stroke"/>',
+    input: '<circle cx="24" cy="34.5" r="2.6" class="ink"/>',
+    waiting: '<path d="M19.5 34h9" class="stroke"/>',
+    wary: '<path d="M19.5 34.5h9" class="stroke"/>',
+    success: '<path d="M16.5 32q7.5 7 15 0" class="stroke"/>',
+    failure: '<path d="M19 36.5q5-4 10 0" class="stroke"/>',
+    sleep: '<path d="M21.5 34h5" class="stroke"/>'
+  };
+  // the persona tints, resolved from the token chain (oklch -> sRGB, values
+  // identical in every theme): the face receives the resolved value, the way
+  // the vendored component's color attribute does at runtime.
+  var TINT_HEX = {
+    'tint-1': '#48B7BD', 'tint-2': '#94B96D', 'tint-3': '#E99E5E',
+    'tint-4': '#D285CB', 'tint-5': '#67A3E0', 'tint-6': '#B49CE1'
+  };
+  function faceSVG(state, tint) {
+    var eyes = EYES[state] || EYES.idle, mouth = MOUTH[state] || MOUTH.idle;
+    var hex = TINT_HEX[tint] || TINT_HEX['tint-5'];
+    return '<svg class="pface" viewBox="0 0 48 48" width="100%" height="100%" aria-hidden="true">' +
+      '<path d="M24 4v6" class="stroke"/><circle cx="24" cy="4.5" r="2.4" class="ink"/>' +
+      '<rect x="8" y="11" width="32" height="30" rx="10" fill="' + hex + '"/>' +
+      eyes + mouth + '</svg>';
+  }
+  function paint() {
+    document.querySelectorAll('[data-face]').forEach(function (el) {
+      el.innerHTML = faceSVG(el.dataset.face, el.dataset.tint);
+      el.style.display = 'inline-block';
+      el.style.width = (el.dataset.size || 44) + 'px';
+      el.style.height = (el.dataset.size || 44) + 'px';
+      el.style.verticalAlign = 'middle';
+    });
+  }
+  window.addEventListener('DOMContentLoaded', function () {
+    paint();
+    var demo = document.getElementById('demoFace');
+    var buttons = document.querySelectorAll('#demoButtons [data-demo]');
+    buttons.forEach(function (b) {
+      b.addEventListener('click', function () {
+        demo.dataset.face = b.dataset.demo;
+        demo.innerHTML = faceSVG(b.dataset.demo, demo.dataset.tint);
+        buttons.forEach(function (x) { x.classList.toggle('primary', x === b); x.classList.toggle('secondary', x !== b); });
+      });
+    });
+  });
+})();
+</script>
+<script src="../shell.js"></script>
+</body>
+</html>

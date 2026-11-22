@@ -196,6 +196,51 @@ correct behavior. Three further capture findings: obscura's CDP needs
 pre-override viewport — a forced re-raster before `captureScreenshot`
 prevents stale tiles.
 
+### Amendment, 2026-11-22 — bot/persona avatars (the owner's pointer: BoopFace)
+
+The owner's request (2026-11-22): *"let's add bot/persona avatars something
+like this https://github.com/CX-ArtLab/BoopFace"*. BoopFace is an MIT,
+zero-dependency, pure-SVG robot-face web component: programmatic expressions
+(idle, waiting-spin/wrap/wave, input, success, failure, wary, refuse, sleep…),
+pointer-following eyes, blinking, `motion="auto|reduce|full"` reduced-motion
+support, `face-state`/`action-state` events, and 188 optional "skins" whose
+colors are fixed by the skin. Single-file vendorable (~56 KB without skins).
+
+- **A1 — every bot/persona disc becomes an expressive face.** The six tinted
+  initials discs are replaced by the robot face, tinted per persona from the
+  existing six tints. The component is vendored in-repo (self-containment,
+  hard rule 12) behind a `persona-face` wrapper seam; upstream attribution
+  lives in the vendor notice (MIT); product copy never names the upstream
+  character (U42's plain register).
+- **A2 — the state map, face + word + tone, never the face alone.** idle →
+  idle (blink, pointer-follow) · run streaming → input · run working →
+  waiting-spin · a hold needing the owner → wary · graded pass → success ·
+  refused/down → failure · retired/asleep → sleep. Every face renders beside
+  its state word and tone chip (U4's law); the face is decorative
+  (`aria-hidden`) and the word carries the meaning; `action-state` feeds the
+  existing status line.
+- **A3 — motion law (U48 holds).** `motion="auto"`: reduced-motion is honored
+  until the owner's motion press, then the stored choice wins. Pointer-follow
+  is desktop-pointer-only and off under reduce.
+- **D8 (new default) — flat tint mode; skins opt-in.** The component's flat
+  mode takes `color` at runtime, so personas read the token chain (the no-hex
+  guard stays intact). Skins carry their own fixed colors — they would fight
+  the theme contract — so they are OFF until the owner asks per persona, and
+  enabling one records an explicit exemption from the no-hex guard in the
+  census.
+- **A4 — the surfaces.** Conversation turn headers, room member stacks,
+  huddles members, Assistants cards, the seat's asker, the bot PWA bubbles,
+  and goal chips — every place a persona disc renders today. The TUI keeps
+  its text marks (no SVG in ratatui); the mini console keeps its compact
+  rows.
+- **A5 — acceptance.**
+  - [ ] M7 avatar spec mockup drawn (tints, the state grid, sizes, in-context
+        surfaces), measured and read in both themes.
+  - [ ] The owner's gate on M7 before implementation.
+  - [ ] I-row: vendor the component + the `persona-face` seam + the state map,
+        harness pins for the state-word pairing, PWA verified at 390/820.
+  - [ ] D7 hygiene pass after the delivery.
+
 ### Amendment, 2026-11-22 (the owner's read: the iPad mockup was mangled; both orientations are the requirement)
 
 Reworked `screens/31-bot-ipad.html` as one app surface that adapts:
