@@ -196,6 +196,36 @@ correct behavior. Three further capture findings: obscura's CDP needs
 pre-override viewport — a forced re-raster before `captureScreenshot`
 prevents stale tiles.
 
+### Amendment, 2026-11-22 (the owner's read: the iPad mockup was mangled; both orientations are the requirement)
+
+Reworked `screens/31-bot-ipad.html` as one app surface that adapts:
+
+- **Landscape (≥1024)** — three panes: sidebar 250 | conversation | receipts
+  320, single hairline seams, no internal topbar borders (the first version's
+  column seams and the switcher overlapping the drawer's action row were the
+  mangling).
+- **Portrait (<1024)** — two panes: sidebar 240 | conversation, and the
+  receipts pane becomes a slide-over (absolute within the pad, 220 ms,
+  scrim + backdrop, opened by the header's **receipts** press, closed by the
+  ✕ or the backdrop). Below 640 the sidebar folds away entirely.
+- The theme switcher seats itself in the sidebar's foot (`data-theme-switch=
+  "inline-sidebar"`), ending every overlap.
+- Captured in BOTH orientations per theme (`31-bot-ipad-{night,day}-{1180,820}.png`),
+  zero overflow measured in all four.
+
+**Second capture-tool finding, recorded with its evidence:** obscura's
+headless Chromium composites an overlay pane's layer at the scrim's alpha —
+the open slide-over paints as a ~55% blend of pane and conversation even
+though the DOM is verified correct (computed background `rgb(17,20,26)`
+opaque, rect `[420,0,400,1180]`, z 50 above the scrim's z 45; probed live).
+Tried transition-off, forced re-raster, compositor warm-up, absolute instead
+of fixed positioning — the blend persists, so it is the build's compositing
+bug, not the design's. The gallery's portrait capture shows the honest closed
+default; the interactive page demonstrates the slide-over live, and the DOM
+probe is the open state's evidence. `position: absolute` (scoped to the pad,
+not the viewport) is kept as the slide-over's implementation — the better
+PWA scoping regardless.
+
 ## Out of scope
 
 - No release cut without the owner's explicit go-ahead (standing rule).

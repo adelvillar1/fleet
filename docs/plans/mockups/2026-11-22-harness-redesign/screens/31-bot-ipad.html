@@ -3,27 +3,61 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The bot — iPad split view</title>
+<title>The bot — iPad, portrait and landscape</title>
 <link rel="stylesheet" href="../system.css">
 <style>
-  /* iPad: the same grammar with room to breathe — sidebar | conversation | drawer */
-  .pad { display: grid; grid-template-columns: 260px minmax(0,1fr) 340px; height: 100vh; }
-  .pad-side { border-right: 1px solid var(--line); background: var(--surface); padding: 14px 10px; overflow-y: auto; }
-  .pad-side h2 { font-family: var(--font-display); font-size: 15px; font-weight: 600; padding: 4px 10px 8px; letter-spacing: -0.02em; }
-  .pad-main { display: flex; flex-direction: column; min-width: 0; }
-  .pad-stream { flex: 1; overflow-y: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; }
-  .bubble { max-width: 72%; border-radius: 14px; padding: 11px 14px; font-size: 14.5px; line-height: 1.6; }
+  /* iPad: one app surface, two orientations, one grammar.
+     Landscape (>=1024): sidebar | conversation | receipts, three panes.
+     Portrait  (<1024): sidebar | conversation; the receipts pane is a
+     slide-over the header's press opens — the iPadOS pattern. */
+  .pad { display: grid; grid-template-columns: 250px minmax(0,1fr) 320px; height: 100vh; height: 100dvh; }
+
+  .pad-side { border-right: 1px solid var(--line); background: var(--surface); padding: 16px 10px 12px; overflow-y: auto; display: flex; flex-direction: column; }
+  .pad-side h2 { font-family: var(--font-display); font-size: 16px; font-weight: 600; padding: 0 10px 10px; letter-spacing: -0.02em; }
+  .pad-side .foot { margin-top: auto; padding-top: 10px; }
+
+  .pad-main { display: flex; flex-direction: column; min-width: 0; background: var(--page); }
+  .pad-head { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--surface); }
+  .pad-head .title { font-family: var(--font-display); font-weight: 600; font-size: 16px; letter-spacing: -0.02em; line-height: 1.2; }
+  .pad-head .sub { font-size: 11.5px; color: var(--muted); }
+  .pad-stream { flex: 1; overflow-y: auto; padding: 18px 20px 8px; display: flex; flex-direction: column; gap: 12px; }
+  .pad-compose { padding: 10px 20px calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--surface); }
+
+  .bubble { max-width: 76%; border-radius: 14px; padding: 11px 14px; font-size: 14.5px; line-height: 1.6; }
   .bubble.you { align-self: flex-end; background: var(--accent); color: var(--on-accent); border-bottom-right-radius: 5px; }
   .bubble.bot { align-self: flex-start; background: var(--raised); border: 1px solid var(--line); box-shadow: var(--shadow-1); border-bottom-left-radius: 5px; }
   .seat-touch { align-self: stretch; max-width: 560px; border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent); background: color-mix(in oklab, var(--warn) 8%, var(--raised)); border-radius: var(--r-md); padding: 14px; box-shadow: var(--shadow-1); }
+  .seat-touch .cmd { font-family: var(--font-mono); font-size: 12px; background: var(--page); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; overflow-x: auto; white-space: nowrap; }
   .press-row { display: flex; gap: 10px; }
-  .press-row .btn { flex: 1; height: 44px; }
-  /* the split view owns its third column: the desktop drawer overlay rule does not apply here */
-  .pad .drawer { position: static; width: auto; box-shadow: none; border-radius: 0; top: auto; bottom: auto; right: auto; }
+  .press-row .btn { flex: 1; height: 44px; } /* the touch floor */
+
+  /* the receipts pane — a column in landscape, a slide-over in portrait */
+  .pad-drawer { background: var(--surface); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .pad-drawer .drawer-body { padding: 14px 16px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .pad-backdrop { display: none; }
+  .receipts-press { display: none; }
+  .drawer-close { display: none; width: 30px; height: 30px; border-radius: 7px; display: none; place-items: center; color: var(--muted); flex: none; }
+
+  @media (max-width: 1023px) {
+    .pad { grid-template-columns: 240px minmax(0,1fr); position: relative; overflow: hidden; }
+    .pad-drawer {
+      position: absolute; right: 0; top: 0; bottom: 0; width: min(400px, 88vw); z-index: 50;
+      border-left: none; border-radius: var(--r-lg) 0 0 var(--r-lg); box-shadow: var(--shadow-3);
+      transform: translateX(103%); transition: transform 220ms var(--ease);
+    }
+    .pad.drawer-open .pad-drawer { transform: none; }
+    .pad.drawer-open .pad-backdrop { display: block; position: absolute; inset: 0; background: var(--scrim); z-index: 45; }
+    .receipts-press { display: inline-flex; }
+    .pad-drawer .drawer-close { display: grid; }
+  }
+  @media (max-width: 640px) {
+    .pad { grid-template-columns: 0 minmax(0,1fr); }
+    .pad-side { display: none; }
+  }
 </style>
 </head>
-<body data-current="sessions" data-title="bot ipad" data-shell="off" data-theme-switch="corner">
-<div class="pad">
+<body data-current="sessions" data-title="bot ipad" data-shell="off" data-theme-switch="inline-sidebar">
+<div class="pad" id="pad">
   <aside class="pad-side">
     <h2>fleet</h2>
     <div class="rail-label" style="color:var(--down)">needs you</div>
@@ -39,12 +73,17 @@
     <div class="rail-label">channels</div>
     <a class="rail-row">▣ inbox <span class="count">2</span></a>
     <a class="rail-row">⌂ goals <span class="count">1</span></a>
+    <div class="foot" id="side-foot"></div>
   </aside>
 
   <main class="pad-main">
-    <header class="topbar" style="border-left:none;border-right:none">
-      <div><div style="font-family:var(--font-display);font-weight:600;font-size:15px;letter-spacing:-.02em">the deploy conversation</div><div style="font-size:11px;color:var(--muted)">fleet · routed glm-4.7 · iPad split view</div></div>
+    <header class="pad-head">
+      <div style="min-width:0">
+        <div class="title">the deploy conversation</div>
+        <div class="sub">fleet · routed glm-4.7 · iPad split view</div>
+      </div>
       <span style="flex:1"></span>
+      <button class="btn secondary sm receipts-press" id="receiptsPress">receipts</button>
       <span class="chip ok">live</span>
     </header>
     <div class="pad-stream">
@@ -58,21 +97,22 @@
       </div>
       <div class="seat-touch">
         <div style="font-size:12.5px;font-weight:600;color:var(--warn)">⚑ approval held 2h — the run is paused on this</div>
-        <div class="cmd" style="font-family:var(--font-mono);font-size:12px;background:var(--page);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0">cargo build --release && fleet deploy --env prod</div>
+        <div class="cmd">cargo build --release && fleet deploy --env prod</div>
         <div class="press-row"><button class="btn primary">approve</button><button class="btn secondary">edit</button><button class="btn ghost">refuse</button></div>
       </div>
     </div>
-    <div style="padding:12px 22px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface)">
+    <div class="pad-compose">
       <div class="suggest"><span class="chip">fix the feed alias</span><span class="chip">hold the cut</span><span class="chip">what changed today</span></div>
       <div class="composer" style="max-width:none"><textarea rows="1" placeholder="message fleet"></textarea>
-        <div class="composer-bar"><button class="iconbtn">📎</button><span class="chip ghost">Ask before</span><span class="spacer"></span><button class="btn primary">send</button></div>
+        <div class="composer-bar"><button class="iconbtn" aria-label="attach a file">📎</button><span class="chip ghost">Ask before</span><span class="spacer"></span><button class="btn primary">send</button></div>
       </div>
     </div>
   </main>
 
-  <aside class="drawer" data-drawer style="width:auto">
+  <aside class="pad-drawer">
     <div class="drawer-head">
       <div><div class="drawer-kicker">made here</div><div class="drawer-title">what this conversation made</div></div>
+      <button class="drawer-close" id="drawerClose" aria-label="close receipts">✕</button>
     </div>
     <div class="drawer-body">
       <div class="row"><div class="row-main"><div class="row-title">route-analysis brief</div><div class="row-sub">desk · render · gate held</div></div><span class="chip warn">review</span></div>
@@ -82,7 +122,21 @@
     </div>
     <div class="drawer-foot"><button class="btn secondary sm">open on the desk</button></div>
   </aside>
+  <div class="pad-backdrop" id="padBackdrop"></div>
 </div>
 <script src="../shell.js"></script>
+<script>
+  (function () {
+    var pad = document.getElementById('pad');
+    var open = function () { pad.classList.add('drawer-open'); };
+    var close = function () { pad.classList.remove('drawer-open'); };
+    var press = document.getElementById('receiptsPress');
+    var closeBtn = document.getElementById('drawerClose');
+    var backdrop = document.getElementById('padBackdrop');
+    press && press.addEventListener('click', open);
+    closeBtn && closeBtn.addEventListener('click', close);
+    backdrop && backdrop.addEventListener('click', close);
+  })();
+</script>
 </body>
 </html>

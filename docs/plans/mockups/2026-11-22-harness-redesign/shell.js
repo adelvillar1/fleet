@@ -18,9 +18,15 @@
     // console) declare data-shell="off": the theme switcher rides, the
     // desktop topbar and rail do not.
     if (body.dataset.shell === 'off') {
-      // screens with their own chrome: corner unless they ask for top-center
-      if (body.dataset.themeSwitch !== 'corner') bar.style.cssText = 'top:10px;left:50%;transform:translateX(-50%);bottom:auto;right:auto;';
-      mountThemeSwitch();
+      // screens with their own chrome name the switch's home: 'top' floats
+      // it top-center (the phone and the console's default), 'inline-sidebar'
+      // seats it in their own sidebar foot (the iPad).
+      var mode = body.dataset.themeSwitch || 'top';
+      if (mode === 'inline-sidebar') {
+        mountThemeSwitch(document.getElementById('side-foot'), true);
+      } else {
+        mountThemeSwitch(null, false, true);
+      }
       return;
     }
     var stage = body.querySelector('[data-stage]');
@@ -62,9 +68,18 @@
     mountThemeSwitch();
   });
 
-  function mountThemeSwitch() {
+  function mountThemeSwitch(host, inline, topCenter) {
     var bar = document.createElement('div');
     bar.className = 'theme-switch';
+    if (inline && host) {
+      bar.style.cssText = 'position:static;transform:none;justify-content:center;';
+      host.appendChild(bar);
+    } else if (topCenter) {
+      bar.style.cssText = 'top:10px;left:50%;transform:translateX(-50%);bottom:auto;right:auto;';
+      document.body.appendChild(bar);
+    } else {
+      document.body.appendChild(bar);
+    }
     ['night', 'day', 'console', 'contrast'].forEach(function (t) {
       var b = document.createElement('button');
       b.textContent = t;
@@ -77,7 +92,7 @@
       });
       bar.appendChild(b);
     });
-    document.body.appendChild(bar);
+    return bar;
   }
 
   // The rail: state groups first (needs you / working — read off the
