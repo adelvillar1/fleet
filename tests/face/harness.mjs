@@ -13436,7 +13436,10 @@ async function theCalibrationRailCarriesTheGateAndTheDay() {
       cell('gamma', '', 'fit', { informs: false }),
     ],
     stream: {
-      route: [{ ts: '2026-10-30T10:00:01Z', provider: 'alpha', model: 'm1', workload: 'quick', how: 'judged', judged_from: 'sys1' }],
+      route: [
+        { ts: '2026-10-30T10:00:01Z', provider: 'alpha', model: 'm1', workload: 'quick', how: 'judged', judged_from: 'sys1' },
+        { ts: '2026-10-30T10:00:02Z', provider: 'delta', model: 'v9', workload: 'vision', how: 'fallback' },
+      ],
       delegation: [{ ts: '2026-10-30T10:00:02Z', session: 'child-one', workspace_branch: 'fleet-child-one', outcome: 'completed' }],
       embed_timing: [{ ts: '2026-10-30T10:00:03Z', kind: 'corpus-load', ms: 1234, facts: 42 }],
       lifecycle: [{ ts: '2026-10-30T10:00:04Z', kind: 'tools', name: 'docker', action: 'disable', reason: 'unkeyed' }],
@@ -13491,6 +13494,17 @@ async function theCalibrationRailCarriesTheGateAndTheDay() {
     board.includes('8 graded rows') && board.includes('alpha \u00b7 quick') &&
       board.includes('short') && board.includes('3 more graded rows'),
     board.slice(0, 260));
+
+  // Pass 3 (the gated mockup): the gate names the day's routed-but-
+  // unjudged cells - a workload the day routed without a graded row is a
+  // blind spot the gate cannot learn from, and the card says so rather
+  // than leaving the owner to diff two lists. The judged pair (alpha ·
+  // quick) names no blind spot; the unjudged one (delta · vision) does.
+  check('CAL the gate names the routed-but-unjudged cells',
+    board.includes('one routed cell the day never graded') &&
+      board.includes('delta \u00b7 vision') && board.includes('1 routed') &&
+      board.includes('unjudged') && !board.includes('alpha \u00b7 quick \u00b7 1 routed'),
+    board.slice(0, 400));
 
   // A cell's press opens the pane card with the rates and the spend —
   // the tabs stood down.

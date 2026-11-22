@@ -18472,6 +18472,40 @@ import { node, svg, clip } from './core/dom.js';
       return row;
     });
     card.appendChild(budgetRows(items, 30, 'cells', false, function () { }));
+    // The day's routed-but-unjudged cells, named where the gate can see
+    // them (the gated mockup): a workload the day routed without a graded
+    // row is a blind spot the gate cannot learn from, and the card says
+    // so rather than leaving the owner to diff two lists. Derived from
+    // the two lists the read already carries - the routes and the cells.
+    var routed = (read.stream && read.stream.route) || [];
+    if (routed.length) {
+      var judged = {};
+      cells.forEach(function (cell) {
+        judged[(cell.provider || '') + '::' + (cell.workload || '')] = true;
+      });
+      var unjudged = {};
+      routed.forEach(function (row) {
+        var key = (row.provider || '') + '::' + (row.workload || '');
+        if (judged[key]) return;
+        unjudged[key] = (unjudged[key] || 0) + 1;
+      });
+      var keys = Object.keys(unjudged);
+      if (keys.length) {
+        card.appendChild(node('p', 'cal-unjudged-head',
+          keys.length === 1 ? 'one routed cell the day never graded'
+            : keys.length + ' routed cells the day never graded'));
+        keys.forEach(function (key) {
+          var pair = key.split('::');
+          var line = node('div', 'cal-unjudged');
+          line.appendChild(node('span', 'cal-unjudged-pair',
+            (pair[0] || 'no provider') + ' \u00b7 ' + (pair[1] || 'no shape')));
+          line.appendChild(node('span', 'cal-unjudged-n mono',
+            unjudged[key] + ' routed'));
+          line.appendChild(node('span', 'cal-unjudged-word', 'unjudged'));
+          card.appendChild(line);
+        });
+      }
+    }
     return card;
   }
 

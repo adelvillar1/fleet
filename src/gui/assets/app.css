@@ -12459,3 +12459,34 @@ section.board-card > .board-head {
   stroke-width: 2;
   stroke-dasharray: 5 4;
 }
+
+/* --- the gate card's unjudged cells (the gated mockup): the workload
+   the day routed without a graded row, named as the blind spot the
+   gate cannot learn from. The warn tone is the signal; the word rides
+   beside it (U4). */
+.cal-unjudged-head {
+  margin: 10px 0 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--warn, var(--dsw-alias-warn));
+}
+.cal-unjudged {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border-left: 2px solid var(--warn, var(--dsw-alias-warn));
+  font-size: 12.5px;
+}
+.cal-unjudged-pair {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text, var(--dsw-alias-ink));
+}
+.cal-unjudged-n {
+  flex: 0 0 auto;
+  color: var(--muted, var(--dsw-alias-ink-secondary));
+}
+.cal-unjudged-word { color: var(--warn, var(--dsw-alias-warn)); flex: 0 0 auto; }
