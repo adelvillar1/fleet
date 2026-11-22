@@ -794,8 +794,10 @@ function boot() {
   root.textContent = '';
   root.appendChild(head);
   root.appendChild(view);
-  root.appendChild(form);
+  // The chips ride above the command line, so the prompt is the last row
+  // on the screen and the one the thumb reaches.
   root.appendChild(keys);
+  root.appendChild(form);
 
   /// The column count the grid actually has: measured from the element's
   /// own width and a monospace advance, so the wrap follows the screen

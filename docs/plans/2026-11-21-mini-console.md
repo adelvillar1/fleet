@@ -50,9 +50,9 @@ command that answers "not on this surface yet — the console says so by name."
 - [ ] The shell numbers above, measured on the real phone link profile the
       compression plan measured (1.5 Mbps / 150 ms RTT), from a cleared cache,
       through the relay.
-      *Phase 1 measures the budget half only, and pins it: **52,013 B
-      uncompressed / 16,677 B gzip** over the three files (console.html
-      1,369 / console.js 42,551 / console.css 8,093) against 61,440 /
+      *Phase 1 measures the budget half only, and pins it: **52,452 B
+      uncompressed / 16,868 B gzip** over the three files (console.html
+      1,369 / console.js 42,675 / console.css 8,408) against 61,440 /
       20,480 B. The cold load through the relay is phase 2, with the route.*
 - [x] The three TUI documents render with one text path each; a divergence
       word and a refusal appear by name in the panels' tests.

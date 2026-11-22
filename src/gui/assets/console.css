@@ -193,13 +193,15 @@ body {
 
 /* ---------------------------------------------------------- the prompt */
 
+/* The command line is the last row, and the only one that pays the home
+   indicator: the keys ride above it, the way a toolbar sits over a
+   composer, so the prompt is always the thing nearest the thumb. */
 .prompt {
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 9px var(--pad) calc(9px + var(--home));
-  border-top: 1px solid var(--rule);
   background: var(--panel);
 }
 
@@ -230,6 +232,8 @@ body {
 
 /* --------------------------------------------------------- the keys */
 
+/* One hairline above the pair: the chips and the prompt are one block at
+   the foot of the page, not two rows with a seam between them. */
 .keys {
   flex: none;
   display: flex;
@@ -237,7 +241,7 @@ body {
   padding: 8px var(--pad);
   overflow-x: auto;
   border-top: 1px solid var(--rule);
-  background: var(--page);
+  background: var(--panel);
   scrollbar-width: none;
 }
 
