@@ -551,6 +551,18 @@ is therefore, in order:
 (P7 wave one — the stylesheet and theme engine — runs in parallel on
 `app.css`/`themes.rs` and does not own `app.js`.)
 
+**P7 wave one: landed and measured** (`35a8bcab` token tier, `b9ab5af7` display
+ladder, `36565bcd` card vocabulary, `433441c1` motion budget, `be9214c4`
+no-hex guard, `3cc2506a` static spine, `70a64894` design-system doc). The
+before/after deltas at the same seed and rig: board **Δ3.20** mean (5.54% of
+pixels), delegation **Δ5.13** (12.84%), huddles stable band **Δ3.16** against a
+0.002 JPEG-shimmer control. Breakpoints 9/9 green with the stage guard; AA
+floor raised — flat accent on day 3.6 → **5.31**:1, worst persona per theme
+4.61–4.67. The no-hex guard scans `app.css` via the census and the 24 stray
+literals became aliases; the red-proof added a hex to the body and the guard
+named it. Wave two (builders, icons, the four sentences, hand walk, gallery) is
+the `app.js` half, dispatched.
+
 No phase is called complete until its rows are landed **and** its screenshot and
 hand-walk clauses are satisfied from the shipped build; status `active` until
 the whole table says so.
