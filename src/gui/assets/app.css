@@ -1,15 +1,18 @@
 /* Fleet's browser face.
 
    The design is the U-ledger's workspace (docs/plans/UI-DECISIONS.md): one
-   shell, one graph, every surface a lens over it. Harbor Night is the
-   default ground since the U-reskin (U4/U5) — deep ink-teal, the eight
-   signal hues carrying fixed meanings, nothing decorative. Day Watch
-   ([data-theme="day"]) is the warm-light inverse; paper and graphite are
-   retired (the owner's 2026-11-13 ruling), and the colour chain still has
-   its three tiers: the reference palette names where a colour came from,
-   the alias tier names what it means, and the signal tier is the U4 token
-   set migrated components read. A theme re-points both tiers; no component
-   rule moves.
+   shell, one graph, every surface a lens over it. The ground is the
+   harness redesign's Indigo Studio system (docs/plans/
+   2026-11-22-harness-redesign.md, D1 as amended): cool graphite night is
+   the default, one indigo-violet accent carries the primary action, the
+   eight signal hues keep their fixed meanings re-hued into the indigo
+   system, and nothing decorative. Day Watch ([data-theme="day"]) is the
+   cool-paper inverse; console and contrast re-derive on the same palette
+   (the owner's ruling: no colour from the previous themes is reused).
+   The colour chain keeps its three tiers: the reference palette names
+   where a colour came from, the alias tier names what it means, and the
+   signal tier is the U4 token set migrated components read. A theme
+   re-points both tiers; no component rule moves.
 
    Page structure: rail (the map), topbar (where you are and what the run
    costs), stage (the work), tissue (the graph, U11). Boards share one
@@ -41,143 +44,171 @@
 
 /* ---------------------------------------------------------------- themes */
 
-/* The default: warm paper. Slightly green-grey rather than cream, so the
-   accent stays the only saturated thing on the page. */
+/* The default: cool graphite night. The indigo accent stays the only
+   saturated thing on the page; the signals are the only other colour. */
 :root {
-  --dsw-static-paper-900: rgb(246, 244, 239);
-  --dsw-static-paper-800: rgb(252, 251, 248);
-  --dsw-static-paper-700: rgb(239, 236, 230);
-  --dsw-static-paper-600: rgb(228, 224, 216);
-  --dsw-static-paper-500: rgb(208, 203, 194);
-  --dsw-static-paper-400: rgb(154, 158, 163);
-  --dsw-static-paper-300: rgb(82, 88, 96);
-  --dsw-static-paper-200: rgb(52, 56, 62);
-  --dsw-static-paper-100: rgb(24, 26, 29);
+  /* The reference tier — where the Indigo Studio palette came from. The
+     graphite scale is the night ground; the indigo scale is the accent
+     family; the seat scale is the six persona tints (theme-independent:
+     bright heads, the dark --on-tone label is what clears AA — G2). */
+  --dsw-static-graphite-900: rgb(10, 12, 17);
+  --dsw-static-graphite-800: rgb(17, 20, 26);
+  --dsw-static-graphite-700: rgb(24, 28, 35);
+  --dsw-static-graphite-600: rgb(29, 34, 42);
+  --dsw-static-graphite-500: rgb(58, 63, 72);
+  --dsw-static-graphite-400: rgb(133, 137, 145);
+  --dsw-static-graphite-300: rgb(160, 165, 172);
+  --dsw-static-graphite-200: rgb(200, 204, 211);
+  --dsw-static-graphite-100: rgb(238, 240, 243);
 
-  --dsw-static-deepseek-700: rgb(30, 62, 140);
-  --dsw-static-deepseek-600: rgb(37, 78, 176);
-  --dsw-static-deepseek-500: rgb(47, 95, 208);
-  --dsw-static-deepseek-400: rgb(86, 132, 232);
-  --dsw-static-deepseek-300: rgb(148, 176, 236);
+  --dsw-static-indigo-700: rgb(79, 69, 196);
+  --dsw-static-indigo-600: rgb(100, 95, 223);
+  --dsw-static-indigo-500: rgb(135, 139, 245);
+  --dsw-static-indigo-400: rgb(155, 161, 251);
+  --dsw-static-indigo-300: rgb(192, 195, 253);
 
-  --dsw-static-ink-900: rgb(20, 22, 25);
-  --dsw-static-ink-800: rgb(28, 31, 35);
-  --dsw-static-ink-700: rgb(38, 42, 47);
-  --dsw-static-ink-600: rgb(58, 63, 70);
-  --dsw-static-ink-500: rgb(94, 100, 108);
-  --dsw-static-ink-400: rgb(130, 137, 146);
-  --dsw-static-ink-300: rgb(160, 166, 174);
-  --dsw-static-ink-200: rgb(196, 201, 207);
-  --dsw-static-ink-100: rgb(236, 238, 241);
+  --dsw-static-seat-1: rgb(72, 183, 189);
+  --dsw-static-seat-2: rgb(148, 185, 109);
+  --dsw-static-seat-3: rgb(233, 158, 94);
+  --dsw-static-seat-4: rgb(210, 133, 203);
+  --dsw-static-seat-5: rgb(103, 163, 224);
+  --dsw-static-seat-6: rgb(180, 156, 225);
 
-  --dsw-static-hairline-on-light: rgb(24 26 29 / 10%);
-  --dsw-static-hairline-on-dark: rgb(255 255 255 / 10%);
-  --dsw-static-ok-on-light: rgb(22, 110, 46);
-  --dsw-static-down-on-light: rgb(176, 36, 32);
-  --dsw-static-warn-on-light: rgb(122, 82, 8);
-  --dsw-static-ok-on-dark: rgb(74, 190, 110);
-  --dsw-static-down-on-dark: rgb(240, 106, 99);
-  --dsw-static-warn-on-dark: rgb(220, 166, 66);
+  /* The ladder scales are load-bearing names (60 component reads — G10):
+     the names stay, the values re-derive. `paper-*` carries the cool-paper
+     day ground it always meant; `ink-*` the graphite text ladder;
+     `deepseek-*` the indigo accent family; `graph-*` the chart ground. */
+  --dsw-static-paper-900: rgb(240, 244, 247);
+  --dsw-static-paper-800: rgb(248, 250, 253);
+  --dsw-static-paper-700: rgb(255, 255, 255);
+  --dsw-static-paper-600: rgb(232, 237, 242);
+  --dsw-static-paper-500: rgb(208, 214, 221);
+  --dsw-static-paper-400: rgb(154, 160, 169);
+  --dsw-static-paper-300: rgb(100, 105, 116);
+  --dsw-static-paper-200: rgb(52, 58, 66);
+  --dsw-static-paper-100: rgb(25, 30, 40);
+
+  --dsw-static-deepseek-700: rgb(79, 69, 196);
+  --dsw-static-deepseek-600: rgb(100, 95, 223);
+  --dsw-static-deepseek-500: rgb(135, 139, 245);
+  --dsw-static-deepseek-400: rgb(155, 161, 251);
+  --dsw-static-deepseek-300: rgb(192, 195, 253);
+
+  --dsw-static-ink-900: rgb(25, 30, 40);
+  --dsw-static-ink-800: rgb(38, 44, 56);
+  --dsw-static-ink-700: rgb(56, 63, 78);
+  --dsw-static-ink-600: rgb(100, 105, 116);
+  --dsw-static-ink-500: rgb(130, 136, 146);
+  --dsw-static-ink-400: rgb(160, 165, 172);
+  --dsw-static-ink-300: rgb(180, 185, 192);
+  --dsw-static-ink-200: rgb(200, 204, 211);
+  --dsw-static-ink-100: rgb(238, 240, 243);
+
+  --dsw-static-hairline-on-light: rgb(25 30 40 / 12%);
+  --dsw-static-hairline-on-dark: rgb(255 255 255 / 9%);
   --dsw-static-accent-text-on-light: var(--dsw-static-deepseek-600);
 
-  --dsw-static-graph-900: rgb(10, 12, 16);
-  --dsw-static-graph-800: rgb(15, 18, 23);
-  --dsw-static-graph-700: rgb(21, 25, 31);
-  --dsw-static-graph-500: rgb(58, 66, 77);
-  --dsw-static-graph-400: rgb(132, 142, 155);
-  --dsw-static-graph-300: rgb(160, 170, 184);
-  --dsw-static-graph-200: rgb(192, 200, 210);
-  --dsw-static-graph-100: rgb(232, 238, 244);
+  --dsw-static-graph-900: rgb(10, 12, 17);
+  --dsw-static-graph-800: rgb(17, 20, 26);
+  --dsw-static-graph-700: rgb(24, 28, 35);
+  --dsw-static-graph-500: rgb(58, 63, 72);
+  --dsw-static-graph-400: rgb(133, 137, 145);
+  --dsw-static-graph-300: rgb(160, 165, 172);
+  --dsw-static-graph-200: rgb(200, 204, 211);
+  --dsw-static-graph-100: rgb(238, 240, 243);
 
+  /* The per-ground signal constants the tone laws read: the ok/warn/down
+     values that clear AA on a light ground and on a dark one, and the
+     contrast theme's own pair. Re-derived with the palette (G4). */
+  --dsw-static-ok-on-light: rgb(0, 127, 78);
+  --dsw-static-down-on-light: rgb(197, 55, 50);
+  --dsw-static-warn-on-light: rgb(134, 89, 0);
+  --dsw-static-ok-on-dark: rgb(71, 196, 150);
+  --dsw-static-down-on-dark: rgb(234, 94, 89);
+  --dsw-static-warn-on-dark: rgb(223, 180, 83);
+  --dsw-static-ok-on-contrast: rgb(0, 107, 56);
+  --dsw-static-down-on-contrast: rgb(176, 12, 21);
+  --dsw-static-warn-on-contrast: rgb(131, 82, 0);
   --dsw-static-contrast-page: rgb(255, 255, 255);
-  --dsw-static-contrast-surface: rgb(255, 255, 255);
-  --dsw-static-contrast-raised: rgb(238, 238, 238);
   --dsw-static-contrast-ink: rgb(0, 0, 0);
-  --dsw-static-contrast-secondary: rgb(38, 38, 38);
-  --dsw-static-contrast-tertiary: rgb(70, 70, 70);
-  --dsw-static-contrast-hairline: rgb(0 0 0 / 20%);
-  --dsw-static-contrast-accent-text: rgb(20, 60, 150);
-  --dsw-static-ok-on-contrast: rgb(0, 104, 32);
-  --dsw-static-down-on-contrast: rgb(176, 20, 20);
-  --dsw-static-warn-on-contrast: rgb(124, 82, 6);
-
-  /* Chart mix colours that read on both grounds. */
-  --dsw-static-mix-teal: rgb(58, 154, 136);
-  --dsw-static-mix-sand: rgb(176, 138, 74);
-  --dsw-static-mix-slate: rgb(112, 124, 140);
 
   /* --- the alias tier: what the colours mean ------------------------ */
-  /* Night is the default since the U-reskin (U4/U5): the alias tier re-points
-     to the Harbor Night mapping and the warm-paper values live on
-     [data-theme="paper"] below. The reference tier above keeps naming where
-     every colour came from; the harbor references are the mockup's own
-     (docs/design/fleet-workspace-mockup.html), the contract U27 holds
-     one-to-one in the signal tier under this block. */
-  --dsw-alias-page: rgb(8, 19, 26);
-  --dsw-alias-persona-1: rgb(174, 81, 50);
-  --dsw-alias-persona-2: rgb(126, 104, 37);
-  --dsw-alias-persona-3: rgb(36, 123, 79);
-  --dsw-alias-persona-4: rgb(44, 115, 150);
-  --dsw-alias-persona-5: rgb(133, 81, 205);
-  --dsw-alias-persona-6: rgb(186, 54, 142);
+  /* Night is the default: the alias tier re-points to the Indigo Studio
+     mapping (docs/plans/2026-11-22-harness-redesign-gap-ledger.md, the
+     palette record) and the other themes re-point it under their own
+     attributes below. The reference tier above names where every colour
+     came from; no colour from the previous themes survives (the owner's
+     ruling, G4), and the guard in `themes.rs` measures every text token
+     against every surface. */
+  --dsw-alias-page: rgb(10, 12, 17);
+  --dsw-alias-persona-1: rgb(72, 183, 189);
+  --dsw-alias-persona-2: rgb(148, 185, 109);
+  --dsw-alias-persona-3: rgb(233, 158, 94);
+  --dsw-alias-persona-4: rgb(210, 133, 203);
+  --dsw-alias-persona-5: rgb(103, 163, 224);
+  --dsw-alias-persona-6: rgb(180, 156, 225);
 
-  --dsw-alias-surface: rgb(15, 37, 48);
-  --dsw-alias-surface-raised: rgb(18, 48, 60);
-  --dsw-alias-surface-overlay: rgb(22, 57, 74);
-  --dsw-alias-hairline: rgb(86 180 200 / 16%);
-  --dsw-alias-hairline-strong: rgb(86 180 200 / 30%);
-  --dsw-alias-ink: rgb(233, 244, 245);
-  --dsw-alias-ink-secondary: rgb(164, 190, 198);
-  --dsw-alias-ink-tertiary: rgb(150, 178, 188);
-  --dsw-alias-accent: rgb(58, 212, 242);
-  --dsw-alias-accent-deep: rgb(45, 214, 191);
-  --dsw-alias-accent-lift: rgb(58, 212, 242);
+  --dsw-alias-surface: rgb(17, 20, 26);
+  --dsw-alias-surface-raised: rgb(24, 28, 35);
+  --dsw-alias-surface-overlay: rgb(29, 34, 42);
+  --dsw-alias-hairline: rgb(255 255 255 / 9%);
+  --dsw-alias-hairline-strong: rgb(255 255 255 / 16%);
+  --dsw-alias-ink: rgb(238, 240, 243);
+  --dsw-alias-ink-secondary: rgb(160, 165, 172);
+  --dsw-alias-ink-tertiary: rgb(133, 137, 145);
+  --dsw-alias-accent: rgb(135, 139, 245);
+  --dsw-alias-accent-deep: rgb(111, 110, 229);
+  --dsw-alias-accent-lift: rgb(155, 161, 251);
   --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
-  --dsw-alias-ok: rgb(55, 226, 164);
-  --dsw-alias-down: rgb(255, 120, 113);
-  --dsw-alias-warn: rgb(255, 178, 36);
-  --dsw-alias-gradient: linear-gradient(135deg, rgb(45, 214, 191), rgb(55, 226, 164));
-  --dsw-alias-on-accent: rgb(4, 18, 26);
+  --dsw-alias-ok: rgb(71, 196, 150);
+  --dsw-alias-down: rgb(234, 94, 89);
+  --dsw-alias-warn: rgb(223, 180, 83);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(135, 139, 245), rgb(111, 110, 229));
+  --dsw-alias-on-accent: rgb(9, 13, 22);
   /* P7: the scrim a door or a drawer lays over the page, and the ink a
      tone-filled bead carries. Both are per-theme because a light ground
      needs a different scrim than a dark one, and a dark red bead needs a
-     light label where a bright green one needs a dark one. */
-  --scrim: rgb(4 10 14 / 48%);
-  --on-tone: rgb(4, 18, 26);
+     light label where a bright green one needs a dark one. `--on-tone` is
+     the persona disc's label (G2): the tints are bright in every theme and
+     the dark label is what clears AA on them. */
+  --scrim: rgb(4 6 10 / 52%);
+  --on-tone: rgb(9, 13, 22);
   /* A flat accent fill is not the accent gradient: the gradient's label
      is white on console, while the flat fill's label must be dark there.
      One token per job, measured in `themes.rs`. */
-  --on-flat: rgb(4, 18, 26);
-  --lane-0: rgb(45, 214, 191);
-  --lane-1: rgb(167, 139, 250);
-  --lane-2: rgb(255, 178, 36);
-  --lane-3: rgb(255, 96, 96);
-  --lane-4: rgb(91, 157, 255);
-  --lane-5: rgb(163, 230, 53);
+  --on-flat: rgb(9, 13, 22);
+  --lane-0: rgb(135, 139, 245);
+  --lane-1: rgb(180, 156, 225);
+  --lane-2: rgb(223, 180, 83);
+  --lane-3: rgb(234, 94, 89);
+  --lane-4: rgb(103, 163, 224);
+  --lane-5: rgb(71, 196, 150);
 
   /* --- the signal tier: U4/U5, one-to-one with the mockup ----------- */
   /* The eight hues are the whole set — no ninth (U4). Every accent pairs
      with an icon or label so meaning never rides colour alone. `--ink`/
      `--panel`/`--text`/`--line` and friends are the U5 token names the
      ledger fixes; the alias tier above re-points the existing components,
-     the signal tier is what migrated components read. */
-  --ink: rgb(8, 19, 26);
-  --ink2: rgb(12, 30, 39);
-  --panel: rgb(15, 37, 48);
-  --panel2: rgb(18, 48, 60);
-  --raise: rgb(22, 57, 74);
-  --line: rgb(86 180 200 / 16%);
-  --line2: rgb(86 180 200 / 30%);
-  --text: rgb(233, 244, 245);
-  --muted: rgb(164, 190, 198);
-  --faint: rgb(150, 178, 188);
-  --green: rgb(55, 226, 164); --cyan: rgb(58, 212, 242); --magenta: rgb(247, 87, 194);
-  --amber: rgb(255, 178, 36); --gold: rgb(255, 216, 107); --red: rgb(255, 96, 96);
-  --teal: rgb(45, 214, 191); --blue: rgb(91, 157, 255);
-  --green-d: rgb(55 226 164 / 14%); --cyan-d: rgb(58 212 242 / 14%);
-  --magenta-d: rgb(247 87 194 / 14%); --amber-d: rgb(255 178 36 / 14%);
-  --gold-d: rgb(255 216 107 / 14%); --red-d: rgb(255 96 96 / 14%);
-  --teal-d: rgb(45 214 191 / 14%); --blue-d: rgb(91 157 255 / 14%);
+     the signal tier is what migrated components read. The hues re-derive
+     into the indigo system (G4): the accent hue is the indigo, the signals
+     keep their meanings. */
+  --ink: rgb(10, 12, 17);
+  --ink2: rgb(14, 17, 22);
+  --panel: rgb(17, 20, 26);
+  --panel2: rgb(24, 28, 35);
+  --raise: rgb(29, 34, 42);
+  --line: rgb(255 255 255 / 9%);
+  --line2: rgb(255 255 255 / 16%);
+  --text: rgb(238, 240, 243);
+  --muted: rgb(160, 165, 172);
+  --faint: rgb(133, 137, 145);
+  --green: rgb(71, 196, 150); --cyan: rgb(135, 139, 245); --magenta: rgb(224, 120, 200);
+  --amber: rgb(223, 180, 83); --gold: rgb(238, 204, 116); --red: rgb(234, 94, 89);
+  --teal: rgb(72, 183, 189); --blue: rgb(103, 163, 224);
+  --green-d: rgb(71 196 150 / 14%); --cyan-d: rgb(135 139 245 / 14%);
+  --magenta-d: rgb(224 120 200 / 14%); --amber-d: rgb(223 180 83 / 14%);
+  --gold-d: rgb(238 204 116 / 14%); --red-d: rgb(234 94 89 / 14%);
+  --teal-d: rgb(72 183 189 / 14%); --blue-d: rgb(103 163 224 / 14%);
   --disp: "Space Grotesk", "Avenir Next", "SF Pro Display", system-ui, sans-serif;
   --body: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
@@ -300,115 +331,117 @@
   --tint-4: var(--dsw-alias-persona-4);
   --tint-5: var(--dsw-alias-persona-5);
   --tint-6: var(--dsw-alias-persona-6);
-  --tint-ink: var(--dsw-alias-ink);
+  /* G2: the disc's label rides --on-tone, not the page ink — the tints are
+     bright in every theme and the dark per-theme label is the measured pair. */
+  --tint-ink: var(--on-tone);
 }
 
-/* Day Watch (U5): the warm-paper inverse of Harbor Night. The surfaces
-   re-point light, the signal hues drop to the mockup's day set, and the
-   accent family deepens far enough for its text tokens to clear the
-   guard's floor on a light ground (the values the themes.rs guard
-   measures). The status colours stay the measured paper set — the law
-   they carry (U15) does not change between grounds. */
+/* Day Watch (U5): the cool-paper inverse of the graphite night. The
+   surfaces re-point light, the signals re-derive into the indigo system's
+   day set, and the accent family deepens far enough for its text tokens to
+   clear the guard's floor on a light ground. The accent-fill labels are
+   WHITE here — the mid-bright indigo measured 3.93 with the dark label, so
+   --on-flat/--dsw-alias-on-accent go white while --on-tone stays dark (the
+   tints are bright; the dark label is their measured pair). */
 :root[data-theme="day"] {
-  --ink: rgb(238, 240, 234);
-  --ink2: rgb(231, 234, 226);
-  --panel: rgb(251, 250, 245);
-  --panel2: rgb(243, 242, 234);
+  --ink: rgb(240, 244, 247);
+  --ink2: rgb(234, 239, 244);
+  --panel: rgb(248, 250, 253);
+  --panel2: rgb(255, 255, 255);
   --raise: rgb(255, 255, 255);
-  --line: rgb(20 60 70 / 14%);
-  --line2: rgb(20 60 70 / 26%);
-  --text: rgb(19, 36, 43);
-  --muted: rgb(60, 72, 82);
-  --faint: rgb(63, 75, 85);
-  --green: rgb(15, 168, 118); --cyan: rgb(10, 147, 184); --magenta: rgb(207, 47, 156);
-  --amber: rgb(201, 126, 0); --gold: rgb(185, 137, 0); --red: rgb(220, 56, 56);
-  --teal: rgb(12, 156, 139); --blue: rgb(47, 111, 214);
-  --green-d: rgb(15 168 118 / 12%); --cyan-d: rgb(10 147 184 / 12%);
-  --magenta-d: rgb(207 47 156 / 12%); --amber-d: rgb(201 126 0 / 13%);
-  --gold-d: rgb(185 137 0 / 14%); --red-d: rgb(220 56 56 / 12%);
-  --teal-d: rgb(12 156 139 / 12%); --blue-d: rgb(47 111 214 / 12%);
-  --deep-shadow: 0 18px 44px -22px rgb(20 50 60 / 40%);
+  --line: rgb(25 30 40 / 12%);
+  --line2: rgb(25 30 40 / 20%);
+  --text: rgb(25, 30, 40);
+  --muted: rgb(100, 105, 116);
+  --faint: rgb(100, 105, 116);
+  --green: rgb(0, 127, 78); --cyan: rgb(100, 95, 223); --magenta: rgb(176, 82, 158);
+  --amber: rgb(134, 89, 0); --gold: rgb(131, 96, 0); --red: rgb(197, 55, 50);
+  --teal: rgb(0, 122, 128); --blue: rgb(61, 106, 190);
+  --green-d: rgb(0 127 78 / 12%); --cyan-d: rgb(100 95 223 / 12%);
+  --magenta-d: rgb(176 82 158 / 12%); --amber-d: rgb(134 89 0 / 13%);
+  --gold-d: rgb(131 96 0 / 14%); --red-d: rgb(197 55 50 / 12%);
+  --teal-d: rgb(0 122 128 / 12%); --blue-d: rgb(61 106 190 / 12%);
+  --deep-shadow: 0 18px 44px -22px rgb(20 26 38 / 40%);
 
-  /* The alias tier re-points light — the paper surfaces, so the
-     existing components read the warm-paper ground under Day Watch
-     exactly as they did under paper. */
-  --dsw-alias-page: rgb(246, 244, 239);
-  --dsw-alias-persona-1: rgb(202, 105, 73);
-  --dsw-alias-persona-2: rgb(158, 130, 46);
-  --dsw-alias-persona-3: rgb(44, 150, 97);
-  --dsw-alias-persona-4: rgb(54, 142, 186);
-  --dsw-alias-persona-5: rgb(155, 113, 214);
-  --dsw-alias-persona-6: rgb(207, 89, 168);
+  /* The alias tier re-points light — the cool-paper surfaces, so the
+     existing components read the Indigo Studio day ground. */
+  --dsw-alias-page: rgb(240, 244, 247);
+  --dsw-alias-persona-1: rgb(72, 183, 189);
+  --dsw-alias-persona-2: rgb(148, 185, 109);
+  --dsw-alias-persona-3: rgb(233, 158, 94);
+  --dsw-alias-persona-4: rgb(210, 133, 203);
+  --dsw-alias-persona-5: rgb(103, 163, 224);
+  --dsw-alias-persona-6: rgb(180, 156, 225);
 
-  --dsw-alias-surface: rgb(252, 251, 248);
-  --dsw-alias-surface-raised: rgb(239, 236, 230);
+  --dsw-alias-surface: rgb(248, 250, 253);
+  --dsw-alias-surface-raised: rgb(255, 255, 255);
   --dsw-alias-surface-overlay: rgb(255, 255, 255);
-  --dsw-alias-hairline: rgb(24 26 29 / 10%);
-  --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
-  --dsw-alias-ink: rgb(24, 26, 29);
-  --dsw-alias-ink-secondary: rgb(60, 72, 82);
-  --dsw-alias-ink-tertiary: rgb(63, 75, 85);
-  --dsw-alias-accent: rgb(10, 147, 184);
-  --dsw-alias-accent-deep: rgb(12, 156, 139);
-  --dsw-alias-accent-lift: rgb(6, 100, 132);
+  --dsw-alias-hairline: rgb(25 30 40 / 12%);
+  --dsw-alias-hairline-strong: rgb(25 30 40 / 20%);
+  --dsw-alias-ink: rgb(25, 30, 40);
+  --dsw-alias-ink-secondary: rgb(100, 105, 116);
+  --dsw-alias-ink-tertiary: rgb(100, 105, 116);
+  --dsw-alias-accent: rgb(100, 95, 223);
+  --dsw-alias-accent-deep: rgb(79, 69, 196);
+  --dsw-alias-accent-lift: rgb(72, 60, 149);
   --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
-  --dsw-alias-gradient: linear-gradient(135deg, rgb(12, 156, 139), rgb(15, 168, 118));
-  --dsw-alias-on-accent: rgb(4, 18, 26);
-  --scrim: rgb(24 26 29 / 34%);
-  --on-tone: rgb(255, 255, 255);
-  --on-flat: rgb(4, 18, 26);
-  --dsw-alias-ok: rgb(22, 110, 46);
-  --dsw-alias-down: rgb(176, 36, 32);
-  --dsw-alias-warn: rgb(122, 82, 8);
-  --lane-0: rgb(15, 168, 118);
-  --lane-1: rgb(207, 47, 156);
-  --lane-2: rgb(201, 126, 0);
-  --lane-3: rgb(220, 56, 56);
-  --lane-4: rgb(47, 111, 214);
-  --lane-5: rgb(12, 156, 139);
-  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
-  --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
-  --shadow-3: 0 32px 80px -32px rgb(24 26 29 / 38%), 0 8px 24px -12px rgb(24 26 29 / 18%);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(100, 95, 223), rgb(79, 69, 196));
+  --dsw-alias-on-accent: rgb(255, 255, 255);
+  --scrim: rgb(20 26 38 / 38%);
+  --on-tone: rgb(9, 13, 22);
+  --on-flat: rgb(255, 255, 255);
+  --dsw-alias-ok: rgb(0, 127, 78);
+  --dsw-alias-down: rgb(197, 55, 50);
+  --dsw-alias-warn: rgb(134, 89, 0);
+  --lane-0: rgb(100, 95, 223);
+  --lane-1: rgb(180, 156, 225);
+  --lane-2: rgb(134, 89, 0);
+  --lane-3: rgb(197, 55, 50);
+  --lane-4: rgb(61, 106, 190);
+  --lane-5: rgb(0, 127, 78);
+  --shadow-1: 0 1px 2px rgb(25 30 40 / 6%), 0 1px 1px rgb(25 30 40 / 4%);
+  --shadow-2: 0 18px 40px -24px rgb(25 30 40 / 30%), 0 2px 6px rgb(25 30 40 / 6%);
+  --shadow-3: 0 32px 80px -32px rgb(25 30 40 / 38%), 0 8px 24px -12px rgb(25 30 40 / 18%);
 }
 
 
-/* The warm dark console. A collector for long evening runs; not the
-   default, and it keeps the same structure and type scale as paper. */
+/* The cool graphite console. A collector for long evening runs; not the
+   default, and it keeps the same structure and type scale as night. */
 :root[data-theme="console"] {
-  --dsw-alias-page: rgb(14, 15, 18);
-  --dsw-alias-persona-1: rgb(162, 76, 47);
-  --dsw-alias-persona-2: rgb(119, 98, 34);
-  --dsw-alias-persona-3: rgb(33, 115, 74);
-  --dsw-alias-persona-4: rgb(41, 109, 142);
-  --dsw-alias-persona-5: rgb(127, 73, 202);
-  --dsw-alias-persona-6: rgb(174, 50, 133);
+  --dsw-alias-page: rgb(17, 19, 22);
+  --dsw-alias-persona-1: rgb(72, 183, 189);
+  --dsw-alias-persona-2: rgb(148, 185, 109);
+  --dsw-alias-persona-3: rgb(233, 158, 94);
+  --dsw-alias-persona-4: rgb(210, 133, 203);
+  --dsw-alias-persona-5: rgb(103, 163, 224);
+  --dsw-alias-persona-6: rgb(180, 156, 225);
 
-  --dsw-alias-surface: rgb(20, 22, 26);
-  --dsw-alias-surface-raised: rgb(28, 31, 36);
-  --dsw-alias-surface-overlay: rgb(32, 35, 41);
+  --dsw-alias-surface: rgb(23, 26, 29);
+  --dsw-alias-surface-raised: rgb(31, 34, 38);
+  --dsw-alias-surface-overlay: rgb(36, 40, 45);
   --dsw-alias-hairline: rgb(255 255 255 / 8%);
   --dsw-alias-hairline-strong: rgb(255 255 255 / 15%);
-  --dsw-alias-ink: rgb(235, 231, 228);
-  --dsw-alias-ink-secondary: rgb(166, 175, 188);
-  --dsw-alias-ink-tertiary: rgb(138, 148, 163);
-  --dsw-alias-accent: rgb(96, 143, 255);
-  --dsw-alias-accent-deep: rgb(66, 112, 230);
-  --dsw-alias-accent-lift: rgb(143, 178, 255);
+  --dsw-alias-ink: rgb(227, 229, 232);
+  --dsw-alias-ink-secondary: rgb(149, 152, 159);
+  --dsw-alias-ink-tertiary: rgb(140, 143, 149);
+  --dsw-alias-accent: rgb(150, 156, 238);
+  --dsw-alias-accent-deep: rgb(119, 122, 216);
+  --dsw-alias-accent-lift: rgb(170, 177, 247);
   --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 14%, transparent);
-  --dsw-alias-ok: rgb(74, 190, 110);
-  --dsw-alias-down: rgb(240, 106, 99);
-  --dsw-alias-warn: rgb(220, 166, 66);
-  --dsw-alias-gradient: linear-gradient(135deg, rgb(76, 113, 201), rgb(52, 88, 182));
-  --dsw-alias-on-accent: rgb(255, 255, 255);
+  --dsw-alias-ok: rgb(71, 196, 150);
+  --dsw-alias-down: rgb(234, 94, 89);
+  --dsw-alias-warn: rgb(223, 180, 83);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(150, 156, 238), rgb(119, 122, 216));
+  --dsw-alias-on-accent: rgb(9, 13, 22);
   --scrim: rgb(0 0 0 / 55%);
-  --on-tone: rgb(12, 14, 18);
-  --on-flat: rgb(12, 14, 18);
-  --lane-0: rgb(45, 212, 191);
-  --lane-1: rgb(167, 139, 250);
-  --lane-2: rgb(251, 191, 36);
-  --lane-3: rgb(251, 113, 133);
-  --lane-4: rgb(56, 189, 248);
-  --lane-5: rgb(163, 230, 53);
+  --on-tone: rgb(9, 13, 22);
+  --on-flat: rgb(9, 13, 22);
+  --lane-0: rgb(150, 156, 238);
+  --lane-1: rgb(180, 156, 225);
+  --lane-2: rgb(223, 180, 83);
+  --lane-3: rgb(234, 94, 89);
+  --lane-4: rgb(103, 163, 224);
+  --lane-5: rgb(71, 196, 150);
   --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 65%), 0 2px 6px rgb(0 0 0 / 25%);
   --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 80%), 0 8px 24px -12px rgb(0 0 0 / 45%);
@@ -419,53 +452,53 @@
 /* The accessibility theme: pure ground, near-black ink, no atmosphere. */
 :root[data-theme="contrast"] {
   --dsw-alias-page: rgb(255, 255, 255);
-  --dsw-alias-persona-1: rgb(190, 89, 55);
-  --dsw-alias-persona-2: rgb(158, 130, 46);
-  --dsw-alias-persona-3: rgb(46, 158, 102);
-  --dsw-alias-persona-4: rgb(48, 127, 166);
-  --dsw-alias-persona-5: rgb(141, 93, 208);
-  --dsw-alias-persona-6: rgb(200, 65, 155);
+  --dsw-alias-persona-1: rgb(72, 183, 189);
+  --dsw-alias-persona-2: rgb(148, 185, 109);
+  --dsw-alias-persona-3: rgb(233, 158, 94);
+  --dsw-alias-persona-4: rgb(210, 133, 203);
+  --dsw-alias-persona-5: rgb(103, 163, 224);
+  --dsw-alias-persona-6: rgb(180, 156, 225);
 
   --dsw-alias-surface: rgb(255, 255, 255);
-  --dsw-alias-surface-raised: rgb(238, 238, 238);
+  --dsw-alias-surface-raised: rgb(228, 228, 228);
   --dsw-alias-surface-overlay: rgb(255, 255, 255);
   --dsw-alias-hairline: rgb(0 0 0 / 22%);
   --dsw-alias-hairline-strong: rgb(0 0 0 / 45%);
   --dsw-alias-ink: rgb(0, 0, 0);
-  --dsw-alias-ink-secondary: rgb(38, 38, 38);
-  --dsw-alias-ink-tertiary: rgb(70, 70, 70);
-  --dsw-alias-accent: rgb(24, 66, 160);
-  --dsw-alias-accent-deep: rgb(16, 48, 122);
-  --dsw-alias-accent-lift: rgb(20, 60, 150);
+  --dsw-alias-ink-secondary: rgb(34, 34, 34);
+  --dsw-alias-ink-tertiary: rgb(58, 58, 58);
+  --dsw-alias-accent: rgb(65, 60, 155);
+  --dsw-alias-accent-deep: rgb(51, 42, 136);
+  --dsw-alias-accent-lift: rgb(60, 54, 149);
   --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
-  --dsw-alias-ok: rgb(0, 104, 32);
-  --dsw-alias-down: rgb(176, 20, 20);
-  --dsw-alias-warn: rgb(124, 82, 6);
-  --dsw-alias-gradient: linear-gradient(135deg, rgb(20, 60, 150), rgb(16, 48, 122));
+  --dsw-alias-ok: rgb(0, 107, 56);
+  --dsw-alias-down: rgb(176, 12, 21);
+  --dsw-alias-warn: rgb(131, 82, 0);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(65, 60, 155), rgb(51, 42, 136));
   --dsw-alias-on-accent: rgb(255, 255, 255);
   --scrim: rgb(0 0 0 / 60%);
-  --on-tone: rgb(255, 255, 255);
+  --on-tone: rgb(20, 24, 34);
   --on-flat: rgb(255, 255, 255);
-  /* The signal tier on a pure-white ground: the mockup's day set, the
-     same eight hues the light themes carry (U4 — no theme invents a hue). */
+  /* The signal tier on a pure-white ground: the indigo system's dark set,
+     the same eight hues the light themes carry (U4 — no theme invents a hue). */
   --ink: rgb(255, 255, 255);
   --panel: rgb(255, 255, 255);
-  --panel2: rgb(238, 238, 238);
+  --panel2: rgb(228, 228, 228);
   --raise: rgb(255, 255, 255);
   --line: rgb(0 0 0 / 22%);
   --line2: rgb(0 0 0 / 45%);
   --text: rgb(0, 0, 0);
-  --muted: rgb(38, 38, 38);
-  --faint: rgb(70, 70, 70);
-  --green: rgb(15, 168, 118); --cyan: rgb(10, 147, 184); --magenta: rgb(207, 47, 156);
-  --amber: rgb(201, 126, 0); --gold: rgb(185, 137, 0); --red: rgb(220, 56, 56);
-  --teal: rgb(12, 156, 139); --blue: rgb(47, 111, 214);
-  --lane-0: rgb(0, 150, 136);
-  --lane-1: rgb(122, 48, 226);
-  --lane-2: rgb(190, 88, 0);
-  --lane-3: rgb(200, 16, 96);
-  --lane-4: rgb(0, 118, 172);
-  --lane-5: rgb(96, 138, 0);
+  --muted: rgb(34, 34, 34);
+  --faint: rgb(58, 58, 58);
+  --green: rgb(0, 107, 56); --cyan: rgb(65, 60, 155); --magenta: rgb(138, 45, 118);
+  --amber: rgb(131, 82, 0); --gold: rgb(112, 78, 0); --red: rgb(176, 12, 21);
+  --teal: rgb(0, 100, 105); --blue: rgb(44, 84, 165);
+  --lane-0: rgb(65, 60, 155);
+  --lane-1: rgb(138, 45, 118);
+  --lane-2: rgb(131, 82, 0);
+  --lane-3: rgb(176, 12, 21);
+  --lane-4: rgb(44, 84, 165);
+  --lane-5: rgb(0, 107, 56);
   --shadow-1: 0 1px 2px rgb(0 0 0 / 12%);
   --shadow-2: 0 12px 28px -20px rgb(0 0 0 / 30%);
   --shadow-3: 0 24px 60px -28px rgb(0 0 0 / 35%);

@@ -37,9 +37,14 @@ struct Theme {
     raised: Option<(u8, u8, u8)>,
     /// The tokens that carry text, each against every surface.
     text: Vec<(String, (u8, u8, u8))>,
+    /// The persona disc's label ink (G2): `--on-tone`, resolved per theme.
+    on_tone: Option<(u8, u8, u8)>,
     /// The six persona tints (P0 of the face rethink): a disc's fill, with
-    /// the theme's ink riding it. Each is held to the same AA floor as body
-    /// text, because a persona's initial is drawn on the disc.
+    /// the theme's `--on-tone` label riding it (G2 of the harness redesign:
+    /// the tints are bright in every theme, and the dark per-theme label —
+    /// not the page ink — is the measured pair). Each is held to the same
+    /// AA floor as body text, because a persona's initial is drawn on the
+    /// disc.
     ///
     /// Read by the AA test, not by the binary: the face gets the tints from
     /// the stylesheet, so this field exists to prove them rather than to
@@ -186,6 +191,7 @@ fn themes() -> Vec<(String, Theme)> {
                 surface: pick("--dsw-alias-surface"),
                 raised: pick("--dsw-alias-surface-raised"),
                 text,
+                on_tone: pick("--on-tone"),
                 personas,
             };
             (name, theme)
@@ -240,6 +246,13 @@ pub struct ThemeReport {
     /// `(token, ratio)` for the ones that do not, worst first. Empty for
     /// a theme that is fully readable.
     pub failing: Vec<(String, f64)>,
+}
+
+/// One theme's persona-disc label: the tint is bright in every theme and
+/// the dark `--on-tone` label is the measured pair (G2). Resolved from the
+/// same stylesheet the face serves.
+fn on_tone_label(theme: &Theme) -> Option<(u8, u8, u8)> {
+    theme.on_tone
 }
 
 impl ThemeReport {
@@ -307,16 +320,13 @@ pub fn measure(name: &str) -> Option<ThemeReport> {
     }
     // P7: the persona tints are text backgrounds too — a disc carries the
     // seat's initial — so they enter the same report the picker's card
-    // shows. A theme whose sixth hue is 4.4:1 against its own ink is a
-    // blocked theme, not a ship-with-warning.
-    if let Some(ink) = theme
-        .text
-        .iter()
-        .find(|(token, _)| token == "--dsw-alias-ink")
-        .map(|(_, colour)| *colour)
-    {
+    // shows. The label is the theme's own `--on-tone` (G2: the tints are
+    // bright in every theme; the page ink is not the disc's label). A theme
+    // whose sixth hue is 4.4:1 against its own label is a blocked theme,
+    // not a ship-with-warning.
+    if let Some(label) = on_tone_label(theme) {
         for (token, tint) in &theme.personas {
-            let ratio = contrast(*tint, ink);
+            let ratio = contrast(*tint, label);
             worst = worst.min(ratio);
             let named = token_name(token);
             if ratio >= MIN_TEXT {
@@ -350,9 +360,11 @@ mod tests {
     /// surfaces. This is the guard that makes "great readability" a
     /// property of the shipped stylesheet rather than a claim about it.
     /// P0 of the face rethink: six persona tints in every theme, each one
-    /// readable with the theme's own ink. A persona's initial is drawn on its
-    /// disc, so the tint is a text background and takes the AA floor rather
-    /// than the 3:1 a decorative fill would.
+    /// readable with the theme's own `--on-tone` label (G2 — the tints are
+    /// bright in every theme; the page ink is not the disc's label). A
+    /// persona's initial is drawn on its disc, so the tint is a text
+    /// background and takes the AA floor rather than the 3:1 a decorative
+    /// fill would.
     #[test]
     fn every_theme_carries_six_readable_persona_tints() {
         let themes = themes();
@@ -364,17 +376,13 @@ mod tests {
                 "{name} declares six persona tints, found {}",
                 theme.personas.len()
             );
-            let ink = theme
-                .text
-                .iter()
-                .find(|(token, _)| token == "--dsw-alias-ink")
-                .map(|(_, colour)| *colour)
-                .unwrap_or_else(|| panic!("{name} declares an ink"));
+            let label = on_tone_label(theme)
+                .unwrap_or_else(|| panic!("{name} declares an --on-tone label"));
             for (token, tint) in &theme.personas {
-                let ratio = contrast(*tint, ink);
+                let ratio = contrast(*tint, label);
                 assert!(
                     ratio >= MIN_TEXT,
-                    "{name}: {token} is {ratio:.2}:1 against the ink, under the {}:1 floor",
+                    "{name}: {token} is {ratio:.2}:1 against the on-tone label, under the {}:1 floor",
                     MIN_TEXT
                 );
             }
@@ -554,7 +562,7 @@ mod tests {
                 "`{retired}` is retired and must not parse"
             );
         }
-        // `console` overrides the base with its own warm-dark ink,
+        // `console` overrides the base with its own cool graphite ink,
         // which is the whole point of a theme block.
         let console = found
             .iter()
@@ -567,7 +575,7 @@ mod tests {
             .find(|(token, _)| token == "--dsw-alias-ink")
             .map(|(_, colour)| *colour)
             .expect("the console ink");
-        assert_eq!(ink, (235, 231, 228));
+        assert_eq!(ink, (227, 229, 232));
         // And `contrast` goes to pure black, the accessibility theme.
         let contrast = found
             .iter()
