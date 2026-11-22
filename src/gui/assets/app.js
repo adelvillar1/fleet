@@ -20025,21 +20025,50 @@ import { node, svg, clip } from './core/dom.js';
       card.appendChild(node('p', 'board-empty', refusals(doc).join('; ')));
       return card;
     }
+    // The lanes as a live chip row (the gated mockup, U1's law): the
+    // latency and the liveness are quantitative, so they render as chips
+    // - the state mark, the name, the probe's own milliseconds in mono -
+    // not as plain-text lines dressed as a card. A failed lane keeps its
+    // detail line below the row, because the reason is words, not a
+    // number.
+    var strip = node('div', 'lane-strip');
     (doc.lanes || []).forEach(function (lane) {
-      var mark = lane.state === 'ok' ? '\u2713' : lane.state === 'error' ? '\u2715' : '\u25cb';
-      var meta = lane.state === 'ok'
-        ? ('v' + (lane.server_version || '?') + ' \u00b7 ' + lane.elapsed_ms + ' ms \u00b7 ' + (lane.tools || []).length + ' tools')
+      var ok = lane.state === 'ok';
+      var chip = node('span', 'lane-chip');
+      chip.dataset.state = lane.state || '';
+      chip.appendChild(node('span', 'lane-chip-mark',
+        ok ? '\u2713' : lane.state === 'error' ? '\u2715' : '\u25cb'));
+      chip.appendChild(node('span', 'lane-chip-name', lane.name));
+      if (ok) {
+        var ms = node('span', 'lane-chip-ms mono',
+          (lane.elapsed_ms != null ? lane.elapsed_ms + ' ms' : ''));
+        ms.title = 'v' + (lane.server_version || '?') + ' \u00b7 ' +
+          (lane.tools || []).length + ' tools';
+        chip.appendChild(ms);
+      }
+      chip.title = ok
+        ? ('v' + (lane.server_version || '?') + ' \u00b7 ' + (lane.tools || []).length + ' tools')
         : (lane.detail || lane.state);
-      var line = node('p', 'derivation', mark + ' ' + lane.name + ' \u00b7 ' + lane.role + ' \u2014 ' + meta);
-      if (lane.state !== 'ok') line.dataset.tone = 'bad';
-      card.appendChild(line);
+      strip.appendChild(chip);
+      if (!ok && (lane.detail || lane.state)) {
+        card.appendChild(node('p', 'derivation', lane.name + ' \u2014 ' + (lane.detail || lane.state)));
+      }
     });
+    card.appendChild(strip);
     return card;
   }
 
   function healthDoctorCard() {
     var doc = face.doctorChecks;
-    var card = boardCard(12, 'the doctor', null,
+    // The head carries the tally (the gated mockup): N green, M failing
+    // - the counts are the checks' own, computed from what landed.
+    var tally = null;
+    if (doc && (doc.checks || []).length) {
+      var ok = (doc.checks || []).filter(function (check) { return check.ok; }).length;
+      var bad = doc.checks.length - ok;
+      tally = ok + ' green' + (bad ? ' \u00b7 ' + bad + ' failing' : '');
+    }
+    var card = boardCard(12, 'the doctor', tally,
       'The cheap checks fleet doctor runs \u2014 every one named, pass or fail.');
     if (!doc) {
       card.appendChild(node('p', 'board-empty', 'Still loading the health checks.'));

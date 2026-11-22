@@ -1253,6 +1253,13 @@ function boot(options) {
         json: () => Promise.resolve(documents.doctor || { type: 'doctor', checks: [] }),
       });
     }
+    if (pathOnly === '/api/lanes' && method === 'GET') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.lanes ||
+          { type: 'lanes', ok: 0, total: 0, lanes: [] }),
+      });
+    }
     return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
   };
 
@@ -17668,6 +17675,47 @@ async function theDeskReachesDesignDeliverables() {
 // The project-centered workspace plan (P2): the second brain is a visible
 // Health lens — the rail names it, the palette finds it by "health", and
 // it renders the lanes and doctor checks beside the atlas.
+/// Pass 3 (the gated mockup): the lanes render as a live chip row - the
+/// latency and liveness are quantitative, so they render as chips (U1),
+/// the failed lane's reason staying a line below; the doctor's head
+/// carries the tally its checks computed.
+async function theHealthLanesRenderAsAChipRow() {
+  const page = boot({
+    documents: {
+      lanes: { type: 'lanes', ok: 1, total: 2, lanes: [
+        { name: 'sys1', role: 'judgment', state: 'ok', server_version: '3.1',
+          elapsed_ms: 210, tools: ['classify'] },
+        { name: 'gen1', role: 'media', state: 'error',
+          detail: 'the lane venv is missing' },
+      ] },
+      doctor: { type: 'doctor', checks: [
+        { ok: true, why: 'the vault opens' },
+        { ok: true, why: 'the home is writable' },
+        { ok: false, why: 'the lane gen1 is unkeyed' },
+      ] },
+    },
+    hash: '#/second-brain/lanes',
+  });
+  await flush();
+  page.open();
+  await flush(150);
+  const chips = page.rows('.lane-chip');
+  check('HEALTH the lanes render as a live chip row',
+    chips.length === 2 &&
+      chips[0].textContent.includes('sys1') &&
+      chips[0].textContent.includes('210 ms'),
+    chips.map((c) => c.textContent).join(' | '));
+  check('HEALTH the failed lane keeps its reason as words',
+    page.text('brain-board').includes('the lane venv is missing'),
+    page.text('brain-board').slice(0, 140));
+  page.hash('#/second-brain/doctor');
+  await flush(150);
+  check('HEALTH the doctor\u2019s head carries the tally its checks computed',
+    page.text('brain-board').includes('2 green') &&
+      page.text('brain-board').includes('1 failing'),
+    page.text('brain-board').slice(0, 140));
+}
+
 async function theHealthLensIsVisibleAndFindable() {
   const page = boot({ documents: {} });
   page.open();
@@ -21290,6 +21338,7 @@ const cases = [
   ['PWS the desk is projects, work and a thread', theDeskOrganisesByProjectAndThread],
   ['P1 the desk reaches design deliverables', theDeskReachesDesignDeliverables],
   ['P2 the health lens is visible and findable', theHealthLensIsVisibleAndFindable],
+  ['HEALTH the lanes render as a live chip row', theHealthLanesRenderAsAChipRow],
   ['FIX an error offers its fix and can be dismissed', anErrorOffersItsFixAndCanBeDismissed],
   ['RAILW the collapsed rail aligns right and fits its badge',
     theCollapsedRailAlignsOnOneRightEdgeAndFitsItsBadge],

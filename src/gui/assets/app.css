@@ -12490,3 +12490,31 @@ section.board-card > .board-head {
   color: var(--muted, var(--dsw-alias-ink-secondary));
 }
 .cal-unjudged-word { color: var(--warn, var(--dsw-alias-warn)); flex: 0 0 auto; }
+
+/* --- the health lanes as a live chip row (the gated mockup, U1): the
+   latency and liveness are quantitative, so they render as chips - the
+   state mark, the name, the probe's own milliseconds. The failed lane's
+   reason stays a line below: words, not a number. */
+.lane-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.lane-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 999px;
+  background: var(--dsw-alias-surface-raised);
+  font-size: 12.5px;
+}
+.lane-chip-mark { flex: 0 0 auto; color: var(--ok, var(--dsw-alias-ok)); }
+.lane-chip[data-state="error"] .lane-chip-mark { color: var(--down, var(--dsw-alias-down)); }
+.lane-chip[data-state="unknown"] .lane-chip-mark { color: var(--muted, var(--dsw-alias-ink-secondary)); }
+.lane-chip-name { color: var(--ink, var(--dsw-alias-ink)); font-weight: 500; }
+.lane-chip-ms {
+  color: var(--dsw-alias-ink-secondary);
+  font-variant-numeric: tabular-nums;
+}
