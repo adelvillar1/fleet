@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-20
 updated: 2026-11-20
 slug: asset-compression
