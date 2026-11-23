@@ -33089,6 +33089,85 @@ import { node, svg, clip } from './core/dom.js';
   // XLSX: shared strings plus the sheets, parsed with DOMParser and
   // rendered as real tables with tabs. Values only, by design — no
   // formulas, no charts — and the pane says so.
+  // --- the xlsx side of the drawer (R7): the workbook's own styles --------
+  // The reader stays fleet's own (zip + DOMParser); what it gains is the
+  // document's form — number formats, dates, bold, merges, column widths —
+  // because a sheet rendered as bare values is not what a human sees.
+  // Formulas are never evaluated: the cached value is shown and the pane
+  // says so.
+  function excelColumnIndex(ref) {
+    var letters = String(ref || '').replace(/[^A-Za-z]/g, '').toUpperCase();
+    var index = 0;
+    for (var i = 0; i < letters.length; i += 1) index = index * 26 + (letters.charCodeAt(i) - 64);
+    return index - 1;
+  }
+
+  function excelSerialDate(serial) {
+    // Excel's day 1 is 1900-01-01 and the file carries the 1900 leap bug;
+    // 25569 is 1970-01-01 on the serial axis that matches real files.
+    return new Date(Math.round((Number(serial) - 25569) * 86400000));
+  }
+
+  function two(n) { return (n < 10 ? '0' : '') + n; }
+
+  var EXCEL_DATE_IDS = [14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47];
+
+  function excelIsDateStyle(style) {
+    if (!style) return false;
+    if (EXCEL_DATE_IDS.indexOf(style.numFmtId) !== -1) return true;
+    var code = String(style.code || '');
+    if (!code) return false;
+    return /[dmyhs]/i.test(code.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, ''));
+  }
+
+  function formatExcelNumber(raw, style) {
+    var value = Number(raw);
+    if (!isFinite(value)) return raw;
+    var code = String((style && style.code) || '');
+    if (excelIsDateStyle(style)) {
+      var d = excelSerialDate(value);
+      var text = d.getUTCFullYear() + '-' + two(d.getUTCMonth() + 1) + '-' + two(d.getUTCDate());
+      if (value % 1 !== 0) text += ' ' + two(d.getUTCHours()) + ':' + two(d.getUTCMinutes());
+      return text;
+    }
+    if (code.indexOf('%') !== -1) {
+      var pct = (code.split('.')[1] || '').replace(/[^0]/g, '').length;
+      return (value * 100).toFixed(pct) + '%';
+    }
+    var currency = (code.match(/[$\u20ac\u00a3\u00a5]/) || [])[0] || '';
+    var decimals = (code.split('.')[1] || '').replace(/[^0]/g, '').length;
+    var body = /#,##/.test(code)
+      ? value.toLocaleString('en-US', {
+          minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+      : value.toFixed(decimals);
+    return currency + body;
+  }
+
+  function xlsxStyles(doc) {
+    var formats = {};
+    Array.prototype.forEach.call(doc.getElementsByTagName('numFmt'), function (one) {
+      formats[Number(one.getAttribute('numFmtId'))] = one.getAttribute('formatCode') || '';
+    });
+    var boldFonts = {};
+    var fonts = doc.getElementsByTagName('font');
+    for (var f = 0; f < fonts.length; f += 1) {
+      boldFonts[f] = fonts[f].getElementsByTagName('b').length > 0;
+    }
+    var styles = [];
+    var cellXfs = doc.getElementsByTagName('cellXfs')[0];
+    if (cellXfs) {
+      Array.prototype.forEach.call(cellXfs.getElementsByTagName('xf'), function (xf) {
+        var id = Number(xf.getAttribute('numFmtId') || 0);
+        styles.push({
+          numFmtId: id,
+          code: formats[id] || '',
+          bold: !!boldFonts[Number(xf.getAttribute('fontId') || 0)]
+        });
+      });
+    }
+    return styles;
+  }
+
   async function renderXlsx(read) {
     try {
       var archive = await zipEntries(await previewBytes(read));
@@ -33102,6 +33181,11 @@ import { node, svg, clip } from './core/dom.js';
             return Array.prototype.map.call(si.getElementsByTagName('t'),
               function (t) { return t.textContent; }).join('');
           });
+      }
+      var styles = [];
+      if (archive.names.indexOf('xl/styles.xml') !== -1) {
+        styles = xlsxStyles(new DOMParser().parseFromString(
+          new TextDecoder().decode(await archive.read('xl/styles.xml')), 'text/xml'));
       }
       var workbook = new DOMParser().parseFromString(
         new TextDecoder().decode(await archive.read('xl/workbook.xml')), 'text/xml');
@@ -33119,18 +33203,85 @@ import { node, svg, clip } from './core/dom.js';
         var doc = new DOMParser().parseFromString(
           new TextDecoder().decode(await archive.read(sheet.path)), 'text/xml');
         var html = node('table', 'md-table pane-data');
+        // Column widths, where the sheet declares them (character units,
+        // taken to rem at the sheet's own scale).
+        var widths = {};
+        Array.prototype.forEach.call(doc.getElementsByTagName('col'), function (col) {
+          var min = Number(col.getAttribute('min') || 0);
+          var max = Math.min(Number(col.getAttribute('max') || min), min + 200);
+          var width = Number(col.getAttribute('width') || 0);
+          if (!width) return;
+          for (var c = min; c <= max; c += 1) widths[c - 1] = width;
+        });
+        if (Object.keys(widths).length) {
+          var colgroup = node('colgroup');
+          Object.keys(widths).forEach(function (key) {
+            var col = node('col');
+            col.style.width = (widths[key] * 0.62) + 'rem';
+            colgroup.appendChild(col);
+          });
+          html.appendChild(colgroup);
+        }
+        // Merges: the top-left carries the span; the covered cells drop.
+        var merged = {};
+        Array.prototype.forEach.call(doc.getElementsByTagName('mergeCell'), function (one) {
+          var parts = String(one.getAttribute('ref') || '').split(':');
+          if (parts.length !== 2) return;
+          var a = parts[0].match(/^([A-Za-z]+)(\d+)$/);
+          var b = parts[1].match(/^([A-Za-z]+)(\d+)$/);
+          if (!a || !b) return;
+          var c1 = excelColumnIndex(a[1]), r1 = Number(a[2]) - 1;
+          var c2 = excelColumnIndex(b[1]), r2 = Number(b[2]) - 1;
+          merged[r1 + ':' + c1] = { colspan: c2 - c1 + 1, rowspan: r2 - r1 + 1 };
+          for (var rr = r1; rr <= r2; rr += 1) {
+            for (var cc = c1; cc <= c2; cc += 1) {
+              if (rr !== r1 || cc !== c1) merged[rr + ':' + cc] = { covered: true };
+            }
+          }
+        });
         var rows = doc.getElementsByTagName('row');
-        for (var r = 0; r < Math.min(rows.length, 500); r++) {
+        for (var r = 0; r < Math.min(rows.length, 500); r += 1) {
           var tr = node('tr');
           var cells = rows[r].getElementsByTagName('c');
-          for (var c = 0; c < cells.length; c++) {
-            var kind = cells[c].getAttribute('t');
-            var values = cells[c].getElementsByTagName('v');
-            var text = values.length
-              ? (kind === 's' ? (shared[Number(values[0].textContent)] || '')
-                : values[0].textContent)
-              : '';
-            var td = node('td', 'md-td', text);
+          var next = 0;
+          for (var k = 0; k < cells.length; k += 1) {
+            var cell = cells[k];
+            var ref = String(cell.getAttribute('r') || '');
+            var colIndex = ref ? excelColumnIndex(ref) : next;
+            next = colIndex + 1;
+            var span = merged[r + ':' + colIndex];
+            if (span && span.covered) continue;
+            // A sparse row stays aligned: fill the gap with empty cells.
+            while (tr.children.length < colIndex) tr.appendChild(node('td', 'md-td'));
+            var sort = Number(cell.getAttribute('s') || 0);
+            var style = styles[sort] || null;
+            var kind = cell.getAttribute('t');
+            var values = cell.getElementsByTagName('v');
+            var raw = values.length ? values[0].textContent : '';
+            var text = '';
+            var numeric = false;
+            if (kind === 's') {
+              text = shared[Number(raw)] || '';
+            } else if (kind === 'inlineStr') {
+              // Inline strings (openpyxl and several exporters write these
+              // instead of sharedStrings): the cell carries its own <is><t>.
+              text = Array.prototype.map.call(cell.getElementsByTagName('t'),
+                function (t) { return t.textContent; }).join('');
+            } else if (kind === 'b') {
+              text = raw === '1' ? 'true' : 'false';
+            } else if (raw !== '') {
+              text = formatExcelNumber(raw, style);
+              numeric = isFinite(Number(raw)) && !excelIsDateStyle(style);
+            }
+            var td = node('td', 'md-td');
+            if (numeric) td.classList.add('num');
+            if (style && style.bold) td.classList.add('bold');
+            if (style && excelIsDateStyle(style)) td.classList.add('date');
+            if (span) {
+              if (span.colspan > 1) td.setAttribute('colspan', String(span.colspan));
+              if (span.rowspan > 1) td.setAttribute('rowspan', String(span.rowspan));
+            }
+            td.textContent = text;
             tr.appendChild(td);
           }
           html.appendChild(tr);
@@ -33153,7 +33304,8 @@ import { node, svg, clip } from './core/dom.js';
         if (index === 0) { tab.dataset.active = 'true'; renderSheet(sheet).catch(function (error) { previewFailed('the sheet', error); }); }
       });
       wrap.appendChild(tabs);
-      wrap.appendChild(node('p', 'pane-empty', 'values \u00b7 formulas and charts are not part of this preview'));
+      wrap.appendChild(node('p', 'pane-empty',
+        'the sheet\u2019s own form \u00b7 formulas are shown as their cached values, never evaluated \u00b7 charts are not part of this preview'));
       wrap.appendChild(table);
       el.panePreview.textContent = '';
       el.panePreview.appendChild(wrap);

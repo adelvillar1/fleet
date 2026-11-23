@@ -12777,3 +12777,9 @@ section.board-card > .board-head {
 }
 .md-doc th { background: var(--dsw-alias-accent-wash); font-weight: 600; }
 .md-doc hr { border: 0; border-top: 1px solid var(--dsw-alias-hairline); margin: 8px 0; }
+
+/* --- the sheet's own form (R7): what the workbook says a cell is. */
+.pane-data td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.pane-data td.bold { font-weight: 600; color: var(--dsw-alias-ink); }
+.pane-data td.date { color: var(--dsw-alias-ink-secondary); white-space: nowrap; }
+.pane-data colgroup col { min-width: 2.5rem; }

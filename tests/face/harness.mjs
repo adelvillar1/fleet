@@ -7953,6 +7953,17 @@ async function thePreviewRendersTheCommonFormats() {
   check('PV a binary document fails gracefully in the pane\u2019s own words',
     page.text('pane-preview-body').includes('would not render'),
     page.text('pane-preview-body').slice(0, 80));
+  // R7: the sheet's own form. The stub DOM cannot inflate a zip, so the
+  // wiring is pinned from the source and the render itself was measured
+  // against the live face (a styled workbook: bold header, dates, %, $,
+  // a merged title, column widths, right-aligned numbers — all read back).
+  check('XLSXF the sheet renders its own form',
+    SRC.includes('function formatExcelNumber(') &&
+      SRC.includes("getElementsByTagName('mergeCell')") &&
+      SRC.includes("kind === 'inlineStr'") &&
+      SRC.includes("td.classList.add('date')") &&
+      SRC.includes('colgroup'),
+    'xlsx form');
 
   // The Rust side's fences, read from the source: the credential
   // refusal, the allowlist-derived type, nosniff, attachment.
