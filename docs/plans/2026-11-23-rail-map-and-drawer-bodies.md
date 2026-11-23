@@ -1,5 +1,6 @@
 ---
-status: active
+status: completed
+completed: 2026-11-23
 created: 2026-11-23
 plan: rail-map-and-drawer-bodies
 ---
@@ -160,7 +161,9 @@ one-row change, not a rework.
   layout path. The map's rows keep their dots/counts inside the drawer.
 - Evidence: WKWebView captures at 390 and 820 for night and day (the study's
   S6 composition, captured from the implementation), plus harness pins that
-  the rail's drawer carries the region headers.
+  the rail's drawer carries the region headers. — Stored:
+  `docs/plans/mockups/2026-11-23-rail-map/` (four captures + README); the pin
+  is `theMapIsTheRailDrawerBelowNineHundred` (`472c1d49`).
 
 ### R10 — the gate and the hygiene, after every row
 - Four legs by exit code: `cargo fmt --check`, `cargo clippy -D warnings`,
@@ -173,27 +176,43 @@ one-row change, not a rework.
 
 ## Acceptance criteria
 
-- [ ] R1–R2: the rail is the map (Home, three regions, system strip, dots and
+- [x] R1–R2: the rail is the map (Home, three regions, system strip, dots and
       counts, folding, expert census, plugins) and no attention group remains;
-      the model table is pinned against `ROUTES`.
-- [ ] R3: the inbox and the board still carry attention; Home's count equals
-      the inbox's held count.
-- [ ] R4: every kind opens the body it is (code/tree/rendered preview/web),
+      the model table is pinned against `ROUTES`. — `cdf783e8`, harness
+      `theRailCarriesTheMap`; live-probed once (map reading correct, quiet lanes
+      dotless).
+- [x] R3: the inbox and the board still carry attention; Home's count equals
+      the inbox's held count. — `35b86631`, the union of `.ib-row`/`.ib-held`.
+- [x] R4: every kind opens the body it is (code/tree/rendered preview/web),
       the switch overrides per object, and defaults do not leak across opens.
-- [ ] R5: each object kind's read body opens with a relevance line and one
+      — `613be4e7`, `theDrawerOpensTheObjectItIs`; live probe: `markdown · 292 B`
+      with the press flipping bodies.
+- [x] R5: each object kind's read body opens with a relevance line and one
       suggested press, both read from existing documents; absences are named.
-- [ ] R6: markdown renders ordered lists, blockquotes, images, nesting, tables
-      and fences through marked+DOMPurify, hostile payloads stripped.
-- [ ] R7: xlsx shows number formats, dates, bold, merges, widths and
-      right-aligned numerics; the row cap and the formula line still hold.
-- [ ] R8: pptx renders slides in the sandboxed frame with the outline fallback
-      on failure, both pinned; the vendor entry carries MIT and the reason.
-- [ ] R9: the 390/820 map-drawer evidence is captured from the implementation
-      and read; both themes.
-- [ ] Harness green and the gate built by exit code after every row; hygiene
-      run and recorded per delivery.
-- [ ] The study's S1–S6 model is what shipped: map (B), Home, consolidated
-      attention, type-aware drawer, phone/pad map.
+      — `613be4e7`; the file object only, per gap-ledger G1 (conversations keep
+      their head, facts/deliverables their own surfaces — no invented line).
+- [x] R6: markdown renders ordered lists, blockquotes, images, nesting, tables
+      and fences through marked+DOMPurify, hostile payloads stripped. —
+      `79cc488e`, pins MDK/PV; live probe: script and `onerror` stripped, images
+      resolved through `/api/preview`. Transcript parser kept per ledger G2.
+- [x] R7: xlsx shows number formats, dates, bold, merges, widths and
+      right-aligned numerics; the row cap and the formula line still hold. —
+      `cea0986b`; live probe of a generated workbook (inlineStr fix found there).
+- [x] R8: pptx renders slides in the sandboxed frame with the outline fallback
+      on failure, both pinned; the vendor entry carries MIT and the reason. —
+      `87edcde3`; live probes of a two-slide deck and of the named fallback.
+- [x] R9: the 390/820 map-drawer evidence is captured from the implementation
+      and read; both themes. — `472c1d49`,
+      `docs/plans/mockups/2026-11-23-rail-map/` (four WKWebView captures, both
+      themes, provenance in the README).
+- [x] Harness green and the gate built by exit code after every row; hygiene
+      run and recorded per delivery. — every row: 4 legs by exit code +
+      `harness.mjs`; final tree `472c1d49`: fmt/clippy/build/test 0, 18 suites
+      2,820 passed, harness 1,945 checks / 283 cases.
+- [x] The study's S1–S6 model is what shipped: map (B), Home, consolidated
+      attention, type-aware drawer, phone/pad map. — `cdf783e8`…`472c1d49`;
+      one pre-existing defect exposed by a live probe and filed, not fixed here:
+      KI-592 (landing hero under an open drawer on `#/file` with no session).
 
 ## Out of scope
 
