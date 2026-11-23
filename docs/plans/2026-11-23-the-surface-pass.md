@@ -295,11 +295,13 @@ the token discipline; R9 every remaining surface classified with
 delegation's run cards opened and the drawer's tab renamed work; R10 the
 card grid, the rails-collapsed layouts, and the PWA's shell at four sizes.
 
-**Handed off, not dropped:** the router fold — calibration's routing
-section already renders the router's chain card, so the standalone page
-duplicates it (D3 of the redesign). It is a product decision of the size
-that takes a mockup and the `#/router` redirect; recorded here and in the
-audit, not guessed into code.
+**Handed off with its mockup, awaiting the owner's gate:** the router fold —
+calibration's routing section already renders the router's chain card, so
+the standalone page duplicates it (D3 of the redesign). The mockup is
+`docs/plans/mockups/2026-11-23-d3-routing-fold/` (Reviews with routing
+first; both themes at 1440, the 820 composition; measured, no overflow),
+and the README carries the five decision points with recommendations. No
+code until the gate settles them.
 
 ## Constraints
 

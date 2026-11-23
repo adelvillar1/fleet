@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D3 — routing is Reviews' first section</title>
+<link rel="stylesheet" href="../2026-11-22-ux-map-study/study.css">
+<script>
+  try {
+    document.documentElement.dataset.theme =
+      new URLSearchParams(location.search).get('theme') ||
+      localStorage.getItem('fleet-theme-2') || 'night';
+  } catch (e) {}
+</script>
+</head>
+<body data-shell="off">
+<div style="max-width:1180px;margin:0 auto;padding:44px 24px 64px">
+  <div class="s-eyebrow">the mockup gate · 2026-11-23</div>
+  <div class="s-title" style="font-size:30px">D3 — one surface fewer, nothing lost</div>
+  <div class="s-note" style="max-width:860px;margin-top:10px;font-size:13px">
+    Routing becomes Reviews&rsquo; first section and the standalone Router page retires —
+    it duplicates a section that already renders its chain card. The screen is drawn in the
+    design system&rsquo;s tokens and measured in WebKit, both themes; the decision points the
+    gate must settle are in the README.
+  </div>
+
+  <div style="display:flex;gap:6px;margin-top:16px">
+    <button class="syschip" data-t="night">night</button>
+    <button class="syschip" data-t="day">day</button>
+  </div>
+
+  <a class="card" href="screens/routing-in-reviews.html"
+     style="display:block;margin-top:20px;text-decoration:none;color:inherit">
+    <div class="s-eyebrow">D3 · Reviews, routing first</div>
+    <div class="s-title" style="font-size:19px">Where the work went, inside the day you grade</div>
+    <div class="s-note" style="margin:6px 0 12px">
+      The section rail with routing current; the day&rsquo;s numbers as doors; the live decision,
+      the declared chain (rows, not cards in a card), cost &times; quality, the workload mix, and
+      today&rsquo;s route rows — then the gate, second.
+    </div>
+    <img src="png/routing-in-reviews-night-1440.png" alt="Reviews with routing first, night"
+         style="width:100%;border-radius:8px;border:1px solid var(--line)">
+  </a>
+
+  <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:18px">
+    <a class="card" href="png/routing-in-reviews-day-1440.png" style="text-decoration:none;color:inherit">
+      <div class="s-eyebrow">the day theme</div>
+      <img src="png/routing-in-reviews-day-1440.png" alt="the same screen, day"
+           style="width:100%;border-radius:8px;border:1px solid var(--line);margin-top:8px">
+    </a>
+    <a class="card" href="png/routing-in-reviews-night-820.png" style="text-decoration:none;color:inherit">
+      <div class="s-eyebrow">820 &middot; the section rail carries it</div>
+      <img src="png/routing-in-reviews-night-820.png" alt="the same screen at 820"
+           style="width:100%;border-radius:8px;border:1px solid var(--line);margin-top:8px">
+    </a>
+  </div>
+
+  <div class="stage-note" style="margin-top:22px">
+    <div class="s-eyebrow">the decision points</div>
+    <div class="note-cols">
+      <div>
+        <p>Does Reviews open on routing every time, or remember the last section? Does
+           <span class="mono">#/router</span> fold silently or with a notice? Do the day
+           controls merge into this surface&rsquo;s instrument?</p>
+        <p>The README carries the recommendation for each — the gate decides, and only then
+           the code lands.</p>
+      </div>
+      <div>
+        <ul>
+          <li>one surface fewer; no content lost</li>
+          <li>measured: no overflow at 1440 or 820, both themes</li>
+          <li>the chain rows are rows — one container depth</li>
+          <li>numbers are doors, per R5</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  var bar = Array.prototype.slice.call(document.querySelectorAll('[data-t]'));
+  function paint() {
+    bar.forEach(function (b) {
+      var on = b.dataset.t === document.documentElement.dataset.theme;
+      b.style.borderColor = on ? 'var(--accent)' : '';
+      b.style.color = on ? 'var(--accent)' : '';
+    });
+  }
+  bar.forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.documentElement.dataset.theme = b.dataset.t;
+      try { localStorage.setItem('fleet-theme-2', b.dataset.t); } catch (e) {}
+      paint();
+    });
+  });
+  paint();
+</script>
+</body>
+</html>

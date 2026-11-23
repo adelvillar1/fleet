@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D3 — routing is Reviews' first section</title>
+<link rel="stylesheet" href="../../2026-11-22-ux-map-study/study.css">
+<script src="../../2026-11-22-ux-map-study/map-shell.js" defer></script>
+<style>
+  /* D3's own grammar, tokens only: the section rail beside the board, and
+     the chain rows flattened inside their card (no nested cards). */
+  .d3-stage { display: grid; grid-template-columns: 196px minmax(0, 1fr); gap: 20px; align-items: start; }
+  .d3-rail {
+    position: sticky; top: 0;
+    display: flex; flex-direction: column; gap: 1px;
+    border-right: 1px solid var(--line);
+    padding: 2px 10px 10px 0;
+  }
+  .d3-rail a {
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; padding: 0 8px; border-radius: 7px;
+    color: var(--muted); font-size: 12.5px; text-decoration: none;
+    white-space: nowrap;
+  }
+  .d3-rail a:hover { color: var(--ink); background: var(--surface); }
+  .d3-rail a.current { color: var(--ink); background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
+  .d3-rail .n { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+  .d3-rail .rail-label { margin: 10px 8px 4px; }
+  .d3-board { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; align-content: start; }
+  .d3-board > .span12 { grid-column: 1 / -1; }
+  .d3-board > .span6 { grid-column: span 6; }
+
+  /* A strip number that is a DOOR (the surface pass's R5 rule, drawn):
+     the dotted rule is the affordance, the caption says where it goes. */
+  .d3-strip { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline;
+    padding: 9px 2px; border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line);
+    color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .d3-strip b { color: var(--ink); font-family: var(--font-mono); font-size: 12px; }
+  .d3-strip .d3-door { text-decoration: underline dotted; text-decoration-color: var(--faint); text-underline-offset: 3px; }
+  .d3-strip .end { margin-left: auto; text-transform: none; letter-spacing: 0; }
+
+  /* The page's one head: eyebrow · title · sentence · the day's instrument. */
+  .d3-head { display: grid; grid-template-columns: minmax(0, 1fr) 292px; align-items: end; gap: 24px; grid-column: 1 / -1; }
+
+  /* A chain is a ROW inside the card (not a card in a card). */
+  .d3-chain { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 12px; align-items: center;
+    padding: 9px 0; border-top: 1px solid var(--line); }
+  .d3-chain:first-of-type { border-top: 0; padding-top: 0; }
+  .d3-chain .name { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--ink); }
+  .d3-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .d3-chip { padding: 3px 8px; border: 1px solid var(--line-strong); border-radius: 6px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft); }
+  .d3-chip.primary { border-color: var(--accent); color: var(--ink); }
+  .d3-arrow { color: var(--faint); font-size: 11px; }
+  .d3-live { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+  .d3-live .ok { color: var(--ok); }
+  .d3-rows { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .d3-rows th { text-align: left; color: var(--faint); font-family: var(--font-mono); font-size: 11px;
+    font-weight: 400; letter-spacing: 0.05em; text-transform: uppercase; padding: 4px 8px 6px 0; }
+  .d3-rows td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); color: var(--ink-soft); }
+  .d3-rows td.mono { font-family: var(--font-mono); }
+  .d3-mix { display: grid; gap: 6px; }
+  .d3-mix .bar { display: grid; grid-template-columns: 106px minmax(0, 1fr) 28px; gap: 8px; align-items: center;
+    font-size: 12px; color: var(--ink-soft); }
+  .d3-mix .bar i { display: block; height: 6px; border-radius: 999px; background: var(--accent); opacity: 0.55; }
+  .d3-mix .bar b { font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-align: right; }
+  .d3-note { border-left: 2px solid var(--accent); }
+</style>
+</head>
+<body data-rail="B" data-current="reviews" data-title="reviews · routing">
+<div data-stage>
+  <div class="stage-inner">
+
+    <div class="d3-stage">
+      <nav class="d3-rail" aria-label="reviews sections">
+        <div class="rail-label">reviews</div>
+        <a class="current" href="#">routing <span class="n">15</span></a>
+        <a href="#">the gate <span class="n">on</span></a>
+        <a href="#">routes <span class="n">15</span></a>
+        <a href="#">turns <span class="n">7</span></a>
+        <a href="#">eval runs <span class="n">2</span></a>
+        <a href="#">recall hits <span class="n">180</span></a>
+        <a href="#">tool screens <span class="n">98</span></a>
+        <a href="#">embed timings <span class="n">12</span></a>
+        <a href="#">footprint checks <span class="n">2</span></a>
+        <a href="#">shapes <span class="n">7</span></a>
+        <a href="#">validations <span class="n">197</span></a>
+      </nav>
+
+      <div class="d3-board">
+        <header class="d3-head">
+          <div>
+            <div class="s-eyebrow">knowledge</div>
+            <div class="s-title" style="font-size:34px">Reviews</div>
+            <p class="s-note" style="max-width:640px;margin-top:6px">
+              Where the run&rsquo;s work went, what it tried first, and the day&rsquo;s route rows — then
+              the judged quality of what served and the gate that decides whether the failover may learn.
+            </p>
+          </div>
+          <div class="card" style="padding:12px 14px">
+            <div class="card-head" style="font-size:12px">the route rows <span class="right">2026-11-23 · today</span></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+              <span class="chip">the day before</span><span class="chip">the day after</span>
+              <span class="chip ok">sys1 judge</span>
+            </div>
+          </div>
+        </header>
+
+        <div class="d3-strip span12">
+          <span class="d3-door"><b>15</b> calls today</span>
+          <span class="d3-door"><b>15</b> ok</span>
+          <span><b>0</b> errors</span>
+          <span class="d3-door"><b>100%</b> success</span>
+          <span><b>0</b> tokens</span>
+          <span class="d3-door"><b>sys1</b> judge</span>
+          <span class="end">a dotted number opens the section that holds it</span>
+        </div>
+
+        <section class="card span12">
+          <div class="card-head">the live decision <span class="right">the run&rsquo;s own routed event</span></div>
+          <p class="d3-live"><span class="dot working" aria-hidden="true"></span>
+            <span><b>quick</b> &rarr; <span class="mono">stepfun/step-3.7-flash</span>
+            <span class="ok">served</span> · judged by sys1 · 812 ms</span></p>
+          <p class="s-note">Nothing else routed this session yet. Every decision the day makes lands here,
+            and in the conversation on the same event.</p>
+        </section>
+
+        <section class="card span12">
+          <div class="card-head">the declared chain <span class="right">the table&rsquo;s own order · first is what a route selects</span></div>
+          <div class="d3-chips" style="margin:6px 0 2px">
+            <span class="s-note" style="font-size:12px">a chip copies the model name; the walk tries them in this order when the first does not serve.</span>
+          </div>
+          <div class="d3-chain">
+            <span class="name">quick</span>
+            <span class="d3-chips"><span class="d3-chip primary">token-plan/qwen3.8-flash</span>
+              <span class="d3-arrow">&rsaquo;</span><span class="d3-chip">xiaomi-mimo/mimo-v2.6-flash</span>
+              <span class="d3-arrow">&rsaquo;</span><span class="d3-chip">zai-coding-plan/GLM-5.3-Flash</span></span>
+          </div>
+          <div class="d3-chain">
+            <span class="name">standard_code</span>
+            <span class="d3-chips"><span class="d3-chip primary">xiaomi-mimo/mimo-v2.6-flash</span>
+              <span class="d3-arrow">&rsaquo;</span><span class="d3-chip">token-plan/qwen3.8-flash</span>
+              <span class="d3-arrow">&rsaquo;</span><span class="d3-chip">zai-coding-plan/GLM-5.3-Flash</span></span>
+          </div>
+          <div class="d3-chain">
+            <span class="name">frontend</span>
+            <span class="d3-chips"><span class="d3-chip primary">opencode/deepseek-v4.1-flash</span>
+              <span class="d3-arrow">&rsaquo;</span><span class="d3-chip">zai-coding-plan/GLM-5.3-Flash</span>
+              <span class="d3-arrow">&rsaquo;</span><span class="d3-chip">ollama-cloud/glm-5.3-flash</span></span>
+          </div>
+        </section>
+
+        <section class="card span6">
+          <div class="card-head">cost &times; quality <span class="right">the board&rsquo;s read</span></div>
+          <p class="s-note">No graded pair yet today. A route row with a judgment lands here as one
+            point — cost per right answer against the wrong rate — and the scatter is the day&rsquo;s evidence,
+            never a guess.</p>
+        </section>
+
+        <section class="card span6">
+          <div class="card-head">the workload mix <span class="right">6 calls</span></div>
+          <div class="d3-mix">
+            <span class="bar">quick <i style="width:78%"></i><b>9</b></span>
+            <span class="bar">standard_code <i style="width:34%"></i><b>4</b></span>
+            <span class="bar">frontend <i style="width:17%"></i><b>2</b></span>
+          </div>
+        </section>
+
+        <section class="card span12">
+          <div class="card-head">today&rsquo;s route rows <span class="right">the day&rsquo;s stream, newest first</span></div>
+          <table class="d3-rows">
+            <thead><tr><th>at</th><th>workload</th><th>model</th><th>how</th><th>ms</th><th>outcome</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">09:15</td><td>hard</td><td class="mono">zai-coding-plan/GLM-5.3-Flash</td><td>fallback</td><td class="mono">3,311</td><td>failed upstream, walk continued</td></tr>
+              <tr><td class="mono">09:14</td><td>quick</td><td class="mono">stepfun/step-3.7-flash</td><td>judged</td><td class="mono">812</td><td>served</td></tr>
+              <tr><td class="mono">09:02</td><td>frontend</td><td class="mono">opencode/deepseek-v4.1-flash</td><td>first</td><td class="mono">1,244</td><td>served</td></tr>
+              <tr><td class="mono">08:58</td><td>standard_code</td><td class="mono">xiaomi-mimo/mimo-v2.6-flash</td><td>judged</td><td class="mono">1,507</td><td>served</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="card span12 d3-note">
+          <div class="card-head">D3 — one surface fewer, nothing lost</div>
+          <p class="s-note" style="font-size:13px">
+            <b>Routing is Reviews&rsquo; first section</b> (the redesign&rsquo;s own D3). The standalone Router
+            page is a duplicate of this section — measured live: calibration&rsquo;s routing section already
+            renders the chain card — so it retires and <span class="mono">#/router</span> resolves here,
+            selected on this section. The gate follows, second: the day you route is the day you grade.
+          </p>
+          <p class="s-note" style="font-size:12.5px">
+            What moved in, whole: the live decision, the declared chain (now rows, not cards in a card),
+            cost &times; quality, the workload mix, and the day&rsquo;s route rows. What stayed here: the
+            gate, the scorecard, the counterfactual replay and the day&rsquo;s ops — untouched.
+          </p>
+        </section>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
