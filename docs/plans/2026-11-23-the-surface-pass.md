@@ -95,7 +95,14 @@ initiated sessions that are just noise."*
   how the session record names it (the sessions document's counts already
   separate `background`; the spine carries the user-initiated
   classification the findability pass built). The row ships with those
-  numbers, not an assumption about which field means what.
+  numbers, not an assumption about which field means what. — **Measured
+  2026-11-23** (`docs/architecture/2026-11-23-surface-audit.md`): the window
+  holds 99 rows, 40 of them `scheduled`/`background`; the list draws 12
+  ("active 12 · archived 47 · all 59"), the archive filter 47, the graph's
+  16 thread nodes — **zero scheduled in all of them**. The rule already
+  holds on these surfaces; the audit traces where the unfiltered population
+  still surfaces (Home's changed block, the inbox rows, the PWA, any count
+  of `background`/`verification`/`empty`).
 - The count strip follows the list: a number over a filtered population must
   count the same population (the owner's own bar — a number that does not
   match what it sits over is noise).
