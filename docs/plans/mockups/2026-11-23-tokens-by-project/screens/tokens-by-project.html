@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tokens by project</title>
+<style>
+  /* The cache instrument's own vocabulary (its sibling, plugins/cache):
+     a near-black field, a mono numeral voice, one accent per model. A donut
+     is a share of a project's tokens, so the field stays quiet and only the
+     slices carry colour. */
+  :root {
+    --bg: #060709;
+    --field: #0a0c11;
+    --card: #0c0f15;
+    --line: #1b2230;
+    --line-soft: #131a25;
+    --ink: #eef3fb;
+    --dim: #94a3b8;
+    --faint: #5d6b80;
+    --teal: #6fe3c9;
+    --blue: #7fb2ff;
+    --amber: #f2b566;
+    --violet: #c79cff;
+    --coral: #ff8f8f;
+    --green: #8fe38f;
+    --mono: ui-monospace, Menlo, "SF Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; }
+  body {
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(1100px 520px at 8% -8%, rgba(111, 227, 201, 0.08), transparent 60%),
+      radial-gradient(900px 480px at 96% 0%, rgba(127, 178, 255, 0.06), transparent 62%);
+    background-attachment: fixed;
+    color: var(--ink);
+    font: 13px/1.45 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    padding: 24px clamp(14px, 3vw, 40px) 40px;
+  }
+  h1, h2, p { margin: 0; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  /* --------------------------------------------------------------- the mast */
+  .mast { padding: 4px 0 18px; }
+  .mast h1 {
+    font-size: clamp(24px, 3.2vw, 32px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-top: 6px;
+  }
+  .mast .note { color: var(--dim); max-width: 760px; margin-top: 8px; font-size: 13.5px; }
+  .strip {
+    display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: baseline;
+    margin-top: 16px; padding: 10px 2px;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    color: var(--faint); font-size: 11.5px; letter-spacing: 0.07em; text-transform: uppercase;
+  }
+  .strip b { color: var(--ink); font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .strip .end { margin-left: auto; text-transform: none; letter-spacing: 0; }
+
+  /* ------------------------------------------------------------- the cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(336px, 1fr)); gap: 16px; margin-top: 18px; align-items: start; }
+  .card {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background:
+      radial-gradient(520px 180px at 0% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 70%),
+      var(--card);
+    padding: 16px 18px 12px;
+    overflow: hidden;
+  }
+  .card::after {
+    content: "";
+    position: absolute; inset: 0 auto auto 0; width: 100%; height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent 70%);
+    opacity: 0.75;
+  }
+  .card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: nowrap; }
+  .card-head b { font-family: var(--mono); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; flex: 0 0 auto; }
+  .card-head .path { font-family: var(--mono); font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+  .card-head .window { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; flex: 0 0 auto; }
+
+  .donut-row { display: flex; justify-content: center; margin: 12px 0 6px; }
+  .donut { display: block; }
+  .donut text { font-family: var(--mono); fill: var(--ink); }
+  .donut .k { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  .donut .u { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; fill: var(--faint); }
+  .donut .slice { transition: opacity 140ms ease; cursor: pointer; }
+  .donut .slice:focus { outline: none; }
+  .donut .slice:focus-visible { filter: brightness(1.25); }
+  .donut:has(.slice:hover) .slice:not(:hover) { opacity: 0.45; }
+  .donut .slice:hover { filter: brightness(1.12); }
+
+  .caption { color: var(--faint); font-size: 11.5px; text-align: center; margin: 6px 0 10px; }
+  .caption b { color: var(--dim); font-family: var(--mono); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  /* ------------------------------------------------------------- the legend */
+  .legend { border-top: 1px solid var(--line-soft); }
+  .row {
+    display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto;
+    gap: 8px; align-items: center; width: 100%;
+    min-height: 44px; padding: 10px 2px; border: 0; border-bottom: 1px solid var(--line-soft);
+    background: none; color: inherit; text-align: left; font: inherit;
+    cursor: pointer; border-radius: 6px;
+  }
+  .row:hover, .row:focus-visible { background: var(--field); outline: none; }
+  .row:focus-visible { box-shadow: inset 0 0 0 1px var(--line); }
+  .row .sw { width: 8px; height: 8px; border-radius: 3px; background: var(--sw); }
+  .row .sw.none { background: none; border: 1px dashed var(--faint); }
+  .row .m { font-family: var(--mono); font-size: 11.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .n { font-family: var(--mono); font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .row .s { font-family: var(--mono); font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }
+  .row.noreport .m { color: var(--faint); }
+  .row.noreport .n { color: var(--faint); }
+
+  /* --------------------------------------------- the hover / focus panel */
+  .tip { display: none; margin: 8px 0 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
+  .tip.open { display: block; }
+  .tip h3 { margin: 0 0 6px; font-family: var(--mono); font-size: 11.5px; font-weight: 600; color: var(--ink); }
+  .tip dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; }
+  .tip dt { color: var(--faint); font-size: 11px; }
+  .tip dd { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
+  .tip dd b { color: var(--ink); font-weight: 600; }
+  .tip dd .none { color: var(--faint); }
+
+  /* ------------------------------------------------------------- the buckets */
+  .buckets { margin-top: 18px; border: 1px dashed var(--line); border-radius: 12px; padding: 10px 14px; display: grid; gap: 6px; }
+  .buckets .head { display: flex; align-items: baseline; gap: 8px; }
+  .buckets .head b { font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
+  .buckets .head span { color: var(--faint); font-size: 11.5px; }
+  .buckets .in { display: flex; flex-wrap: wrap; gap: 4px 22px; font-size: 12px; color: var(--dim); }
+  .buckets .in i { font-style: normal; font-family: var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+  .buckets .in b { font-family: var(--mono); color: var(--dim); font-weight: 500; }
+
+  .foot { margin-top: 22px; color: var(--faint); font-size: 11.5px; }
+
+  @media (max-width: 700px) {
+    .cards { grid-template-columns: 1fr; }
+    .strip { gap: 5px 14px; }
+    .strip .end { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .donut .slice { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <div class="eyebrow">tokens &middot; by project</div>
+    <h1>Where the tokens went.</h1>
+    <p class="note">
+      One donut per project, sliced by the models that worked across <b>every session
+      scoped to that project</b> &mdash; a session is never a slice. The legend below
+      each donut carries every model&rsquo;s number; hovering a slice or a legend row
+      adds the provider&rsquo;s own breakdown.
+    </p>
+    <div class="strip">
+      <span><b>61.0M</b> reported tokens</span>
+      <span><b>3</b> projects</span>
+      <span><b>74,208</b> calls</span>
+      <span><b>14</b> days</span>
+      <span class="end">a slice is a model; the centre is the project&rsquo;s reported total</span>
+    </div>
+  </header>
+
+  <main class="cards" id="cards"></main>
+
+  <section class="buckets">
+    <div class="head"><b>not every call has a project</b><span>each bucket says what it is; none is guessed, and none is merged</span></div>
+    <div class="in">
+      <span><i>0</i> calls <b>unattributed</b> &mdash; rows written before routes named their session</span>
+      <span><i>12</i> calls <b>unbound</b> &mdash; the session exists and has no workspace</span>
+      <span><i>3</i> calls <b>unknown session</b> &mdash; the log is no longer in the archive</span>
+    </div>
+  </section>
+
+  <p class="foot">
+    Fixture, not the live archive: the numbers show the shape and the honesty rules.
+    Cache read is a subset of the prompt, never an addition; a field the provider did
+    not report reads &ldquo;not reported&rdquo;, never 0.
+  </p>
+</div>
+
+<script>
+  // One fixture, so every number below derives from the same rows.
+  var ACCENTS = { glm: '#6fe3c9', qwen: '#7fb2ff', step: '#f2b566', deep: '#c79cff', mimo: '#ff8f8f' };
+  var PROJECTS = [
+    {
+      name: 'fleet', path: '/Users/you/Projects/fleet', calls: 3184, window: '14 days',
+      models: [
+        { key: 'glm',  name: 'zai-coding-plan/GLM-5.3-Flash', calls: 1204, accounted: 1204,
+          prompt: 16200000, completion: 2200000, total: 18400000, cacheRead: 12800000, cacheWrite: 1100000, reasoning: null },
+        { key: 'qwen', name: 'token-plan/qwen3.8-flash', calls: 861, accounted: 861,
+          prompt: 10600000, completion: 1500000, total: 12100000, cacheRead: 8100000, cacheWrite: null, reasoning: null },
+        { key: 'step', name: 'stepfun/step-3.7-flash', calls: 702, accounted: 702,
+          prompt: 5400000, completion: 800000, total: 6200000, cacheRead: null, cacheWrite: null, reasoning: null },
+        { key: 'deep', name: 'opencode/deepseek-v4.1-flash', calls: 417, accounted: 417,
+          prompt: 3100000, completion: 500000, total: 3600000, cacheRead: 2200000, cacheWrite: null, reasoning: 210000 }
+      ]
+    },
+    {
+      name: 'design-canvas', path: '/Users/you/Projects/design-canvas', calls: 1902, window: '14 days',
+      models: [
+        { key: 'glm',  name: 'zai-coding-plan/GLM-5.3-Flash', calls: 640, accounted: 640,
+          prompt: 4900000, completion: 1200000, total: 6100000, cacheRead: 3600000, cacheWrite: 240000, reasoning: null },
+        { key: 'qwen', name: 'token-plan/qwen3.8-flash', calls: 812, accounted: 812,
+          prompt: 3700000, completion: 700000, total: 4400000, cacheRead: 2400000, cacheWrite: null, reasoning: null },
+        { key: 'mimo', name: 'xiaomi-mimo/mimo-v2.6-flash', calls: 450, accounted: 450,
+          prompt: 1900000, completion: 400000, total: 2300000, cacheRead: null, cacheWrite: null, reasoning: null }
+      ]
+    },
+    {
+      name: 'second-brain', path: '/Users/you/Projects/second-brain', calls: 125, window: '14 days',
+      models: [
+        { key: 'glm',  name: 'zai-coding-plan/GLM-5.3-Flash', calls: 52, accounted: 52,
+          prompt: 2600000, completion: 500000, total: 3100000, cacheRead: 1700000, cacheWrite: 90000, reasoning: null },
+        { key: 'step', name: 'stepfun/step-3.7-flash', calls: 32, accounted: 32,
+          prompt: 2000000, completion: 400000, total: 2400000, cacheRead: null, cacheWrite: null, reasoning: null },
+        { key: 'glm2', name: 'ollama-cloud/glm-5.3-flash', calls: 41, accounted: 0,
+          prompt: 0, completion: 0, total: null, cacheRead: null, cacheWrite: null, reasoning: null }
+      ]
+    }
+  ];
+
+  function fmt(n) {
+    if (n === null || n === undefined) return null;
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return String(n);
+  }
+  function num(n) { return Number(n).toLocaleString('en-US'); }
+  function billed(m) { return m.prompt + m.completion; }
+
+  function donut(project) {
+    var NS = 'http://www.w3.org/2000/svg';
+    var SIZE = 176, R = 64, W = 22, C = 2 * Math.PI * R;
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('class', 'donut');
+    svg.setAttribute('width', SIZE); svg.setAttribute('height', SIZE);
+    svg.setAttribute('viewBox', '0 0 ' + SIZE + ' ' + SIZE);
+    var drawn = project.models.filter(function (m) { return m.accounted > 0 && billed(m) > 0; });
+    var total = drawn.reduce(function (sum, m) { return sum + billed(m); }, 0);
+    var gap = drawn.length > 1 ? 5 : 0;
+    var offset = 0;
+    drawn.forEach(function (m) {
+      var len = Math.max(0, billed(m) / total * C - gap);
+      var slice = document.createElementNS(NS, 'circle');
+      slice.setAttribute('class', 'slice');
+      slice.setAttribute('cx', SIZE / 2); slice.setAttribute('cy', SIZE / 2);
+      slice.setAttribute('r', R);
+      slice.setAttribute('fill', 'none');
+      slice.setAttribute('stroke', ACCENTS[m.key]);
+      slice.setAttribute('stroke-width', W);
+      slice.setAttribute('stroke-dasharray', len + ' ' + (C - len));
+      slice.setAttribute('stroke-dashoffset', -offset);
+      slice.setAttribute('transform', 'rotate(-90 ' + SIZE / 2 + ' ' + SIZE / 2 + ')');
+      slice.setAttribute('tabindex', '0');
+      slice.setAttribute('role', 'img');
+      slice.setAttribute('aria-label', m.name + ': ' + fmt(billed(m)) + ' tokens, ' +
+        Math.round(billed(m) / total * 100) + '% of the project');
+      slice.dataset.model = m.name;
+      svg.appendChild(slice);
+      offset += billed(m) / total * C;
+    });
+    var k = document.createElementNS(NS, 'text');
+    k.setAttribute('class', 'k'); k.setAttribute('text-anchor', 'middle');
+    k.setAttribute('x', SIZE / 2); k.setAttribute('y', SIZE / 2 - 2);
+    k.textContent = fmt(total);
+    svg.appendChild(k);
+    var u = document.createElementNS(NS, 'text');
+    u.setAttribute('class', 'u'); u.setAttribute('text-anchor', 'middle');
+    u.setAttribute('x', SIZE / 2); u.setAttribute('y', SIZE / 2 + 16);
+    u.textContent = 'tokens';
+    svg.appendChild(u);
+    return svg;
+  }
+
+  function tip(m, project, total) {
+    var box = document.createElement('div');
+    box.className = 'tip';
+    box.dataset.model = m.name;
+    var h = document.createElement('h3');
+    h.textContent = m.name;
+    box.appendChild(h);
+    var dl = document.createElement('dl');
+    function line(term, value, cls) {
+      var dt = document.createElement('dt'); dt.textContent = term;
+      var dd = document.createElement('dd');
+      if (value === null) { dd.innerHTML = '<span class="none">not reported</span>'; }
+      else { dd.innerHTML = cls === 'b' ? '<b>' + value + '</b>' : value; }
+      dl.appendChild(dt); dl.appendChild(dd);
+    }
+    line('calls', num(m.calls) + ' \u00b7 ' + num(m.accounted) + ' reported');
+    line('prompt', m.prompt ? fmt(m.prompt) : null);
+    line('completion', m.completion ? fmt(m.completion) : null);
+    line('billed', m.accounted ? fmt(billed(m)) : null, 'b');
+    line('provider total', m.total === null ? null : fmt(m.total));
+    line('cache read', m.cacheRead === null ? null :
+      fmt(m.cacheRead) + ' (' + Math.round(m.cacheRead / m.prompt * 100) + '% of prompt)');
+    line('cache write', m.cacheWrite === null ? null : fmt(m.cacheWrite));
+    line('reasoning', m.reasoning === null ? null : fmt(m.reasoning));
+    line('share of project', m.accounted ? Math.round(billed(m) / total * 100) + '%' : null);
+    box.appendChild(dl);
+    return box;
+  }
+
+  function card(project, openPanel) {
+    var el = document.createElement('article');
+    el.className = 'card';
+    var drawn = project.models.filter(function (m) { return m.accounted > 0 && billed(m) > 0; });
+    var total = drawn.reduce(function (sum, m) { return sum + billed(m); }, 0);
+    el.style.setProperty('--accent', ACCENTS[drawn[0].key] || '#6fe3c9');
+
+    var head = document.createElement('div');
+    head.className = 'card-head';
+    var title = document.createElement('b'); title.textContent = project.name;
+    var path = document.createElement('span'); path.className = 'path'; path.textContent = project.path;
+    path.title = project.path;
+    var win = document.createElement('span'); win.className = 'window'; win.textContent = project.window;
+    head.appendChild(title); head.appendChild(path); head.appendChild(win);
+    el.appendChild(head);
+
+    var row = document.createElement('div'); row.className = 'donut-row';
+    row.appendChild(donut(project));
+    el.appendChild(row);
+
+    var accounted = project.models.reduce(function (s, m) { return s + m.accounted; }, 0);
+    var caption = document.createElement('p'); caption.className = 'caption';
+    caption.innerHTML = '<b>' + num(accounted) + '</b> of <b>' + num(project.calls) +
+      '</b> calls reported tokens';
+    el.appendChild(caption);
+
+    var tipBox = tip(drawn[0], project, total);
+    el.appendChild(tipBox);
+
+    var legend = document.createElement('div'); legend.className = 'legend';
+    project.models.forEach(function (m) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'row' + (m.accounted ? '' : ' noreport');
+      b.setAttribute('aria-expanded', 'false');
+      var sw = document.createElement('span');
+      sw.className = 'sw' + (m.accounted ? '' : ' none');
+      sw.style.setProperty('--sw', ACCENTS[m.key] || 'transparent');
+      var name = document.createElement('span'); name.className = 'm'; name.textContent = m.name;
+      var n = document.createElement('span'); n.className = 'n';
+      n.textContent = m.accounted ? fmt(billed(m)) : 'no token report';
+      var s = document.createElement('span'); s.className = 's';
+      s.textContent = m.accounted ? Math.round(billed(m) / total * 100) + '%' : '\u2014';
+      b.appendChild(sw); b.appendChild(name); b.appendChild(n); b.appendChild(s);
+      function open() {
+        var next = tip(m, project, total);
+        el.replaceChild(next, el.querySelector('.tip'));
+        next.classList.add('open');
+        legend.querySelectorAll('.row').forEach(function (other) { other.setAttribute('aria-expanded', 'false'); });
+        b.setAttribute('aria-expanded', 'true');
+      }
+      b.addEventListener('click', open);
+      b.addEventListener('mouseenter', open);
+      b.addEventListener('focus', open);
+      legend.appendChild(b);
+    });
+    el.appendChild(legend);
+    if (openPanel) {
+      el.querySelector('.tip').classList.add('open');
+    }
+    return el;
+  }
+
+  var panel = new URLSearchParams(location.search).get('panel') === '1';
+  var cards = document.getElementById('cards');
+  PROJECTS.forEach(function (project) { cards.appendChild(card(project, panel && project.name === 'fleet')); });
+</script>
+</body>
+</html>

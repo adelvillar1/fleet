@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T1 — tokens by project</title>
+<link rel="stylesheet" href="../2026-11-22-ux-map-study/study.css">
+<script>
+  try {
+    document.documentElement.dataset.theme =
+      new URLSearchParams(location.search).get('theme') ||
+      localStorage.getItem('fleet-theme-2') || 'night';
+  } catch (e) {}
+</script>
+</head>
+<body data-shell="off">
+<div style="max-width:1180px;margin:0 auto;padding:44px 24px 64px">
+  <div class="s-eyebrow">the mockup gate &middot; 2026-11-23</div>
+  <div class="s-title" style="font-size:30px">T1 &mdash; where the tokens went, per project</div>
+  <div class="s-note" style="max-width:880px;margin-top:10px;font-size:13px">
+    A second view of the accounting the cache instrument already reads: one card per
+    project, the donut sliced by the models that worked across <b>every session scoped
+    to that project</b>, the legend below the donut carrying each model&rsquo;s number,
+    and the provider&rsquo;s own breakdown on hover or focus. Drawn in the cache
+    instrument&rsquo;s vocabulary and measured in WebKit.
+  </div>
+
+  <div style="display:flex;gap:6px;margin-top:16px">
+    <button class="syschip" data-t="night">night</button>
+    <button class="syschip" data-t="day">day</button>
+  </div>
+
+  <a class="card" href="screens/tokens-by-project.html"
+     style="display:block;margin-top:20px;text-decoration:none;color:inherit">
+    <div class="s-eyebrow">T1 &middot; the screen</div>
+    <div class="s-title" style="font-size:19px">Three projects, three donuts, the numbers always on the legend</div>
+    <div class="s-note" style="margin:6px 0 12px">
+      Each card: the project&rsquo;s name and path, the donut (slices = models, centre = the
+      project&rsquo;s reported total), the caption naming how many calls reported, and the legend
+      below it &mdash; every model with its tokens and share, readable without hovering. The
+      bucket strip at the foot names the calls no session can account for.
+    </div>
+    <img src="png/tokens-1440.png" alt="T1 at 1440: three project cards with donuts and legends"
+         style="width:100%;border-radius:8px;border:1px solid var(--line)">
+  </a>
+
+  <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:18px">
+    <a class="card" href="png/tokens-1440-panel.png" style="text-decoration:none;color:inherit">
+      <div class="s-eyebrow">the hover / focus panel &mdash; every field the provider sent</div>
+      <img src="png/tokens-1440-panel.png" alt="the detail panel open on one model"
+           style="width:100%;border-radius:8px;border:1px solid var(--line);margin-top:8px">
+    </a>
+    <a class="card" href="png/tokens-820.png" style="text-decoration:none;color:inherit">
+      <div class="s-eyebrow">820 &middot; two cards per row</div>
+      <img src="png/tokens-820.png" alt="T1 at 820"
+           style="width:100%;border-radius:8px;border:1px solid var(--line);margin-top:8px">
+    </a>
+  </div>
+
+  <a class="card" href="png/tokens-390.png"
+     style="display:block;margin-top:18px;text-decoration:none;color:inherit">
+    <div class="s-eyebrow">390 &middot; one column, the same card</div>
+    <img src="png/tokens-390.png" alt="T1 at 390"
+         style="width:min(390px,100%);border-radius:8px;border:1px solid var(--line);margin-top:8px">
+  </a>
+
+  <div class="stage-note" style="margin-top:22px">
+    <div class="s-eyebrow">the decision points</div>
+    <div class="note-cols">
+      <div>
+        <p><b>Already answered by the owner:</b> the donut is per project, composed across all
+           sessions scoped to that project; a project card carries the donut with a legend below
+           it; the slice metric is billed tokens (prompt + completion &mdash; cache read is a
+           subset, never a slice); a field the provider did not report reads &ldquo;not
+           reported&rdquo;, never 0.</p>
+        <p><b>Still the gate&rsquo;s:</b> the card density and order at 1440/820/390 (this draws
+           three across, two, one, ordered by billed tokens); and whether the three buckets are
+           a footnote strip (drawn) or cards of their own.</p>
+      </div>
+      <div>
+        <ul>
+          <li>one donut per project; a session is never a slice</li>
+          <li>the legend is the always-on numbers surface &mdash; touch and keyboard included</li>
+          <li>hover/focus adds the provider&rsquo;s breakdown</li>
+          <li>measured: no overflow at 1440, 820 or 390; rows 44px</li>
+          <li>one key added to the writer: the route row names its session</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  var bar = Array.prototype.slice.call(document.querySelectorAll('[data-t]'));
+  function paint() {
+    bar.forEach(function (b) {
+      var on = b.dataset.t === document.documentElement.dataset.theme;
+      b.style.borderColor = on ? 'var(--accent)' : '';
+      b.style.color = on ? 'var(--accent)' : '';
+    });
+  }
+  bar.forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.documentElement.dataset.theme = b.dataset.t;
+      try { localStorage.setItem('fleet-theme-2', b.dataset.t); } catch (e) {}
+      paint();
+    });
+  });
+  paint();
+</script>
+</body>
+</html>

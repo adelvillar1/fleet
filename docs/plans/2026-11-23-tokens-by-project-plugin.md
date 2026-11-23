@@ -95,6 +95,11 @@ model with its number. The gate's open questions live in the mockup's README:
    "not reported" where the provider sent none, with calls/accounted beside them.
 5. **Name and home**: plugin `tokens`, rail group `system`, label `tokens`.
 
+The pack is drawn and measured: `docs/plans/mockups/2026-11-23-tokens-by-project/`
+(2026-11-23) — the screen at 1440, the detail panel, 820 and 390, with the measured
+facts in its README. Its two remaining answers (card density/order, the buckets'
+housing) are the gate's.
+
 No code lands before those answers; the mockup is the same gate D3 used.
 
 ### C1 — the route row names its conversation
