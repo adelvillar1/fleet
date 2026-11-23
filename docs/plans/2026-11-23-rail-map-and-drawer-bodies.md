@@ -112,7 +112,10 @@ one-row change, not a rework.
 - Pins: one fixture boot per kind — a code file opens `code`; a markdown file
   opens `preview`; an image and a docx open `preview`; a URL object opens
   `web`; switching the mode on one object does not change the next object's
-  default.
+  default. — Shipped in `theDrawerOpensTheObjectItIs` for md/code/image/docx.
+  The drawer holds no URL object (the web body is entered by the address box
+  or a page link, not by an object kind): recorded as gap-ledger G3, not
+  guessed into a dead mapping.
 
 ### R5 — the relevance line and the suggested press
 - The read body opens with one line of state read from documents that exist:
@@ -143,7 +146,10 @@ one-row change, not a rework.
 - Pins: a small fixture workbook (generated once, committed as bytes with its
   generator noted) renders a dated cell as a date, a bold header, a merged
   cell, a right-aligned number and a percentage cell; the row cap still says
-  so.
+  so. — `tests/face/fixtures/release-ledger.xlsx`, generator
+  `make-fixtures.mjs` (noted in the folder's README); the pin is
+  `theSheetRendersItsOwnForm`, which inflates the committed bytes and reads
+  the rendered table (the cap on its 501-row second sheet).
 
 ### R8 — PPTX, rendered
 - Vendor `@meshesha/pptxjs@2.0.0` (MIT, 366 KB UMD, fflate inlined) with the
@@ -154,7 +160,11 @@ one-row change, not a rework.
 - Pins: source pins for the vendored bundle and the sandboxed mount; the
   fallback path (a fixture that fails to parse) lands the outline and says
   so; the engine's own no-network posture is recorded in `VENDOR.json`'s
-  reason.
+  reason. — `tests/face/fixtures/broken-deck.pptx` (a zip that is not an
+  OOXML package; the live face refuses it by name — two broken-deck shapes
+  the engine accepted as empty decks are recorded in the README); the pin is
+  `theDeckFallsBackToTheOutlineByName`, which mounts the frame and drives
+  both of its reports.
 
 ### R9 — the map below 900px
 - The rail drawer renders the same map (Home, regions, system) — no second
@@ -185,8 +195,9 @@ one-row change, not a rework.
       the inbox's held count. — `35b86631`, the union of `.ib-row`/`.ib-held`.
 - [x] R4: every kind opens the body it is (code/tree/rendered preview/web),
       the switch overrides per object, and defaults do not leak across opens.
-      — `613be4e7`, `theDrawerOpensTheObjectItIs`; live probe: `markdown · 292 B`
-      with the press flipping bodies.
+      — `613be4e7` + `61335a07`, `theDrawerOpensTheObjectItIs` (md, code,
+      image, docx); live probe: `markdown · 292 B` with the press flipping
+      bodies. The URL kind has no drawer object — gap-ledger G3.
 - [x] R5: each object kind's read body opens with a relevance line and one
       suggested press, both read from existing documents; absences are named.
       — `613be4e7`; the file object only, per gap-ledger G1 (conversations keep
@@ -197,18 +208,24 @@ one-row change, not a rework.
       resolved through `/api/preview`. Transcript parser kept per ledger G2.
 - [x] R7: xlsx shows number formats, dates, bold, merges, widths and
       right-aligned numerics; the row cap and the formula line still hold. —
-      `cea0986b`; live probe of a generated workbook (inlineStr fix found there).
+      `cea0986b` + `61335a07`: `theSheetRendersItsOwnForm` renders the
+      committed `release-ledger.xlsx` (its generator noted beside it); live
+      probe of the same bytes read back 17 cells, the dates, the merged
+      title and the widths.
 - [x] R8: pptx renders slides in the sandboxed frame with the outline fallback
       on failure, both pinned; the vendor entry carries MIT and the reason. —
-      `87edcde3`; live probes of a two-slide deck and of the named fallback.
+      `87edcde3` + `61335a07`: `theDeckFallsBackToTheOutlineByName` drives the
+      frame's failed/rendered reports on the committed `broken-deck.pptx`;
+      live probes: a two-slide deck drew, and this fixture is refused by the
+      viewer's own words.
 - [x] R9: the 390/820 map-drawer evidence is captured from the implementation
       and read; both themes. — `472c1d49`,
       `docs/plans/mockups/2026-11-23-rail-map/` (four WKWebView captures, both
       themes, provenance in the README).
 - [x] Harness green and the gate built by exit code after every row; hygiene
       run and recorded per delivery. — every row: 4 legs by exit code +
-      `harness.mjs`; final tree `472c1d49`: fmt/clippy/build/test 0, 18 suites
-      2,820 passed, harness 1,945 checks / 283 cases.
+      `harness.mjs`; final tree `61335a07`: fmt/clippy/build/test 0, 18 suites
+      2,820 passed, harness 1,966 checks / 285 cases.
 - [x] The study's S1–S6 model is what shipped: map (B), Home, consolidated
       attention, type-aware drawer, phone/pad map. — `cdf783e8`…`472c1d49`;
       one pre-existing defect exposed by a live probe and filed, not fixed here:
