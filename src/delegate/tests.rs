@@ -207,6 +207,7 @@ fn call(id: &str, name: &str, arguments: &str) -> crate::api::ToolCall {
 fn child_start(parent: &str) -> Record {
     Record::Start {
         principal: None,
+        initiator: None,
         v: 1,
         model: "step-5-preview".to_string(),
         created: "2026-10-14T12:00:00Z".to_string(),
@@ -221,6 +222,7 @@ fn child_start(parent: &str) -> Record {
 fn parent_start() -> Record {
     Record::Start {
         principal: None,
+        initiator: None,
         v: 1,
         model: "step-5-preview".to_string(),
         created: "2026-10-14T11:59:00Z".to_string(),
@@ -413,6 +415,7 @@ async fn the_delegate_beat_opens_the_shared_session_once() {
                 &session,
                 &[Record::Start {
                     principal: None,
+                    initiator: None,
                     v: 1,
                     model: "m".to_string(),
                     created: "2026-10-14T11:59:00Z".to_string(),

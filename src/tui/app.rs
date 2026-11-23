@@ -4387,6 +4387,7 @@ mod tests {
         app.seed(&[
             Record::Start {
                 principal: None,
+                initiator: None,
                 personas: None,
                 v: 1,
                 model: "m".to_string(),
@@ -4710,6 +4711,7 @@ mod tests {
         let records = vec![
             Record::Start {
                 principal: None,
+                initiator: None,
                 personas: None,
                 v: 1,
                 model: "m".to_string(),
@@ -4773,6 +4775,7 @@ mod tests {
             resumed: false,
             kind: None,
             workspace: None,
+            initiator: None,
             workspace_inferred: false,
             channel: None,
             compacted: false,

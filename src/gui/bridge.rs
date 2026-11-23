@@ -10006,18 +10006,41 @@ fn handback_reason(reason: &str) -> bool {
 /// day in October). A log with no owner message is `empty`, which is a
 /// narrower and more honest word for it.
 fn work_class(entry: &session::SessionSummary) -> &'static str {
+    // The kind first: a scheduled run, a delegated child and a probe are
+    // what they are whatever started them.
     match entry.kind.as_deref() {
-        Some(session::SCHEDULED_KIND) => "background",
-        Some(session::SUBAGENT_KIND) => "delegated",
-        Some(session::PROBE_KIND) => "probe",
-        // Nobody ever spoke here: a start record and nothing else.
-        _ if entry.empty => "empty",
-        // Nobody ever said what the work was about: every message names
-        // the machinery.
-        _ if entry.machinery_only => "probe",
-        _ if entry.channel.is_some() => "channel",
-        _ => "yours",
+        Some(session::SCHEDULED_KIND) => return "background",
+        Some(session::SUBAGENT_KIND) => return "delegated",
+        Some(session::PROBE_KIND) => return "probe",
+        _ => {}
     }
+    // Nobody ever spoke here: a start record and nothing else.
+    if entry.empty {
+        return "empty";
+    }
+    // A bot channel is its own surface's, not the conversation list's.
+    if entry.channel.is_some() {
+        return "channel";
+    }
+    // The birth tag decides, when the log carries one (2026-11-23): a
+    // user's terse message stays theirs, and a system-started run is never
+    // the owner's — no text heuristic in between. `background` is the
+    // archive's class for system work that is not a schedule or a child;
+    // multi-user onboarding filters on the initiator's id.
+    if let Some(initiator) = &entry.initiator {
+        return if initiator.is_user() {
+            "yours"
+        } else {
+            "background"
+        };
+    }
+    // Legacy logs (written before the tag): the text classifier stands in —
+    // exact for the probes the archive carries, and honest that everything
+    // else is read as the owner's.
+    if entry.machinery_only {
+        return "probe";
+    }
+    "yours"
 }
 
 /// The job a scheduled run belongs to, read from the frame
@@ -22259,6 +22282,7 @@ mod tests {
             resumed: false,
             kind: kind.map(str::to_string),
             workspace: None,
+            initiator: None,
             workspace_inferred: false,
             channel: channel.map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string())),
             compacted: false,
@@ -23689,6 +23713,75 @@ slug: the-draft
         assert_eq!(changed.len(), 1, "{document}");
         assert_eq!(changed[0]["session"], mine_id.as_str());
         assert_eq!(changed[0]["line"], "ship the migration");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The birth tag decides the class (2026-11-23): a user's terse message
+    /// stays the owner's even when the text looks like a smoke test, and a
+    /// system-started run with a work-shaped message is never the owner's.
+    /// Old logs fall back to the text classifier; the tag is not invented.
+    #[tokio::test]
+    async fn the_birth_tag_decides_the_class_and_old_logs_fall_back() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-initiator-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let mut mine = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        mine.record(&crate::session::Record::User {
+            // A smoke-test shape, but the user started it: the tag wins.
+            content: "say ok".into(),
+        })
+        .unwrap();
+        let mine_id = mine.id().to_string();
+        drop(mine);
+        let start = |initiator: Option<crate::session::Initiator>| crate::session::Record::Start {
+            v: crate::session::SESSION_FORMAT_VERSION,
+            model: "deepseek-flash".into(),
+            created: "2026-11-23T00:00:00Z".into(),
+            kind: None,
+            parent: None,
+            workspace: None,
+            personas: None,
+            principal: None,
+            initiator,
+        };
+        let write = |id: &str, start: crate::session::Record, text: &str| {
+            let body = serde_json::to_string(&start).unwrap()
+                + "\n"
+                + &serde_json::to_string(&crate::session::Record::User {
+                    content: text.into(),
+                })
+                .unwrap()
+                + "\n";
+            std::fs::write(crate::session::session_path(&home, id), body).unwrap();
+        };
+        // A work-shaped message the system started — no text rule could
+        // catch it, and none should: the tag is the fact.
+        write(
+            "sys-1",
+            start(Some(crate::session::Initiator::system())),
+            "Summarize this ledger and name the open rows",
+        );
+        // A log written before the tag: the text classifier stands in.
+        write("old-probe", start(None), "reply with exactly: UPGRADED OK");
+        let live = LiveFace {
+            driving: None,
+            seats: Default::default(),
+        };
+        let doc = sessions_read(&home, "", &live, "", None);
+        let row = |id: &str| {
+            doc["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|one| one["id"] == id)
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} in {doc}"))
+        };
+        assert_eq!(row(&mine_id)["class"], "yours");
+        assert_eq!(row("sys-1")["class"], "background");
+        assert_eq!(row("old-probe")["class"], "probe");
+        assert_eq!(doc["counts"]["yours"], 1);
+        assert_eq!(doc["counts"]["total"], 3);
         std::fs::remove_dir_all(&home).ok();
     }
 

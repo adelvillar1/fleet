@@ -294,8 +294,24 @@ pub(crate) fn names_no_subject(text: &str) -> bool {
     // "list the conversations by age" and "take a look at the rail" name
     // their work and stay named.
     const DIRECTIVE: &[&str] = &[
-        "call", "use", "run", "invoke", "reply", "respond", "say", "print", "delegate", "repeat",
-        "send", "execute", "list", "take", "do", "create", "append", "overwrite",
+        "call",
+        "use",
+        "run",
+        "invoke",
+        "reply",
+        "respond",
+        "say",
+        "print",
+        "delegate",
+        "repeat",
+        "send",
+        "execute",
+        "list",
+        "take",
+        "do",
+        "create",
+        "append",
+        "overwrite",
     ];
     let opener = line
         .trim_start_matches(|c: char| !c.is_alphanumeric() && c != '\'')
@@ -1192,6 +1208,7 @@ mod tests {
     fn start() -> Record {
         Record::Start {
             principal: None,
+            initiator: None,
             personas: None,
             v: 1,
             model: "m".to_string(),
@@ -2083,6 +2100,7 @@ mod tests {
             resumed: false,
             kind: None,
             workspace: workspace.map(str::to_string),
+            initiator: None,
             workspace_inferred: false,
             channel: None,
             compacted: false,

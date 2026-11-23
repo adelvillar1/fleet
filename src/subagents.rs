@@ -3986,6 +3986,7 @@ mod tests {
         let records = vec![
             Record::Start {
                 principal: None,
+                initiator: None,
                 personas: None,
                 v: 1,
                 model: "m".to_string(),
@@ -4277,6 +4278,7 @@ mod tests {
         std::fs::create_dir_all(dir).unwrap();
         let mut text = serde_json::to_string(&Record::Start {
             principal: None,
+            initiator: None,
             v: 1,
             model: "test-model".to_string(),
             created: "2026-10-15T00:00:00Z".to_string(),

@@ -7416,6 +7416,7 @@ mod tests {
             workspace: None,
             personas: None,
             principal: None,
+            initiator: None,
         };
         let mut text = serde_json::to_string(&start).unwrap() + "\n";
         for record in records {

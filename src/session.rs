@@ -55,6 +55,55 @@ pub const PRACTICE_KIND: &str = "practice";
 /// place.
 pub const PROBE_KIND: &str = "probe";
 
+/// Who started a session. Written at birth and never inferred from the text:
+/// a user's terse message stays theirs, and system traffic is never the
+/// owner's — the structural answer to the 2026-11-23 report, and the slot
+/// multi-user onboarding filters on.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ActorKind {
+    User,
+    System,
+}
+
+/// One session's initiator: the kind, and — for a user — the identity whose
+/// conversations it is. The id is empty for the system: no human owns its
+/// traffic.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Initiator {
+    pub kind: ActorKind,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+}
+
+impl Initiator {
+    /// A human started it. `id` is the identity the surface authenticated;
+    /// until multi-user onboarding lands, a human surface records
+    /// [`OWNER_ACTOR`].
+    pub fn user(id: impl Into<String>) -> Initiator {
+        Initiator {
+            kind: ActorKind::User,
+            id: id.into(),
+        }
+    }
+
+    /// The system started it: a scheduled run, a delegated child, a probe.
+    pub fn system() -> Initiator {
+        Initiator {
+            kind: ActorKind::System,
+            id: String::new(),
+        }
+    }
+
+    pub fn is_user(&self) -> bool {
+        self.kind == ActorKind::User
+    }
+}
+
+/// The identity a human surface records today — the owner. A multi-user face
+/// passes the authenticated user's id where this constant is used.
+pub const OWNER_ACTOR: &str = "owner";
+
 /// The mention kinds a huddle's routing reads (the huddles plan's C3). A
 /// mention is `@name` in a message; the kind says what the address asks
 /// for, so the loop can route the turn without re-reading the prose.
@@ -244,6 +293,12 @@ pub enum Record {
         /// from its parent, never its own.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         principal: Option<String>,
+        /// Who started this session: a user (with an identity) or the system.
+        /// Absent on logs written before the field — those fall back to the
+        /// text classifier for the owner's list, which is exact for the
+        /// probes the archive already carries and honest about the rest.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initiator: Option<Initiator>,
     },
     User {
         content: String,
@@ -787,7 +842,15 @@ impl Session {
     /// clock's sub-second bits and the process id.
     pub fn create(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, None, None, None, None)
+        Session::open_new(
+            &dir,
+            model,
+            None,
+            None,
+            None,
+            None,
+            Initiator::user(OWNER_ACTOR),
+        )
     }
 
     /// The owner-facing creation that names who takes the conversation:
@@ -800,7 +863,15 @@ impl Session {
         personas: Option<Vec<String>>,
     ) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, None, None, personas, None)
+        Session::open_new(
+            &dir,
+            model,
+            None,
+            None,
+            personas,
+            None,
+            Initiator::user(OWNER_ACTOR),
+        )
     }
 
     /// Create a breakout room's log under `home`: a session with members
@@ -815,7 +886,15 @@ impl Session {
         personas: Option<Vec<String>>,
     ) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, None, Some(parent), personas, None)
+        Session::open_new(
+            &dir,
+            model,
+            None,
+            Some(parent),
+            personas,
+            None,
+            Initiator::user(OWNER_ACTOR),
+        )
     }
 
     /// Create a delegated child's log under `home` — the same convention
@@ -841,6 +920,7 @@ impl Session {
             Some(parent),
             None,
             principal,
+            Initiator::system(),
         )
     }
 
@@ -854,7 +934,15 @@ impl Session {
     /// and replay treat it as real work in a real session.
     pub fn create_scheduled(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(SCHEDULED_KIND), None, None, None)
+        Session::open_new(
+            &dir,
+            model,
+            Some(SCHEDULED_KIND),
+            None,
+            None,
+            None,
+            Initiator::system(),
+        )
     }
 
     /// Create a verification run's log under `sessions_dir(home)`,
@@ -865,7 +953,15 @@ impl Session {
     /// so by the kind.
     pub fn create_probe(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(PROBE_KIND), None, None, None)
+        Session::open_new(
+            &dir,
+            model,
+            Some(PROBE_KIND),
+            None,
+            None,
+            None,
+            Initiator::system(),
+        )
     }
 
     /// Create a learning session's log under `sessions_dir(home)`,
@@ -881,7 +977,15 @@ impl Session {
         personas: Option<Vec<String>>,
     ) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(kind), None, personas, None)
+        Session::open_new(
+            &dir,
+            model,
+            Some(kind),
+            None,
+            personas,
+            None,
+            Initiator::user(OWNER_ACTOR),
+        )
     }
 
     /// The one place a log is created: the id, the file, and the `start`
@@ -893,6 +997,7 @@ impl Session {
         parent: Option<&str>,
         personas: Option<Vec<String>>,
         principal: Option<&str>,
+        initiator: Initiator,
     ) -> io::Result<Session> {
         let id = format!(
             "{}-{:06x}",
@@ -929,6 +1034,7 @@ impl Session {
             workspace,
             personas,
             principal: principal.map(str::to_string),
+            initiator: Some(initiator),
         })?;
         Ok(session)
     }
@@ -1084,6 +1190,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         kind,
         workspace,
         personas,
+        initiator,
         ..
     } = serde_json::from_str(first.trim()).ok()?
     else {
@@ -1303,6 +1410,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         kind,
         workspace,
         workspace_inferred,
+        initiator,
         channel,
         personas: persona_set,
         compacted,
@@ -1443,6 +1551,9 @@ pub struct SessionSummary {
     /// The working directory this session was born in, or `None` on a log
     /// written before the field existed. The archive groups by it.
     pub workspace: Option<String>,
+    /// Who started the session, when the log carries the tag (see
+    /// [`Initiator`]); `None` on logs written before the field.
+    pub initiator: Option<Initiator>,
     /// True when `workspace` was inferred from the log's own paths rather
     /// than recorded by the start record. A surface that groups by
     /// project says so, because an inference is not a fact the log holds.
@@ -1611,6 +1722,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     resumed: false,
                     kind: None,
                     workspace: None,
+                    initiator: None,
                     workspace_inferred: false,
                     channel: None,
                     compacted: false,
@@ -2606,6 +2718,7 @@ mod tests {
             workspace: workspace.map(str::to_string),
             personas: None,
             principal: None,
+            initiator: None,
         };
         let write = |id: &str, records: &[Record]| {
             let text: String = records
@@ -2643,6 +2756,68 @@ mod tests {
             })
         );
         assert!(workspace_of(&home, "no-such-log").is_none());
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// The 2026-11-23 ownership ruling: a session is tagged to its
+    /// initiator at birth — a user with an identity, or the system. The
+    /// human surfaces write the owner; schedules, children and probes write
+    /// the system; a log written before the field carries none, and the
+    /// reader says so rather than guessing.
+    #[test]
+    fn a_session_is_tagged_to_its_initiator_at_birth() {
+        let home = temp_home("initiator");
+        let user = Session::create(&home, "m").unwrap();
+        assert_eq!(
+            summarize(user.path()).unwrap().initiator,
+            Some(Initiator::user(OWNER_ACTOR))
+        );
+        let probe = Session::create_probe(&home, "m").unwrap();
+        assert_eq!(
+            summarize(probe.path()).unwrap().initiator,
+            Some(Initiator::system())
+        );
+        let scheduled = Session::create_scheduled(&home, "m").unwrap();
+        assert_eq!(
+            summarize(scheduled.path()).unwrap().initiator,
+            Some(Initiator::system())
+        );
+        let child = Session::create_subagent(&home, "m", "parent-1", None).unwrap();
+        assert_eq!(
+            summarize(child.path()).unwrap().initiator,
+            Some(Initiator::system())
+        );
+        let lesson = Session::create_lesson(&home, "m", LESSON_KIND, None).unwrap();
+        assert_eq!(
+            summarize(lesson.path()).unwrap().initiator,
+            Some(Initiator::user(OWNER_ACTOR)),
+            "a lesson is the owner's conversation"
+        );
+        // Before the field: absent, never invented.
+        let old_id = "20260101t000000z-000000";
+        let old = Record::Start {
+            v: SESSION_FORMAT_VERSION,
+            model: "m".into(),
+            created: "2026-01-01T00:00:00Z".into(),
+            kind: None,
+            parent: None,
+            workspace: None,
+            personas: None,
+            principal: None,
+            initiator: None,
+        };
+        let body = serde_json::to_string(&old).unwrap()
+            + "\n"
+            + &serde_json::to_string(&Record::User {
+                content: "the old conversation".into(),
+            })
+            .unwrap()
+            + "\n";
+        std::fs::write(session_path(&home, old_id), body).unwrap();
+        assert_eq!(
+            summarize(&session_path(&home, old_id)).unwrap().initiator,
+            None
+        );
         fs::remove_dir_all(&home).ok();
     }
 
@@ -2853,6 +3028,7 @@ mod tests {
                 parent: None,
                 workspace: None,
                 principal: None,
+                initiator: None,
             },
             Record::User {
                 content: "hi".into(),
@@ -2912,6 +3088,7 @@ mod tests {
                 parent: None,
                 workspace: None,
                 principal: None,
+                initiator: None,
             },
             Record::User {
                 content: "probe it".into(),
@@ -3008,6 +3185,7 @@ mod tests {
                 parent: None,
                 workspace: None,
                 principal: None,
+                initiator: None,
             },
             skills_record(),
             Record::User {
@@ -3109,6 +3287,7 @@ mod tests {
                 parent: None,
                 workspace: None,
                 principal: None,
+                initiator: None,
             },
             memory_record(),
             Record::User {
@@ -3283,6 +3462,7 @@ mod tests {
     fn subagent_start() -> Record {
         Record::Start {
             principal: None,
+            initiator: None,
             personas: None,
             v: 1,
             model: "test-model".to_string(),
@@ -3420,14 +3600,27 @@ mod tests {
 
     #[test]
     fn an_ordinary_logs_start_record_carries_no_kind() {
-        // The ordinary run is byte-for-byte the run it has always been:
-        // no `kind`, no `parent`, and no marker in the listing.
+        // The ordinary run carries no session `kind` and no `parent` — the
+        // markers that name machinery — and it carries its initiator, the
+        // owner who started it (2026-11-23). Asserted structurally: the
+        // tag's own `kind` key is not the session kind.
         let home = temp_home("ordinary-start");
         let session = Session::create(&home, "m").unwrap();
         let line = fs::read_to_string(session.path()).unwrap();
         let recorded = line.lines().next().expect("the start line");
-        assert!(!recorded.contains("kind"), "{recorded}");
-        assert!(!recorded.contains("parent"), "{recorded}");
+        let start: Record = serde_json::from_str(recorded).unwrap();
+        let Record::Start {
+            kind,
+            parent,
+            initiator,
+            ..
+        } = start
+        else {
+            panic!("the first line is a start record: {recorded}");
+        };
+        assert_eq!(kind, None, "{recorded}");
+        assert_eq!(parent, None, "{recorded}");
+        assert_eq!(initiator, Some(Initiator::user(OWNER_ACTOR)), "{recorded}");
         assert_eq!(list(&home).unwrap()[0].kind, None);
         fs::remove_dir_all(&home).ok();
     }

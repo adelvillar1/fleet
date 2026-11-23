@@ -2863,6 +2863,7 @@ mod tests {
         let records = vec![
             Record::Start {
                 principal: None,
+                initiator: None,
                 personas: None,
                 v: 1,
                 model: "m".into(),
@@ -3191,6 +3192,7 @@ mod tests {
             workspace: None,
             personas: None,
             principal: None,
+            initiator: None,
         };
         let mut text = serde_json::to_string(&start).unwrap() + "\n";
         for record in records {
@@ -3582,6 +3584,7 @@ mod tests {
                 workspace: None,
                 personas: None,
                 principal: None,
+                initiator: None,
             })
             .unwrap();
         child.record(&call()).unwrap();

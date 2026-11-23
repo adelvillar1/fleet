@@ -14,26 +14,36 @@ answers `GET /api/version` so the owner asks the face what it is.
 
 ## v0.9.4 — 2026-11-23
 
-**The conversations list drops the harness's own traffic.** A hotfix for the
-surface pass's R3: the human-only filter was right, but the classifier beneath it
-treated verbatim probes as subjects — so the list still held the smoke tests. The
-machinery matcher is tightened against this home's real archive (120 rows in the
-window): **29 probe sessions hidden, zero human rows lost** — 80 "yours" → 50,
-nothing newly shown. The shapes now caught are the ones the archive actually
-carries: `Reply with exactly…`, `Take one screenshot with computer_use…`,
-`Append one line reading…`, `List the files … using the list_dir tool`,
-`Create the file … containing exactly`, `Do not call any tools`, `run pwd…`,
-`probe: …`, `say hello`/`Say ok.`
+**Every session is tagged to its initiator at birth — a user (with an identity)
+or the system.** The owner's ruling: ownership cannot be inferred from what a
+message says; it has to be recorded, and it is the thing multi-user onboarding
+filters on.
 
-The rule stays conservative by construction — an opener must be a directive *and*
-the harness vocabulary must follow — so "list the conversations by age", "take a
-look at the health rail", "create a plan to address all open KI issues", "do a
-deep dive on the composer", "Use only this supplied corpus…" and the owner's
-warmups stay named. The known limits are in the test: a task-shaped statement
-about fixture data (`sample-board`) names no imperative and stays; a bare shell
-command with no harness word stays.
+- **`Start.initiator`** — `{kind: user|system, id}` on the session's birth
+  record. The human surfaces (the face's conversations, the TUI chat, breakout
+  rooms, lessons) write `user` with the identity (`owner` until a multi-user face
+  supplies the authenticated id); scheduled runs, delegated children and probes
+  (`fleet run --probe`) write `system`. A log written before the field carries
+  none, and the reader says so rather than guessing one.
+- **The class reads the tag first** — `work_class` consults the initiator before
+  any text rule: a user's terse message stays theirs even when it looks like a
+  smoke test, and a system-started run with a work-shaped message is never the
+  owner's. A system run that is neither a schedule, a child nor a probe lands in
+  `background`; the conversations list keeps only `yours`.
+- **Legacy logs fall back to the text classifier, tightened against this home's
+  real archive** (120 rows in the window): **29 probe sessions hidden, zero human
+  rows lost** — 80 "yours" → 50, nothing newly shown. The shapes now caught are
+  the ones the archive actually carries: `Reply with exactly…`, `Take one
+  screenshot with computer_use…`, `Append one line reading…`, `List the files …
+  using the list_dir tool`, `Create the file … containing exactly`, `Do not call
+  any tools`, `run pwd…`, `probe: …`, `say hello` / `Say ok.` The rule needs a
+  directive opener *and* the harness vocabulary, so "list the conversations by
+  age", "take a look at the health rail", "create a plan to address all open KI
+  issues", "do a deep dive on the composer", "Use only this supplied corpus…" and
+  the owner's warmups stay named; the known limits (a task-shaped statement about
+  fixture data, a bare shell command with no harness word) are in the test.
 
-Gate: fmt, clippy and the release build clean; `cargo test` 2,824 passed / 0
+Gate: fmt, clippy and the release build clean; `cargo test` 2,826 passed / 0
 failed; the face harness on Node 26.
 
 ## v0.9.3 — 2026-11-23
