@@ -5763,6 +5763,28 @@ async function theDrawerRendersMarkdownThroughTheEngine() {
     clean.slice(-160));
 }
 
+// R9: below 900px the map IS the rail drawer — the same Home, regions and
+// system strip, never a second layout. (The CSS breakpoint is the visual
+// fact; this pins the drawer's content and the toggle that opens it.)
+async function theMapIsTheRailDrawerBelowNineHundred() {
+  const page = boot({ width: 390, documents: {} });
+  await flush();
+  page.open();
+  await flush(60);
+  page.IDS['rail-menu'].click();
+  await flush(40);
+  const names = page.rows('.surfaces-group-name').map((one) => one.textContent);
+  const home = page.rows('.surfaces-link-home')[0];
+  check('MAP390 the drawer opens and carries the map',
+    page.body.dataset.mobileRail === 'open' &&
+      !!home && home.textContent.includes('Home') &&
+      names.join(',') === 'software,design,knowledge,system',
+    'open=' + page.body.dataset.mobileRail + ' names=' + names.join(','));
+  check('MAP390 the drawer\u2019s scrim stands behind it',
+    page.IDS['rail-scrim'].hidden !== true,
+    'scrim hidden=' + page.IDS['rail-scrim'].hidden);
+}
+
 // The drawer opens the object it is (the UX map study, 2026-11-23): a kind
 // table over the language the file read returns — code files and trees in
 // the code body, markdown and every binary document in the rendered body —
@@ -21762,6 +21784,7 @@ const cases = [
   ['RP5 the board leads with change and divergence', theBoardLeadsWithChangeAndDivergence],
   ['RP6 delegation leads with the blockers', theDelegationSurfaceLeadsWithTheBlockers],
   ['MAP the rail is the work-kind map: Home, regions, dots, no state groups', theRailCarriesTheMap],
+  ['MAP390 below 900px the map is the rail drawer', theMapIsTheRailDrawerBelowNineHundred],
   ['KIND the drawer opens the body the object is, with its relevance line', theDrawerOpensTheObjectItIs],
   ['MDK the drawer renders markdown through marked, sanitised', theDrawerRendersMarkdownThroughTheEngine],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
