@@ -12,6 +12,72 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.9.2 — 2026-11-23
+
+**The map and the drawer — the rail becomes a map of work-kind regions, and
+the drawer opens the object as a human would see it.** Forty-one commits past
+v0.9.1: the face re-derived into the Indigo Studio palette and the drawer's
+four canonical tabs first, then two plans built end to end on top of them
+(`docs/plans/2026-11-22-ux-map-and-drawer-study.md`,
+`docs/plans/2026-11-23-rail-map-and-drawer-bodies.md`, R1–R10, completed).
+
+- **The rail is the map** (R1–R3, `cdf783e8`, `35b86631`) — **Home** (the
+  inbox, with its held count) leads; `software · design · knowledge` are
+  bracketed regions and the *system* strip closes the foot with the expert
+  census and the enabled plugins; state is a dot or a count, never a group —
+  the needs-you/working groups retire, and attention lives where the work is
+  (the inbox by the age of the hold, the board's needs-you lead). Folding is
+  per region, remembered; a quiet lane carries no dot.
+- **The drawer opens the body the object is** (R4–R5, `613be4e7`) — one
+  `KIND_MODE` table decides from the file read: code and trees → `code`,
+  markdown, documents, office files and images → `preview`; the mode switch
+  is the per-object override and never leaks into the next open. The read
+  body opens with the relevance line (kind · size) and the one press it
+  suggests — the sibling body, one press away.
+- **Markdown renders properly** (R6, `79cc488e`) — marked 18.2.1 in the
+  vendored set, output sanitised through DOMPurify (script and `onerror`
+  stripped, proven live); relative images resolve through the contained
+  preview route. The transcript's DOM-built renderer keeps its path presses.
+- **xlsx shows the sheet's own form** (R7, `cea0986b`) — number formats,
+  Excel serial dates, bold, merged spans, column widths, right-aligned
+  numerics, `inlineStr` cells; formulas stay their cached values, labelled,
+  and the 500-row cap says so.
+- **pptx draws** (R8, `87edcde3`) — `@meshesha/pptxjs` 2.0.0 (MIT) renders
+  slides inside the sandboxed frame from inlined bytes, no network; a viewer
+  that refuses falls back to the text outline **by name**, carrying the
+  renderer's own reason.
+- **The map below 900px** (R9, `472c1d49`) — the rail drawer renders the same
+  map (Home, regions, system), pinned at a 390 boot and captured at 390/820 in
+  both themes from the running face (`docs/plans/mockups/2026-11-23-rail-map/`).
+- **The pins read committed bytes** (`61335a07`, `31360dbd`) — a
+  dependency-free generator writes the fixtures the pins use: a real workbook
+  (merged bold title, serial dates, grouped numbers, percentages, widths, a
+  501-row sheet) the harness inflates and renders, a docx boot, and a zip the
+  deck renderer genuinely refuses. The URL kind has no drawer object — recorded
+  as gap-ledger G3, not guessed into a dead mapping. Harness: 1,966 checks /
+  285 cases; 2,820 Rust tests.
+- **The face before the map**: the four themes re-derive into the **Indigo
+  Studio palette** (`d4522fef`); the drawer reads in the **four canonical
+  tabs** (`7e8d76aa`), the connections tab carries the goal edge and the
+  narrow inspector retires (`588842c8`); the board leads with the home's
+  needs-you decisions (`f5fee99c`); the age rides every inbox row that has a
+  stamp (`205b3598`); the basis ladder rides the fact rows (`e709eb0e`); the
+  learning graph is drawn (`fde071af`); health lanes are a live chip row
+  (`ac273aec`); the fleet map renders the earned liveness as U16's meters
+  (`ec9091dd`); the desk's stage track carries its names and the refuse-to-end
+  gate (`6753e48c`); the reply carries the route that served it (`cef9565e`)
+  and its evidence chips open the source (`9895c2de`); persona faces are
+  vendored in-repo (`2937d0a5`); the bot PWA composes its split view and its
+  discs are the persona face (`0e12aab2`, `20eda857`); the relay card reads
+  the bridge's own counters (`43b8580f`); the version-page stand-in reads its
+  head whole (`3364f452`).
+- **The study behind it**: seven mock screens, 14 WebKit captures, 14/14
+  in-page AA audits clean (`94594bf5`, `fe31f49f`), and the viewer research
+  that chose the engines (`docs/architecture/2026-11-23-document-viewers.md`).
+- One defect found by a live probe and filed, not fixed here: **KI-592** (the
+  landing hero paints under an open drawer when `#/file` arrives with no
+  conversation; pre-existing).
+
 ## v0.9.1 — 2026-11-22
 
 **The relevance pass — surfaces lead with what needs the owner, then what
