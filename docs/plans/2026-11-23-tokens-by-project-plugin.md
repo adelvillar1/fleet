@@ -67,19 +67,22 @@ without a workspace.
 
 ### C0 — the mockup gate (before code)
 
-Draw one screen in the cache instrument's own language (near-black field, mono
-numerals, one accent per model), measured in WebKit at 1440, 820 and 390:
-each project's donut — its slices the models that worked across **all** the
-sessions scoped to that project, the centre carrying the project's reported
-total — with the legend and the hover/focus panel. The gate's open questions
-live in the mockup's README:
+Draw the page in the cache instrument's own language (near-black field, mono
+numerals, one accent per model), measured in WebKit at 1440, 820 and 390: a
+grid of **project cards**, each card carrying the project's donut — its slices
+the models that worked across **all** the sessions scoped to that project, the
+centre the project's reported total — and, below the donut, the legend of every
+model with its number. The gate's open questions live in the mockup's README:
 
-1. **The layout, not the meaning.** The donut is per project and its
-   composition is fixed: every session the project's runs belong to, aggregated
-   by model — a session is never a slice, and two sessions that used the same
-   model are one slice. What the gate picks is how the page shows them: one
-   project at a time with a selector (recommended at phone widths) or a grid of
-   every project's donut.
+1. **The card, not the meaning.** The donut is per project and its composition
+   is fixed: every session the project's runs belong to, aggregated by model —
+   a session is never a slice, and two sessions that used the same model are one
+   slice. The numbers per model are readable **without hovering** (the legend
+   below the donut carries tokens and share); hovering a slice or a legend row
+   adds the full provider breakdown. What the gate picks is the card's density
+   and order (billed tokens descending) at 1440, 820 and 390 — how many cards
+   per row, and whether the buckets are cards of their own or one footnote
+   strip.
 2. **Slice metric**: `billed_tokens` (prompt + completion), the reading the
    cache instrument already uses — the cache half is a subset of the prompt, so
    cache-read is a *field*, not a slice.
@@ -135,16 +138,20 @@ No code lands before those answers; the mockup is the same gate D3 used.
 - `index.html`: the cache plugin's static-HTML + `postMessage` pattern (one
   `ask('cache')`, no other channel), the instrument vocabulary shared with its
   sibling, `prefers-reduced-motion` honoured.
-- The donut: **one per project**, its slices composed across every session
-  scoped to that project — the models that worked, aggregated, never one ring
-  per session and never one slice per call. Slices by billed tokens, one stable
-  colour per model across every project, the centre carrying the project's
-  reported total; the caption says how many calls reported (`accounted` of
-  `calls`); a model with no usage block draws no slice and is named in the
-  caption. The legend lists every model with its tokens and share.
-- Hover **and focus** open the same detail panel (no hover-only information);
-  legend rows are the keyboard path. The buckets render as their own entries
-  with their sentences, not as zero-token projects.
+- The card: **one per project**, the project's name (the basename, the full
+  path in the tooltip), the donut, and the legend below it. The donut's slices
+  are composed across every session scoped to that project — the models that
+  worked, aggregated, never one ring per session and never one slice per call.
+  Slices by billed tokens, one stable colour per model across every project, the
+  centre carrying the project's reported total; the caption says how many calls
+  reported (`accounted` of `calls`); a model with no usage block draws no slice
+  and is named in the caption.
+- The legend below the donut is the always-on surface: every model with its
+  tokens and share, readable without hovering (and the only path on touch).
+  Hovering a slice or a legend row opens the full provider breakdown; the same
+  panel opens on keyboard focus of a legend row, so nothing is hover-only.
+- The buckets render as their own entries with their sentences, not as
+  zero-token projects.
 - Empty window → a sentence naming the window; a refused read → the refusal's
   own words and the query name.
 
@@ -170,16 +177,19 @@ No code lands before those answers; the mockup is the same gate D3 used.
   the bridge's enforcement); an undeclared query still refuses by name.
 - [ ] C5: the bundle asks `cache` and nothing else (a grep of the bundle's
   `ask(` calls and the manifest's set agree).
-- [ ] C6: the donut's slices sum to the project's reported total; its
-  composition aggregates every session of the project (a fixture of two
-  sessions in one workspace, two models, draws ONE donut with both models — a
-  session is never a slice or a ring); a zero-token model never draws a slice;
-  the caption names `accounted` of `calls`; the three buckets render as
-  sentences, never as projects with 0%.
+- [ ] C6: a project is one card carrying the donut and, below it, the legend
+  of every model's tokens and share — readable without hovering; the donut's
+  slices sum to the project's reported total and aggregate every session of the
+  project (a fixture of two sessions in one workspace, two models, draws ONE
+  donut with both models — a session is never a slice or a ring); a zero-token
+  model never draws a slice; the caption names `accounted` of `calls`; the three
+  buckets render as sentences, never as projects with 0%.
 - [ ] C7: hover and keyboard focus open the same panel; every provider-reported
   field is shown, and an absent one reads "not reported" — never 0.
-- [ ] C8: measured in WebKit at 1440/820/390 — no overflow, the donut and legend
-  stack at ≤640, the legend rows' touch targets ≥44px, reduced-motion honoured.
+- [ ] C8: measured in WebKit at 1440/820/390 — no overflow, the cards reflow
+  (a grid at 1440 and 820, one column at 390), the donut and its legend stack
+  inside each card at ≤640, the legend rows' touch targets ≥44px,
+  reduced-motion honoured.
 - [ ] C9: the gate is green — fmt, clippy, release build, `cargo test` (all
   binaries), the face harness and the console harness on the pinned Node 26.
 
