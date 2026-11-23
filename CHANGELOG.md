@@ -12,6 +12,60 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.9.3 — 2026-11-23
+
+**The surface pass, finished — and the ledger emptied.** Twenty-eight commits
+past v0.9.2: every surface rebuilt on one grammar, routing folded into Reviews,
+the known-issues ledger driven to **zero open**, the face harness moved to
+Node 26 (the V8 segfault's actual fix), and a new instrument built end to end
+from an approved mockup.
+
+- **One surface grammar (the surface pass, R1–R10)** — the read-only spine
+  strip retires from six surfaces (`d976eba9`); a stat is a door onto the
+  section that holds its population (`c4199e74`); empty and loading states name
+  their one press, and **empty is not refused** at the bridge (`37d8009b`);
+  one page head (`answerHead`) with the design system's tokens holding
+  (`a905d8ed`); the router's chains flatten and the address tells the truth
+  (`0e19ee8d`); every div-button carries a cursor and answers the keyboard
+  centrally (`393390cd`); a form inside a card is a section, not a second card
+  (`217d6e59`); the card grid's spans are declared and measured with rails open
+  and collapsed and the PWA at 390/820/844/1180 (`7df6d062`); a past run opens
+  and the drawer's third tab is `work` (`1b40ed0b`). The method and the
+  per-surface audit: `docs/architecture/2026-11-23-surface-audit.md`.
+- **Connections is a knowledge page** (`8c131cac`) — the graph left the aside,
+  its nodes drill in place, its legend chips isolate a kind, and a skill's row
+  opens its lens instead of dying.
+- **Routing is Reviews' first section** (`82f2f691`; mockup `4108b60c`) — the
+  standalone Router page retires; `#/router` folds silently onto
+  `#/calibration/routing`, which carries the live decision, the declared chain,
+  cost × quality, the workload mix and the day's route rows; the strip follows
+  the selected section.
+- **The known-issues burndown** (`7710a81c`, `93c260ef`) — KI-560 (the provider
+  card saved the *filtered* catalog, deleting disabled models; the read now
+  publishes the declared `catalog_models`), KI-562 (the reload-all sequence
+  drives `writeSettings`, holds its press, counts per provider, keeps its
+  sentence across the repaint), KI-566, KI-584, KI-592 (the landing under the
+  open drawer) and KI-594 closed with pins; **KI-595** found by the gate itself
+  (a budget env leaked between parallel tests) and fixed the same hour. The
+  ledger now stands at 593 rows, **0 open**.
+- **The harness runs on Node 26** (`1ba31304`, `4a37a9b0`) — KI-593's V8
+  mark-compact segfault is fixed by refusing older runtimes: both harnesses
+  exit 2 below 26 and name the requirement, `tests/common::node()` resolves the
+  runtime regardless of PATH order, the `--no-concurrent-marking` workaround is
+  gone (the gate exercises the default GC), and 20 unflagged full runs on
+  26.11.1 are clean. `FACE_PROGRESS=1` keeps a silent segv attributable.
+- **Tokens by project** (`953a5213`; mockup `6883a54e`) — a new instrument
+  plugin (`plugins/tokens`, untrusted, asks only `cache`): one card per project,
+  the donut sliced by the models that worked across **every session scoped to
+  that project**, the legend below it carrying each model's tokens and share,
+  the provider's full breakdown on hover or focus ("not reported" as words), and
+  three named buckets for the calls no session can claim. The route row now
+  carries `session`; the cache document carries `projects` from the same walk,
+  its own keys untouched.
+
+Gate: fmt, clippy and the release build clean; `cargo test` **2,824 passed / 0
+failed**; the face harness 2,007 checks across 290 cases on Node 26.11.1.
+
 ## v0.9.2 — 2026-11-23
 
 **The map and the drawer — the rail becomes a map of work-kind regions, and
