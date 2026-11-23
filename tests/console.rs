@@ -14,19 +14,24 @@
 
 use std::process::Command;
 
+mod common;
+
 #[test]
 fn the_mini_console_holds_its_contract() {
-    match Command::new("node").arg("--version").output() {
-        Ok(version) if version.status.success() => {}
-        _ => {
+    let node = match common::node() {
+        Ok(Some(node)) => node,
+        Ok(None) => {
             eprintln!(
                 "console harness: no `node` on PATH, so tests/console/harness.mjs was skipped; \
                  install node to run the console's own checks"
             );
             return;
         }
-    }
-    let run = Command::new("node")
+        Err(why) => panic!("{why}"),
+    };
+    // KI-593: the console harness boots vm contexts too, so it runs on the same
+    // pinned runtime as the face harness (tests/common::node).
+    let run = Command::new(&node)
         .arg("tests/console/harness.mjs")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()

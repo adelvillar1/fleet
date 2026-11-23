@@ -21,6 +21,20 @@ import vm from 'node:vm';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
+// KI-593: this harness boots vm contexts too, so it runs on the same pinned
+// runtime as the face harness — Node 26 or newer. Older V8 builds segfault in
+// mark-compact GC over this repository's vm contexts; refuse them by name
+// rather than let a run die with no output.
+const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
+if (!(NODE_MAJOR >= 26)) {
+  console.error(
+    'console: this harness requires Node 26 or newer (running ' + process.versions.node + ').\n' +
+    'console: KI-593 — older V8 builds segfault in mark-compact GC over the harness vm contexts.\n' +
+    'console: run it with a 26+ node (Homebrew node@26: /opt/homebrew/opt/node@26/bin/node), '
+    + 'or set FLEET_NODE for the Rust gate.');
+  process.exit(2);
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
 const ASSETS = ['console.html', 'console.js', 'console.css']

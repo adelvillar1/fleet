@@ -6,10 +6,26 @@
 // Every case boots a fresh page (app.js is one IIFE that wires itself at
 // load), feeds it documents in the bridge's own shapes, drives it the
 // way a pointer or a keystroke would, and asserts on what it built.
+
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+
+// KI-593: this harness runs on Node 26 or newer. Its ~290 vm contexts (one
+// fresh context per boot) provoked a V8 mark-compact crash on older builds
+// (ClearStaleLeftTrimmedPointerVisitor over internal frames, ~1/10 full runs
+// on v25.2.1; v26 measured clean). An old runtime is refused by name rather
+// than left to segfault a run with no output.
+const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
+if (!(NODE_MAJOR >= 26)) {
+  console.error(
+    'face: this harness requires Node 26 or newer (running ' + process.versions.node + ').\n' +
+    'face: KI-593 — older V8 builds segfault in mark-compact GC over the harness vm contexts.\n' +
+    'face: run it with a 26+ node (Homebrew node@26: /opt/homebrew/opt/node@26/bin/node), '
+    + 'or set FLEET_NODE for the Rust gate.');
+  process.exit(2);
+}
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
@@ -22886,4 +22902,5 @@ if (failures.length) {
   for (const failure of failures) console.error('  ' + failure);
   process.exit(1);
 }
-console.log('face: ' + pass.length + ' checks passed across ' + selected.length + ' cases');
+console.log('face: ' + pass.length + ' checks passed across ' + selected.length +
+  ' cases (node ' + process.versions.node + ')');
