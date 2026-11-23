@@ -69,12 +69,17 @@ without a workspace.
 
 Draw one screen in the cache instrument's own language (near-black field, mono
 numerals, one accent per model), measured in WebKit at 1440, 820 and 390:
-the project list with each project's reported total, the selected project's
-donut by model, the centre total, the legend, and the hover/focus panel. The
-gate's open questions live in the mockup's README:
+each project's donut — its slices the models that worked across **all** the
+sessions scoped to that project, the centre carrying the project's reported
+total — with the legend and the hover/focus panel. The gate's open questions
+live in the mockup's README:
 
-1. **Project list + one donut** (recommended — the model breakdown is the ask)
-   versus a grid of small donuts per project.
+1. **The layout, not the meaning.** The donut is per project and its
+   composition is fixed: every session the project's runs belong to, aggregated
+   by model — a session is never a slice, and two sessions that used the same
+   model are one slice. What the gate picks is how the page shows them: one
+   project at a time with a selector (recommended at phone widths) or a grid of
+   every project's donut.
 2. **Slice metric**: `billed_tokens` (prompt + completion), the reading the
    cache instrument already uses — the cache half is a subset of the prompt, so
    cache-read is a *field*, not a slice.
@@ -130,11 +135,13 @@ No code lands before those answers; the mockup is the same gate D3 used.
 - `index.html`: the cache plugin's static-HTML + `postMessage` pattern (one
   `ask('cache')`, no other channel), the instrument vocabulary shared with its
   sibling, `prefers-reduced-motion` honoured.
-- The donut: slices by billed tokens, one stable colour per model across every
-  project, the centre carrying the project's reported total; the caption says
-  how many calls reported (`accounted` of `calls`); a model with no usage block
-  draws no slice and is named in the caption. The legend lists every model with
-  its tokens and share.
+- The donut: **one per project**, its slices composed across every session
+  scoped to that project — the models that worked, aggregated, never one ring
+  per session and never one slice per call. Slices by billed tokens, one stable
+  colour per model across every project, the centre carrying the project's
+  reported total; the caption says how many calls reported (`accounted` of
+  `calls`); a model with no usage block draws no slice and is named in the
+  caption. The legend lists every model with its tokens and share.
 - Hover **and focus** open the same detail panel (no hover-only information);
   legend rows are the keyboard path. The buckets render as their own entries
   with their sentences, not as zero-token projects.
@@ -163,9 +170,12 @@ No code lands before those answers; the mockup is the same gate D3 used.
   the bridge's enforcement); an undeclared query still refuses by name.
 - [ ] C5: the bundle asks `cache` and nothing else (a grep of the bundle's
   `ask(` calls and the manifest's set agree).
-- [ ] C6: the donut's slices sum to the project's reported total; a zero-token
-  model never draws a slice; the caption names `accounted` of `calls`; the three
-  buckets render as sentences, never as projects with 0%.
+- [ ] C6: the donut's slices sum to the project's reported total; its
+  composition aggregates every session of the project (a fixture of two
+  sessions in one workspace, two models, draws ONE donut with both models — a
+  session is never a slice or a ring); a zero-token model never draws a slice;
+  the caption names `accounted` of `calls`; the three buckets render as
+  sentences, never as projects with 0%.
 - [ ] C7: hover and keyboard focus open the same panel; every provider-reported
   field is shown, and an absent one reads "not reported" — never 0.
 - [ ] C8: measured in WebKit at 1440/820/390 — no overflow, the donut and legend
