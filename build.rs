@@ -101,6 +101,14 @@ const ASSETS: &[Asset] = &[
         stamp: Stamp::None,
     },
     Asset {
+        path: "src/gui/assets/vendor/pptxjs.umd.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/pptxjs.LICENSE",
+        stamp: Stamp::None,
+    },
+    Asset {
         path: "src/gui/assets/vendor/pdf.min.mjs",
         stamp: Stamp::None,
     },

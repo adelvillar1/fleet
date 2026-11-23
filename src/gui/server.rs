@@ -84,6 +84,12 @@ pub(crate) const VENDOR_MARKED_GZ: &[u8] =
 pub(crate) const VENDOR_MARKED_LICENSE: &str = include_str!("assets/vendor/marked.LICENSE");
 pub(crate) const VENDOR_MARKED_LICENSE_GZ: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/vendor-marked.LICENSE.gz"));
+pub(crate) const VENDOR_PPTXJS: &str = include_str!("assets/vendor/pptxjs.umd.js");
+pub(crate) const VENDOR_PPTXJS_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-pptxjs.umd.js.gz"));
+pub(crate) const VENDOR_PPTXJS_LICENSE: &str = include_str!("assets/vendor/pptxjs.LICENSE");
+pub(crate) const VENDOR_PPTXJS_LICENSE_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-pptxjs.LICENSE.gz"));
 pub(crate) const VENDOR_PDF: &str = include_str!("assets/vendor/pdf.min.mjs");
 pub(crate) const VENDOR_PDF_WORKER: &str = include_str!("assets/vendor/pdf.worker.min.mjs");
 pub(crate) const VENDOR_DOCX: &str = include_str!("assets/vendor/docx-preview.min.js");
@@ -301,6 +307,12 @@ pub(crate) const GZIP_ASSETS: &[(&str, &str, &[u8])] = &[
         "/vendor/marked.LICENSE",
         VENDOR_MARKED_LICENSE,
         VENDOR_MARKED_LICENSE_GZ,
+    ),
+    ("/vendor/pptxjs.umd.js", VENDOR_PPTXJS, VENDOR_PPTXJS_GZ),
+    (
+        "/vendor/pptxjs.LICENSE",
+        VENDOR_PPTXJS_LICENSE,
+        VENDOR_PPTXJS_LICENSE_GZ,
     ),
     ("/vendor/pdf.min.mjs", VENDOR_PDF, VENDOR_PDF_GZ),
     (
@@ -676,6 +688,22 @@ async fn serve_connection(
             write_reply(
                 &mut stream,
                 versioned_asset("text/plain; charset=utf-8", VENDOR_MARKED_LICENSE)
+                    .negotiated(&request),
+            )
+            .await
+        }
+        ("GET", "/vendor/pptxjs.umd.js") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_PPTXJS)
+                    .negotiated(&request),
+            )
+            .await
+        }
+        ("GET", "/vendor/pptxjs.LICENSE") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("text/plain; charset=utf-8", VENDOR_PPTXJS_LICENSE)
                     .negotiated(&request),
             )
             .await

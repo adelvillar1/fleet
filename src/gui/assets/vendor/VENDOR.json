@@ -111,6 +111,17 @@
       "license": "MIT",
       "vendored": "2026-11-23",
       "reason": "Markdown rendering (the UX map study's R6): the preview renders CommonMark/GFM the hand-rolled parser only approximated. Its output is HTML, so it is sanitised by the vendored DOMPurify before it touches the DOM; a build without the sanitiser refuses the render."
+    },
+    {
+      "file": "pptxjs.umd.js",
+      "name": "PPTXjs",
+      "version": "2.0.0",
+      "upstream": "https://github.com/meshesha/PPTXjs",
+      "download": "https://unpkg.com/@meshesha/pptxjs@2.0.0/dist/pptxjs.umd.js",
+      "sha256": "95d9efb216258a6e07c76134d08c78da4b01fa6bb05f3e40efc22453b43a6b87",
+      "license": "MIT",
+      "vendored": "2026-11-23",
+      "reason": "PPTX rendering (the UX map study's R8): slides drawn as HTML/SVG inside the sandboxed frame from the document's bytes in memory, no network and no worker. fflate is inlined in this bundle (single runtime dep upstream). The text-outline renderer stays the named fallback when the viewer reports an error."
     }
   ]
 }

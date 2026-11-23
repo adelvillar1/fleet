@@ -33315,41 +33315,113 @@ import { node, svg, clip } from './core/dom.js';
   // PPTX, the honest partial: the same zip reader pulls each slide's
   // text and notes into an outline. No client-side slide rendering
   // exists that is worth vendoring, and the pane says so.
-  async function renderPptx(read) {
-    try {
-      var archive = await zipEntries(await previewBytes(read));
-      var slides = archive.names.filter(function (name) {
-        return /^ppt\/slides\/slide\d+\.xml$/.test(name);
-      }).sort(function (left, right) {
-        return Number(left.match(/\d+/)[0]) - Number(right.match(/\d+/)[0]);
+  // The outline: the deck's text and notes, slide by slide. It is the
+  // fallback now, named as one — the viewer below draws the slides.
+  async function pptxOutline(read, reason) {
+    var wrap = node('div', 'pane-pptx');
+    var archive = await zipEntries(await previewBytes(read));
+    var slides = archive.names.filter(function (name) {
+      return /^ppt\/slides\/slide\d+\.xml$/.test(name);
+    }).sort(function (left, right) {
+      return Number(left.match(/\d+/)[0]) - Number(right.match(/\d+/)[0]);
+    });
+    wrap.appendChild(node('p', 'pane-empty',
+      slides.length + ' slide' + (slides.length === 1 ? '' : 's') +
+      ' \u00b7 the text outline' +
+      (reason ? ' \u2014 the slide renderer reported: ' + reason : '') +
+      ' \u00b7 the deck itself did not render here'));
+    for (var i = 0; i < slides.length; i += 1) {
+      var doc = new DOMParser().parseFromString(
+        new TextDecoder().decode(await archive.read(slides[i])), 'text/xml');
+      var card = node('div', 'pane-pptx-slide');
+      card.appendChild(node('h3', 'pane-pptx-num', 'slide ' + (i + 1)));
+      var texts = xmlText(doc, 't');
+      texts.filter(function (t) { return t.trim(); }).forEach(function (t) {
+        card.appendChild(node('p', 'pane-pptx-line', t));
       });
-      var wrap = node('div', 'pane-pptx');
-      wrap.appendChild(node('p', 'pane-empty',
-        slides.length + ' slide' + (slides.length === 1 ? '' : 's') +
-        ' \u00b7 the outline, not the slides \u2014 nothing renders a deck client-side'));
-      for (var i = 0; i < slides.length; i++) {
-        var doc = new DOMParser().parseFromString(
-          new TextDecoder().decode(await archive.read(slides[i])), 'text/xml');
-        var card = node('div', 'pane-pptx-slide');
-        card.appendChild(node('h3', 'pane-pptx-num', 'slide ' + (i + 1)));
-        var texts = xmlText(doc, 't');
-        texts.filter(function (t) { return t.trim(); }).forEach(function (t) {
-          card.appendChild(node('p', 'pane-pptx-line', t));
-        });
-        var notesName = 'ppt/notesSlides/notesSlide' + (i + 1) + '.xml';
-        if (archive.names.indexOf(notesName) !== -1) {
-          var notes = new DOMParser().parseFromString(
-            new TextDecoder().decode(await archive.read(notesName)), 'text/xml');
-          var noteLines = xmlText(notes, 't').filter(function (t) { return t.trim(); });
-          if (noteLines.length) {
-            card.appendChild(node('p', 'pane-pptx-notes', 'notes: ' + noteLines.join(' \u00b7 ')));
-          }
+      var notesName = 'ppt/notesSlides/notesSlide' + (i + 1) + '.xml';
+      if (archive.names.indexOf(notesName) !== -1) {
+        var notes = new DOMParser().parseFromString(
+          new TextDecoder().decode(await archive.read(notesName)), 'text/xml');
+        var noteLines = xmlText(notes, 't').filter(function (t) { return t.trim(); });
+        if (noteLines.length) {
+          card.appendChild(node('p', 'pane-pptx-notes', 'notes: ' + noteLines.join(' \u00b7 ')));
         }
-        wrap.appendChild(card);
       }
+      wrap.appendChild(card);
+    }
+    return wrap;
+  }
+
+  // PPTX: @meshesha/pptxjs draws the slides inside the sandboxed frame —
+  // the bundle and the document's bytes ride in as source and base64, no
+  // network, no worker. The frame reports its own state, so a viewer that
+  // refuses falls back to the text outline BY NAME rather than blanking
+  // the pane (the research note's chosen risk control).
+  async function renderPptx(read) {
+    var wrap = node('div', 'pane-pptx');
+    var fallback = async function (reason) {
+      try {
+        var outline = await pptxOutline(read, reason);
+        el.panePreview.textContent = '';
+        el.panePreview.appendChild(outline);
+      } catch (error) { previewFailed('the deck', error); }
+    };
+    try {
+      var data = await previewBytes(read);
+      var bytes = new Uint8Array(data);
+      var binary = '';
+      for (var i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+      var bundle = await fetch('/vendor/pptxjs.umd.js').then(function (r) { return r.text(); });
+      var nonce = 'pptx-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+      var docHtml = '<!doctype html><html><head><meta charset="utf-8"><style>' +
+        'html,body{margin:0;background:#fff} #slides{width:100%}' +
+        '<\/style></head><body>' +
+        '<div id="slides"></div>' +
+        '<script>' + bundle.replace(/<\/script/gi, '<\\/script') + '<\/script>' +
+        '<script>' +
+        'var N = "' + nonce + '";' +
+        'function tell(type, extra) { parent.postMessage(Object.assign({nonce: N, type: type}, extra || {}), "*"); }' +
+        'tell("pptx-boot", {ns: typeof PPTXjs});' +
+        'try {' +
+        '  var raw = atob("' + btoa(binary) + '");' +
+        '  var bytes = new Uint8Array(raw.length);' +
+        '  for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);' +
+        '  var viewer = new PPTXjs.PptxViewer("#slides", { mode: "list", scale: "fit" });' +
+        '  viewer.on("error", function (e) { tell("pptx-failed", { reason: String(e && e.error && e.error.message || e) }); });' +
+        '  viewer.load(bytes).then(function () { tell("pptx-rendered", {}); })' +
+        '    .catch(function (err) { tell("pptx-failed", { reason: String(err && err.message || err) }); });' +
+        '} catch (err) { tell("pptx-failed", { reason: String(err && err.message || err) }); }' +
+        '<\/script></body></html>';
       el.panePreview.textContent = '';
       el.panePreview.appendChild(wrap);
-    } catch (error) { previewFailed('the deck', error); }
+      wrap.appendChild(documentFrame(docHtml));
+      var settled = false;
+      var listen = function (event) {
+        var message = event && event.data;
+        if (!message || message.nonce !== nonce) return;
+        if (message.type === 'pptx-rendered') {
+          settled = true;
+          wrap.dataset.state = 'rendered';
+          window.removeEventListener('message', listen);
+        } else if (message.type === 'pptx-failed') {
+          settled = true;
+          wrap.dataset.state = 'failed';
+          window.removeEventListener('message', listen);
+          fallback(message.reason || 'the viewer refused this deck');
+        }
+      };
+      window.addEventListener('message', listen);
+      // A viewer that never answers must not leave a blank pane: after a
+      // bounded wait the outline stands, and the frame is removed.
+      setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('message', listen);
+        wrap.dataset.state = 'failed';
+        fallback('the slide renderer did not answer in time');
+      }, 12000);
+    } catch (error) { fallback(String(error && error.message || error)); }
   }
 
   // DOCX: docx-preview renders inside the sandboxed frame — the

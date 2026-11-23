@@ -7953,6 +7953,23 @@ async function thePreviewRendersTheCommonFormats() {
   check('PV a binary document fails gracefully in the pane\u2019s own words',
     page.text('pane-preview-body').includes('would not render'),
     page.text('pane-preview-body').slice(0, 80));
+  // R8: the deck is drawn by the vendored viewer inside the sandboxed
+  // frame, and the text outline is the NAMED fallback. The stub cannot run
+  // the viewer, so the wiring and the vendor record are pinned here and the
+  // render was measured against the live face (a two-slide deck drew; a zip
+  // that is not a deck fell back to the outline with the viewer's reason).
+  const VENDOR_JSON = fs.readFileSync(
+    path.join(ROOT, 'src/gui/assets/vendor/VENDOR.json'), 'utf8');
+  check('PPTXF the deck draws through the vendored viewer, the outline is the named fallback',
+    SRC.includes('new PPTXjs.PptxViewer(') &&
+      SRC.includes("'/vendor/pptxjs.umd.js'") &&
+      SRC.includes('pptxOutline(read, reason)') &&
+      SRC.includes('the slide renderer did not answer in time') &&
+      VENDOR_JSON.includes('PPTXjs') && VENDOR_JSON.includes('2.0.0') &&
+      VENDOR_JSON.includes('MIT') &&
+      RUST.includes('/vendor/pptxjs.umd.js') &&
+      fs.existsSync(path.join(ROOT, 'src/gui/assets/vendor/pptxjs.LICENSE')),
+    'pptx viewer');
   // R7: the sheet's own form. The stub DOM cannot inflate a zip, so the
   // wiring is pinned from the source and the render itself was measured
   // against the live face (a styled workbook: bold header, dates, %, $,
