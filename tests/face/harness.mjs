@@ -22867,7 +22867,13 @@ if (only) {
   console.log('face: NARROWED to ' + selected.length + ' of ' + cases.length +
     ' cases by FACE_ONLY=' + only + ' — this is a dev loop, not the gate');
 }
+// Attribution, not a gate mode (KI-593): FACE_PROGRESS=1 writes each case's
+// name to stderr before it runs, so a V8 segv that leaves no summary still
+// says which case the process died in (or that it died between cases, in a
+// GC after the last one named). The gate never sets it; stdout is untouched.
+const progress = process.env.FACE_PROGRESS === '1';
 for (const [name, run] of selected) {
+  if (progress) console.error('face: case ' + name);
   try {
     await run();
   } catch (error) {
