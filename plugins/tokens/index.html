@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fleet tokens</title>
+<style>
+  /* The cache instrument's own vocabulary (its sibling, plugins/cache):
+     a near-black field, a mono numeral voice, one accent per model. A donut
+     is a share of a project's tokens, so the field stays quiet and only the
+     slices carry colour. */
+  :root {
+    --bg: #060709;
+    --field: #0a0c11;
+    --card: #0c0f15;
+    --line: #1b2230;
+    --line-soft: #131a25;
+    --ink: #eef3fb;
+    --dim: #94a3b8;
+    --faint: #5d6b80;
+    --teal: #6fe3c9;
+    --blue: #7fb2ff;
+    --amber: #f2b566;
+    --violet: #c79cff;
+    --coral: #ff8f8f;
+    --green: #8fe38f;
+    --mono: ui-monospace, Menlo, "SF Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; }
+  body {
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(1100px 520px at 8% -8%, rgba(111, 227, 201, 0.08), transparent 60%),
+      radial-gradient(900px 480px at 96% 0%, rgba(127, 178, 255, 0.06), transparent 62%);
+    background-attachment: fixed;
+    color: var(--ink);
+    font: 13px/1.45 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    padding: 24px clamp(14px, 3vw, 40px) 40px;
+  }
+  h1, h2, p { margin: 0; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  /* --------------------------------------------------------------- the mast */
+  .mast { padding: 4px 0 18px; }
+  .mast h1 {
+    font-size: clamp(24px, 3.2vw, 32px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-top: 6px;
+  }
+  .mast .note { color: var(--dim); max-width: 760px; margin-top: 8px; font-size: 13.5px; }
+  .strip {
+    display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: baseline;
+    margin-top: 16px; padding: 10px 2px;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    color: var(--faint); font-size: 11.5px; letter-spacing: 0.07em; text-transform: uppercase;
+  }
+  .strip b { color: var(--ink); font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .strip .end { margin-left: auto; text-transform: none; letter-spacing: 0; }
+
+  /* ------------------------------------------------------------- the cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(336px, 1fr)); gap: 16px; margin-top: 18px; align-items: start; }
+  .card {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background:
+      radial-gradient(520px 180px at 0% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 70%),
+      var(--card);
+    padding: 16px 18px 12px;
+    overflow: hidden;
+  }
+  .card::after {
+    content: "";
+    position: absolute; inset: 0 auto auto 0; width: 100%; height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent 70%);
+    opacity: 0.75;
+  }
+  .card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: nowrap; }
+  .card-head b { font-family: var(--mono); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; flex: 0 0 auto; }
+  .card-head .path { font-family: var(--mono); font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+  .card-head .window { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; flex: 0 0 auto; }
+  .card-head .inferred {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--faint); border: 1px dashed var(--line); border-radius: 999px;
+    padding: 1px 6px; white-space: nowrap; flex: 0 0 auto;
+  }
+
+  .donut-row { display: flex; justify-content: center; margin: 12px 0 6px; }
+  .donut { display: block; }
+  .donut text { font-family: var(--mono); fill: var(--ink); }
+  .donut .k { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  .donut .u { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; fill: var(--faint); }
+  .donut .slice { transition: opacity 140ms ease; cursor: pointer; }
+  .donut .slice:focus { outline: none; }
+  .donut .slice:focus-visible { filter: brightness(1.25); }
+  .donut:has(.slice:hover) .slice:not(:hover) { opacity: 0.45; }
+  .donut .slice:hover { filter: brightness(1.12); }
+
+  .caption { color: var(--faint); font-size: 11.5px; text-align: center; margin: 6px 0 10px; }
+  .caption b { color: var(--dim); font-family: var(--mono); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  /* ------------------------------------------------------------- the legend */
+  .legend { border-top: 1px solid var(--line-soft); }
+  .row {
+    display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto;
+    gap: 8px; align-items: center; width: 100%;
+    min-height: 44px; padding: 10px 2px; border: 0; border-bottom: 1px solid var(--line-soft);
+    background: none; color: inherit; text-align: left; font: inherit;
+    cursor: pointer; border-radius: 6px;
+  }
+  .row:hover, .row:focus-visible { background: var(--field); outline: none; }
+  .row:focus-visible { box-shadow: inset 0 0 0 1px var(--line); }
+  .row .sw { width: 8px; height: 8px; border-radius: 3px; background: var(--sw); }
+  .row .sw.none { background: none; border: 1px dashed var(--faint); }
+  .row .m { font-family: var(--mono); font-size: 11.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .n { font-family: var(--mono); font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .row .s { font-family: var(--mono); font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }
+  .row.noreport .m { color: var(--faint); }
+  .row.noreport .n { color: var(--faint); }
+
+  /* --------------------------------------------- the hover / focus panel */
+  .tip { display: none; margin: 8px 0 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
+  .tip.open { display: block; }
+  .tip h3 { margin: 0 0 6px; font-family: var(--mono); font-size: 11.5px; font-weight: 600; color: var(--ink); }
+  .tip dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; }
+  .tip dt { color: var(--faint); font-size: 11px; }
+  .tip dd { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
+  .tip dd b { color: var(--ink); font-weight: 600; }
+  .tip dd .none { color: var(--faint); }
+
+  /* ------------------------------------------------------------- the buckets */
+  .buckets { margin-top: 18px; border: 1px dashed var(--line); border-radius: 12px; padding: 10px 14px; display: grid; gap: 6px; }
+  .buckets .head { display: flex; align-items: baseline; gap: 8px; }
+  .buckets .head b { font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
+  .buckets .head span { color: var(--faint); font-size: 11.5px; }
+  .buckets .in { display: flex; flex-wrap: wrap; gap: 4px 22px; font-size: 12px; color: var(--dim); }
+  .buckets .in i { font-style: normal; font-family: var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+  .buckets .in b { font-family: var(--mono); color: var(--dim); font-weight: 500; }
+
+  .foot { margin-top: 22px; color: var(--faint); font-size: 11.5px; }
+
+  @media (max-width: 700px) {
+    .cards { grid-template-columns: 1fr; }
+    .strip { gap: 5px 14px; }
+    .strip .end { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .donut .slice { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <div class="eyebrow">tokens &middot; by project</div>
+    <h1>Where the tokens went.</h1>
+    <p class="note">
+      One donut per project, sliced by the models that worked across <b>every session
+      scoped to that project</b> &mdash; a session is never a slice. The legend below
+      each donut carries every model&rsquo;s number; hovering a slice or a legend row
+      adds the provider&rsquo;s own breakdown.
+    </p>
+    <div class="strip" id="strip"></div>
+  </header>
+
+  <main id="cards" class="cards"></main>
+
+  <section class="buckets" id="buckets" hidden>
+    <div class="head"><b>not every call has a project</b><span>each bucket says what it is; none is guessed, and none is merged</span></div>
+    <div class="in" id="bucket-rows"></div>
+  </section>
+
+  <p class="foot" id="foot">Cache read is a subset of the prompt, never an addition; a field the provider did not report reads &ldquo;not reported&rdquo;, never 0.</p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ------------------------------------------------------------- the wire
+  // The host's whole data path: one declared query, asked of the face
+  // through postMessage and answered from the bridge's plugin-query route.
+  // No fetch, no other channel — the manifest's set is the boundary.
+  var NAME = 'tokens';
+  var QUERY = 'cache';
+  var BUDGET = 20000;
+  var seq = 0;
+
+  function ask(query) {
+    return new Promise(function (resolve) {
+      if (window.parent === window) {
+        resolve({ ok: false, refused: ['no host \u2014 this page answers only through the face\u2019s plugin host'] });
+        return;
+      }
+      var mine = ++seq;
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        window.removeEventListener('message', onMessage);
+        resolve({ ok: false, refused: ['the face did not answer `' + query + '` within ' + (BUDGET / 1000) + ' s'] });
+      }, BUDGET);
+      function onMessage(event) {
+        var data = event.data || {};
+        if (data.fleetPlugin !== NAME || data.query !== query) return;
+        if (data.seq != null && data.seq !== mine) return;
+        done = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve({ ok: !!data.ok, answer: data.answer || null, refused: data.refused || null });
+      }
+      window.addEventListener('message', onMessage);
+      try {
+        parent.postMessage({ fleetPlugin: NAME, query: query, seq: mine }, '*');
+      } catch (error) {
+        done = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve({ ok: false, refused: ['the host refused the message: ' + error] });
+      }
+    });
+  }
+
+  // ------------------------------------------------------------ the tools
+  function el(tag, cls, text) {
+    var one = document.createElement(tag);
+    if (cls) one.className = cls;
+    if (text != null) one.textContent = text;
+    return one;
+  }
+  function num(value) { return typeof value === 'number' && isFinite(value) ? value : 0; }
+  function arr(value) { return Array.isArray(value) ? value : []; }
+  function fmt(n) {
+    if (n === null || n === undefined) return null;
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return String(n);
+  }
+  function comma(n) { return Number(n).toLocaleString('en-US'); }
+  function share(part, whole) { return whole > 0 ? Math.round(part / whole * 100) + '%' : null; }
+
+  // One colour per model, stable across every project: the whole document's
+  // model names, sorted, index into the instrument's accents.
+  var ACCENTS = ['#6fe3c9', '#7fb2ff', '#f2b566', '#c79cff', '#ff8f8f', '#8fe38f', '#7fd8e3'];
+  var colours = {};
+  function paintColours(projects) {
+    var names = {};
+    projects.forEach(function (project) {
+      arr(project.models).forEach(function (model) { names[model.model] = true; });
+    });
+    Object.keys(names).sort().forEach(function (name, index) {
+      colours[name] = ACCENTS[index % ACCENTS.length];
+    });
+  }
+  function colourOf(model) { return colours[model] || '#6fe3c9'; }
+
+  // --------------------------------------------------------------- the donut
+  function donut(models, accent) {
+    var NS = 'http://www.w3.org/2000/svg';
+    var SIZE = 176, R = 64, W = 22, C = 2 * Math.PI * R;
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('class', 'donut');
+    svg.setAttribute('width', SIZE); svg.setAttribute('height', SIZE);
+    svg.setAttribute('viewBox', '0 0 ' + SIZE + ' ' + SIZE);
+    var drawn = models.filter(function (model) { return num(model.accounted) > 0 && num(model.billed) > 0; });
+    var total = drawn.reduce(function (sum, model) { return sum + num(model.billed); }, 0);
+    if (!drawn.length) {
+      var ring = document.createElementNS(NS, 'circle');
+      ring.setAttribute('cx', SIZE / 2); ring.setAttribute('cy', SIZE / 2);
+      ring.setAttribute('r', R); ring.setAttribute('fill', 'none');
+      ring.setAttribute('stroke', '#1b2230'); ring.setAttribute('stroke-width', W);
+      ring.setAttribute('stroke-dasharray', '4 7');
+      svg.appendChild(ring);
+    }
+    var gap = drawn.length > 1 ? 5 : 0;
+    var offset = 0;
+    drawn.forEach(function (model) {
+      var len = Math.max(0, num(model.billed) / total * C - gap);
+      var slice = document.createElementNS(NS, 'circle');
+      slice.setAttribute('class', 'slice');
+      slice.setAttribute('cx', SIZE / 2); slice.setAttribute('cy', SIZE / 2);
+      slice.setAttribute('r', R);
+      slice.setAttribute('fill', 'none');
+      slice.setAttribute('stroke', colourOf(model.model));
+      slice.setAttribute('stroke-width', W);
+      slice.setAttribute('stroke-dasharray', len + ' ' + (C - len));
+      slice.setAttribute('stroke-dashoffset', -offset);
+      slice.setAttribute('transform', 'rotate(-90 ' + SIZE / 2 + ' ' + SIZE / 2 + ')');
+      slice.setAttribute('tabindex', '0');
+      slice.setAttribute('role', 'img');
+      slice.setAttribute('aria-label', model.model + ': ' + (fmt(model.billed) || 'no tokens') +
+        ', ' + (share(model.billed, total) || '0%') + ' of the project');
+      slice.addEventListener('focus', function () { showTip(svg, model); });
+      slice.addEventListener('mouseenter', function () { showTip(svg, model); });
+      svg.appendChild(slice);
+      offset += num(model.billed) / total * C;
+    });
+    var centre = document.createElementNS(NS, 'text');
+    centre.setAttribute('class', 'k'); centre.setAttribute('text-anchor', 'middle');
+    centre.setAttribute('x', SIZE / 2); centre.setAttribute('y', SIZE / 2 - 2);
+    centre.textContent = drawn.length ? fmt(total) : '\u2014';
+    svg.appendChild(centre);
+    var unit = document.createElementNS(NS, 'text');
+    unit.setAttribute('class', 'u'); unit.setAttribute('text-anchor', 'middle');
+    unit.setAttribute('x', SIZE / 2); unit.setAttribute('y', SIZE / 2 + 16);
+    unit.textContent = drawn.length ? 'tokens' : 'no report';
+    svg.appendChild(unit);
+    return { svg: svg, total: total };
+  }
+
+  // The detail panel: every field the provider sent, absence as words.
+  function detail(model, total) {
+    var box = el('div', 'tip');
+    box.appendChild(el('h3', null, model.model));
+    var dl = el('dl');
+    function line(term, value, bold) {
+      dl.appendChild(el('dt', null, term));
+      var dd = el('dd');
+      if (value === null || value === undefined) {
+        dd.innerHTML = '<span class="none">not reported</span>';
+      } else if (bold) {
+        dd.innerHTML = '<b>' + value + '</b>';
+      } else {
+        dd.textContent = String(value);
+      }
+      dl.appendChild(dd);
+    }
+    line('calls', comma(num(model.calls)) + ' \u00b7 ' + comma(num(model.accounted)) + ' reported');
+    line('prompt', num(model.accounted) ? fmt(num(model.prompt)) : null);
+    line('completion', num(model.accounted) ? fmt(num(model.completion)) : null);
+    line('billed', num(model.accounted) ? fmt(num(model.billed)) : null, true);
+    line('provider total', model.provider_total == null ? null : fmt(num(model.provider_total)));
+    line('cache read', model.cache_read == null ? null :
+      fmt(num(model.cache_read)) + ' (' + (share(num(model.cache_read), num(model.prompt)) || '0%') + ' of prompt)');
+    line('cache write', model.cache_creation == null ? null : fmt(num(model.cache_creation)));
+    line('reasoning', model.reasoning == null ? null : fmt(num(model.reasoning)));
+    line('share of project', num(model.accounted) ? (share(num(model.billed), total) || '0%') : null);
+    if (model.provider_total_differs) {
+      line('the provider\u2019s total', 'differs from prompt + completion');
+    }
+    box.appendChild(dl);
+    return box;
+  }
+
+  // One open tip at a time, inside the card whose slice or row was touched.
+  function showTip(scope, model) {
+    var card = scope.closest('.card');
+    if (!card) return;
+    var current = card.querySelector('.tip');
+    var total = Number(card.dataset.billed || 0);
+    var next = detail(model, total);
+    next.classList.add('open');
+    if (current) card.replaceChild(next, current);
+    else card.insertBefore(next, card.querySelector('.legend'));
+    card.querySelectorAll('.row').forEach(function (row) {
+      row.setAttribute('aria-expanded', row.dataset.model === model.model ? 'true' : 'false');
+    });
+  }
+
+  // ------------------------------------------------------------------ the card
+  function projectCard(project, windowDays) {
+    var models = arr(project.models);
+    var card = el('article', 'card');
+    var drawn = models.filter(function (one) { return num(one.accounted) > 0 && num(one.billed) > 0; });
+    card.style.setProperty('--accent', drawn.length ? colourOf(drawn[0].model) : '#5d6b80');
+    card.dataset.billed = String(project.totals ? num(project.totals.billed) : 0);
+
+    var head = el('div', 'card-head');
+    head.appendChild(el('b', null, project.name || 'unnamed project'));
+    var path = el('span', 'path', project.project || '');
+    path.title = project.project || '';
+    head.appendChild(path);
+    if (project.inferred) {
+      var inferred = el('span', 'inferred', 'inferred');
+      inferred.title = 'the start record names no workspace \u2014 the project is inferred from the log\u2019s paths';
+      head.appendChild(inferred);
+    }
+    head.appendChild(el('span', 'window', (windowDays || 14) + ' days'));
+    card.appendChild(head);
+
+    var row = el('div', 'donut-row');
+    var ring = donut(models, card.style.getPropertyValue('--accent'));
+    row.appendChild(ring.svg);
+    card.appendChild(row);
+
+    var totals = project.totals || {};
+    var caption = el('p', 'caption');
+    caption.innerHTML = '<b>' + comma(num(totals.accounted)) + '</b> of <b>' +
+      comma(num(totals.calls)) + '</b> calls reported tokens';
+    card.appendChild(caption);
+
+    if (drawn.length) card.appendChild(detail(drawn[0], ring.total));
+
+    var legend = el('div', 'legend');
+    models.forEach(function (model) {
+      var button = el('button', 'row' + (num(model.accounted) ? '' : ' noreport'));
+      button.type = 'button';
+      button.dataset.model = model.model;
+      button.setAttribute('aria-expanded', 'false');
+      var sw = el('span', 'sw' + (num(model.accounted) ? '' : ' none'));
+      sw.style.setProperty('--sw', num(model.accounted) ? colourOf(model.model) : 'transparent');
+      button.appendChild(sw);
+      button.appendChild(el('span', 'm', model.model));
+      button.appendChild(el('span', 'n', num(model.accounted) ? fmt(num(model.billed)) : 'no token report'));
+      button.appendChild(el('span', 's', num(model.accounted) ? (share(num(model.billed), ring.total) || '\u2014') : '\u2014'));
+      function open() { showTip(button, model); }
+      button.addEventListener('click', open);
+      button.addEventListener('mouseenter', open);
+      button.addEventListener('focus', open);
+      legend.appendChild(button);
+    });
+    card.appendChild(legend);
+    return card;
+  }
+
+  // ------------------------------------------------------------------ the page
+  function say(where, text, bad) {
+    where.textContent = '';
+    var one = el('p', 'foot');
+    one.textContent = text;
+    if (bad) one.style.color = '#ff8f8f';
+    where.appendChild(one);
+  }
+
+  function render(doc) {
+    var cards = document.getElementById('cards');
+    var buckets = document.getElementById('buckets');
+    var rows = document.getElementById('bucket-rows');
+    var strip = document.getElementById('strip');
+    cards.textContent = '';
+    rows.textContent = '';
+    strip.textContent = '';
+    buckets.hidden = true;
+
+    var projects = arr(doc.projects).filter(function (one) { return !one.bucket; });
+    var unclaimed = arr(doc.projects).filter(function (one) { return !!one.bucket; });
+    paintColours(arr(doc.projects));
+
+    var billed = 0, calls = 0, accounted = 0;
+    arr(doc.projects).forEach(function (project) {
+      billed += num(project.totals && project.totals.billed);
+      calls += num(project.totals && project.totals.calls);
+      accounted += num(project.totals && project.totals.accounted);
+    });
+    function chip(value, label) {
+      var span = el('span');
+      span.appendChild(el('b', null, value));
+      span.appendChild(document.createTextNode(' ' + label));
+      strip.appendChild(span);
+    }
+    chip(fmt(billed) || '0', 'reported tokens');
+    chip(comma(projects.length), projects.length === 1 ? 'project' : 'projects');
+    chip(comma(calls), 'calls');
+    chip(comma(num(doc.window_days) || 14), 'days');
+    var end = el('span', 'end', 'a slice is a model; the centre is the project\u2019s reported total');
+    strip.appendChild(end);
+
+    if (!arr(doc.projects).length) {
+      say(cards, 'No route rows in the last ' + (num(doc.window_days) || 14) +
+        ' days carry a project yet. Rows written before routes named their session are counted in the bucket strip as they appear.');
+      return;
+    }
+    projects.forEach(function (project) { cards.appendChild(projectCard(project, num(doc.window_days))); });
+
+    if (unclaimed.length) {
+      buckets.hidden = false;
+      unclaimed.forEach(function (project) {
+        var span = el('span');
+        span.appendChild(el('i', null, comma(num(project.totals && project.totals.calls))));
+        span.appendChild(document.createTextNode(' calls '));
+        span.appendChild(el('b', null, project.bucket));
+        span.appendChild(document.createTextNode(' \u2014 ' + (project.says || '')));
+        rows.appendChild(span);
+      });
+    }
+  }
+
+  function boot() {
+    var cards = document.getElementById('cards');
+    cards.textContent = '';
+    say(cards, 'reading the cache document\u2026');
+    ask(QUERY).then(function (result) {
+      if (!result.ok) {
+        cards.textContent = '';
+        var words = arr(result.refused).filter(Boolean);
+        say(cards, words.length ? words.join(' \u00b7 ') :
+          'the face did not answer `' + QUERY + '` and gave no reason');
+        var again = el('button', 'replay-button', 'ask again');
+        again.type = 'button';
+        again.style.marginTop = '10px';
+        again.addEventListener('click', boot);
+        cards.appendChild(again);
+        return;
+      }
+      render(result.answer || {});
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>

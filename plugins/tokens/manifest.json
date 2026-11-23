@@ -1,0 +1,8 @@
+{
+  "name": "tokens",
+  "tier": "untrusted",
+  "version": "1.0.0",
+  "entry": { "group": "system", "label": "tokens" },
+  "queries": ["cache"],
+  "provenance": "creator:fleet repo · plugins/tokens"
+}

@@ -5266,7 +5266,16 @@ impl Bridge {
         let home = self.home.clone();
         let user_home = std::env::var("HOME").ok();
         let root = crate::calib::resolve_root(&home, user_home.as_deref());
-        crate::cache_report::read_document(&root, crate::cache_report::WINDOW_DAYS)
+        // The project dimension: each route row names its conversation, and
+        // the conversation's own Start record names the folder it was born in
+        // — the same fact the rail groups by. One small read per distinct
+        // session in the window, never a guessed path.
+        let lookup = |session: &str| crate::session::workspace_of(&home, session);
+        crate::cache_report::read_document_with(
+            &root,
+            crate::cache_report::WINDOW_DAYS,
+            Some(&lookup),
+        )
     }
 
     /// Record one counter and answer with the whole document, so the

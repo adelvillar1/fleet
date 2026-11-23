@@ -704,6 +704,66 @@ pub struct Session {
     kind: Option<String>,
 }
 
+/// The project a session is scoped to, as the archive itself resolves it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceFact {
+    /// The workspace path the session was born in; `None` for a session whose
+    /// Start record names none and whose paths name no project either.
+    pub path: Option<String>,
+    /// True when the path was inferred from the log's own paths (a log written
+    /// before the Start record carried a workspace) — the same flag the
+    /// archive's summaries carry, so a surface can say where it came from.
+    pub inferred: bool,
+}
+
+/// The project one session is scoped to (KI-560's sibling): the Start
+/// record's own `workspace`, or — for a log written before that field
+/// existed — the first project its paths name, marked inferred. `None` when
+/// the log is not in the archive (or its first line is not a Start record);
+/// `Some` with no path when the session was born unbound.
+///
+/// The first line is cheap; the inference (only for a log without the field)
+/// reads at most the same 256 KB head the summary reader uses, never the
+/// whole file.
+pub fn workspace_of(home: &Path, session: &str) -> Option<WorkspaceFact> {
+    use std::io::{BufRead, Read};
+    let path = session_path(home, session);
+    let handle = std::fs::File::open(&path).ok()?;
+    let mut first = String::new();
+    let mut reader = std::io::BufReader::new(handle);
+    reader.read_line(&mut first).ok()?;
+    let start = serde_json::from_str::<Record>(first.trim()).ok()?;
+    let workspace = match start {
+        Record::Start { workspace, .. } => workspace,
+        _ => return None,
+    };
+    match workspace {
+        Some(workspace) => Some(WorkspaceFact {
+            path: Some(workspace),
+            inferred: false,
+        }),
+        None => {
+            const HEAD: u64 = 256 * 1024;
+            let mut head = String::new();
+            std::fs::File::open(&path)
+                .ok()?
+                .take(HEAD)
+                .read_to_string(&mut head)
+                .ok()?;
+            Some(match infer_project(&head) {
+                Some(path) => WorkspaceFact {
+                    path: Some(path),
+                    inferred: true,
+                },
+                None => WorkspaceFact {
+                    path: None,
+                    inferred: false,
+                },
+            })
+        }
+    }
+}
+
 /// The personas a session's Start record carries, read from the log's
 /// first record only — the route preparation reads this per run, and a
 /// full replay to learn who leads would walk the whole archive line.
@@ -2525,6 +2585,64 @@ mod tests {
         let listed = list(&home).unwrap();
         assert_eq!(listed.len(), 1, "{listed:?}");
         assert_eq!(listed[0].workspace.as_deref(), Some(expected.as_str()));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// The tokens-by-project plan's C2: the project a session is scoped to,
+    /// read the way the archive reads it — the Start record's own workspace,
+    /// or an inference (marked) for a log written before that field existed.
+    /// A missing log is no fact at all; a born-unbound session is a fact
+    /// with no path.
+    #[test]
+    fn the_workspace_fact_reads_the_start_record_and_marks_inference() {
+        let home = temp_home("workspace-fact");
+        std::fs::create_dir_all(crate::home::sessions_dir(&home)).unwrap();
+        let start = |workspace: Option<&str>| Record::Start {
+            v: 3,
+            model: "deepseek-flash".into(),
+            created: "2026-11-23T00:00:00Z".into(),
+            kind: None,
+            parent: None,
+            workspace: workspace.map(str::to_string),
+            personas: None,
+            principal: None,
+        };
+        let write = |id: &str, records: &[Record]| {
+            let text: String = records
+                .iter()
+                .map(|one| serde_json::to_string(one).unwrap() + "\n")
+                .collect();
+            std::fs::write(session_path(&home, id), text).unwrap();
+        };
+        write("born", &[start(Some("/Users/x/Projects/alpha"))]);
+        assert_eq!(
+            workspace_of(&home, "born"),
+            Some(WorkspaceFact {
+                path: Some("/Users/x/Projects/alpha".to_string()),
+                inferred: false,
+            })
+        );
+        write(
+            "inferred",
+            &[
+                start(None),
+                Record::User {
+                    content: "look at /Users/x/Projects/beta/src/main.rs".into(),
+                },
+            ],
+        );
+        let fact = workspace_of(&home, "inferred").expect("the log is in the archive");
+        assert!(fact.inferred, "{fact:?}");
+        assert_eq!(fact.path.as_deref(), Some("/Users/x/Projects/beta"));
+        write("unbound", &[start(None)]);
+        assert_eq!(
+            workspace_of(&home, "unbound"),
+            Some(WorkspaceFact {
+                path: None,
+                inferred: false,
+            })
+        );
+        assert!(workspace_of(&home, "no-such-log").is_none());
         fs::remove_dir_all(&home).ok();
     }
 

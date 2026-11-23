@@ -34,6 +34,12 @@ pub const WINDOW_DAYS: usize = 14;
 /// percentile of three calls is a number, not a measurement.
 pub const LATENCY_FLOOR: usize = 4;
 
+/// A caller's resolution of one session to its project: `None` when the log is
+/// not in the archive, `Some` with a workspace (or none, for a session born
+/// unbound). The bridge supplies [`crate::session::workspace_of`]; tests supply
+/// a map.
+pub type WorkspaceLookup<'a> = dyn Fn(&str) -> Option<crate::session::WorkspaceFact> + 'a;
+
 /// One model's account across the window.
 #[derive(Debug, Default, Clone)]
 struct Ledger {
@@ -52,6 +58,18 @@ struct Ledger {
     /// Cache-read tokens (a subset of `reporting_prompt`).
     cache_read: u64,
     completion: u64,
+    /// Tokens the provider wrote into its cache, over the rows that
+    /// reported the field at all — absence is never zero.
+    cache_creation: u64,
+    creation_reported: u64,
+    /// Reasoning tokens, over the rows that reported them.
+    reasoning: u64,
+    reasoning_reported: u64,
+    /// The provider's own `total_tokens`, over the rows that reported a
+    /// non-zero one. Carried so a provider whose total disagrees with
+    /// prompt + completion is named, never silently reconciled.
+    provider_total: u64,
+    total_reported: u64,
     /// Reporting rows that actually read from cache.
     shared_calls: u64,
     /// (cached, fresh) route latencies in ms, for the split.
@@ -181,6 +199,18 @@ impl Account {
                 ledger.fresh_ms.push(row.latency_ms);
             }
         }
+        if let Some(creation) = usage.cache_creation_tokens {
+            ledger.creation_reported += 1;
+            ledger.cache_creation += creation;
+        }
+        if let Some(reasoning) = usage.reasoning_tokens {
+            ledger.reasoning_reported += 1;
+            ledger.reasoning += reasoning;
+        }
+        if usage.total_tokens > 0 {
+            ledger.total_reported += 1;
+            ledger.provider_total += usage.total_tokens;
+        }
     }
 
     /// Render the account as the instrument's document.
@@ -260,13 +290,271 @@ impl Account {
     }
 }
 
+/// The project a route row belongs to, as the session archive resolves it —
+/// or the honest bucket when it cannot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProjectKey {
+    Project {
+        path: String,
+        inferred: bool,
+    },
+    /// A row with no session on it: written before rows named their
+    /// conversation, or a run prepared without one (cron, a one-shot CLI,
+    /// an onboarding probe).
+    Unattributed,
+    /// The session exists and its Start record (and its own paths) name no
+    /// workspace.
+    Unbound,
+    /// The session id is on the row and the log is no longer in the archive.
+    UnknownSession,
+}
+
+impl ProjectKey {
+    fn bucket(&self) -> Option<&'static str> {
+        match self {
+            ProjectKey::Project { .. } => None,
+            ProjectKey::Unattributed => Some("unattributed"),
+            ProjectKey::Unbound => Some("unbound"),
+            ProjectKey::UnknownSession => Some("unknown session"),
+        }
+    }
+
+    /// The host's own sentence for a bucket, so every surface says the same
+    /// thing about the calls no project can claim.
+    fn says(&self) -> Option<&'static str> {
+        match self {
+            ProjectKey::Project { .. } => None,
+            ProjectKey::Unattributed => Some("rows written before routes named their session"),
+            ProjectKey::Unbound => Some("the session exists and has no workspace"),
+            ProjectKey::UnknownSession => Some("the session's log is no longer in the archive"),
+        }
+    }
+
+    fn path(&self) -> Option<&str> {
+        match self {
+            ProjectKey::Project { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
+    /// The label a card shows: the project folder's own name.
+    fn name(&self) -> Option<String> {
+        self.path().map(|path| {
+            path.trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(path)
+                .to_string()
+        })
+    }
+
+    fn inferred(&self) -> bool {
+        matches!(self, ProjectKey::Project { inferred: true, .. })
+    }
+
+    /// The bucket's fixed place after the real projects — unattributed,
+    /// unbound, unknown session, in that order, never ranked against each
+    /// other by volume.
+    fn order(&self) -> (u8, u8) {
+        match self {
+            ProjectKey::Project { .. } => (0, 0),
+            ProjectKey::Unattributed => (1, 0),
+            ProjectKey::Unbound => (1, 1),
+            ProjectKey::UnknownSession => (1, 2),
+        }
+    }
+}
+
+impl Account {
+    /// One project's token view: its models by billed tokens, and the totals
+    /// the card's centre carries. Cache fields stay `null` when no row in the
+    /// group reported them — a provider that never reports is not a provider
+    /// that reported zero.
+    fn project_json(self, key: &ProjectKey) -> Value {
+        let mut ledgers = self.ledgers;
+        ledgers.sort_by(|a, b| {
+            (b.prompt + b.completion)
+                .cmp(&(a.prompt + a.completion))
+                .then_with(|| a.model.to_lowercase().cmp(&b.model.to_lowercase()))
+        });
+        let billed = |one: &Ledger| one.prompt.saturating_add(one.completion);
+        let models: Vec<Value> = ledgers
+            .iter()
+            .map(|ledger| {
+                let total = ledger.prompt.saturating_add(ledger.completion);
+                json!({
+                    "provider": ledger.provider,
+                    "model": ledger.model,
+                    "calls": ledger.calls,
+                    "accounted": ledger.accounted,
+                    "prompt": ledger.prompt,
+                    "completion": ledger.completion,
+                    "billed": total,
+                    "cache_read": (ledger.reported > 0).then_some(ledger.cache_read),
+                    "cache_creation": (ledger.creation_reported > 0)
+                        .then_some(ledger.cache_creation),
+                    "reasoning": (ledger.reasoning_reported > 0)
+                        .then_some(ledger.reasoning),
+                    "provider_total": (ledger.total_reported > 0)
+                        .then_some(ledger.provider_total),
+                    "provider_total_differs": ledger.total_reported > 0
+                        && ledger.provider_total != total,
+                    "last_at": ledger.last_at,
+                })
+            })
+            .collect();
+        let sum = |f: &dyn Fn(&Ledger) -> u64| ledgers.iter().map(f).sum::<u64>();
+        let total_calls = sum(&|one| one.calls);
+        let total_accounted = sum(&|one| one.accounted);
+        let total_billed: u64 = ledgers.iter().map(billed).sum();
+        let cache_read = ledgers
+            .iter()
+            .any(|one| one.reported > 0)
+            .then(|| sum(&|one| one.cache_read));
+        let cache_creation = ledgers
+            .iter()
+            .any(|one| one.creation_reported > 0)
+            .then(|| sum(&|one| one.cache_creation));
+        let reasoning = ledgers
+            .iter()
+            .any(|one| one.reasoning_reported > 0)
+            .then(|| sum(&|one| one.reasoning));
+        let provider_total = ledgers
+            .iter()
+            .any(|one| one.total_reported > 0)
+            .then(|| sum(&|one| one.provider_total));
+        json!({
+            "project": key.path(),
+            "name": key.name(),
+            "bucket": key.bucket(),
+            "says": key.says(),
+            "inferred": key.inferred(),
+            "models": models,
+            "totals": {
+                "calls": total_calls,
+                "accounted": total_accounted,
+                "prompt": sum(&|one| one.prompt),
+                "completion": sum(&|one| one.completion),
+                "billed": total_billed,
+                "cache_read": cache_read,
+                "cache_creation": cache_creation,
+                "reasoning": reasoning,
+                "provider_total": provider_total,
+                "provider_total_differs": ledgers.iter().any(|one| {
+                    one.total_reported > 0 && one.provider_total != billed(one)
+                }),
+                "models": ledgers.len(),
+            },
+        })
+    }
+}
+
+/// The running document: the model-wide account (the cache plugin's contract),
+/// and — when the caller can resolve a session to its project — one account per
+/// project. One walk feeds both, so the two views cannot disagree about a row.
+struct Builder<'a> {
+    account: Account,
+    projects: Vec<(ProjectKey, Account)>,
+    by_session: std::collections::HashMap<String, ProjectKey>,
+    workspace_of: Option<&'a WorkspaceLookup<'a>>,
+}
+
+impl<'a> Builder<'a> {
+    fn new(workspace_of: Option<&'a WorkspaceLookup<'a>>) -> Self {
+        Builder {
+            account: Account::default(),
+            projects: Vec::new(),
+            by_session: std::collections::HashMap::new(),
+            workspace_of,
+        }
+    }
+
+    fn key_for(&mut self, session: &str) -> ProjectKey {
+        if session.is_empty() {
+            return ProjectKey::Unattributed;
+        }
+        if let Some(key) = self.by_session.get(session) {
+            return key.clone();
+        }
+        let Some(lookup) = self.workspace_of else {
+            return ProjectKey::UnknownSession;
+        };
+        let key = match lookup(session) {
+            None => ProjectKey::UnknownSession,
+            Some(fact) => match fact.path {
+                Some(path) => ProjectKey::Project {
+                    path,
+                    inferred: fact.inferred,
+                },
+                None => ProjectKey::Unbound,
+            },
+        };
+        self.by_session.insert(session.to_string(), key.clone());
+        key
+    }
+
+    fn add(&mut self, row: &ReadRow) {
+        self.account.add(row);
+        if self.workspace_of.is_none() {
+            return;
+        }
+        let key = self.key_for(&row.session);
+        let index = match self.projects.iter().position(|(one, _)| *one == key) {
+            Some(index) => index,
+            None => {
+                self.projects.push((key, Account::default()));
+                self.projects.len() - 1
+            }
+        };
+        self.projects[index].1.add(row);
+    }
+
+    fn finish(mut self, window_days: usize) -> Value {
+        let mut doc = self.account.finish(window_days);
+        let mut projects: Vec<(ProjectKey, Account)> = std::mem::take(&mut self.projects);
+        // The projects by billed tokens, the buckets after them in their own
+        // fixed order — a bucket is never ranked against a project.
+        projects.sort_by(|(a, aa), (b, bb)| {
+            a.order().cmp(&b.order()).then_with(|| {
+                let billed = |account: &Account| -> u64 {
+                    account
+                        .ledgers
+                        .iter()
+                        .map(|one| one.prompt.saturating_add(one.completion))
+                        .sum()
+                };
+                billed(bb)
+                    .cmp(&billed(aa))
+                    .then_with(|| a.path().unwrap_or("").cmp(b.path().unwrap_or("")))
+            })
+        });
+        let projects: Vec<Value> = projects
+            .into_iter()
+            .map(|(key, account)| account.project_json(&key))
+            .collect();
+        if let Value::Object(ref mut map) = doc {
+            map.insert("projects".to_string(), Value::Array(projects));
+        }
+        doc
+    }
+}
+
 /// The document over a slice of rows — the shape the tests drive.
 pub fn document(rows: &[ReadRow], window_days: usize) -> Value {
-    let mut account = Account::default();
+    document_with(rows, window_days, None)
+}
+
+/// The document with the project dimension, over a slice of rows.
+pub fn document_with(
+    rows: &[ReadRow],
+    window_days: usize,
+    workspace_of: Option<&WorkspaceLookup<'_>>,
+) -> Value {
+    let mut builder = Builder::new(workspace_of);
     for row in rows.iter().filter(|row| row.op == OP_ROUTE) {
-        account.add(row);
+        builder.add(row);
     }
-    account.finish(window_days)
+    builder.finish(window_days)
 }
 
 /// The document over the stream's newest `days` day-files, **streamed**:
@@ -275,8 +563,19 @@ pub fn document(rows: &[ReadRow], window_days: usize) -> Value {
 /// cache view wants every route row of the window, so it reads each file
 /// line by line and keeps only the account.
 pub fn read_document(root: &Path, days: usize) -> Value {
+    read_document_with(root, days, None)
+}
+
+/// The document over the stream's newest `days` day-files, with the project
+/// dimension resolved through `workspace_of` (one session-log read per distinct
+/// session in the window, memoised for the walk).
+pub fn read_document_with(
+    root: &Path,
+    days: usize,
+    workspace_of: Option<&WorkspaceLookup<'_>>,
+) -> Value {
     use std::io::BufRead;
-    let mut account = Account::default();
+    let mut builder = Builder::new(workspace_of);
     for file in crate::calib::day_files_recent(root, days) {
         let Ok(handle) = std::fs::File::open(&file) else {
             continue;
@@ -295,11 +594,11 @@ pub fn read_document(root: &Path, days: usize) -> Value {
                 continue;
             };
             if row.op == OP_ROUTE {
-                account.add(&row);
+                builder.add(&row);
             }
         }
     }
-    account.finish(days)
+    builder.finish(days)
 }
 
 #[cfg(test)]
@@ -327,6 +626,157 @@ mod tests {
             latency_ms: ms,
             ..ReadRow::default()
         }
+    }
+
+    /// The tokens-by-project plan's C2: one walk feeds both views; rows are
+    /// grouped by the project their session was born in, and the calls no
+    /// session can claim are their own named buckets — never guessed, never
+    /// merged. The provider's own total is carried, and a disagreement with
+    /// prompt + completion is a flag, not a silent reconciliation.
+    #[test]
+    fn the_projects_group_by_the_sessions_workspace_and_name_their_buckets() {
+        fn row_in(
+            ts: &str,
+            provider: &str,
+            model: &str,
+            usage: Option<Usage>,
+            ms: u64,
+            session: &str,
+        ) -> ReadRow {
+            let mut one = row(ts, provider, model, usage, ms);
+            one.session = session.to_string();
+            one
+        }
+        let mut mismatch = usage(200, Some(20));
+        mismatch.total_tokens = 999;
+        let rows = vec![
+            row_in(
+                "2026-11-20T10:00:00Z",
+                "p1",
+                "m1",
+                Some(usage(100, Some(10))),
+                100,
+                "s1",
+            ),
+            row_in(
+                "2026-11-20T11:00:00Z",
+                "p1",
+                "m1",
+                Some(usage(50, None)),
+                110,
+                "s2",
+            ),
+            row_in(
+                "2026-11-20T12:00:00Z",
+                "p2",
+                "m2",
+                Some(mismatch),
+                120,
+                "s3",
+            ),
+            row_in(
+                "2026-11-20T13:00:00Z",
+                "p1",
+                "m1",
+                Some(usage(30, None)),
+                130,
+                "",
+            ),
+            row_in(
+                "2026-11-20T14:00:00Z",
+                "p3",
+                "m3",
+                Some(usage(40, None)),
+                140,
+                "gone",
+            ),
+            row_in(
+                "2026-11-20T15:00:00Z",
+                "p4",
+                "m4",
+                Some(usage(60, None)),
+                150,
+                "s4",
+            ),
+        ];
+        let facts = [
+            ("s1", Some("/Users/x/Projects/alpha")),
+            ("s2", Some("/Users/x/Projects/alpha")),
+            ("s3", Some("/Users/x/Projects/beta")),
+            ("s4", None),
+        ];
+        let lookup = |id: &str| {
+            facts.iter().find(|(one, _)| *one == id).map(|(_, path)| {
+                crate::session::WorkspaceFact {
+                    path: path.map(str::to_string),
+                    inferred: false,
+                }
+            })
+        };
+        let doc = document_with(&rows, 14, Some(&lookup));
+        let projects = doc["projects"].as_array().expect("projects");
+        assert_eq!(projects.len(), 5, "{projects:?}");
+        // The two real projects first (by billed tokens: beta's 210 over
+        // alpha's 170); then the buckets in their fixed order.
+        assert_eq!(projects[0]["name"], "beta");
+        assert_eq!(projects[1]["name"], "alpha");
+        assert_eq!(projects[2]["bucket"], "unattributed");
+        assert_eq!(
+            projects[2]["says"],
+            "rows written before routes named their session"
+        );
+        assert_eq!(projects[3]["bucket"], "unbound");
+        assert_eq!(projects[4]["bucket"], "unknown session");
+        assert_eq!(projects[2]["project"], Value::Null);
+        assert_eq!(projects[2]["name"], Value::Null);
+
+        // One project, two sessions, one model row — a session is never a row.
+        let alpha = projects
+            .iter()
+            .find(|one| one["name"] == "alpha")
+            .expect("alpha");
+        assert_eq!(alpha["inferred"], false);
+        assert_eq!(alpha["models"].as_array().expect("models").len(), 1);
+        let model = &alpha["models"][0];
+        assert_eq!(model["model"], "m1");
+        assert_eq!(model["calls"], 2);
+        assert_eq!(model["accounted"], 2);
+        assert_eq!(model["prompt"], 150);
+        assert_eq!(model["completion"], 20);
+        assert_eq!(model["billed"], 170);
+        // Cache read: only the reporting row's 10 — absence is not zero, and
+        // the unreported fields stay null.
+        assert_eq!(model["cache_read"], 10);
+        assert_eq!(model["cache_creation"], Value::Null);
+        assert_eq!(model["reasoning"], Value::Null);
+        assert_eq!(model["provider_total"], 170);
+        assert_eq!(model["provider_total_differs"], false);
+        assert_eq!(alpha["totals"]["calls"], 2);
+        assert_eq!(alpha["totals"]["billed"], 170);
+        assert_eq!(alpha["totals"]["cache_read"], 10);
+
+        // The provider's own total disagreeing with prompt + completion is a
+        // flag on the row and on the project.
+        let beta = projects
+            .iter()
+            .find(|one| one["name"] == "beta")
+            .expect("beta");
+        assert_eq!(beta["models"][0]["provider_total"], 999);
+        assert_eq!(beta["models"][0]["provider_total_differs"], true);
+        assert_eq!(beta["totals"]["provider_total"], 999);
+        assert_eq!(beta["totals"]["provider_total_differs"], true);
+
+        // A bucket's model with no cache report anywhere: null, never 0.
+        assert_eq!(projects[3]["models"][0]["cache_read"], Value::Null);
+        // The model-wide view is untouched: every row is still there.
+        let models = doc["models"].as_array().expect("models");
+        assert_eq!(models.len(), 4, "{models:?}");
+        assert_eq!(doc["totals"]["calls"], 6);
+
+        // Without a lookup the project dimension is simply absent — the cache
+        // plugin's own contract.
+        let plain = document(&rows, 14);
+        assert_eq!(plain["projects"].as_array().expect("projects").len(), 0);
     }
 
     #[test]

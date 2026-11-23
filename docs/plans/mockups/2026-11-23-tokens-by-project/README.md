@@ -35,6 +35,11 @@ project cards:
 The fixture is labelled as a fixture on the page: its numbers show the shape and the
 honesty rules, not the live archive.
 
+`png/bundle-1440.png` is the **shipped bundle's own render** (`plugins/tokens/`)
+against a document fixture through a stubbed host — the detail panel open on a
+legend row (`reasoning: not reported`), the `inferred` tag on a project whose
+workspace the archive inferred, and the three buckets in the strip.
+
 ## Measured (WebKit)
 
 | Capture | Viewport | Facts |
@@ -58,11 +63,13 @@ computed row heights).
    instrument already uses; cache read is a subset of the prompt, never an addition.
 4. **Absence is words** — a field the provider did not report says "not reported".
 
-## What the gate still decides
+## Approved 2026-11-23 — and built as drawn
 
-1. **Card density and order at 1440 / 820 / 390** — this draws three across, two,
-   one, ordered by billed tokens descending.
-2. **The buckets' housing** — a footnote strip (drawn) or three cards of their own.
+The owner ordered the build from this drawing, so the two questions above stand as
+drawn: **three cards across / two / one, ordered by billed tokens descending**, and
+**the three buckets as one footnote strip**. The bundle lives at `plugins/tokens/`
+(see the plan `2026-11-23-tokens-by-project-plugin.md`); the screen is the same
+card, driven by the `cache` document's `projects`.
 
 ## On approval, the implementation is small and named
 

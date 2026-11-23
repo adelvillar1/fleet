@@ -249,3 +249,37 @@ pub fn render(report: &Report) -> String {
     ));
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The repo's own `tokens` bundle: its manifest, its sweep, its asset,
+    /// and the one query it declares — answered through the bridge's
+    /// enforcement, not asserted. An undeclared query still refuses by name,
+    /// so the sandbox's set stays the boundary.
+    #[tokio::test]
+    async fn the_tokens_bundle_passes_both_passes_and_answers_only_its_query() {
+        let home = std::env::temp_dir().join(format!("fleet-tokens-eval-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/tokens");
+        let dir = crate::plugins::face::plugin_dir(&home, "tokens");
+        std::fs::create_dir_all(&dir).unwrap();
+        for entry in std::fs::read_dir(&repo).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), dir.join(entry.file_name())).unwrap();
+        }
+        let static_report = static_pass(&home, "tokens");
+        assert!(static_report.passed(), "{static_report:?}");
+        let (bridge, _sources) =
+            crate::gui::bridge::Bridge::detached(home.clone(), "test-model".to_string(), None);
+        let declared = declared_pass(&bridge, &home, "tokens").await;
+        assert!(declared.passed(), "{declared:?}");
+        assert!(bridge.plugin_query("tokens", "cache").await.is_ok());
+        let refused = bridge.plugin_query("tokens", "state").await;
+        let why = refused.expect_err("an undeclared query refuses");
+        assert!(why.contains("state"), "the refusal names the query: {why}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}

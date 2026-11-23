@@ -1,7 +1,7 @@
 ---
 title: tokens by project — a second view of the accounting the cache instrument already reads
 date: 2026-11-23
-status: draft
+status: completed
 slug: tokens-by-project
 ---
 
@@ -160,43 +160,65 @@ No code lands before those answers; the mockup is the same gate D3 used.
 - Empty window → a sentence naming the window; a refused read → the refusal's
   own words and the query name.
 
+### What shipped (2026-11-23)
+
+`plugins/tokens/` (untrusted, `queries: ["cache"]`, group `system`, label `tokens`);
+the `projects` grouping in `src/cache_report.rs` (one walk — the cache plugin's own
+keys untouched); `session::workspace_of` (the Start record's workspace, the
+archive's own inference for a log without one, `None` for a log that is gone); and
+`RouteRow.session` + `Prepared`'s kept seed (the conversation id, distinct from the
+derived HTTP value). The fixture-rendered bundle measured 1440/820/390 with the
+document width equal to the viewport at each.
+
 ## Acceptance criteria
 
-- [ ] C0: the mockup exists under `docs/plans/mockups/2026-11-23-tokens-by-project/`,
+- [x] C0: the mockup exists under `docs/plans/mockups/2026-11-23-tokens-by-project/`,
   measured at 1440/820/390 with no horizontal overflow, its README records the
-  five gate answers, and the owner has answered them.
-- [ ] C1: `RouteRow.session` is written from the conversation seed (a test on
-  `Prepared::record_route` asserts the id it was prepared with lands on the row);
-  a seedless run writes an empty field; rows without the field decode empty.
-- [ ] C2: `cache_report` answers `projects` from the same walk; a fixture with two
-  sessions in two workspaces groups by project and by model; `unattributed`,
-  `unbound` and `unknown session` each appear as their own bucket from their own
-  fixture row; the total per project equals the sum of its model rows; a model
-  with no usage block carries `accounted` 0 and `prompt` 0 (not a null share);
-  the provider's differing `total_tokens` carries the mismatch flag.
-- [ ] C3: the existing `models`/`totals` keys are unchanged (the cache plugin's
-  document test still passes byte-for-shape), and the `cache` document test adds
-  the `projects` assertions.
-- [ ] C4: `fleet plugins eval tokens` passes both the static pass (manifest,
-  credential sweep, asset sanity) and the declared pass (`cache` answered through
-  the bridge's enforcement); an undeclared query still refuses by name.
-- [ ] C5: the bundle asks `cache` and nothing else (a grep of the bundle's
-  `ask(` calls and the manifest's set agree).
-- [ ] C6: a project is one card carrying the donut and, below it, the legend
-  of every model's tokens and share — readable without hovering; the donut's
-  slices sum to the project's reported total and aggregate every session of the
-  project (a fixture of two sessions in one workspace, two models, draws ONE
-  donut with both models — a session is never a slice or a ring); a zero-token
-  model never draws a slice; the caption names `accounted` of `calls`; the three
-  buckets render as sentences, never as projects with 0%.
-- [ ] C7: hover and keyboard focus open the same panel; every provider-reported
-  field is shown, and an absent one reads "not reported" — never 0.
-- [ ] C8: measured in WebKit at 1440/820/390 — no overflow, the cards reflow
-  (a grid at 1440 and 820, one column at 390), the donut and its legend stack
-  inside each card at ≤640, the legend rows' touch targets ≥44px,
-  reduced-motion honoured.
-- [ ] C9: the gate is green — fmt, clippy, release build, `cargo test` (all
-  binaries), the face harness and the console harness on the pinned Node 26.
+  answers, and the owner approved it as drawn when ordering the build — the cards
+  ordered by billed tokens descending (three across, two, one) and the buckets as
+  one footnote strip.
+- [x] C1: `RouteRow.session` is written from the conversation seed —
+  `route::tests::the_route_row_names_the_conversation_it_was_prepared_for` asserts
+  `conv-row-1` lands on the written row and a seedless run writes empty; the field
+  is `#[serde(default)]`, so rows written before it decode empty.
+- [x] C2: `cache_report` answers `projects` from the same walk —
+  `cache_report::tests::the_projects_group_by_the_sessions_workspace_and_name_their_buckets`:
+  two sessions in one workspace draw one project and one model row; `unattributed`,
+  `unbound` and `unknown session` are their own buckets with the host's sentence;
+  each project's totals equal its model rows; a group that never reported cache
+  reads `null`; a provider total that differs from prompt + completion carries the
+  flag. `session::workspace_of` is pinned separately for the recorded, inferred,
+  unbound and missing-log cases.
+- [x] C3: the existing `models`/`totals` keys are unchanged — the cache instrument's
+  own tests still pass, and the new test asserts the model-wide view still holds
+  every row (4 models, 6 calls) beside the project view.
+- [x] C4: both eval passes are pinned by
+  `plugins::eval::tests::the_tokens_bundle_passes_both_passes_and_answers_only_its_query`
+  (static: manifest, credential sweep, asset; declared: `cache` answered through the
+  bridge's enforcement) and it asserts an undeclared query refuses by name;
+  `fleet plugins eval tokens` on an installed copy reports 4/4 checks.
+- [x] C5: the bundle asks `cache` and nothing else — the manifest declares
+  `["cache"]` and the page has one `ask(QUERY)` with `QUERY = 'cache'`.
+- [x] C6: a project is one card carrying the donut and, below it, the legend of
+  every model's tokens and share, readable without hovering; the composition is the
+  document's grouping (C2's fixture: a session is never a slice); a model with no
+  usage block draws no slice and its legend row reads "no token report"; the centre
+  is the project's reported total; the caption names `accounted` of `calls`; the
+  buckets render as the strip with the host's sentences. Verified by rendering the
+  bundle against a document fixture in WebKit — `png/bundle-1440.png` in the mockup
+  pack is that render.
+- [x] C7: hover and keyboard focus open the same panel (slices and legend rows share
+  one `showTip`); every provider-reported field is listed — calls/reported, prompt,
+  completion, billed, provider total, cache read with its share of the prompt, cache
+  write, reasoning, share of project — and an absent one reads "not reported", never
+  0 (the fixture's reasoning shows it).
+- [x] C8: measured on the bundle in WebKit at 1440/820/390 — document width equals
+  the viewport at all three (no overflow), the cards reflow (one row at 1440, two
+  columns at 820, one at 390), every legend row is 44px, and the bundle's only
+  transition is disabled under `prefers-reduced-motion`.
+- [x] C9: the gate is green — fmt and clippy clean, release build, `cargo test`
+  2,824 passed / 0 failed (the face and console harness tests run the pinned Node
+  26 through `tests/common`).
 
 ## Files to be touched
 

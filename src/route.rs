@@ -3607,6 +3607,9 @@ impl Router {
         let ts = session::iso_utc_stamp(SystemTime::now()).unwrap_or_default();
         calib::RouteRow {
             ts,
+            // The caller stamps the conversation (Prepared::record_route); the
+            // builder knows only the route, so the field starts empty.
+            session: String::new(),
             provider,
             how: self.decision.how.label().to_string(),
             workload: self.decision.workload.clone(),
@@ -3974,14 +3977,23 @@ pub struct Prepared {
     /// the derivation passes through verbatim, so the conversation's
     /// affinity bucket survives everything but a new conversation.
     pub session_id: String,
+    /// The conversation seed this route was prepared for, when the caller had
+    /// one — the session log's id, distinct from the derived `session_id`
+    /// above. The route row carries it (KI-560's sibling: the accounting must
+    /// name its conversation so a surface can attribute it to the project the
+    /// session is scoped to).
+    pub session: Option<String>,
 }
 
 impl Prepared {
     /// Record this session's routing decision to the calibration stream,
     /// best-effort — a full queue drops the row, never the run.
     pub fn record_route(&self, task: &str) {
-        self.calib
-            .record(calib::Row::Route(self.router.row(task, self.latency_ms)));
+        let mut row = self.router.row(task, self.latency_ms);
+        // The conversation the row belongs to: the accounting's join to the
+        // project its session was born in. Absent seed, absent field.
+        row.session = self.session.clone().unwrap_or_default();
+        self.calib.record(calib::Row::Route(row));
     }
 }
 
@@ -4283,6 +4295,7 @@ async fn prepare_walk(
         latency_ms,
         calib,
         session_id,
+        session: session_seed.map(str::to_string),
     })
 }
 
@@ -5998,6 +6011,74 @@ mod tests {
             text.contains("one unrecoverable failure"),
             "the text names what it is: {text}"
         );
+    }
+
+    /// The tokens-by-project plan's C1: the route row names the
+    /// conversation it was prepared for, so the accounting can be
+    /// attributed to the project the session is scoped to. A seedless run
+    /// writes an empty field — a bucket, never a guessed project.
+    #[test]
+    fn the_route_row_names_the_conversation_it_was_prepared_for() {
+        fn write_one(tag: &str, session: Option<&str>) -> String {
+            let mut candidate = default_roster()
+                .into_iter()
+                .find(|c| c.id == "deepseek")
+                .unwrap();
+            candidate.key_required = false;
+            candidate.base_url = "http://127.0.0.1:1/v1".to_string();
+            let resolved = resolve(std::slice::from_ref(&candidate), &HashMap::new());
+            let decision = RouteDecision {
+                provider: "deepseek".to_string(),
+                model: "deepseek-model".to_string(),
+                how: How::Fallback,
+                workload: Some("standard_code".to_string()),
+                verdict: None,
+                execution: None,
+                reason: "test".to_string(),
+                walked: None,
+                judged_from: crate::route::JudgedFrom::None,
+                start_index: 0,
+                order: vec![("deepseek".to_string(), "deepseek-model".to_string())],
+            };
+            let router = std::sync::Arc::new(Router::new(resolved, decision.clone()));
+            let root = std::env::temp_dir()
+                .join(format!("fleet-route-session-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            let calib = crate::calib::Stream::open(root.clone());
+            let prepared = Prepared {
+                router,
+                decision,
+                latency_ms: 7,
+                calib,
+                session_id: "a-derived-http-session".to_string(),
+                session: session.map(str::to_string),
+            };
+            prepared.record_route("a task");
+            drop(prepared);
+            // The writer drains on the last handle's drop; read the day-file
+            // until the route row is there (bounded, never a silent sleep).
+            for _ in 0..400 {
+                for file in crate::calib::day_files_recent(&root, 1) {
+                    let Ok(text) = std::fs::read_to_string(&file) else {
+                        continue;
+                    };
+                    for line in text.lines() {
+                        let Ok(row) = serde_json::from_str::<crate::calib::ReadRow>(line) else {
+                            continue;
+                        };
+                        if row.op == crate::calib::OP_ROUTE {
+                            let _ = std::fs::remove_dir_all(&root);
+                            return row.session;
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            panic!("no route row landed in {root:?}");
+        }
+        assert_eq!(write_one("seeded", Some("conv-row-1")), "conv-row-1");
+        assert_eq!(write_one("seedless", None), "");
     }
 
     /// The failsafe plan's C5: an exhausted walk names every skipped

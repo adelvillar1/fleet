@@ -284,6 +284,7 @@ fn route_row_value(row: ReadRow) -> Row {
         .collect();
     Row::Route(calib::RouteRow {
         ts: row.ts,
+        session: String::new(),
         provider: row.provider,
         how: row.how,
         workload: (!row.workload.is_empty()).then_some(row.workload),

@@ -63,6 +63,14 @@ use crate::skills::wrap_detail;
 #[derive(Debug, Clone, Serialize)]
 pub struct RouteRow {
     pub ts: String,
+    /// The conversation this row belongs to — the session log's own id, so
+    /// the accounting can be attributed to the project the session is scoped
+    /// to (its Start record's workspace). Empty on rows written before the
+    /// field existed and on runs prepared without a conversation seed (cron,
+    /// a one-shot CLI task, an onboarding probe): those are not projects, and
+    /// a reader buckets them rather than guessing one.
+    #[serde(default)]
+    pub session: String,
     /// The candidate that served, or the selected one when none did.
     pub provider: String,
     /// `judged`, `fallback`, or `pinned`.
@@ -4504,6 +4512,7 @@ mod tests {
     fn route_row(attempts: &[(&'static str, &'static str)]) -> Row {
         Row::Route(RouteRow {
             ts: "2026-10-13T12:00:00Z".to_string(),
+            session: String::new(),
             usage: None,
             provider: attempts
                 .first()
