@@ -85,10 +85,11 @@ cards, cards with no semantic press inside, nested cards).
   memories/skills/tools/workflows interactively; the four read-only cards
   above it duplicated them. The rail wins; the cards retired.
 - **G5 — explicit affordance.** Every press is a `<button>` or carries
-  `role=button`/`tabindex=0` with `cursor: pointer`. The audit found **zero
-  pointer-cursor divs in the whole face**: where a div has a listener (the
-  board's task rows, the receipts), nothing tells the owner and the
-  keyboard cannot reach it.
+  `role=button`/`tabindex=0` with `cursor: pointer`. Measured after the
+  sweep: 19 click-div sites — 18 had role + tabindex, **none had the
+  cursor**, and **seven had no keyboard**. Fixed centrally (one cursor
+  rule, one document keydown); the one site with no semantics (the desk's
+  empty card) now has them.
 - **G6 — one page head.** One eyebrow/title/sentence per surface. Learning
   renders "learning" twice (column and page); the router's crumb says
   `SETTINGS / advanced` while its eyebrow says `INTELLIGENCE`.

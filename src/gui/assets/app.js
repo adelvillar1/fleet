@@ -14991,6 +14991,11 @@ import { node, svg, clip } from './core/dom.js';
   function dkEmpty() {
     var wrap = node('div', 'dk-emptywrap');
     var card = node('div', 'dk-empty');
+    // It is a press (it starts the brief). The audit found this the one
+    // click-div in the face with no role at all (G5).
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', 'start a deliverable');
     var glyph = node('div', 'glyph');
     glyph.setAttribute('aria-hidden', 'true');
     glyph.appendChild(icon('desk'));
@@ -17540,12 +17545,12 @@ import { node, svg, clip } from './core/dom.js';
       expand.textContent = '\u203a';
       expand.addEventListener('click', function () { foldWork(false); });
       el.workHead.appendChild(expand);
-      el.workHead.appendChild(node('span', 'work-folded-label', desk ? 'the desk' : 'learning'));
+      el.workHead.appendChild(node('span', 'work-folded-label', desk ? 'the desk' : 'projects'));
       if (needs) el.workHead.appendChild(node('span', 'work-folded-badge', String(needs)));
       return;
     }
     var head = node('div', 'work-title');
-    head.appendChild(node('h2', null, desk ? 'the desk' : 'learning'));
+    head.appendChild(node('h2', null, desk ? 'the desk' : 'projects'));
     head.appendChild(node('span', 'work-count', !doc ? 'reading\u2026'
       : total + ' ' + (total === 1 ? noun : plural)
         + (needs ? ' \u00b7 ' + needs + ' need you' : '')));
@@ -35927,6 +35932,19 @@ import { node, svg, clip } from './core/dom.js';
   })();
 
   el.paneClose.addEventListener('click', closePane);
+  // Keyboard for every div-button (G5, the surface pass): a focused
+  // [role="button"] answers Enter and Space like a native button. One
+  // listener for every builder; a local keydown that already handled the
+  // press has called preventDefault, so nothing fires twice.
+  document.addEventListener('keydown', function (event) {
+    if (event.defaultPrevented) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    var at = event.target;
+    if (!at || !at.getAttribute || at.getAttribute('role') !== 'button') return;
+    if (String(at.tagName || '').toUpperCase() === 'BUTTON') return;
+    event.preventDefault();
+    at.click();
+  });
   // Every tab answers its own click — the act, connections and made-here
   // tabs were born unwired once; a drawer whose tablist lies is worse
   // than no drawer. The read modes answer too: a mode switch that does

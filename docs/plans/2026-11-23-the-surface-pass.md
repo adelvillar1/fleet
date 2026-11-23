@@ -205,6 +205,21 @@ initiated sessions that are just noise."*
   pairing; the corpus copies its remote; the empty states already explained
   and stay. Pinned in the P6 armada case.
 
+### R9 — the affordance sweep (done across all surfaces)
+
+- The click-div census: **19 sites**; 18 already carried role + tabindex,
+  **zero showed a cursor**, and **seven had no keyboard at all** (no local
+  keydown). Fixed centrally: one CSS rule gives every `role=button/tab/
+  option/menuitem/switch` its cursor; one document-level keydown makes a
+  focused div-button answer Enter/Space exactly like a native button (and
+  keeps out of a local handler's way via `defaultPrevented`). The one site
+  with no semantics at all — the desk's empty card, which starts the brief —
+  now carries role, tabindex and its label.
+- Learning's duplicated title is gone: its column names the list
+  (`projects`), the page head names the surface once.
+- Pinned in the R10 case: the cursor rule, the keydown handler, and the
+  learning column/head split.
+
 ### R10 — the card grid holds: aligned, even, rails collapsed, PWA sizes
 
 - **Measured live** (probe face at 1440×900, each surface with the rail

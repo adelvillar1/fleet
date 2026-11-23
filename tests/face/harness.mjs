@@ -9000,6 +9000,28 @@ async function theStrategyStepShowsItsPreview() {
       flatBot.includes('min-width: 1024px') &&
         flatBot.includes('grid-template-columns: 280px minmax(0, 1fr) 300px;'),
       'bot breakpoints');
+
+    // G5's other half: the cursor was missing on every div-button, and
+    // seven of them had no keyboard at all. One rule, one listener.
+    check('R10 every div-button shows a cursor and answers the keyboard',
+      flatCss.includes('[role="button"], [role="tab"], [role="option"], [role="menuitem"], [role="switch"] { cursor: pointer; }') &&
+        SRC.includes("getAttribute('role') !== 'button'") &&
+        SRC.includes('at.click();'),
+      'affordance');
+
+    // One surface word once: learning's column names its list, the page
+    // head names the surface (the audit found "learning" twice).
+    const learning = boot({ hash: '#/learning', documents: {
+      hold: ['/api/learning'], state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    } });
+    learning.open();
+    await flush(80);
+    const column = learning.rows('.work-title h2').map((n) => n.textContent).join('|');
+    check('R10 the learning column names its list, the page its surface',
+      column === 'projects' &&
+        learning.rows('.page-head .page-title')[0].textContent === 'learning',
+      'column=' + column);
   }
 
   // R7/G6: every surface with a page head wears its place — the eyebrow

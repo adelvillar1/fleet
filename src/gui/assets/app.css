@@ -5575,6 +5575,17 @@ pre.drawer-code {
   outline: none;
 }
 
+/* Every div-button shows it (G5, the surface pass): the audit found zero
+   pointer-cursor elements in the face — role and tabindex were there, the
+   mouse affordance was not. */
+[role="button"],
+[role="tab"],
+[role="option"],
+[role="menuitem"],
+[role="switch"] {
+  cursor: pointer;
+}
+
 /* A list row that IS a press (R9/G5): the button's own styling stood
    down; the row's grid and states are the .list-row rules. */
 button.list-row {
