@@ -5548,6 +5548,27 @@ pre.drawer-code {
 .surface-strip b { margin-right: 3px; color: var(--dsw-alias-ink); font-family: var(--font-mono); font-size: 12px; letter-spacing: -0.02em; }
 .surface-strip-down b { color: var(--dsw-alias-down); }
 .surface-strip-end { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 12px; }
+/* A strip number that is a door (the surface pass, R5): the label reads
+   the same, the dotted rule and the cursor say it opens something, and
+   focus is visible the way every control's is. */
+.surface-strip-press {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--dsw-alias-ink-tertiary);
+  text-underline-offset: 3px;
+}
+.surface-strip-press:hover,
+.surface-strip-press:focus-visible {
+  color: var(--dsw-alias-ink);
+  text-decoration-style: solid;
+  outline: none;
+}
 
 .board-card[data-span="8"] { grid-column: span 8; }
 .board-card[data-span="4"] { grid-column: span 4; }

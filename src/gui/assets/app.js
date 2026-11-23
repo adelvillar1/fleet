@@ -7495,7 +7495,9 @@ import { node, svg, clip } from './core/dom.js';
     el.routerBoard.appendChild(surfaceHead('Intelligence', 'Router',
       'Where this run\u2019s work went, what it tried first, and what the day has served.', instrument));
     el.routerBoard.appendChild(surfaceStrip([
-      [totals.calls || 0, 'calls today'],
+      [totals.calls || 0, 'calls today', null, function () {
+        window.location.hash = '#/calibration/routing';
+      }],
       [totals.ok || 0, 'ok'],
       [errors, 'errors', errors ? 'down' : null],
       [rate, 'success'],
@@ -8459,10 +8461,24 @@ import { node, svg, clip } from './core/dom.js';
   function surfaceStrip(items, end) {
     var strip = node('div', 'surface-strip');
     items.forEach(function (item) {
-      var span = node('span', item[2] === 'down' ? 'surface-strip-down' : null);
-      span.appendChild(node('b', null, String(item[0])));
-      span.appendChild(document.createTextNode(' ' + item[1]));
-      strip.appendChild(span);
+      // A number is a door or it is noise (the surface pass): an item that
+      // carries a press is a real button onto the population it counts —
+      // and only where that population is what the destination shows.
+      var press = item[3];
+      var holder;
+      if (press) {
+        holder = node('button', 'surface-strip-press' +
+          (item[2] === 'down' ? ' surface-strip-down' : ''));
+        holder.type = 'button';
+        holder.setAttribute('aria-label',
+          String(item[0]) + ' ' + item[1] + ' — open');
+        holder.addEventListener('click', press);
+      } else {
+        holder = node('span', item[2] === 'down' ? 'surface-strip-down' : null);
+      }
+      holder.appendChild(node('b', null, String(item[0])));
+      holder.appendChild(document.createTextNode(' ' + item[1]));
+      strip.appendChild(holder);
     });
     if (end) strip.appendChild(node('span', 'surface-strip-end', end));
     return strip;
@@ -9286,12 +9302,22 @@ import { node, svg, clip } from './core/dom.js';
     // pass): the numbers sat above the interactive rail that already
     // lists the same segments, and a skills card reading "460" with no
     // door was the owner's own example of noise.
+    // The strip's doors (R5): facts open the corpus, retired opens the
+    // retired list, hits open today's recall. Live and protected are
+    // facets of the corpus with no view of their own — informative, not
+    // fake doors.
+    var toMemory = function (id) {
+      rememberMemorySection(id);
+      window.location.hash = '#/memory/' + id;
+      paintMemory();
+    };
     el.memoryBoard.appendChild(surfaceStrip([
-      [facts.length, 'facts'],
+      [facts.length, 'facts', null, function () { toMemory('corpus'); }],
       [live.length, 'live'],
       [protectedFacts.length, 'protected'],
-      [retired.length, 'retired', retired.length ? 'down' : null],
-      [hits.length, 'hits ' + read.day],
+      [retired.length, 'retired', retired.length ? 'down' : null,
+        function () { toMemory('retired'); }],
+      [hits.length, 'hits ' + read.day, null, function () { toMemory('today'); }],
       [recalls.length, 'recalls this run']
     ], 'the corpus at ' + read.root));
     // The search reads every field across every section, so it sits
@@ -18298,13 +18324,24 @@ import { node, svg, clip } from './core/dom.js';
     el.calibrationBoard.appendChild(surfaceHead('System', 'Calibration',
       'The day\u2019s stream, the judged quality of what served, and the gate that decides whether the failover may learn from it.',
       instrument));
+    // The strip's doors (R5): the route-row numbers open the routing
+    // section; the fit and gate numbers open the gate. Each destination
+    // is the section that actually shows that population.
+    var toSection = function (id) {
+      rememberCalibrationSection(id);
+      window.location.hash = '#/calibration/' + id;
+      paintCalibration();
+    };
     el.calibrationBoard.appendChild(surfaceStrip([
-      [read.rows_read, 'rows, the day\u2019s last ' + read.cap],
-      [judged, 'judged'],
-      [cells.length, 'fit cells'],
-      [fit, 'fit', fit ? 'live' : null],
-      [informing, 'informing the failover'],
-      [read.gate && read.gate.informs_failover ? 'on' : 'off', 'failover gate']
+      [read.rows_read, 'rows, the day\u2019s last ' + read.cap, null,
+        function () { toSection('routing'); }],
+      [judged, 'judged', null, function () { toSection('routing'); }],
+      [cells.length, 'fit cells', null, function () { toSection('the-gate'); }],
+      [fit, 'fit', fit ? 'live' : null, function () { toSection('the-gate'); }],
+      [informing, 'informing the failover', null,
+        function () { toSection('the-gate'); }],
+      [read.gate && read.gate.informs_failover ? 'on' : 'off', 'failover gate', null,
+        function () { toSection('the-gate'); }]
     ], read.day + (day ? ' \u00b7 a past day, the hash\u2019s own' : ' \u00b7 today')));
     paintCalibrationRail(read);
     paintCalibrationSection(calibrationSectionId());

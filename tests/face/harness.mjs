@@ -13829,6 +13829,25 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
       page.rows('.section-body')[0].dataset.section === 'today',
     page.rows('.section-body').map((b) => b.dataset.section).join(','));
 
+  // R5: the strip's numbers that have a view behind them are doors — the
+  // facts open the corpus, retired the retired list, today's hits the
+  // recall; live and protected are facets with no view, so they stay
+  // plain rather than lying about where they go.
+  const memDoors = page.rows('.surface-strip-press');
+  check('MEM the corpus numbers are doors, the facets stay plain',
+    memDoors.length === 3 &&
+      memDoors.some((b) => b.textContent.includes('facts')) &&
+      memDoors.some((b) => b.textContent.includes('retired')) &&
+      memDoors.some((b) => b.textContent.includes('hits')),
+    'doors=' + memDoors.length + ' / ' + memDoors.map((b) => b.textContent).join(' | '));
+  const factsDoor = memDoors.filter((b) => b.textContent.includes('facts'))[0];
+  if (factsDoor) factsDoor.click();
+  await flush(80);
+  check('MEM the facts door selects the corpus',
+    page.window.location.hash === '#/memory/corpus' &&
+      page.rows('.section-body')[0].dataset.section === 'corpus',
+    page.window.location.hash);
+
   // Pass 3 (the gated mockup): the basis ladder rides the fact row's left
   // border — confirmed-by and validated the strongest, inferred the
   // session-produced middle — and the basis chip still names the word,
@@ -14274,6 +14293,23 @@ async function theCalibrationRailCarriesTheGateAndTheDay() {
     cardText.slice(0, 200));
   page.fireOn('dock-object-close', 'click');
   await flush(40);
+
+  // R5: the day's summary numbers are doors — six presses, each onto the
+  // section that shows its population (the row counts to routing, the
+  // fit/gate numbers to the gate).
+  const calDoors = page.rows('.surface-strip-press');
+  check('CAL the day\u2019s strip numbers are doors',
+    calDoors.length === 6 &&
+      calDoors.every((b) => b.name === 'button' && !!b.getAttribute('aria-label')),
+    'doors=' + calDoors.length);
+  const rowsDoor = calDoors.filter((b) => b.textContent.includes('rows, the day'))[0];
+  if (rowsDoor) rowsDoor.click();
+  await flush(80);
+  check('CAL the rows door lands on the day\u2019s route rows',
+    page.window.location.hash === '#/calibration/routing' &&
+      page.rows('.section-body')[0].dataset.section === 'routing',
+    page.window.location.hash + ' / ' +
+      page.rows('.section-body').map((b) => b.dataset.section).join(','));
 
   // The section route; an op section's rows carry the four new ops and
   // the record in the pane.

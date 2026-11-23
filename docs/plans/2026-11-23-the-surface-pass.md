@@ -133,6 +133,14 @@ initiated sessions that are just noise."*
   press that reveals its population (the chip pattern from connections).
 - Pins: each number's element is a press with a named effect; no numeric
   strip with no press remains on those surfaces.
+- **Shipped:** `surfaceStrip` items may carry a press and render as real
+  buttons (dotted rule, visible focus, aria-label). Calibration's six
+  numbers are doors — the row counts open the routing section, the
+  fit/gate numbers open the gate. Memory's facts/retired/hits open the
+  corpus/retired/recall (live and protected are facets with no view, so
+  they stay plain rather than lying). The router's "calls today" opens the
+  day's route rows (`#/calibration/routing`). Live-verified: 6/3/1 doors,
+  each landing on the section it names.
 
 ### R6 — empty and loading states gain their head and their one press
 

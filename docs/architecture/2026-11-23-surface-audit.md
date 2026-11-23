@@ -262,7 +262,9 @@ cards, cards with no semantic press inside, nested cards).
 
 1. **The read-only spine strip** — six surfaces, one shared builder: retired
    in this row (measured: inbox 4 → 0 cards, memory 4 → 0).
-2. **Stat strips become doors** — calibration, router, memory, armada.
+2. **Stat strips become doors** — done: calibration (6), memory (3), router
+   (1) — each onto the section that shows its population; armada's strip
+   retired with the read-only cards.
 3. **Empty and loading states** — inbox, board, learning, second brain:
    every one gains its head, its sentence, its one press, elapsed + retry.
 4. **Router flattening + crumb** — the nine nested rows, the six numbers,
