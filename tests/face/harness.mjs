@@ -8947,8 +8947,64 @@ async function theStrategyStepShowsItsPreview() {
     check('P4 the route rows read the whole trail, unfiltered',
       page.rows('.rrow').length === 2 && page.rows('.filter-chip').length === 0,
       'rows: ' + page.rows('.rrow').length + ' chips: ' + page.rows('.filter-chip').length);
+
+    // R7: the address tells the truth. The router is an advanced page; the
+    // crumb names it by its own plain name (it used to read "SETTINGS /
+    // advanced" and never name the page), and the eyebrow agrees with the
+    // crumb's group instead of saying "Intelligence" over an advanced page.
+    check('R7 the router\u2019s crumb names its place and its page',
+      page.text('crumb-group') === 'advanced' &&
+        page.text('crumb-page') === 'Routing',
+      page.text('crumb-group') + ' / ' + page.text('crumb-page'));
+    check('R7 the router\u2019s eyebrow agrees with its place',
+      page.rows('.page-head .page-eyebrow').length === 1 &&
+        page.rows('.page-head .page-eyebrow')[0].textContent === 'Advanced',
+      page.rows('.page-head .page-eyebrow').map((e) => e.textContent).join(' | '));
+
+    // R7: the chain rows are rows, not cards inside the card (one
+    // container depth). The chips keep their own press.
+    const chainRule = ruleBlock('.chain');
+    check('R7 the chain rows are rows, not nested cards',
+      chainRule !== '' &&
+        chainRule.indexOf('border-radius') === -1 &&
+        chainRule.indexOf('background') === -1 &&
+        chainRule.indexOf('border-top') >= 0,
+      chainRule.slice(0, 120));
   }
 
+
+  // R7/G6: every surface with a page head wears its place — the eyebrow
+  // is the crumb's group, in the rail's own word. One word, one home: a
+  // page whose crumb says system and whose eyebrow says Intelligence is
+  // the contradiction the audit found on the router.
+  async function theEyebrowWearsTheSurfacesPlace() {
+    const cases = [
+      ['memory', 'Knowledge'], ['learning', 'Knowledge'],
+      ['calibration', 'Knowledge'], ['workspace-history', 'System'],
+      ['router', 'Advanced'], ['delegation', 'Advanced'],
+    ];
+    for (const [route, expected] of cases) {
+      const page = boot({
+        hash: '#/' + route,
+        documents: {
+          // The learning read is held: its loaded shell is a lesson view,
+          // and the head that belongs to the surface is the loading
+          // state's — the one an arriving owner actually sees first.
+          hold: route === 'learning' ? ['/api/learning'] : [],
+          state: (asked) => emptyState(asked),
+          onboard: onboardDoc({ door: false }),
+        },
+      });
+      page.open();
+      await flush(100);
+      const eyebrow = page.rows('.page-head .page-eyebrow')[0];
+      const crumb = page.text('crumb-group');
+      check('R7 the ' + route + ' head wears its place',
+        !!eyebrow && eyebrow.textContent === expected &&
+          crumb === expected.toLowerCase(),
+        (eyebrow ? eyebrow.textContent : 'none') + ' / crumb=' + crumb);
+    }
+  }
 
   // and the mint names the face so the server builds the bot origin.
   // The panel arrives by hashchange (the fake window fires it like a
@@ -22424,6 +22480,7 @@ const cases = [
   ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],
   ['SURF the connections page draws its graph, drills in place and isolates a kind', theTissuePaintsTheGraphAndPivots],
   ['R6 empty and loading states name their one press', theEmptyAndLoadingStatesOfferTheirDoor],
+  ['R7 every surface head wears its place', theEyebrowWearsTheSurfacesPlace],
   ['RESKIN an empty tissue names what fills it', anEmptyTissueNamesWhatFillsIt],
   ['INTEL the tools segment names the registry and its classes', theToolsSegmentNamesTheRegistryAndItsClasses],
   ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],

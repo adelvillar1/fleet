@@ -169,6 +169,20 @@ initiated sessions that are just noise."*
 - Pins: no nested card rows on the surface; the crumb's group equals the
   rail region (intelligence for the router? it is an advanced page — the
   ledger records where it truly lives).
+- **Shipped:** the chain rows are rows (hairline-separated, no card inside
+  the card); the crumb map is rebuilt from the rail's own map, so a folded
+  surface reads `advanced / Routing` (it used to say `SETTINGS / advanced`,
+  naming no page) and a railed lane keeps its region (design is `design /
+  Design`); the eyebrow agrees with the crumb across memory, learning,
+  calibration, router, delegation, workspace history, second brain. New pin:
+  `R7 every surface head wears its place` (six surfaces, eyebrow == crumb
+  group).
+- **Found while measuring:** calibration's routing section already renders
+  the router's chain card (8 rows live) — so the standalone router page
+  duplicates a section of Reviews, exactly what D3 of the redesign says
+  ("Routing is Reviews' first section"). Folding the router page into that
+  section is the next product decision; it lands with a mockup and the
+  #/router address redirecting to `#/calibration/routing`.
 
 ### R8 — the design-system conformance row
 

@@ -1071,12 +1071,29 @@ import { node, svg, clip } from './core/dom.js';
 
   // Which group an address belongs to, and its label in that group —
   // derived once so the rail, the palette and the panel all agree.
+  // The topbar's place words (the surface pass, R7): a railed lane's crumb
+  // names its region and its own plain label; a folded surface is
+  // 'advanced' under its plain name. The old map copied FOLDED's tuple,
+  // which put the GROUP's name in the page slot — the router's crumb read
+  // 'SETTINGS / advanced' and never named the page.
   var WHERE = {};
-  GROUPS.forEach(function (group) {
-    group[2].forEach(function (item) { WHERE[item[0]] = [group[0], item[1]]; });
+  RAIL_MAP.regions.forEach(function (region) {
+    region.rows.forEach(function (address) {
+      WHERE[address] = [region.name, surfaceLabel(address)];
+    });
   });
-  Object.keys(FOLDED).forEach(function (address) {
-    if (!WHERE[address]) WHERE[address] = FOLDED[address];
+  WHERE[RAIL_MAP.home] = ['home', 'the inbox'];
+  RAIL_MAP.system.rows.forEach(function (address) {
+    WHERE[address] = ['system', surfaceLabel(address)];
+  });
+  ADVANCED.forEach(function (row) {
+    if (!WHERE[row[0]]) WHERE[row[0]] = ['advanced', row[1]];
+  });
+  ROUTES.forEach(function (route) {
+    if (WHERE[route[0]]) return;
+    var folded = FOLDED[route[0]];
+    WHERE[route[0]] = folded && folded[0] !== 'settings'
+      ? folded : ['advanced', surfaceLabel(route[0])];
   });
 
   var el = {
@@ -7461,7 +7478,7 @@ import { node, svg, clip } from './core/dom.js';
     var read = face.router;
     el.routerBoard.textContent = '';
     if (!read) {
-      el.routerBoard.appendChild(surfaceHead('Intelligence', 'Router',
+      el.routerBoard.appendChild(surfaceHead('Advanced', 'Router',
         'Where this run\u2019s work went, what it tried first, and what the day has served.', null));
       // A first read that refused names its refusal: the loading card is
       // for a read still in flight, and a refusal that leaves it up reads
@@ -7510,7 +7527,7 @@ import { node, svg, clip } from './core/dom.js';
           run: function () { window.location.hash = '#/settings'; }
         }
       ]);
-    el.routerBoard.appendChild(surfaceHead('Intelligence', 'Router',
+    el.routerBoard.appendChild(surfaceHead('Advanced', 'Router',
       'Where this run\u2019s work went, what it tried first, and what the day has served.', instrument));
     el.routerBoard.appendChild(surfaceStrip([
       [totals.calls || 0, 'calls today', null, function () {
@@ -8185,7 +8202,7 @@ import { node, svg, clip } from './core/dom.js';
     var read = face.delegation;
     el.delegationBoard.textContent = '';
     if (!read) {
-      el.delegationBoard.appendChild(surfaceHead('Intelligence', 'Delegation',
+      el.delegationBoard.appendChild(surfaceHead('Advanced', 'Delegation',
         'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty', sentence('delegation', 'loading')));
@@ -8205,7 +8222,7 @@ import { node, svg, clip } from './core/dom.js';
           ask('read the dependency graph and tell me the next ready node to work');
         }
       }]);
-    el.delegationBoard.appendChild(surfaceHead('Intelligence', 'Delegation',
+    el.delegationBoard.appendChild(surfaceHead('Advanced', 'Delegation',
       'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.',
       instrument));
     el.delegationBoard.appendChild(surfaceStrip([
@@ -9319,7 +9336,7 @@ import { node, svg, clip } from './core/dom.js';
     var read = face.memory;
     el.memoryBoard.textContent = '';
     if (!read) {
-      el.memoryBoard.appendChild(surfaceHead('Intelligence', 'Intelligence',
+      el.memoryBoard.appendChild(surfaceHead('Knowledge', 'Intelligence',
         'Everything fleet knows and can do: what it remembers, its skills, its tools, and the chains they compose into.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty', sentence('memory', 'loading')));
@@ -9350,7 +9367,7 @@ import { node, svg, clip } from './core/dom.js';
           }
         }
       ]);
-    el.memoryBoard.appendChild(surfaceHead('Intelligence', 'Intelligence',
+    el.memoryBoard.appendChild(surfaceHead('Knowledge', 'Intelligence',
       'Everything fleet knows and can do: what it remembers, its skills, its tools, and the chains they compose into.', instrument));
     // The capability cards retired with the spine strip (the surface
     // pass): the numbers sat above the interactive rail that already
@@ -10271,7 +10288,7 @@ import { node, svg, clip } from './core/dom.js';
     el.learningBoard.textContent = '';
     var read = face.learning;
     if (!read) {
-      el.learningBoard.appendChild(surfaceHead('Learning', 'learning',
+      el.learningBoard.appendChild(surfaceHead('Knowledge', 'learning',
         'The measure \u2192 plan \u2192 teach loop: what you hold, the plan\u2019s coarse view, the propositions it built, and the practice.', null));
       el.learningBoard.appendChild(loadingCard(12, 'reading',
         'Still loading. This comes from this machine\u2019s own lessons and memories.',
@@ -10280,7 +10297,7 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
     if (refusals(read)) {
-      el.learningBoard.appendChild(surfaceHead('Learning', 'learning', null, null));
+      el.learningBoard.appendChild(surfaceHead('Knowledge', 'learning', null, null));
       var refused = boardCard(12, 'refused', null, null);
       refused.appendChild(node('p', 'board-empty', refusals(read).join('; ')));
       el.learningBoard.appendChild(refused);
@@ -18348,7 +18365,7 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
     if (!read.rows_read) {
-      el.calibrationBoard.appendChild(surfaceHead('System', 'Calibration',
+      el.calibrationBoard.appendChild(surfaceHead('Knowledge', 'Calibration',
         'The day\u2019s stream, the judged quality of what served, and the gate that decides ' +
         'whether the failover may learn from it.', null));
       el.calibrationBoard.appendChild(node('p', 'board-empty',
@@ -18384,7 +18401,7 @@ import { node, svg, clip } from './core/dom.js';
           }
         }
       ]);
-    el.calibrationBoard.appendChild(surfaceHead('System', 'Calibration',
+    el.calibrationBoard.appendChild(surfaceHead('Knowledge', 'Calibration',
       'The day\u2019s stream, the judged quality of what served, and the gate that decides whether the failover may learn from it.',
       instrument));
     // The strip's doors (R5): the route-row numbers open the routing
@@ -19650,7 +19667,7 @@ import { node, svg, clip } from './core/dom.js';
     // The one head grammar (the surface pass): this page built its own
     // header with the old classes; it renders through the shared builder
     // with the same words and its instrument beside the head.
-    var head = surfaceHead('Knowledge', 'Second brain',
+    var head = surfaceHead('System', 'Second brain',
       'The project landscape, read as an atlas: every project\u2019s six-week pulse and the ' +
       'one line its last session left behind, with the decisions that need a person kept beside them.',
       brainTool(read));
@@ -20854,7 +20871,7 @@ import { node, svg, clip } from './core/dom.js';
     var rail = face.historyRail;
     el.workspaceHistoryBoard.textContent = '';
     if (!rail) {
-      el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
+      el.workspaceHistoryBoard.appendChild(surfaceHead('System', 'Workspace history',
         'One Store, every branch a delegated child worked: the tree as it stands, and the ' +
         'figures behind it.', null));
       var waiting = boardCard(12, 'reading', null, null);
@@ -20872,7 +20889,7 @@ import { node, svg, clip } from './core/dom.js';
     // delegation forks from the fresh tree. A refusal that names an
     // act carries the act's own control.
     if ((rail.refused_projects || []).length) {
-      el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
+      el.workspaceHistoryBoard.appendChild(surfaceHead('System', 'Workspace history',
         'The machine\u2019s registered projects, the ones with recent work at hand.', null));
       var lost = boardCard(12, 'stores lost to the Docker reset', 'the read\u2019s named refusals');
       lost.appendChild(node('p', 'board-empty',
@@ -20913,7 +20930,7 @@ import { node, svg, clip } from './core/dom.js';
       el.workspaceHistoryBoard.appendChild(lost);
     }
     if (!(rail.projects || []).length) {
-      el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
+      el.workspaceHistoryBoard.appendChild(surfaceHead('System', 'Workspace history',
         'The machine\u2019s registered projects, the ones with recent work at hand.', null));
       var none = boardCard(12, 'no project with recent activity', null, null);
       none.appendChild(node('p', 'board-empty', rail.note ||
@@ -20966,7 +20983,7 @@ import { node, svg, clip } from './core/dom.js';
           readWorkspaceFiles(face.historyBranch, face.historyPath || '', true);
         }
       }]);
-    body.appendChild(surfaceHead('Knowledge', 'Workspace history',
+    body.appendChild(surfaceHead('System', 'Workspace history',
       'One Store, every branch a delegated child worked: the tree as it stands — the ' +
       'store\u2019s figures and the files live in the pane.', instrument));
     body.appendChild(surfaceStrip([

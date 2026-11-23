@@ -4699,16 +4699,18 @@ pre.drawer-code {
 
 .chains { display: grid; gap: 7px; }
 
+/* A chain is a ROW inside the card, not a card inside it (R7): the
+   surface pass found nine chain rows styled as nested cards. One container
+   depth — the hairline separates the rows, the card stays the host. */
 .chain {
   display: grid;
   grid-template-columns: 136px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  padding: 9px 11px;
-  border: var(--card-hairline);
-  border-radius: 9px;
-  background: var(--dsw-alias-surface-raised);
+  padding: 8px 0;
+  border-top: 1px solid var(--dsw-alias-hairline);
 }
+.chain:first-child { border-top: 0; padding-top: 0; }
 
 .chain-name {
   color: var(--dsw-alias-accent-lift);
