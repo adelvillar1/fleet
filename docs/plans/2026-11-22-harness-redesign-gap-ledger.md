@@ -108,3 +108,4 @@ deeper one). Tokens split per job — one value never serves two grounds.
 
 Every measured pair is proven by the guard, not by this table — the table
 records intent, `themes.rs` measures the artifact.
+| G4 | D2/§the drawer's four canonical tabs (G11) name the third tab **connections**; the surface pass (2026-11-23) moved the connections *graph* to a knowledge page, leaving the tab carrying the conversation's goal edge and delegated work under a name the owner had just asked to move. | D2/G11 | The tab's content (`pane-work`: the goal edge, the live run, the plan's work) is not the graph; the graph is `#/connections`. Two things named 'connections' was the confusion. | The third tab's label is **work** — read · act · work · made here. The ids stay (`tab-connections`/`pane-connections`) so saved hashes and every pin keep resolving; the label says what it holds. | this commit (the surface pass R9) |

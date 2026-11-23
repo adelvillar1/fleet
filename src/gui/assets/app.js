@@ -7807,6 +7807,16 @@ import { node, svg, clip } from './core/dom.js';
     });
     wrap.appendChild(made);
     card.appendChild(wrap);
+    // The run is a conversation (R9): the tree is its shape, and this is
+    // the way in — a past run's card was a dead end the owner would try
+    // to open.
+    if (root && root.id) {
+      var open = node('button', 'row-rewind', 'open the run');
+      open.type = 'button';
+      open.setAttribute('aria-label', 'open run ' + root.id);
+      open.addEventListener('click', function () { openWork(root.id); });
+      card.appendChild(open);
+    }
     return card;
   }
 

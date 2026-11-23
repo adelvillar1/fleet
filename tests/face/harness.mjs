@@ -2663,6 +2663,7 @@ async function theDockIsClosedAndTheWorkColumnTakesItsPlace() {
       HTML.indexOf('tab-read') < HTML.indexOf('tab-act') &&
       HTML.indexOf('tab-act') < HTML.indexOf('tab-connections') &&
       HTML.indexOf('tab-connections') < HTML.indexOf('tab-made') &&
+      /id="tab-connections"[^>]*>work</.test(HTML) &&
       HTML.includes('id="process-card"') === true &&
       HTML.indexOf('id="process-card"') > HTML.indexOf('id="pane-run"'),
     'tabs');
@@ -5688,8 +5689,10 @@ async function theDelegationSurfaceLeadsWithTheBlockers() {
   const page = boot({
     width: 1440, hash: '#/delegation',
     documents: {
-      delegation: { type: 'delegation', depth_cap: 2, live: null, history: [], graph,
-        refused: [] },
+      delegation: { type: 'delegation', depth_cap: 2, live: null,
+        history: [{ id: 'run-x', session: 'run-x', status: 'stopped',
+          stop_reason: 'handed back', children: [], compactions: 0 }],
+        graph, refused: [] },
       state: (asked) => emptyState(asked),
       onboard: onboardDoc({ door: false }),
     },
@@ -5712,6 +5715,19 @@ async function theDelegationSurfaceLeadsWithTheBlockers() {
   const fold = page.rows('.delegation-fold')[0];
   check('RP6 the trees fold beneath the blockers',
     !!fold && fold.dataset.collapsed === 'true', fold ? fold.dataset.collapsed : 'no fold');
+
+  // R9: a past run's card is not a dead end — its one press opens the
+  // conversation the tree was rebuilt from.
+  if (fold) fold.click();
+  await flush(80);
+  const runOpen = page.rows('.row-rewind')
+    .filter((one) => one.textContent === 'open the run')[0];
+  check('R9 a past run opens its conversation', !!runOpen,
+    page.rows('.row-rewind').map((one) => one.textContent).join(' | '));
+  if (runOpen) runOpen.click();
+  await flush(120);
+  check('R9 the run press lands on the run',
+    page.window.location.hash === '#/sessions/run-x', page.window.location.hash);
 }
 
 // The rail's map (the UX map study, 2026-11-23; placement B): Home leads

@@ -199,6 +199,27 @@ initiated sessions that are just noise."*
 - Pins: the harness's head assertions read `.page-head` (the old class is
   gone); the per-surface rows pin their own composition.
 
+### R9 — COMPLETE
+
+Every surface measured and classified against the bar (act / drill / explain),
+with the fixes below landed and pinned:
+
+- **armada** — map rows are real buttons; relay opens the pairing; corpus
+  copies its remote.
+- **the whole face** — div-buttons: one cursor rule + one document keydown
+  (7 of 19 had no keyboard); the desk's empty card gained its semantics.
+- **settings family** — nested form cards are sections (G1; vault 2→0).
+- **delegation** — a past run's card is not a dead end: "open the run" opens
+  the conversation the tree was rebuilt from.
+- **the drawer** — the third tab is labelled **work** (it carries the goal
+  edge and delegated work, not the graph); the G11 amendment is recorded in
+  the redesign's gap ledger (G4).
+- **calibration, huddles, workspace history, plugins, bots, board, settings**
+  — measured: no clickable-looking dead objects. The report cards, tier
+  table, manifest diffs, scorecard rows and empty states **explain** (state
+  + why + what fills it), which is the bar's third job; the strips' numbers
+  with no view behind them stay plain rather than faking doors.
+
 ### R9 — armada (done)
 
 - The map's rows are real buttons (they were click-divs); the relay opens the
