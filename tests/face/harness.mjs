@@ -5594,6 +5594,15 @@ async function theRailCarriesTheMap() {
       !!inboxCount && inboxCount.textContent === '1 held' && inboxCount.hidden !== true,
     inboxHome ? 'row=' + inboxHome.textContent + ' count=' +
       (inboxCount ? inboxCount.textContent : 'none') : 'no Home row');
+  // R3: the count and the queue name the same holds — the rail says what the
+  // inbox's own surface draws, read from the one document.
+  // A held row draws as .ib-held (its own store view); the five answerable
+  // classes draw as .ib-row. The count names the union the inboxTotal sums.
+  const queueRows = inboxPage.rows('.ib-row').concat(inboxPage.rows('.ib-held'));
+  check('MAP Home\u2019s count is the queue\u2019s own rows',
+    queueRows.length === 1 && queueRows[0].dataset.class === 'held' &&
+      !!inboxCount && inboxCount.textContent === queueRows.length + ' held',
+    'rows=' + queueRows.length + ' count=' + (inboxCount ? inboxCount.textContent : 'none'));
 
   // R1's pin: the rail lists exactly the map's addresses — Home, the three
   // regions' lanes (armada off in this fixture) and the system strip. The
