@@ -5570,6 +5570,27 @@ pre.drawer-code {
   outline: none;
 }
 
+/* A loading state's foot (R6): how long it has waited, and the retry. */
+.board-empty-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 8px;
+}
+.board-empty-foot .board-note {
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+/* The empty inbox names its one press (G7): the sentence and the door on
+   one line, wrapping at narrow widths. */
+.ib-empty {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .board-card[data-span="8"] { grid-column: span 8; }
 .board-card[data-span="4"] { grid-column: span 4; }
 

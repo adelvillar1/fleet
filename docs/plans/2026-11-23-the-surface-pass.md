@@ -152,6 +152,14 @@ initiated sessions that are just noise."*
   time, retry, and the surface's invitation.
 - Pins: one per surface (empty state has a press; a loading state carries
   elapsed and a retry).
+- **Shipped:** the board's empty state opens the plans folder in the pane's
+  tree; learning and the health lanes show `waiting Ns` + a retry that
+  re-reads; the empty inbox renders through the one head and its door opens
+  the conversations. The bridge fix behind it: `read_work_board` reported an
+  empty plans folder as a **refusal**, painting the error grammar and hiding
+  the empty state — empty is a result, refused is a failed read. New pin:
+  `R6 empty and loading states name their one press` (the read is held open
+  to see the loading state; the plans tree paints the folder).
 
 ### R7 — the router's chains flatten and its crumb tells the truth
 

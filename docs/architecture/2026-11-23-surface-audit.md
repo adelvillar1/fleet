@@ -265,8 +265,10 @@ cards, cards with no semantic press inside, nested cards).
 2. **Stat strips become doors** — done: calibration (6), memory (3), router
    (1) — each onto the section that shows its population; armada's strip
    retired with the read-only cards.
-3. **Empty and loading states** — inbox, board, learning, second brain:
-   every one gains its head, its sentence, its one press, elapsed + retry.
+3. **Empty and loading states** — done: the board's empty state opens the
+   plans folder, learning and health show `waiting Ns` + retry, the empty
+   inbox has one head and its door. The root cause was a bridge bug: an
+   empty board was reported as a refusal.
 4. **Router flattening + crumb** — the nine nested rows, the six numbers,
    the misleading breadcrumb.
 5. **The remaining per-surface passes** in the order above, each with its

@@ -743,11 +743,17 @@
   <main class="stage stage-board stage-split" id="panel-inbox" hidden aria-label="the inbox">
     <nav class="section-rail" id="inbox-rail" aria-label="inbox sections"></nav>
     <div class="board" id="inbox-board">
-      <header class="ib-head">
-        <h1>the inbox</h1>
-        <span class="ib-total" id="ib-total" hidden></span>
-      </header>
-      <div class="ib-empty" id="ib-empty" hidden>nothing needs you</div>
+      <!-- The head is the design system's one head grammar (the surface
+           pass, R6/R8): the old bespoke header floated the title over an
+           empty page. -->
+      <div id="inbox-head"></div>
+      <span class="ib-total" id="ib-total" hidden></span>
+      <!-- An empty state names its one press (G7): the sentence in its
+           own span so the door survives every repaint. -->
+      <div class="ib-empty" id="ib-empty" hidden>
+        <span id="ib-empty-say">nothing needs you</span>
+        <button class="row-rewind" id="ib-empty-door" type="button">open the conversations</button>
+      </div>
       <div id="ib-body"></div>
     </div>
   </main>

@@ -4374,17 +4374,16 @@ pub struct WorkBoardRead {
 pub fn read_work_board(home: &Path, root: &Path) -> WorkBoardRead {
     let plans = work_plans(root);
     let tasks = work_loose_tasks(home);
-    let mut refused: Vec<String> = Vec::new();
-    if plans.is_empty() {
-        refused.push(format!(
-            "{} holds no approved plan \u{2014} a plan contributes work once it is approved",
-            root.join("docs").join("plans").display()
-        ));
-    }
+    // Empty is not refused (the surface pass, 2026-11-23): the board used
+    // to report "no approved plan" as a read REFUSAL, which painted the
+    // error grammar and hid the face's empty state — the one state that
+    // carries the way forward (open the plans folder). An empty board is a
+    // result; `refused` is for a read that failed, and none of these reads
+    // has a failure channel of its own yet.
     WorkBoardRead {
         plans,
         tasks,
-        refused,
+        refused: Vec::new(),
     }
 }
 

@@ -526,6 +526,11 @@ function boot(options) {
       return Promise.reject(new Error('the harness failed this fetch'));
     }
     const pathOnly = String(url).split('?')[0];
+    // A read a case wants to see in flight: the reply never resolves, so
+    // the surface stays in its loading state (R6's clock and retry).
+    if ((documents.hold || []).some((one) => pathOnly === one)) {
+      return new Promise(() => {});
+    }
     if (pathOnly === '/api/state') {
       const asked = new URL('http://x' + url).searchParams.get('session') || '';
       const doc = typeof documents.state === 'function'
@@ -17584,6 +17589,81 @@ async function theTissuePaintsTheGraphAndPivots() {
       ' hash=' + skills.window.location.hash);
 }
 
+// R6 (the surface pass): an empty or loading state names its one press —
+// the board's empty state opens the plans folder, a loading surface says
+// how long it has waited and offers a retry that re-reads, and the empty
+// inbox opens the conversations.
+async function theEmptyAndLoadingStatesOfferTheirDoor() {
+  const board = boot({ width: 1440, hash: '#/board', documents: {
+    board: { type: 'board', read_at: 'now', refused: [], plans: [], tasks: [],
+      counts: { queued: 0, 'in-process': 0, done: 0, plans: 0 } },
+    tree: { type: 'tree', path: 'docs/plans', refused: [],
+      entries: [{ kind: 'file', name: 'the-plan.md' }] },
+    state: (asked) => emptyState(asked),
+    onboard: onboardDoc({ door: false }),
+  } });
+  board.open();
+  await flush(120);
+  const door = board.rows('.row-rewind')
+    .filter((b) => b.textContent === 'open the plans folder')[0];
+  check('R6 the empty board offers the plans folder', !!door,
+    board.rows('.row-rewind').map((b) => b.textContent).join(' | '));
+  if (door) door.click();
+  await flush(80);
+  check('R6 the plans door opens the pane on the folder',
+    board.calls.some((c) => String(c.url).indexOf('/api/tree') === 0 &&
+      String(c.url).indexOf('docs%2Fplans') > 0) &&
+      board.IDS['pane'].hidden === false &&
+      board.text('pane-tree').includes('the-plan.md'),
+    board.calls.map((c) => c.url).filter((u) => String(u).indexOf('/api/tree') === 0).join(' | '));
+
+  // A loading surface: how long, a retry, and the retry re-reads.
+  const learning = boot({ width: 1440, hash: '#/learning', documents: {
+    hold: ['/api/learning'],
+    state: (asked) => emptyState(asked),
+    onboard: onboardDoc({ door: false }),
+  } });
+  // The read is held open, so the surface stays in its loading state the
+  // way a browser shows it while a slow read is in flight.
+  learning.open();
+  await flush(80);
+  const foot = learning.rows('.board-empty-foot .board-note')[0];
+  const retry = learning.rows('.board-empty-foot button')
+    .filter((b) => b.textContent === 'retry')[0];
+  check('R6 a loading surface says how long and offers a retry',
+    !!retry && !!foot && foot.textContent.indexOf('waiting') === 0,
+    'retry=' + (retry ? 'yes' : 'no') + ' foot=' + (foot ? foot.textContent : 'none') +
+      ' feet=' + learning.rows('.board-empty-foot').length +
+      ' board=' + learning.text('learning-board').slice(0, 100));
+  const before = learning.calls
+    .filter((c) => String(c.url).indexOf('/api/learning') === 0).length;
+  if (retry) retry.click();
+  await flush(80);
+  check('R6 the retry re-reads the surface',
+    learning.calls.filter((c) => String(c.url).indexOf('/api/learning') === 0).length >= before + 1,
+    String(learning.calls.filter((c) => String(c.url).indexOf('/api/learning') === 0).length));
+
+  // The empty inbox: one head, the sentence, the door.
+  const inbox = boot({ width: 1440, hash: '#/inbox', documents: {
+    inbox: { type: 'inbox', seats: [], onboarding: [], asks: [], cron: [],
+      doctor: [], held: [], dismissed: [], archived: [] },
+    state: (asked) => emptyState(asked),
+    onboard: onboardDoc({ door: false }),
+  } });
+  inbox.open();
+  await flush(120);
+  check('R6 the empty inbox has one head and names its door',
+    inbox.rows('.page-head .page-title').length === 1 &&
+      inbox.rows('.page-head .page-title')[0].textContent === 'the inbox' &&
+      inbox.IDS['ib-empty'].hidden === false &&
+      !!inbox.IDS['ib-empty-door'],
+    inbox.rows('.page-head .page-title').map((t) => t.textContent).join(' | '));
+  inbox.IDS['ib-empty-door'].click();
+  await flush(40);
+  check('R6 the inbox door opens the conversations',
+    inbox.window.location.hash === '#/sessions', inbox.window.location.hash);
+}
+
 // U2/U35: an empty tissue names what fills it — never a node that was
 // never read.
 async function anEmptyTissueNamesWhatFillsIt() {
@@ -22343,6 +22423,7 @@ const cases = [
   ['RAIL the rail carries no install pill', theRailCarriesNoInstallPill],
   ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],
   ['SURF the connections page draws its graph, drills in place and isolates a kind', theTissuePaintsTheGraphAndPivots],
+  ['R6 empty and loading states name their one press', theEmptyAndLoadingStatesOfferTheirDoor],
   ['RESKIN an empty tissue names what fills it', anEmptyTissueNamesWhatFillsIt],
   ['INTEL the tools segment names the registry and its classes', theToolsSegmentNamesTheRegistryAndItsClasses],
   ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],

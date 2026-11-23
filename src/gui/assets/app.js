@@ -1327,7 +1327,10 @@ import { node, svg, clip } from './core/dom.js';
     onboardCards: document.getElementById('onboard-cards'),
     inboxBody: document.getElementById('ib-body'),
     inboxTotal: document.getElementById('ib-total'),
+    inboxHead: document.getElementById('inbox-head'),
     inboxEmpty: document.getElementById('ib-empty'),
+    inboxEmptySay: document.getElementById('ib-empty-say'),
+    inboxEmptyDoor: document.getElementById('ib-empty-door'),
     seat: document.getElementById('seat'),
     seatVerdict: document.getElementById('seat-verdict'),
     seatLabel: document.getElementById('seat-label'),
@@ -5619,6 +5622,14 @@ import { node, svg, clip } from './core/dom.js';
     }, 0);
   }
 
+  // The empty inbox's one press (G7): the conversations are where the work
+  // is, so the empty state opens them rather than standing there.
+  if (el.inboxEmptyDoor) {
+    el.inboxEmptyDoor.addEventListener('click', function () {
+      window.location.hash = '#/sessions';
+    });
+  }
+
   // --- the inbox's controls (the inbox-controls plan) ---------------------
 
   // The five classes in the queue's reading order: the row class, the
@@ -5876,6 +5887,13 @@ import { node, svg, clip } from './core/dom.js';
   function paintInbox() {
     paintRailCounts();
     paintInboxRail();
+    // One head grammar (R6/R8): eyebrow, title, the order it presents.
+    if (el.inboxHead) {
+      el.inboxHead.textContent = '';
+      el.inboxHead.appendChild(surfaceHead('Attention', 'the inbox',
+        'What needs you, ordered by the age of the hold \u2014 every row one press from its answer.',
+        null));
+    }
     if (!el.inboxBody) return;
     var doc = face.inbox;
     el.inboxBody.textContent = '';
@@ -5944,7 +5962,7 @@ import { node, svg, clip } from './core/dom.js';
     if (tab === 'archived') {
       if (el.inboxEmpty) el.inboxEmpty.hidden = archived.length > 0;
       if (!archived.length) {
-        if (el.inboxEmpty) el.inboxEmpty.textContent = 'nothing archived is waiting on you';
+        if (el.inboxEmptySay) el.inboxEmptySay.textContent = 'nothing archived is waiting on you';
         return;
       }
       if (el.inboxEmpty) el.inboxEmpty.hidden = true;
@@ -5990,7 +6008,7 @@ import { node, svg, clip } from './core/dom.js';
 
     if (!waiting && !doc.held_error) {
       if (el.inboxEmpty) {
-        el.inboxEmpty.textContent = 'nothing needs you';
+        if (el.inboxEmptySay) el.inboxEmptySay.textContent = 'nothing needs you';
         el.inboxEmpty.hidden = false;
       }
       paintDismissed(doc.dismissed);
@@ -8458,6 +8476,42 @@ import { node, svg, clip } from './core/dom.js';
     return head;
   }
 
+  // A loading state that can be waited out or given up on (R6): the
+  // sentence, how long it has waited, and one retry. A surface stuck at
+  // "Still loading" with no door is a dead end (measured at 5 s on
+  // learning and second brain).
+  function loadingCard(span, where, said, retry) {
+    var card = boardCard(span, where, null, null);
+    card.appendChild(node('p', 'board-empty', said));
+    var foot = node('div', 'board-empty-foot');
+    var waited = node('span', 'board-note', '');
+    var since = Date.now();
+    var beat = null;
+    var tick = function () {
+      if (!waited.parentNode) {
+        if (beat) window.clearInterval(beat);
+        return;
+      }
+      var s = Math.round((Date.now() - since) / 1000);
+      waited.textContent = s < 60 ? 'waiting ' + s + 's' : 'waiting ' + Math.round(s / 60) + 'm';
+    };
+    foot.appendChild(waited);
+    // The first reading is written before the card is attached, so it must
+    // not go through the tick's detachment guard; the interval takes over
+    // once the card is on the surface.
+    waited.textContent = 'waiting 0s';
+    beat = window.setInterval(tick, 1000);
+    var again = node('button', 'row-rewind', 'retry');
+    again.type = 'button';
+    again.addEventListener('click', function () {
+      if (beat) window.clearInterval(beat);
+      retry();
+    });
+    foot.appendChild(again);
+    card.appendChild(foot);
+    return card;
+  }
+
   function surfaceStrip(items, end) {
     var strip = node('div', 'surface-strip');
     items.forEach(function (item) {
@@ -10219,10 +10273,9 @@ import { node, svg, clip } from './core/dom.js';
     if (!read) {
       el.learningBoard.appendChild(surfaceHead('Learning', 'learning',
         'The measure \u2192 plan \u2192 teach loop: what you hold, the plan\u2019s coarse view, the propositions it built, and the practice.', null));
-      var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'Still loading. This comes from this machine\u2019s own lessons and memories.'));
-      el.learningBoard.appendChild(waiting);
+      el.learningBoard.appendChild(loadingCard(12, 'reading',
+        'Still loading. This comes from this machine\u2019s own lessons and memories.',
+        function () { readLearning(true); }));
       if (el.learningBar) el.learningBar.textContent = '';
       return;
     }
@@ -10855,9 +10908,8 @@ import { node, svg, clip } from './core/dom.js';
     el.boardBoard.appendChild(pageHead('Work', 'The board',
       'your work at execution level \u2014 each plan\u2019s tasks in the column they stand in, and who each one is for.', null));
     if (!read) {
-      var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty', sentence('board', 'loading')));
-      el.boardBoard.appendChild(waiting);
+      el.boardBoard.appendChild(loadingCard(12, 'reading',
+        sentence('board', 'loading'), function () { readBoard(true); }));
       readBoard(false);
       return;
     }
@@ -10880,6 +10932,17 @@ import { node, svg, clip } from './core/dom.js';
     if (!plans.length && !loose.length) {
       var empty = boardCard(12, 'the board', null, null);
       empty.appendChild(node('p', 'board-empty', sentence('board', 'empty')));
+      // The empty state's one press (G7): the plans folder, in the pane's
+      // own tree — where a plan is written, read and approved.
+      var plansDoor = node('button', 'row-rewind', 'open the plans folder');
+      plansDoor.type = 'button';
+      plansDoor.addEventListener('click', function () {
+        openPane();
+        showPaneTab('read');
+        showReadMode('code');
+        readTree('docs/plans', true).then(function () { paintTree(); });
+      });
+      empty.appendChild(plansDoor);
       el.boardBoard.appendChild(empty);
       return;
     }
@@ -20184,8 +20247,9 @@ import { node, svg, clip } from './core/dom.js';
     var card = boardCard(12, 'the services', doc ? (doc.ok + ' ok \u00b7 ' + doc.total + ' services') : null,
       'The background services this app starts, checked live.');
     if (!doc) {
-      card.appendChild(node('p', 'board-empty', 'Still loading the connection checks.'));
-      return card;
+      return loadingCard(12, 'the services',
+        'Still loading the connection checks.',
+        function () { readLanes(true); });
     }
     if (refusals(doc)) {
       card.appendChild(node('p', 'board-empty', refusals(doc).join('; ')));
