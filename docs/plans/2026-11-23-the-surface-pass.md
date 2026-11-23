@@ -76,10 +76,40 @@ this bar; "it renders" is not a pass.
   moved (it carries the conversation's goal edge and delegated work); it is
   audited with the conversation surface, not here.
 
-### R3 — the first surface after the move
+### R3 — conversations: human work only
 
-- Chosen by the audit's own ranking: the surface with the most noise and dead
-  objects first, with the skills card as the owner's named example.
+The owner's directive (2026-11-23): *"conversations should only see human
+initiated or human involved conversations. there are a bunch of system
+initiated sessions that are just noise."*
+
+- The Conversations surface lists only what a human started or took part in.
+  System-initiated sessions — scheduled runs, cron, delegated workers,
+  background auto-tasks — leave the list.
+- They are not deleted or hidden from the product: their evidence belongs
+  where the system's work is audited (the run's receipts, the board, the
+  desk), and a delegated child rides under the parent goal (the findability
+  ruling, 2026-11-15: per-class window, spine user-initiated-only, children
+  under the parent). The audit confirms the destination read before the
+  filter ships — no row is dropped into nowhere.
+- **Measure before designing:** count the population by initiator and read
+  how the session record names it (the sessions document's counts already
+  separate `background`; the spine carries the user-initiated
+  classification the findability pass built). The row ships with those
+  numbers, not an assumption about which field means what.
+- The count strip follows the list: a number over a filtered population must
+  count the same population (the owner's own bar — a number that does not
+  match what it sits over is noise).
+- Pins: a fixture with owner, delegated and scheduled sessions; the list
+  carries only the human ones; a system run stays reachable its own way; the
+  strip agrees with the list.
+- This row is measured first in R2's pass (the owner named it), and its
+  measurement is the population evidence the filter is built from.
+
+### R4 — the first surface after the move
+
+- Chosen by the audit's own ranking after conversations: the surface with the
+  most noise and dead objects, with the skills card as the owner's named
+  example.
 
 ## Constraints
 
