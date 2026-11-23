@@ -19,7 +19,11 @@ end to end from an approved mockup. Gate: **2,824 Rust tests**, the face harness
   full list.
 - **v0.9.3 — the surface pass, the empty ledger, Node 26, tokens** (`bb070183`,
   tag pushed to gitea **and** github; the gated four-leg gate ran on a detached
-  worktree of the tag's commit before the tag existed). Assets: ASSETS_TBD.
+  worktree of the tag's commit before the tag existed). Assets: `fleet_0.9.3_aarch64.dmg`
+  (19.6 MB), `fleet-aarch64-apple-darwin.tar.gz` (16.1 MB), the raw CLI update
+  artifact `fleet-aarch64-apple-darwin` (43.2 MB), the signed updater
+  `fleet.app.tar.gz` + `.sig`, and `latest.json` — the feed names 0.9.3 and its
+  cli row's sha256 begins `3741e03f0914`.
 
 ## The surface pass, finished (plan completed)
 
@@ -131,7 +135,11 @@ method and per-surface audit in `docs/architecture/2026-11-23-surface-audit.md`:
 - The github mirror raced the master push (both remotes were already at
   `bb070183`); the tags pushed to both remotes cleanly.
 - The release gate ran on a detached worktree and settled 4.97 GiB of gate
-  artifacts; the assets preflight read 55 GiB free.
+  artifacts; the assets preflight read 55 GiB free, and the assets step's own
+  sweep then dropped 1.4 GiB of superseded compilations — release binaries and
+  bundles untouched, 59 GiB free after.
+- The local built binary answers `--version` from the packaged copy
+  (`target/release/fleet`); nothing was relaunched to verify the app.
 - `plan_check.py` still warns about two **2026-10-29** drafts (`turn-feedback`,
   `workspace-history-truth`) — untouched this session, and the owner's call.
   Three earlier plans remain active (kanzo-board, relevance-pass,
