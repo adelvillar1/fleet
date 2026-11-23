@@ -3167,6 +3167,11 @@ pub struct RosterEntry {
     /// load has already filtered them from `models`; this is why they
     /// are absent.
     pub disabled_models: Vec<String>,
+    /// The provider's declared catalog BEFORE the off-set filter
+    /// (KI-560). `models` is the enabled list; a card re-enabling a
+    /// model must write the whole catalog back, or the save deletes the
+    /// models it does not mention.
+    pub catalog_models: Vec<String>,
     /// The per-model settings the provider declared or the owner
     /// overrode, as the editor shows them.
     pub model_settings: std::collections::BTreeMap<String, crate::route::ModelSettings>,
@@ -3273,6 +3278,7 @@ fn roster_entry(
         key_env: entry.candidate.key_env.clone(),
         disabled_reason: entry.candidate.disabled_reason.clone(),
         disabled_models: entry.candidate.disabled_models.clone(),
+        catalog_models: entry.candidate.catalog_models.clone(),
         model_settings: entry.candidate.model_settings.clone(),
         headers: raw_headers.clone(),
     }

@@ -11394,7 +11394,10 @@ mod tests {
             .stderr(std::process::Stdio::from(stderr_file))
             .spawn()
             .expect("spawn the mock-server child");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // KI-594: five seconds was a quiet machine's number. Under the
+        // full suite's parallelism the child's spawn can take far longer;
+        // the wait is for readiness, not a claim about the work.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let port = loop {
             if let Ok(text) = std::fs::read_to_string(scratch.join("port")) {
                 if let Ok(port) = text.trim().parse::<u16>() {

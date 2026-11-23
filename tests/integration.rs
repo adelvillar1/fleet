@@ -4551,6 +4551,7 @@ async fn a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_
             key_required: true,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -5752,6 +5753,7 @@ fn resolved(id: &str, base_url: String, key_required: bool, key: Option<&str>) -
             key_required,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -13076,7 +13078,11 @@ use base64::Engine as _;
 #[allow(clippy::result_large_err)]
 fn relay_retry<T>(mut call: impl FnMut() -> Result<T, ureq::Error>) -> Result<T, ureq::Error> {
     let mut last: Option<ureq::Error> = None;
-    for attempt in 0..12u64 {
+    // KI-594: readiness, not assertion — a loaded machine can take longer
+    // than two seconds to answer a freshly spawned child. Twenty-five to a
+    // hundred milliseconds per attempt, eighty attempts (about six
+    // seconds), still returning the transport error to the caller.
+    for attempt in 0..80u64 {
         match call() {
             Ok(value) => return Ok(value),
             Err(ureq::Error::Status(code, response)) => {
@@ -13084,7 +13090,7 @@ fn relay_retry<T>(mut call: impl FnMut() -> Result<T, ureq::Error>) -> Result<T,
             }
             Err(error) => {
                 last = Some(error);
-                std::thread::sleep(std::time::Duration::from_millis(25 * (attempt + 1)));
+                std::thread::sleep(std::time::Duration::from_millis(25 * (attempt + 1).min(4)));
             }
         }
     }
@@ -13117,7 +13123,10 @@ async fn the_reference_relay_carries_sealed_frames() {
         .arg("--join-secret")
         .arg(join_secret)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        // KI-594: stderr is inherited. A piped stderr nobody drains both
+        // hides a child's death and can fill and freeze it; the next
+        // sighting should read the traceback in the test output.
+        .stderr(std::process::Stdio::inherit())
         .spawn()
         .expect("the reference relay spawns");
     let stdout = child.stdout.take().expect("the relay's stdout is piped");

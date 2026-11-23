@@ -22900,22 +22900,27 @@ import { node, svg, clip } from './core/dom.js';
   function writeSettings(op, fields, onDone) {
     var body = Object.assign({ op: op }, fields || {});
     settingsSay('saving', settingsLabel(op, fields));
-    post('/api/settings', body).then(function (reply) {
+    // The write returns what it did (KI-562): a caller driving a sequence
+    // (the reload-all) must name a refusal or an unreachable server and
+    // carry on, where `onDone` is the success path alone.
+    return post('/api/settings', body).then(function (reply) {
       if (reply.status !== 200) {
         settingsSay('refused', 'the write was refused',
           (reply.body && reply.body.error) || 'the app refused without saying why');
         // A refusal stops here: the caller's `onDone` is its success path,
         // and running it would paint its own "saved" over the writer's
         // words (the harness's U1 case caught exactly that).
-        return;
+        return { refused: true, reply: reply };
       }
       settingsSay('saved', settingsLabel(op, fields));
       return readSettings(true).then(function () {
         if (onDone) onDone(reply);
+        return { ok: true, reply: reply };
       });
     }).catch(function () {
       settingsSay('unreachable', 'the settings surface is unreachable',
         'the write never left this page \u2014 check the face is still running');
+      return { unreachable: true };
     });
   }
 
@@ -25712,15 +25717,22 @@ import { node, svg, clip } from './core/dom.js';
       act.type = 'button';
       act.dataset.act = 'provider-reload-all';
       act.addEventListener('click', function () {
+        if (act.disabled) return;
         var ids = ((read.catalog && read.catalog.providers) || [])
           .filter(function (one) { return one.kind !== 'lane' && one.enabled !== false; })
           .map(function (one) { return one.id; });
         var done = [];
         var failed = [];
-        // The press answers at once and holds itself: a sequence of network
-        // asks takes seconds, and a button that looks live through all of
-        // them is the silence KI-442 and KI-563 are made of.
+        // The press answers at once and holds itself for the WHOLE
+        // sequence (KI-562): one busy word, the count so far, and an
+        // answer remembered in face state — the final read rebuilds this
+        // card, and the sentence must still be what the owner is looking
+        // at. A button that looks live through nine asks is the silence
+        // KI-442 and KI-563 are made of.
         var release = fb.hold(act, 'reloading\u2026');
+        var progress = function () {
+          return (done.length + failed.length) + ' of ' + ids.length;
+        };
         fb.say('asking ' + ids.length + ' account' + (ids.length === 1 ? '' : 's') +
           ' for their catalogues\u2026', false);
         var step = function (index) {
@@ -25729,21 +25741,31 @@ import { node, svg, clip } from './core/dom.js';
             fb.say('reloaded ' + done.length + ' of ' + ids.length +
               (failed.length ? ' \u2014 ' + failed.join(', ') + ' did not answer' : ''),
               failed.length > 0);
+            if (failed.length) {
+              settingsNotice(failed.join(', ') + ' did not answer', 'the catalogues');
+            }
             readSettings(true);
             return;
           }
-          post('/api/settings', { op: 'provider-discover', id: ids[index] })
-            .then(function (reply) {
-              var body = reply.body || {};
-              var wrote = body.wrote || body;
-              var ok = reply.status === 200 && wrote.ok !== false && !body.error;
-              (ok ? done : failed).push(ids[index]);
+          var id = ids[index];
+          fb.say('reloading ' + id + ' \u2014 ' + progress() + '\u2026', false);
+          // Through the one write path (KI-562): a refusal is named by the
+          // writer and still counts against the sequence, where the
+          // success path's own read repaints the card between steps.
+          var landed = false;
+          writeSettings('provider-discover', { id: id }, function (reply) {
+            landed = true;
+            var body = (reply && reply.body) || {};
+            var wrote = body.wrote || (reply && reply.wrote) || {};
+            (wrote.ok === false ? failed : done).push(id);
+            step(index + 1);
+          }).then(function (result) {
+            if (landed) return;
+            if (result && (result.refused || result.unreachable)) {
+              failed.push(id);
               step(index + 1);
-            })
-            .catch(function () {
-              failed.push(ids[index]);
-              step(index + 1);
-            });
+            }
+          });
         };
         step(0);
       });
@@ -25887,7 +25909,7 @@ import { node, svg, clip } from './core/dom.js';
       {
         id: 'interface', icon: 'theme', name: 'interface',
         badge: 0,
-        changed: read.soul.present,
+        changed: (read.soul || {}).present,
         paint: function () {
           return [
             cfgList('the interface', 'how the face reads',
@@ -25904,7 +25926,7 @@ import { node, svg, clip } from './core/dom.js';
             cfgList('the identity', 'the voice the model-visible base is read from',
               [cfgItem({
                 id: 'soul', kind: 'soul', name: 'the identity slot',
-                value: read.soul.present ? 'set' : 'absent',
+                value: (read.soul || {}).present ? 'set' : 'absent',
                 card: function () { return [['the identity slot', soulCard(read)]]; }
               }),
               cfgItem({
@@ -26239,8 +26261,11 @@ import { node, svg, clip } from './core/dom.js';
     el.settingsBoard.textContent = '';
     // A document without its lists is a read that did not land, not a
     // settings page: painting it would throw on the first `.length` and
-    // leave the pane blank (found by the inbox harness's route walk).
-    if (!read || !read.scalars) {
+    // leave the pane blank (found by the inbox harness's route walk). The
+    // guard names every key the rail dereferences — `soul` was the one
+    // missing, and a read with scalars alone threw inside settingsSections
+    // (KI-566).
+    if (!read || !read.scalars || !read.soul) {
       el.settingsBoard.appendChild(pageHead('System', 'Settings',
         'Every knob this home carries, written through the same writer the CLI uses.',
         null));
@@ -26800,11 +26825,15 @@ import { node, svg, clip } from './core/dom.js';
     key.placeholder = 'paste the key \u2014 it is stored, never shown';
     key.setAttribute('aria-label', 'the ' + provider.id + ' key');
     var disabled = (provider.disabled_models || []).slice();
-    var catalog = (provider.models || []).filter(function (model) {
-      // The read's `models` is the enabled list and `disabled_models`
-      // the off list; a model named in both arrives once.
-      return disabled.indexOf(model) === -1;
-    }).concat(disabled);
+    // KI-560: the read carries the DECLARED catalog beside the enabled
+    // list, in the provider's own order. The rows use it so a re-enabled
+    // model returns to where it was declared, not appended after the
+    // disabled ones; a read without it falls back to the old union.
+    var catalog = provider.catalog_models && provider.catalog_models.length
+      ? provider.catalog_models.slice()
+      : (provider.models || []).filter(function (model) {
+        return disabled.indexOf(model) === -1;
+      }).concat(disabled);
     var declared = provider.model_settings || {};
     var catalogRows = node('div', 'cfg-list-rows');
     // W4: the headers this provider's requests carry — the config's own
@@ -26888,7 +26917,11 @@ import { node, svg, clip } from './core/dom.js';
         base_url: base.value.trim(),
         models_url: listing.value.trim() || undefined,
         key_env: provider.key_env || '',
-        models: provider.models || [],
+        // KI-560: save the FULL catalog, never the filtered list — the
+        // off-set is the only subtraction. Posting `models` here would
+        // delete every disabled model from the config on re-enable.
+        models: (provider.catalog_models && provider.catalog_models.length
+          ? provider.catalog_models : provider.models) || [],
         disabled_models: disabled,
         model_settings: declared,
         headers: headers,

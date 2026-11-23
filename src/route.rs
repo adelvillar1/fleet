@@ -329,6 +329,11 @@ pub struct Candidate {
     /// carried so a surface can name why a model the provider lists is
     /// not here.
     pub disabled_models: Vec<String>,
+    /// The provider's catalog as declared, BEFORE the off-set filter
+    /// (KI-560): a card that re-enables a model must write the full
+    /// catalog back, and the post-filter `models` cannot do that without
+    /// deleting the disabled ones — or reordering them.
+    pub catalog_models: Vec<String>,
     /// Per-model settings — the provider's declaration or the owner's
     /// override — that the window and request builders read.
     pub model_settings: std::collections::BTreeMap<String, ModelSettings>,
@@ -437,6 +442,7 @@ pub fn default_roster() -> Vec<Candidate> {
             key_required: true,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -459,6 +465,7 @@ pub fn default_roster() -> Vec<Candidate> {
             key_required: true,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -481,6 +488,7 @@ pub fn default_roster() -> Vec<Candidate> {
             key_required: true,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -499,6 +507,7 @@ pub fn default_roster() -> Vec<Candidate> {
             key_required: true,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -516,6 +525,7 @@ pub fn default_roster() -> Vec<Candidate> {
             key_required: true,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -543,6 +553,7 @@ pub fn default_roster() -> Vec<Candidate> {
             key_required: true,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -567,6 +578,7 @@ pub fn default_roster() -> Vec<Candidate> {
             key_required: false,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -589,6 +601,7 @@ pub fn default_roster() -> Vec<Candidate> {
             key_required: true,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,
@@ -1480,6 +1493,7 @@ fn merge(
                     key_required: entry.key_required.unwrap_or(true),
                     disabled_reason: entry.disabled_reason.clone(),
                     disabled_models: entry.disabled_models.clone().unwrap_or_default(),
+                    catalog_models: Vec::new(),
                     model_settings: entry.model_settings.clone().unwrap_or_default(),
                     headers: entry.headers.clone().unwrap_or_default(),
                     protocol: entry.protocol,
@@ -1501,6 +1515,10 @@ fn merge(
     // carried on the candidate so a surface can name why a model the
     // provider lists is absent.
     for candidate in &mut candidates {
+        // The declared catalog, kept before anything is subtracted
+        // (KI-560): the card saves THIS list and lets the off-set be the
+        // only subtraction.
+        candidate.catalog_models = candidate.models.clone();
         if candidate.disabled_models.is_empty() {
             continue;
         }
@@ -4695,6 +4713,12 @@ mod tests {
             .unwrap();
         assert_eq!(stepfun.models, vec!["step-3.7-flash"]);
         assert_eq!(stepfun.disabled_models, vec!["step-3.5-flash"]);
+        // KI-560: the declared catalog is kept whole, in declared order,
+        // beside the enabled list — the card saves THIS back.
+        assert_eq!(
+            stepfun.catalog_models,
+            vec!["step-3.7-flash", "step-3.5-flash"]
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -5369,6 +5393,7 @@ mod tests {
                     key_required: false,
                     disabled_reason: None,
                     disabled_models: Vec::new(),
+                    catalog_models: Vec::new(),
                     model_settings: std::collections::BTreeMap::new(),
                     headers: std::collections::BTreeMap::new(),
                     protocol: None,
@@ -5389,6 +5414,7 @@ mod tests {
                     key_required: true,
                     disabled_reason: None,
                     disabled_models: Vec::new(),
+                    catalog_models: Vec::new(),
                     model_settings: std::collections::BTreeMap::new(),
                     headers: std::collections::BTreeMap::new(),
                     protocol: None,
@@ -6389,6 +6415,7 @@ mod tests {
                 key_required: false,
                 disabled_reason: None,
                 disabled_models: Vec::new(),
+                catalog_models: Vec::new(),
                 model_settings: std::collections::BTreeMap::new(),
                 headers: std::collections::BTreeMap::new(),
                 protocol: None,
@@ -6782,6 +6809,7 @@ mod tests {
                 key_required: false,
                 disabled_reason: None,
                 disabled_models: Vec::new(),
+                catalog_models: Vec::new(),
                 model_settings: std::collections::BTreeMap::new(),
                 headers: std::collections::BTreeMap::new(),
                 protocol: None,

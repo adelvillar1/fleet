@@ -2333,6 +2333,12 @@ fn a_batch_that_judged_nothing_did_not_answer_and_the_command_says_so() {
     assert!(!over_budget.batch_answered());
 }
 
+// The environment lock is deliberately held across the awaits below: the
+// budget seam must stay cleared for every ask the sequence makes, and nothing
+// inside the future takes the same lock — the tests that do are synchronous
+// and wait on another thread. Clippy's lint is right in general and wrong
+// here, so it is silenced once, with the reason (the gui/server.rs precedent).
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn an_over_budget_day_is_refused_naming_the_spend_on_a_mixed_day() {
     // The budget's arithmetic on a mixed day, pinned: three delegation
@@ -2343,6 +2349,16 @@ async fn an_over_budget_day_is_refused_naming_the_spend_on_a_mixed_day() {
     // The cap holds to within one ask's real cost, and the reservation
     // is the only number available before the ask: the day's total can
     // cross the cap by at most one ask's real cost.
+    //
+    // The budget is read from the process environment, so this test holds
+    // the shared lock and clears the seam for its whole window (KI-595):
+    // the guard test beside it lowers the cap to 0.005 while it stands, and
+    // an unlocked multi-ask test read that number mid-flight — the second
+    // ask was refused for a budget this test never set (the sentence's
+    // "$0.01" is 0.005 formatted to cents).
+    let _lock = crate::testsupport::env_lock();
+    let mut budget = crate::testsupport::EnvVar::swapping(DELEGATE_BUDGET_ENV);
+    budget.clear();
     let home = scratch("budget-home");
     let root = scratch("budget-calib");
     let dir = sessions(&root);

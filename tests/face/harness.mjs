@@ -458,6 +458,15 @@ class El {
       if (form) form.fire('submit', {});
     }
   }
+  // A real select's own surface (KI-584): the face reads `options`, removes
+  // the roster's stale options and appends new ones. The stub's select had
+  // none, so provider pinning had no case and failed silently in a catch.
+  get options() {
+    return this.children.filter((child) => child.name === 'option');
+  }
+  remove(index) {
+    if (typeof index === 'number' && index >= 0) this.children.splice(index, 1);
+  }
   matches(sel) { return matchesSimple(this, sel); }
   closest(sel) {
     let node = this;
@@ -488,7 +497,24 @@ const DOCUMENT_REF = { current: null };
 function boot(options) {
   const opts = { width: 1440, ...options };
   const IDS = {};
-  PAGE_IDS.forEach((id) => { IDS[id] = new El('div'); IDS[id].id = id; });
+  PAGE_IDS.forEach((id) => {
+    // The real tag, not always a div (KI-584): a `<select>` with its static
+    // options is representable, so the face's own option handling runs.
+    const tagMatch = HTML.match(new RegExp('<([a-z]+)[^>]*id="' + id + '"[^>]*>'));
+    const tag = tagMatch ? tagMatch[1] : 'div';
+    IDS[id] = new El(tag);
+    IDS[id].id = id;
+    if (tag === 'select') {
+      const block = HTML.match(new RegExp('<select[^>]*id="' + id + '"[^>]*>([\\s\\S]*?)</select>'));
+      const inner = block ? block[1] : '';
+      for (const m of inner.matchAll(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)<\/option>/g)) {
+        const option = new El('option');
+        option.value = m[1];
+        option.textContent = m[2];
+        IDS[id].appendChild(option);
+      }
+    }
+  });
   const body = new El('body');
   const documentElement = new El('html');
   documentElement.children = Object.values(IDS);
@@ -5737,6 +5763,46 @@ async function theDelegationSurfaceLeadsWithTheBlockers() {
     page.window.location.hash === '#/sessions/run-x', page.window.location.hash);
 }
 
+// KI-584: the provider select is a real select in the stub — its static
+// Auto option, the roster's enabled providers appended by the face, and the
+// /pin command reading the same options.
+async function theProviderPinHasItsSelect() {
+  const page = boot({ width: 1440, hash: '#/chat', documents: {
+    settings: { catalog: { providers: [
+      { id: 'alpha', enabled: true }, { id: 'beta', enabled: true },
+      { id: 'off', enabled: false } ] } },
+    state: (asked) => emptyState(asked),
+  } });
+  page.open();
+  await flush(140);
+  const select = page.IDS['run-provider'];
+  const options = select.options.map((one) => one.value);
+  check('KI-584 the provider select carries its options',
+    options.join(',') === ',alpha,beta', options.join(','));
+  runSlash(page, '/pin alpha');
+  await flush(80);
+  check('KI-584 the pin command takes a real provider',
+    select.value === 'alpha' && page.text('face-say').includes('the pin is set'),
+    select.value + ' / ' + page.text('face-say').slice(0, 80));
+}
+
+// KI-566: a settings read that landed its scalars but not its soul threw
+// inside settingsSections; the honest answer is the reading card, not a
+// blank pane and not a guess.
+async function aPartialSettingsReadPaintsTheReadingCard() {
+  const page = boot({ hash: '#/settings', documents: {
+    settings: { type: 'settings', scalars: [] },
+    state: (asked) => emptyState(asked),
+    onboard: onboardDoc({ door: false }),
+  } });
+  page.open();
+  await flush(100);
+  check('KI-566 a settings read without its soul paints the reading card',
+    page.text('settings-board').includes('Still loading') &&
+      page.rows('.page-title').length === 1,
+    page.text('settings-board').slice(0, 140));
+}
+
 // R3 (the surface pass): the conversations list carries human work only.
 // The document holds an owner session, a scheduled run and a delegated
 // child; the list draws the owner's alone, and the count names the same
@@ -9072,6 +9138,11 @@ const calibrationStub = () => ({
       flatCss.includes('.board-card .cfg-form, .board-card .cfg-details { margin: 0 0 14px; padding: 12px 0 0; border: 0; border-top: 1px solid var(--dsw-alias-hairline); border-radius: 0; background: none; }'),
       'cfg nesting');
 
+    // KI-592: a landing with the drawer open excludes the pane's width.
+    check('KI-592 the landing steps left of the open drawer',
+      flatCss.includes('body[data-pane="open"] #panel-chat .empty { margin-right: var(--pane-width); width: min(760px, calc(100% - var(--pane-width) - 56px)); }'),
+      'landing inset');
+
     // G5's other half: the cursor was missing on every div-button, and
     // seven of them had no keyboard at all. One rule, one listener.
     check('R10 every div-button shows a cursor and answers the keyboard',
@@ -12285,10 +12356,13 @@ async function theSettingsRailCarriesOneSectionAtATime() {
       allow_api_models: false,
       roster: [{ id: 'alpha', base_url: 'http://127.0.0.1:9/v1',
         models_url: 'http://127.0.0.1:9/inference/v1/models',
-        models: ['m-one', 'm-two'],
+        models: ['m-one'],
         kind: 'http', billing: 'plan', enabled: true, key_present: true,
         key_required: true, key_env: 'ALPHA_API_KEY', disabled_reason: null,
         disabled_models: ['m-two'],
+        // KI-560: the declared catalog beside the enabled list, as the
+        // real read publishes it.
+        catalog_models: ['m-one', 'm-two'],
         model_settings: { 'm-one': { context_window: 262144,
           context_window_source: 'provider' } } }] },
     catalog: { models: [{ value: 'alpha/m-one', provider: 'alpha', model: 'm-one',
@@ -12297,7 +12371,8 @@ async function theSettingsRailCarriesOneSectionAtATime() {
       key_present: true, key_env: 'ALPHA_API_KEY', disabled_reason: null,
       base_url: 'http://127.0.0.1:9/v1',
       models_url: 'http://127.0.0.1:9/inference/v1/models',
-      models: ['m-one', 'm-two'], disabled_models: ['m-two'],
+      models: ['m-one'], disabled_models: ['m-two'],
+      catalog_models: ['m-one', 'm-two'],
       headers: { 'x-opencode-session': '{session}' },
       model_settings: { 'm-one': { context_window: 262144,
         context_window_source: 'provider' } } }] },
@@ -12706,6 +12781,14 @@ async function theSettingsRailCarriesOneSectionAtATime() {
       String(toggleWrites[0].body).includes('x-opencode-session') &&
       String(toggleWrites[0].body).includes('\\"enabled\\":false'),
     JSON.stringify(toggleWrites.map((c) => c.body)));
+  // KI-560: the card saves the FULL declared catalog and lets the
+  // off-set be the only subtraction. Posting the filtered `models` here
+  // deletes every disabled model from the config on the next save.
+  check('\u00a7KI-560 the save carries the full catalog, not the filtered list',
+    toggleWrites.length === 1 &&
+      String(toggleWrites[0].body).includes('\\"models\\":[\\"m-one\\",\\"m-two\\"]') &&
+      String(toggleWrites[0].body).includes('\\"disabled_models\\":[\\"m-two\\"]'),
+    toggleWrites.length ? String(toggleWrites[0].body).slice(0, 400) : 'no write');
   providers.fireOn('dock-object-close', 'click');
   await flush(40);
 
@@ -12781,11 +12864,44 @@ async function theSettingsRailCarriesOneSectionAtATime() {
     reloadAct ? reloadAct.textContent : 'no act');
   const reloadsBefore = providers.calls.length;
   if (reloadAct) reloadAct.click();
+  // KI-562: the press holds itself for the WHOLE sequence, and the card
+  // names the account it is asking with the count so far — read before
+  // the first reply settles, while the sequence is genuinely in flight.
+  check('MODEL the reload-all press holds itself while the sequence runs',
+    !!reloadAct && reloadAct.disabled === true &&
+      String(reloadAct.textContent || '').includes('reloading'),
+    reloadAct ? String(reloadAct.disabled) + ' / ' + reloadAct.textContent : 'no act');
+  check('MODEL the sequence names the account it is asking and the count',
+    providers.el('dock-object-body').textContent.includes('reloading alpha') &&
+      providers.el('dock-object-body').textContent.includes('0 of 1'),
+    providers.el('dock-object-body').textContent.slice(0, 200));
   await flush(120);
   const allReloads = providers.calls.slice(reloadsBefore).filter((c) => c.method === 'POST' &&
     c.url === '/api/settings' && String(c.body).includes('"op":"provider-discover"'));
   check('MODEL the press reloads each http provider once', allReloads.length === 1,
     JSON.stringify(allReloads.map((c) => c.body)));
+  // The sequence ends with its sentence on the surface and its press
+  // live again — the state the owner who pressed it must find.
+  const settledCard = providers.el('dock-object-body');
+  const settledAct = settledCard.find((one) => one.name === 'button' &&
+    one.dataset.act === 'provider-reload-all')[0] || null;
+  check('MODEL the sequence ends with one sentence and a live press',
+    settledCard.textContent.includes('reloaded 1 of 1') &&
+      !!settledAct && settledAct.disabled === false &&
+      String(settledAct.textContent || '').includes('reload them all'),
+    (settledAct ? String(settledAct.disabled) + ' / ' + settledAct.textContent : 'no act') +
+      ' | ' + settledCard.textContent.slice(0, 200));
+  // And the sentence is remembered, not painted into a node the next
+  // rebuild drops (KI-562): close the card, open it again from the read.
+  providers.fireOn('dock-object-close', 'click');
+  await flush(40);
+  const reopenRow = providers.rows('.cfg-item').find((row) =>
+    row.dataset.item === 'provider-reload-all');
+  if (reopenRow) reopenRow.click();
+  await flush(60);
+  check('MODEL the sequence\u2019s answer survives the card being rebuilt',
+    providers.el('dock-object-body').textContent.includes('reloaded 1 of 1'),
+    providers.el('dock-object-body').textContent.slice(0, 200));
   providers.fireOn('dock-object-close', 'click');
   await flush(40);
 
@@ -22659,6 +22775,8 @@ const cases = [
   ['R7 every surface head wears its place', theEyebrowWearsTheSurfacesPlace],
   ['R10 the card grid spans are all declared and collapse', theCardGridsSpansAreAllDeclared],
   ['R3 the conversations list carries human work only', theConversationsListCarriesHumanWorkOnly],
+  ['KI-566 a partial settings read paints the reading card', aPartialSettingsReadPaintsTheReadingCard],
+  ['KI-584 the provider select is a real select for the pin', theProviderPinHasItsSelect],
   ['RESKIN an empty tissue names what fills it', anEmptyTissueNamesWhatFillsIt],
   ['INTEL the tools segment names the registry and its classes', theToolsSegmentNamesTheRegistryAndItsClasses],
   ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],

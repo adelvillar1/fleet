@@ -25,6 +25,12 @@ fn the_face_work_surface_holds_its_contract() {
         }
     }
     let run = Command::new("node")
+        // KI-593: the harness can segfault inside V8's mark-compact GC
+        // (ClearStaleLeftTrimmedPointerVisitor iterating vm roots — macOS
+        // crash reports, ~1/10 runs). Concurrent marking off is the
+        // workaround: 20/20 clean versus the baseline, and v26 is clean too.
+        // Remove when the V8 bug is fixed upstream.
+        .arg("--no-concurrent-marking")
         .arg("tests/face/harness.mjs")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()

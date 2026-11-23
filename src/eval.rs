@@ -3249,6 +3249,7 @@ fn calibration_roster() -> Vec<route::Resolved> {
             key_required: false,
             disabled_reason: None,
             disabled_models: Vec::new(),
+            catalog_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
             protocol: None,

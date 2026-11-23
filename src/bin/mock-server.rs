@@ -52,7 +52,12 @@ fn serve() {
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind the mock server");
     let port = listener.local_addr().unwrap().port();
-    std::fs::write(&port_path, port.to_string()).expect("write the port file");
+    // Atomic handoff (KI-594): a reader polling the file used to be able to
+    // see it truncated mid-write and parse a shorter, wrong port. Write a
+    // sibling and rename it into place — a reader sees all or nothing.
+    let tmp = format!("{port_path}.tmp");
+    std::fs::write(&tmp, port.to_string()).expect("write the port file");
+    std::fs::rename(&tmp, &port_path).expect("publish the port file");
     eprintln!("[mock-server] listening on {port}");
 
     for stream in listener.incoming() {

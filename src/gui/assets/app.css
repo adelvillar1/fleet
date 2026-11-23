@@ -1681,6 +1681,17 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 .empty::-webkit-scrollbar { display: none; }
 
+/* KI-592: on a landing with the drawer open the question and its blocks
+   step left of the drawer instead of painting under it. The pane is an
+   overlay and the landing is the one surface with no column of its own to
+   narrow — its box simply excludes the pane's width. */
+@media (min-width: 1181px) {
+  body[data-pane="open"] #panel-chat .empty {
+    margin-right: var(--pane-width);
+    width: min(760px, calc(100% - var(--pane-width) - 56px));
+  }
+}
+
 .empty[hidden] { display: none; }
 
 .empty-eyebrow {
