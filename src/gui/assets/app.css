@@ -6596,16 +6596,11 @@ pre.drawer-code {
   background: var(--dsw-alias-surface);
   box-shadow: var(--shadow-3);
 }
-/* The offset itself. The tissue is a grid column at >=1081px only, and
-   the reveal strip takes its place when it is collapsed — the same two
-   states the `.face` template declares, so the pane's edge and the
-   stage's edge are one fact. Below the breakpoint the column is gone and
-   the pane may have the whole width. */
+/* The offset itself. The connections column retired (the surface pass,
+   2026-11-23): nothing holds the stage's right edge, so the drawer may
+   have the whole width (KI-555). The variable stays for the rules that
+   still read it (the scrim and the face's answer strip). */
 :root { --pane-right: 0px; }
-@media (min-width: 1081px) {
-  body[data-tissue="on"] { --pane-right: var(--tissue-width); }
-  body[data-tissue="off"] { --pane-right: 30px; }
-}
 /* The drawer's scrim: the workspace dims behind it and a press on the
    scrim closes it, the way the object drawer does (U13). */
 .pane-scrim {
@@ -11238,31 +11233,24 @@ body[data-motion="off"] .amb { display: none; }
   overflow-wrap: anywhere;
 }
 
-/* --- U0/U11: the tissue column ------------------------------------ */
-
-.tissue {
-  display: none;
-  grid-column: 3;
-  grid-row: 3;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  border-left: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel) 40%, transparent);
-  overflow-y: auto;
-  overflow-x: hidden;
+/* --- U0/U11: the connections page (the surface pass, 2026-11-23) ---
+   The graph was a permanent third column; it is a knowledge-region surface
+   now, so its own page carries the head, the drawing, the legend, and the
+   focus card at a width a human can read. */
+.connections-board {
+  max-width: 1040px;
+  grid-template-columns: minmax(0, 1fr);
 }
-
-.tissue-head {
+.connections-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  padding: 14px 16px 8px;
+  gap: 10px;
+  grid-column: 1 / -1;
+  padding: 2px 2px 0;
 }
-
-.tissue-title {
+.connections-title {
   font-family: var(--disp);
-  font-size: 15px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--text);
 }
@@ -11277,8 +11265,10 @@ body[data-motion="off"] .amb { display: none; }
 
 .tissue-graph {
   position: relative;
-  height: 240px;
-  flex: 0 0 auto;
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+  aspect-ratio: 720 / 440;
 }
 
 .tissue-graph svg { display: block; width: 100%; height: 100%; }
@@ -11348,6 +11338,10 @@ body[data-expert="on"] .plain-only { display: none; }
 .tissue-node.far .tissue-node-ring { stroke-opacity: 0.55; fill-opacity: 0.35; }
 .tissue-node.far:hover .tissue-node-ring,
 .tissue-node.far:focus .tissue-node-ring { stroke-opacity: 1; fill-opacity: 1; }
+/* A kind isolated (the surface pass): the other families step back, and a
+   link that touches neither end of the chosen kind fades with them. */
+.tissue-node.dim { opacity: 0.22; }
+.tissue-edge.dim { opacity: 0.1; }
 body[data-labels="off"] .tissue-hover-title { display: none; }
 
 .tissue-node-label {
@@ -11376,6 +11370,14 @@ body[data-labels="off"] .tissue-hover-title { display: none; }
   font-family: var(--mono);
   font-size: 12px;
   color: var(--muted);
+  background: var(--panel);
+  cursor: pointer;
+}
+.tissue-kind:hover { border-color: var(--line2); color: var(--text); }
+.tissue-kind[aria-pressed="true"] {
+  border-color: var(--cyan);
+  color: var(--text);
+  background: var(--panel2);
 }
 
 .tissue-kind .tissue-kind-dot { width: 6px; height: 6px; border-radius: 50%; }
@@ -11450,85 +11452,7 @@ body[data-labels="off"] .tissue-hover-title { display: none; }
   line-height: 1.5;
 }
 
-/* U9's breakpoint: >=1081px carries the tissue; <=1080 drops it. When
-   the pane is open on a wide shell it becomes the fourth column and the
-   tissue keeps its place — the tissue is permanent, the pane is not. */
-@media (min-width: 1081px) {
-  body[data-tissue="on"] .face {
-    grid-template-columns: var(--rail-actual) minmax(0, 1fr) var(--tissue-width);
-  }
-  body[data-tissue="on"] .tissue { display: flex; }
-  /* The pane is an overlay (U13); the tissue keeps its column. */
-}
 
-:root { --tissue-width: 320px; }
-
-/* The connections column's collapse (U12): the head chevron, the console
-   switch and the edge tab are three doors on ONE state — body[data-tissue].
-   Collapsed, the column steps out of the grid and a slim tab holds the
-   stage's right edge, so the way back never hides with the pane it
-   controls. <=1080px the column is dropped by the breakpoint, the tab with
-   it. */
-.tissue-collapse {
-  margin-left: auto;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  color: var(--muted);
-  background: none;
-  border: none;
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1;
-  flex: none;
-}
-.tissue-collapse:hover { color: var(--text); background: var(--panel2); }
-.tissue-collapse::after { content: "\203A"; } /* › collapse — the column goes right */
-body[data-tissue="off"] .tissue-collapse::after { content: "\2039"; } /* ‹ */
-
-#tissue-reveal {
-  position: fixed;
-  right: 0;
-  top: 42%;
-  z-index: 30;
-  display: none;
-  place-items: center;
-  width: 26px;
-  height: 56px;
-  border: 1px solid var(--line2);
-  border-right: none;
-  border-radius: 9px 0 0 9px;
-  background: var(--panel);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1;
-}
-#tissue-reveal:hover { color: var(--text); background: var(--panel2); }
-#tissue-reveal::after { content: "\2039"; }
-@media (min-width: 1081px) {
-  body[data-tissue="off"] #tissue-reveal { display: grid; }
-  body[data-tissue="off"] .face {
-    grid-template-columns: var(--rail-actual) minmax(0, 1fr) 30px;
-  }
-  /* U13: the drawer overlays here too — no fourth track with the pane open. */
-  body[data-tissue="off"] .tissue {
-    display: flex;
-    grid-column: 3;
-    padding: 0;
-    overflow: hidden;
-  }
-  body[data-tissue="off"] .tissue-head { padding: 10px 0; width: 100%; flex-direction: column; gap: 8px; }
-  body[data-tissue="off"] .tissue-title,
-  body[data-tissue="off"] .tissue-where,
-  body[data-tissue="off"] .tissue-graph,
-  body[data-tissue="off"] .tissue-legend,
-  body[data-tissue="off"] .tissue-focus,
-  body[data-tissue="off"] .tissue-empty { display: none; }
-  body[data-tissue="off"] .tissue-collapse { margin: 0 auto; }
-}
 
 /* --- U9: the lens-head's sub line --------------------------------- */
 

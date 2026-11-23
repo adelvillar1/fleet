@@ -255,6 +255,10 @@ import { node, svg, clip } from './core/dom.js';
     ['huddles', 'huddles'],
     ['desk', 'desk'],
     ['calibration', 'calibration'],
+    // The connections graph is a knowledge surface (the surface pass,
+    // 2026-11-23): the column fought the drawer for the right edge, so
+    // the graph reads /api/tissue on its own page instead.
+    ['connections', 'connections'],
     ['design', 'design'],
     ['vault', 'vault'],
     ['settings', 'settings'],
@@ -313,6 +317,11 @@ import { node, svg, clip } from './core/dom.js';
       // What landed, and whether it holds.
       ['desk', 'desk'],
       // What it knows and what it can do.
+      // The connections page (the surface pass, 2026-11-23): the rail
+      // reads RAIL_MAP, the palette still reads this table — a row here
+      // keeps ⌘K reaching the surface (U44), and the surface pass's
+      // palette row folds the two onto one source.
+      ['connections', 'connections'],
       ['memory', 'intelligence'],
       // What it learned the hard way.
       ['learning', 'learning'],
@@ -367,7 +376,7 @@ import { node, svg, clip } from './core/dom.js';
     regions: [
       { id: 'software', name: 'software', rows: ['sessions', 'board', 'armada'] },
       { id: 'design', name: 'design', rows: ['design'] },
-      { id: 'knowledge', name: 'knowledge', rows: ['memory', 'learning', 'desk', 'calibration'] }
+      { id: 'knowledge', name: 'knowledge', rows: ['connections', 'memory', 'learning', 'desk', 'calibration'] }
     ],
     system: {
       id: 'system', name: 'system',
@@ -696,6 +705,14 @@ import { node, svg, clip } from './core/dom.js';
       ['circle', { cx: 18.5, cy: 8.5, r: 2.3 }],
       ['circle', { cx: 12, cy: 17.5, r: 2.3 }],
       ['path', { d: 'M7.7 7.4l8.6 7.6M17 10.6l-3.7 4.8M7.3 8.9l3.4 6.4' }],
+    ],
+    // The connections page (the surface pass): a hub joined to two nodes —
+    // its own drawing, in the graph's family, so no two rail marks repeat.
+    connections: [
+      ['circle', { cx: 12, cy: 10.5, r: 2.6 }],
+      ['circle', { cx: 5, cy: 18, r: 2 }],
+      ['circle', { cx: 19, cy: 18, r: 2 }],
+      ['path', { d: 'M10.2 12.3l-3.4 3.4M13.8 12.3l3.4 3.4M7 18h10' }],
     ],
     // the practice: a cycle, the repetition the retrieval needs
     practice: [
@@ -1145,7 +1162,6 @@ import { node, svg, clip } from './core/dom.js';
     viewsWrap: document.getElementById('views-wrap'),
     views: document.getElementById('views'),
     viewSave: document.getElementById('view-save'),
-    tissue: document.getElementById('tissue'),
     tissueWhere: document.getElementById('tissue-where'),
     tissueGraph: document.getElementById('tissue-graph'),
     tissueLegend: document.getElementById('tissue-legend'),
@@ -1324,9 +1340,6 @@ import { node, svg, clip } from './core/dom.js';
     chatBigger: document.getElementById('chat-bigger'),
     send: document.getElementById('send'),
     chromeSearch: document.getElementById('chrome-search-input'),
-    ctlConnections: document.getElementById('ctl-connections'),
-    tissueCollapse: document.getElementById('tissue-collapse'),
-    tissueReveal: document.getElementById('tissue-reveal'),
     ctlLabels: document.getElementById('ctl-labels'),
     ctlMotion: document.getElementById('ctl-motion'),
     ctlExpert: document.getElementById('ctl-expert'),
@@ -12613,17 +12626,12 @@ import { node, svg, clip } from './core/dom.js';
     catch (error) { return fallback; }
   }
   function paintConsole() {
-    document.body.dataset.tissue = consoleSetting('connections', 'on');
+    // The connections column is a page now (the surface pass), so the
+    // console keeps only the switches that still change something: labels
+    // (names on the graph), armada (its instances), expert, motion.
     document.body.dataset.labels = consoleSetting('labels', 'on');
     document.body.dataset.armada = consoleSetting('armada', 'off');
     document.body.dataset.expert = consoleSetting('expert', 'off');
-    if (el.ctlConnections) el.ctlConnections.setAttribute('aria-pressed',
-      String(document.body.dataset.tissue === 'on'));
-    // The collapse doors sync off the same state: the head chevron's
-    // pressed flag mirrors the column, and the edge tab shows only when
-    // the column is away (its visibility is CSS off body[data-tissue]).
-    if (el.tissueCollapse) el.tissueCollapse.setAttribute('aria-pressed',
-      String(document.body.dataset.tissue === 'on'));
     if (el.ctlLabels) el.ctlLabels.setAttribute('aria-pressed',
       String(document.body.dataset.labels === 'on'));
     if (el.ctlArmada) el.ctlArmada.setAttribute('aria-pressed',
@@ -12632,29 +12640,13 @@ import { node, svg, clip } from './core/dom.js';
       String(document.body.dataset.expert === 'on'));
   }
   function consoleToggle(key, onValue, offValue, after) {
-    // Read the applied state, not the storage fallback: the default for
-    // connections/labels is on, so a fallback of off would flip the first
-    // press the wrong way.
-    var attr = { connections: 'tissue', labels: 'labels', armada: 'armada', expert: 'expert' }[key];
+    var attr = { labels: 'labels', armada: 'armada', expert: 'expert' }[key];
     var now = document.body.dataset[attr] || offValue;
     try { window.localStorage.setItem('fleet-' + key, now === onValue ? offValue : onValue); }
     catch (error) { }
     paintConsole();
     if (after) after();
   }
-  if (el.ctlConnections) el.ctlConnections.addEventListener('click', function () {
-    consoleToggle('connections', 'on', 'off');
-  });
-  // The column's own doors (U12): the head chevron collapses where the
-  // column is, and the edge tab is the way back when it is away — both
-  // ride the same state the console switch sets, so the three never
-  // disagree.
-  if (el.tissueCollapse) el.tissueCollapse.addEventListener('click', function () {
-    consoleToggle('connections', 'on', 'off');
-  });
-  if (el.tissueReveal) el.tissueReveal.addEventListener('click', function () {
-    consoleToggle('connections', 'on', 'off');
-  });
   if (el.ctlLabels) el.ctlLabels.addEventListener('click', function () {
     consoleToggle('labels', 'on', 'off');
   });
@@ -32244,6 +32236,10 @@ import { node, svg, clip } from './core/dom.js';
     // The conversation is live from the log; every board paints now and
     // again when its own read lands.
     var arrive = {
+      // The connections page (the surface pass): the column painted at
+      // boot; the page paints on arrival from the read it already holds,
+      // then refreshes in the background.
+      connections: function () { paintTissue(); readTissue(false); },
       board: function () { paintBoard(); readBoard(true).then(paintBoard); },
       router: function () { paintRouter(); readRouter(true).then(paintRouter); },
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
@@ -34444,7 +34440,7 @@ import { node, svg, clip } from './core/dom.js';
   // (tower). The harness pins it against the rail's own addresses.
   var BUILT = ['chat', 'board', 'inbox', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
     'sessions', 'calibration', 'second-brain', 'workspace-history', 'armada', 'bots', 'vault',
-    'settings', 'plugins', 'learning'];
+    'settings', 'plugins', 'learning', 'connections'];
 
   // The rail's badge: the surface that has something waiting says so,
   // and says nothing when it does not — an empty counter is decoration.
@@ -35098,7 +35094,13 @@ import { node, svg, clip } from './core/dom.js';
   function pivotTo(kind, id, label) {
     focusOn(kind, id, label);
     var target = FOCUS_LENSES[kind];
-    if (!target || !target.lens) return;
+    // The kind table names every kind's lens; FOCUS_LENSES adds the follow
+    // hooks for the ones that open an object. Reading only the second table
+    // left "open skills" dead on the old column (the live probe, 2026-11-23):
+    // a kind with a lens and no hook had an act that did nothing.
+    var kindLens = TISSUE_KINDS[kind] ? TISSUE_KINDS[kind].lens : null;
+    var lens = target ? target.lens : kindLens;
+    if (!lens) return;
     if (kind === 'thread') { openWork(id); return; }
     // A design board pivots to the canvas, not the desk stages (the
     // project-centered workspace plan): the namespaced id carries the slug.
@@ -35106,12 +35108,12 @@ import { node, svg, clip } from './core/dom.js';
       window.location.hash = '#/design/' + encodeURIComponent(id.slice('design:'.length));
       return;
     }
-    if (face.panel !== target.lens) {
-      try { window.history.replaceState(null, '', '#/' + target.lens); } catch (error) { }
+    if (face.panel !== lens) {
+      try { window.history.replaceState(null, '', '#/' + lens); } catch (error) { }
       readSpine(true);
       showRoute();
     }
-    if (target.follow) target.follow(id);
+    if (target && target.follow) target.follow(id);
   }
 
   function paintTissue() {
@@ -35152,7 +35154,10 @@ import { node, svg, clip } from './core/dom.js';
     if (!face.focusObject) {
       face.focusObject = { kind: focus.kind, id: focus.id, label: focus.label };
     }
-    var W = 288, H = 224, CX = W / 2, CY = H / 2;
+    // Page scale (the surface pass): the column's 288x224 drawing was
+    // sized to a 320px rail; a page has room for the neighbourhood to
+    // breathe, and the SVG scales down with the window.
+    var W = 720, H = 440, CX = W / 2, CY = H / 2;
     // The focus's neighborhood, never the whole archive (U3/U11): the
     // centered object and what the read says it touches. Nothing else is
     // drawn — an unlinked focus shows itself and says so, rather than
@@ -35202,18 +35207,26 @@ import { node, svg, clip } from './core/dom.js';
           : 'what this connects to')
         : 'nothing connects to this yet';
     }
+    // The kind filter (the surface pass): a legend chip isolates its kind.
+    // A kind that is no longer drawn clears itself, so a filter can never
+    // hide the whole graph behind a chip that is not there.
+    if (face.tissueKind && !nodes.some(function (one) {
+      return one.kind === face.tissueKind;
+    })) face.tissueKind = null;
+    var kinds = {};
+    nodes.forEach(function (one) { kinds[one.id] = one.kind; });
     var at = {};
     ring.forEach(function (one, index) {
       var angle = (index / ring.length) * Math.PI * 2 - Math.PI / 2;
-      at[one.id] = [CX + 78 * Math.cos(angle), CY + 66 * Math.sin(angle)];
+      at[one.id] = [CX + 150 * Math.cos(angle), CY + 118 * Math.sin(angle)];
     });
     others.forEach(function (one, index) {
       var spread = Math.max(1, others.length);
       var angle = (index / spread) * Math.PI * 2 - Math.PI / 2 + Math.PI / spread;
-      at[one.id] = [CX + 118 * Math.cos(angle), CY + 96 * Math.sin(angle)];
+      at[one.id] = [CX + 262 * Math.cos(angle), CY + 196 * Math.sin(angle)];
     });
     at[focus.id] = [CX, CY];
-    if (moreNode) at[moreNode.id] = [CX, H - 12];
+    if (moreNode) at[moreNode.id] = [CX, H - 18];
     var made = svg('svg', {
       viewBox: '0 0 ' + W + ' ' + H, 'aria-hidden': 'true', class: 'tissue-net'
     });
@@ -35227,7 +35240,9 @@ import { node, svg, clip } from './core/dom.js';
       if (!fromXY || !toXY) return;
       made.appendChild(svg('line', {
         x1: fromXY[0], y1: fromXY[1], x2: toXY[0], y2: toXY[1],
-        class: 'tissue-edge' + (edge.hot ? ' hot' : ''),
+        class: 'tissue-edge' + (edge.hot ? ' hot' : '') +
+          (face.tissueKind && kinds[edge.from] !== face.tissueKind &&
+            kinds[edge.to] !== face.tissueKind ? ' dim' : ''),
         'data-from': edge.from, 'data-to': edge.to,
         stroke: 'var(--line2)'
       }));
@@ -35281,8 +35296,10 @@ import { node, svg, clip } from './core/dom.js';
     function graphNode(one, radius) {
       var xy = at[one.id];
       var group = svg('g', {
-        class: 'tissue-node' + (one.live ? ' live' : '') + (radius < 5 ? ' far' : ''),
-        tabindex: '0', role: 'button', 'aria-label': one.label || one.id
+        class: 'tissue-node' + (one.live ? ' live' : '') + (radius < 5 ? ' far' : '') +
+          (face.tissueKind && one.kind !== face.tissueKind ? ' dim' : ''),
+        tabindex: '0', role: 'button', 'aria-label': one.label || one.id,
+        'data-kind': one.kind
       });
       group.appendChild(svg('circle', {
         cx: xy[0], cy: xy[1], r: radius, class: 'tissue-node-ring',
@@ -35290,7 +35307,14 @@ import { node, svg, clip } from './core/dom.js';
         'stroke-width': radius < 5 ? '1' : '1.2'
       }));
       group.appendChild(svg('title', {}, one.label || one.id));
-      group.addEventListener('click', function () { pivotTo(one.kind, one.id, one.label); });
+      // A node press DRILLS DOWN (the surface pass): the graph re-centres
+      // and the card names the object; the card's own press is what opens
+      // the object's lens. On the old column a press had to leave the
+      // workspace to be useful.
+      group.addEventListener('click', function () {
+        focusOn(one.kind, one.id, one.label);
+        paintTissue();
+      });
       group.addEventListener('mouseenter', function () { showHover(one, xy); });
       group.addEventListener('mouseleave', hideHover);
       group.addEventListener('focus', function () { showHover(one, xy); });
@@ -35298,8 +35322,8 @@ import { node, svg, clip } from './core/dom.js';
       made.appendChild(group);
     }
 
-    others.forEach(function (one) { graphNode(one, 3.4); });
-    ring.forEach(function (one) { graphNode(one, 7); });
+    others.forEach(function (one) { graphNode(one, 4.6); });
+    ring.forEach(function (one) { graphNode(one, 9.5); });
     if (moreNode) {
       var moreXY = at[moreNode.id];
       var more = svg('g', {
@@ -35307,7 +35331,7 @@ import { node, svg, clip } from './core/dom.js';
         'aria-label': moreNode.label
       });
       more.appendChild(svg('circle', {
-        cx: moreXY[0], cy: moreXY[1], r: 6, class: 'tissue-node-ring',
+        cx: moreXY[0], cy: moreXY[1], r: 8, class: 'tissue-node-ring',
         fill: 'var(--line2)', stroke: 'var(--line2)', 'stroke-width': '1'
       }));
       more.appendChild(svg('title', {}, moreNode.label));
@@ -35322,13 +35346,16 @@ import { node, svg, clip } from './core/dom.js';
       made.appendChild(more);
     }
 
-    // The center: the focus itself, bigger — the focus card names it.
+    // The center: the focus itself, bigger — the focus card names it. Its
+    // press OPENS the object (act): the node ring drills, the centre acts.
     var center = svg('g', {
-      class: 'tissue-node' + (focus.live ? ' live' : ''),
-      tabindex: '0', role: 'button', 'aria-label': focus.label || focus.id
+      class: 'tissue-node' + (focus.live ? ' live' : '') +
+        (face.tissueKind && focus.kind !== face.tissueKind ? ' dim' : ''),
+      tabindex: '0', role: 'button', 'aria-label': focus.label || focus.id,
+      'data-kind': focus.kind
     });
     center.appendChild(svg('circle', {
-      cx: CX, cy: CY, r: 13, class: 'tissue-node-ring',
+      cx: CX, cy: CY, r: 19, class: 'tissue-node-ring',
       fill: 'var(' + kindHue(focus.kind) + '-d)', stroke: 'var(' + kindHue(focus.kind) + ')',
       'stroke-width': '1.5'
     }));
@@ -35357,12 +35384,23 @@ import { node, svg, clip } from './core/dom.js';
     nodes.forEach(function (one) { held[one.kind] = (held[one.kind] || 0) + 1; });
     el.tissueLegend.textContent = '';
     Object.keys(held).forEach(function (kind) {
-      var chip = node('span', 'tissue-kind');
+      // A chip is a press, not a caption (the surface pass): it isolates
+      // its kind in the graph, and its number is what it isolates. The
+      // owner's bar — "a skills card with a number tells me nothing" — the
+      // number is the reason to press, not the whole story.
+      var chip = node('button', 'tissue-kind');
+      chip.type = 'button';
+      chip.setAttribute('aria-pressed',
+        String(face.tissueKind === kind));
       var dot = node('span', 'tissue-kind-dot');
       dot.style.background = 'var(' + kindHue(kind) + ')';
       chip.appendChild(dot);
       var named = TISSUE_KINDS[kind] ? TISSUE_KINDS[kind].name : kind;
       chip.appendChild(node('span', null, named + ' ' + held[kind]));
+      chip.addEventListener('click', function () {
+        face.tissueKind = face.tissueKind === kind ? null : kind;
+        paintTissue();
+      });
       el.tissueLegend.appendChild(chip);
     });
   }
@@ -35703,23 +35741,13 @@ import { node, svg, clip } from './core/dom.js';
     var MIN = 300, MAX = 720, STAGE_FLOOR = 560, DEFAULT = 440;
     var applied = DEFAULT;
     // KI-555: the pane's right edge is the stage's, so whatever holds the
-    // right of the window is not the pane's to take — the connections
-    // column when it is open, the reveal strip when it is collapsed. A
-    // clamp that ignored it would let a drag push the pane back over the
-    // column the stylesheet just stepped around, which is the same defect
-    // wearing a different hat.
+    // right of the window is not the pane's to take. The connections column
+    // retired (the surface pass, 2026-11-23): nothing holds the edge now,
+    // so the drawer may take it.
     function reserved() {
-      if (window.innerWidth <= 1080) return 0;
-      var tissue = document.body.dataset.tissue;
-      if (tissue === 'on') {
-        var raw = window.getComputedStyle
-          ? window.getComputedStyle(document.documentElement)
-            .getPropertyValue('--tissue-width')
-          : '';
-        var width = parseFloat(raw);
-        return isNaN(width) ? 320 : width;
-      }
-      return tissue === 'off' ? 30 : 0;
+      // The connections column retired (the surface pass): nothing holds the
+      // stage's right edge any more, so the drawer may have it (KI-555).
+      return 0;
     }
     function clamp(width) {
       var max = Math.max(

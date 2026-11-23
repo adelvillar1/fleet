@@ -5778,8 +5778,8 @@ async function theRailCarriesTheMap() {
   // regions' lanes (armada off in this fixture) and the system strip. The
   // addresses are ROUTES' own (they navigate), so a drift in the table is a
   // red check, not a silent second registry.
-  const expected = ['board', 'bots', 'calibration', 'design', 'desk', 'inbox',
-    'learning', 'memory', 'plugins', 'second-brain', 'sessions', 'settings',
+  const expected = ['board', 'bots', 'calibration', 'connections', 'design', 'desk',
+    'inbox', 'learning', 'memory', 'plugins', 'second-brain', 'sessions', 'settings',
     'vault', 'workspace-history'];
   check('MAP the rail lists exactly the map\u2019s addresses',
     links.map((one) => one.dataset.address).sort().join(',') === expected.join(','),
@@ -5797,10 +5797,12 @@ async function theRailCarriesTheMap() {
   check('MAP every lane sits in its work kind',
     sectionOf('sessions') === 'software' && sectionOf('board') === 'software' &&
       sectionOf('design') === 'design' &&
+      sectionOf('connections') === 'knowledge' &&
       sectionOf('memory') === 'knowledge' && sectionOf('learning') === 'knowledge' &&
       sectionOf('desk') === 'knowledge' && sectionOf('calibration') === 'knowledge' &&
       sectionOf('settings') === 'system' && sectionOf('vault') === 'system',
-    ['sessions', 'board', 'design', 'memory', 'learning', 'desk', 'calibration', 'settings', 'vault']
+    ['sessions', 'board', 'design', 'connections', 'memory', 'learning', 'desk',
+      'calibration', 'settings', 'vault']
       .map((a) => a + '=' + sectionOf(a)).join(' '));
 
   const stateSections = page.rows('.surfaces-section')
@@ -8153,19 +8155,18 @@ async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
 
   // The grip: drag left widens to the cap, the choice persists, the
   // double-click resets, and the separator takes the keyboard. The cap is
-  // no longer the whole window (KI-555): at 1440 with the connections
-  // column open the pane stops at the column's edge, so the widest it may
-  // be is 1440 - stage floor 560 - tissue 320 = 560. Before the fix this
-  // case pinned 720, which is exactly the pane painting over 200px of a
-  // 320px column — the defect recorded as an expectation.
+  // The pane is the one right surface (the surface pass retired the
+  // connections column): at 1440 nothing holds the stage's right edge, so
+  // the grip reaches its own maximum, 720 — KI-555's cap died with the
+  // column it protected.
   const grip = page.rows('#pane-grip')[0];
   grip.fire('pointerdown', { clientX: 1000, pointerId: 1 });
   grip.fire('pointermove', { clientX: 700, pointerId: 1 });
   grip.fire('pointerup', { clientX: 700, pointerId: 1 });
   const widened = page.sandbox.document.documentElement.style.getPropertyValue('--pane-width');
   check('P the drag widens the pane to its cap and persists',
-    widened === '560px' &&
-      JSON.stringify(page.sandbox.localStorage.getItem('fleet-pane-width')) === '"560"',
+    widened === '720px' &&
+      JSON.stringify(page.sandbox.localStorage.getItem('fleet-pane-width')) === '"720"',
     String(widened));
   grip.fire('dblclick', {});
   const reset = page.sandbox.document.documentElement.style.getPropertyValue('--pane-width');
@@ -15956,16 +15957,17 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
     // threads/archive consolidation (the owner's 2026-11-17 ruling); this
     // is the next subtraction, and the count is re-derived, not guessed.
     // The map (2026-11-23): Home + software (sessions, board; armada off) +
-    // design + knowledge (memory, learning, desk, calibration) + the system
-    // strip (health, versions, secrets, plugins, assistants, settings) = 14.
-    check('ICONS the rail lists the destinations', links.length === 14,
+    // design + knowledge (connections, memory, learning, desk, calibration)
+    // + the system strip (health, versions, secrets, plugins, assistants,
+    // settings) = 15.
+    check('ICONS the rail lists the destinations', links.length === 15,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 14,
+      shapes.every(Boolean) && new Set(shapes).size === 15,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
 
     // The owner's own report, on the rendered rail rather than in the
@@ -17439,36 +17441,111 @@ const tissueDocument = () => ({
   ],
 });
 async function theTissuePaintsTheGraphAndPivots() {
-  const page = boot({ documents: { tissue: tissueDocument() } });
+  const page = boot({ documents: { tissue: tissueDocument() }, hash: '#/connections' });
   page.open();
-  await flush();
+  await flush(120);
+  check('SURF the connections page is the surface shown',
+    page.IDS['panel-connections'].hidden === false,
+    String(page.IDS['panel-connections'].hidden));
   const svgEl = page.IDS['tissue-graph'].querySelector('svg');
-  check('RESKIN the tissue draws one graph', !!svgEl, svgEl ? 'svg present' : 'no svg');
+  check('SURF the surface draws one graph', !!svgEl, svgEl ? 'svg present' : 'no svg');
   const nodes = svgEl.querySelectorAll('.tissue-node');
-  check('RESKIN the graph carries the focus and the ring',
+  check('SURF the graph carries the focus and the ring',
     nodes.length === 4, 'nodes=' + nodes.length);
   const live = svgEl.querySelectorAll('.tissue-node.live');
-  check('RESKIN the working node carries the pulse', live.length === 1,
+  check('SURF the working node carries the pulse', live.length === 1,
     'live=' + live.length);
-  const legend = page.IDS['tissue-legend'].querySelectorAll('.tissue-kind');
-  check('RESKIN the legend names the kinds present', legend.length === 4,
+  const legend = Array.from(page.IDS['tissue-legend'].querySelectorAll('.tissue-kind'));
+  check('SURF the legend is a row of presses, not captions',
+    legend.length === 4 && legend.every((one) => one.name === 'button' &&
+      one.getAttribute('aria-pressed') === 'false'),
     'kinds=' + legend.length);
-  const focusCard = page.IDS['tissue-focus'];
-  check('RESKIN the focus card names the first node',
-    focusCard.querySelector('.tissue-focus-title').textContent === 'write the release notes',
-    'title=' + focusCard.querySelector('.tissue-focus-title').textContent);
-  check('RESKIN the focus card offers the kind\u2019s lens',
-    focusCard.textContent.includes('open tasks'),
-    'actions=' + focusCard.textContent);
-  // The pivot (U3): a ring click refocuses the whole column.
-  const ringNode = nodes.filter((one) => one.className !== 'tissue-node live' &&
-    one.querySelector('circle').getAttribute('r') === '7')[0];
-  ringNode.click();
-  await flush();
-  check('RESKIN a ring click pivots the focus',
-    page.IDS['tissue-focus'].querySelector('.tissue-focus-title').textContent !==
-      'write the release notes',
-    'title=' + page.IDS['tissue-focus'].querySelector('.tissue-focus-title').textContent);
+  const title = () => {
+    const found = page.IDS['tissue-focus'].querySelector('.tissue-focus-title');
+    return found ? found.textContent : '';
+  };
+  check('SURF the focus card names the first node',
+    title() === 'write the release notes', 'title=' + title());
+
+  // Drill down (the surface pass): a ring press refocuses IN PLACE — the
+  // graph re-centres and the card names it, and the address does not move.
+  const ringNode = Array.from(nodes).find((one) => {
+    const named = one.querySelector('title');
+    return named && named.textContent === 'the release thread';
+  });
+  check('SURF the ring offers its objects', !!ringNode, 'ring node');
+  if (ringNode) ringNode.click();
+  await flush(40);
+  check('SURF a ring press drills the focus in place',
+    title() === 'the release thread' &&
+      page.window.location.hash === '#/connections',
+    'title=' + title() + ' hash=' + page.window.location.hash);
+
+  // The kind filter: a chip isolates its family and steps the rest back,
+  // so the number is a reason to press rather than the whole story.
+  const chipFor = (kind) => Array.from(
+    page.IDS['tissue-legend'].querySelectorAll('.tissue-kind'))
+    .filter((one) => one.textContent.indexOf(kind + ' ') === 0)[0];
+  const clicked = chipFor('tasks');
+  if (clicked) clicked.click();
+  await flush(40);
+  // The legend repaints, so read the chip FRESH: the pressed one is the
+  // task's, the task node keeps its colour and the focus (a thread) steps
+  // back — the chip isolates, it does not hide the object the page is on.
+  const now = chipFor('tasks');
+  const taskNodeNow = Array.from(
+    page.IDS['tissue-graph'].querySelectorAll('.tissue-node'))
+    .filter((one) => one.getAttribute('data-kind') === 'task')[0];
+  const focusNow = Array.from(
+    page.IDS['tissue-graph'].querySelectorAll('.tissue-node'))
+    .filter((one) => one.getAttribute('data-kind') === 'thread')[0];
+  check('SURF a legend chip isolates its kind',
+    !!now && now.getAttribute('aria-pressed') === 'true' &&
+      !!taskNodeNow && String(taskNodeNow.getAttribute('class')).indexOf('dim') === -1 &&
+      !!focusNow && String(focusNow.getAttribute('class')).indexOf('dim') >= 0,
+    now ? now.getAttribute('aria-pressed') + ' taskDim=' +
+      (taskNodeNow ? String(taskNodeNow.getAttribute('class')).indexOf('dim') : 'none') +
+      ' focusDim=' + (focusNow ? String(focusNow.getAttribute('class')).indexOf('dim') : 'none') : 'no chip');
+  const again = chipFor('tasks');
+  if (again) again.click();
+  await flush(40);
+  check('SURF the chip clears on a second press',
+    chipFor('tasks').getAttribute('aria-pressed') === 'false' &&
+      Array.from(page.IDS['tissue-graph'].querySelectorAll('.tissue-node'))
+        .every((one) => String(one.getAttribute('class')).indexOf('dim') === -1),
+    chipFor('tasks').getAttribute('aria-pressed'));
+
+  // Act: the card's press opens the object's own lens (the node ring
+  // drills; the card is the way out of the surface).
+  const open = page.IDS['tissue-focus'].querySelector('.tissue-focus-actions button');
+  check('SURF the card offers the kind\u2019s lens',
+    !!open && open.textContent === 'open threads',
+    open ? open.textContent : 'no action');
+  if (open) open.click();
+  await flush(80);
+  check('SURF the card\u2019s press opens the object\u2019s lens',
+    String(page.window.location.hash).indexOf('#/sessions') === 0,
+    'hash=' + page.window.location.hash);
+
+  // The act every kind carries: a skills focus has a lens (intelligence)
+  // but no follow hook, and the live probe found its "open skills" press
+  // dead on the old column. The card's press reads the KIND table first.
+  const skills = boot({ hash: '#/connections', documents: { tissue: {
+    type: 'tissue',
+    nodes: [{ id: 'sk1', kind: 'skill', label: 'the review skill' },
+      { id: 'install', kind: 'install', label: 'this install' }],
+    edges: [{ from: 'sk1', to: 'install', kind: 'earned' }],
+  } } });
+  skills.open();
+  await flush(120);
+  const skillAction = skills.IDS['tissue-focus'].querySelector('.tissue-focus-actions button');
+  if (skillAction) skillAction.click();
+  await flush(80);
+  check('SURF the card\u2019s press acts for every kind with a lens',
+    !!skillAction && skillAction.textContent === 'open skills' &&
+      skills.window.location.hash === '#/memory',
+    (skillAction ? skillAction.textContent : 'no action') +
+      ' hash=' + skills.window.location.hash);
 }
 
 // U2/U35: an empty tissue names what fills it — never a node that was
@@ -17753,17 +17830,15 @@ async function theThreadPaneCollapsesAndPersists() {
   check('KI-555 the scrim stops at the pane\u2019s edge so it dims no column it left',
     ruleBlock('.pane-scrim').includes('inset: 0 var(--pane-right'),
     ruleBlock('.pane-scrim'));
-  check('KI-555 the offset is the tissue\u2019s column, then the reveal strip, then nothing',
-    /data-tissue="on"\]\s*\{\s*--pane-right:\s*var\(--tissue-width\)/.test(CSS) &&
-      /data-tissue="off"\]\s*\{\s*--pane-right:\s*30px/.test(CSS) &&
-      CSS.includes('--pane-right: 0px'),
-    'on/off/default');
-  // Below the breakpoint the column does not exist, so the offset must
-  // not either — a 30px gap at 1080 would be a strip of nothing.
-  const mediaStart = CSS.indexOf('@media (min-width: 1081px)');
-  const offAt = CSS.indexOf('body[data-tissue="off"] { --pane-right: 30px; }');
-  check('KI-555 the offset lives inside the breakpoint that creates the column',
-    mediaStart > -1 && offAt > mediaStart, 'media=' + mediaStart + ' off=' + offAt);
+  // The column retired (the surface pass): nothing reserves the stage's
+  // right edge any more, so the offset is zero at every width and no rule
+  // steps around a column that is not there. KI-555 (the open drawer over
+  // the connections column) cannot occur by construction.
+  check('KI-555 nothing reserves the stage\u2019s right edge any more',
+    CSS.includes(':root { --pane-right: 0px; }') &&
+      CSS.indexOf('data-tissue') === -1 &&
+      CSS.indexOf('--tissue-width') === -1,
+    'offset rules');
 
   // And the grip's own clamp agrees: a drag cannot widen the pane back
   // over the column the stylesheet just stepped around. The stub models
@@ -17774,18 +17849,16 @@ async function theThreadPaneCollapsesAndPersists() {
   });
   gripped.open();
   await flush(60);
-  gripped.body.dataset.tissue = 'on';
-  gripped.documentElement.style.setProperty('--tissue-width', '320px');
   const grip = gripped.el('pane-grip');
   // ArrowLeft widens by 24 from the applied width; drive it past the
   // stage floor and read where it stops.
   for (let i = 0; i < 40; i += 1) grip.fire('keydown', { key: 'ArrowLeft', preventDefault() {} });
   await flush(20);
   const stopped = parseInt(gripped.documentElement.style.getPropertyValue('--pane-width'), 10);
-  // 1440 - stage floor 560 - tissue 320 = 560 is the widest the pane may
-  // be with the column open; the clamp must not report more.
-  check('KI-555 the grip cannot widen the pane over the connections column',
-    !isNaN(stopped) && stopped <= 560, 'stopped at ' + stopped + 'px');
+  // Nothing reserved: at 1440 the stage floor allows 880, so the grip's
+  // own maximum (720) is what stops it.
+  check('KI-555 the grip reaches its own maximum, nothing reserves the edge',
+    stopped === 720, 'stopped at ' + stopped + 'px');
 }
 
 // U31: the judged rows carry the meter, the gold border when the
@@ -18006,11 +18079,13 @@ async function theConsoleControlsApplyLive() {
       String(page.body.outerHTML || '').indexOf('ctl-density') === -1 &&
       page.body.dataset.density === undefined,
     'density=' + String(page.body.dataset.density));
-  page.IDS['ctl-connections'].click();
-  await flush(40);
-  check('S3 the connections toggle hides the graph column',
-    page.body.dataset.tissue === 'off',
-    'tissue=' + page.body.dataset.tissue);
+  // The connections column became a page (the surface pass): its switch,
+  // its chevron and its edge tab retired with it, and the page is the one
+  // door. The density control's precedent — a toggle that changes nothing
+  // where the owner is looking is not a control.
+  check('S3 the connections switch retired with the column',
+    !page.IDS['ctl-connections'] && page.body.dataset.tissue === undefined,
+    'tissue=' + String(page.body.dataset.tissue));
   page.IDS['ctl-labels'].click();
   await flush(40);
   check('S3 the labels toggle applies live',
@@ -18122,40 +18197,6 @@ async function theBoardRendersColumnsAndSettlesMoves() {
 // renders in place. The board projects from the workspace spine (the
 // tasks endpoint is never fetched for it), and a graph-node pivot
 // reflects the lens in the address without leaving the workspace.
-// S6 (U12): the connections column's collapse — the head chevron, the
-// console switch and the edge tab ride ONE state, so the doors never
-// disagree, and the way back is always visible.
-async function theConnectionsColumnCollapsesFromItsOwnDoor() {
-  const page = boot({
-    documents: {
-      tissue: emptyTissue(),
-      workspace: { type: 'workspace', tasks: [], deliverables: [], threads: [],
-        instances: [], intelligence: { tools: 0, workflows: 0 } },
-    },
-    hash: '#/board',
-  });
-  page.open();
-  await flush(60);
-  check('S6 the column starts on', page.body.dataset.tissue === 'on', page.body.dataset.tissue);
-  check('S6 the head chevron carries the state',
-    page.IDS['tissue-collapse'].getAttribute('aria-pressed') === 'true',
-    page.IDS['tissue-collapse'].getAttribute('aria-pressed'));
-  page.IDS['tissue-collapse'].click();
-  await flush(60);
-  check('S6 the chevron collapses the column', page.body.dataset.tissue === 'off', page.body.dataset.tissue);
-  check('S6 the console switch agrees',
-    page.IDS['ctl-connections'].getAttribute('aria-pressed') === 'false',
-    page.IDS['ctl-connections'].getAttribute('aria-pressed'));
-  check('S6 the choice persists', page.window.localStorage.getItem('fleet-connections') === 'off',
-    page.window.localStorage.getItem('fleet-connections'));
-  page.IDS['tissue-reveal'].click();
-  await flush(60);
-  check('S6 the edge tab expands the column', page.body.dataset.tissue === 'on', page.body.dataset.tissue);
-  check('S6 the doors agree after a round trip',
-    page.IDS['ctl-connections'].getAttribute('aria-pressed') === 'true' &&
-      page.IDS['tissue-collapse'].getAttribute('aria-pressed') === 'true', 'doors');
-}
-
 async function theSpineFeedsTheLensesAndThePivotStaysInPlace() {
   const page = boot({
     documents: {
@@ -18223,11 +18264,19 @@ async function theSpineFeedsTheLensesAndThePivotStaysInPlace() {
   const spineBefore = page.calls.filter((c) => c.url === '/api/workspace').length;
   if (taskNode) taskNode.click();
   await flush(80);
-  check('S6 the pivot reflects the lens in the address',
-    page.window.location.hash === '#/desk', 'hash=' + page.window.location.hash);
-  check('S6 the pivot re-reads the spine to project the lens',
-    page.calls.filter((c) => c.url === '/api/workspace').length >= spineBefore + 1,
-    'spine reads: ' + page.calls.filter((c) => c.url === '/api/workspace').length);
+  // The surface pass: a node drills in place; the card's press is the act.
+  check('S6 a node press drills the focus in place',
+    page.window.location.hash === '#/board' &&
+      page.IDS['tissue-focus'].querySelector('.tissue-focus-title').textContent === 'the spine task',
+    'hash=' + page.window.location.hash);
+  const openTask = page.IDS['tissue-focus'].querySelector('.tissue-focus-actions button');
+  if (openTask) openTask.click();
+  await flush(80);
+  check('S6 the card\u2019s press opens the lens and re-reads the spine',
+    page.window.location.hash === '#/desk' &&
+      page.calls.filter((c) => c.url === '/api/workspace').length >= spineBefore + 1,
+    'hash=' + page.window.location.hash +
+      ' spine reads: ' + page.calls.filter((c) => c.url === '/api/workspace').length);
 }
 
 // S4 (U17): the inbox row wears the resolved principal chip when it carries
@@ -22257,7 +22306,7 @@ const cases = [
   ['HEALTH another down service keeps its words', anotherDownServiceKeepsItsWords],
   ['RAIL the rail carries no install pill', theRailCarriesNoInstallPill],
   ['RESKIN saved views capture and restore a lens', savedViewsCaptureAndRestoreALens],
-  ['RESKIN the tissue paints the graph and pivots', theTissuePaintsTheGraphAndPivots],
+  ['SURF the connections page draws its graph, drills in place and isolates a kind', theTissuePaintsTheGraphAndPivots],
   ['RESKIN an empty tissue names what fills it', anEmptyTissueNamesWhatFillsIt],
   ['INTEL the tools segment names the registry and its classes', theToolsSegmentNamesTheRegistryAndItsClasses],
   ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],
@@ -22278,7 +22327,6 @@ const cases = [
   ['S4 the board renders columns and settles moves', theBoardRendersColumnsAndSettlesMoves],
   ['S4 the inbox row wears the principal chip', theInboxRowWearsThePrincipalChip],
   ['S6 the spine feeds the lenses and the pivot stays in place', theSpineFeedsTheLensesAndThePivotStaysInPlace],
-  ['S6 the connections column collapses from its own door', theConnectionsColumnCollapsesFromItsOwnDoor],
   ['U13 the drawer waits for the owner on desk and learning', theDrawerWaitsForTheOwnerOnDeskAndLearning],
   ['P1 gutter the rail counts each turn\u2019s receipts from the log', theGutterCountsEachTurnsReceipts],
   ['P1 composer one field and three controls at most', theComposerIsOneFieldAndThreeControls],

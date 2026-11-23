@@ -791,6 +791,26 @@
     <div class="board" id="calibration-board"></div>
   </main>
 
+  <!-- The connections page (the surface pass, 2026-11-23): the graph was a
+       permanent third column that fought the drawer for the right edge; it
+       is a knowledge-region surface now. Same read (/api/tissue), same
+       typed language — at page scale, with the presses doing jobs: a node
+       drills the focus in place, the card's press opens the object's lens,
+       and a legend chip isolates its kind. -->
+  <main class="stage stage-board" id="panel-connections" hidden aria-label="connections — what this connects to">
+    <div class="board connections-board">
+      <div class="connections-head">
+        <span class="connections-title">connections</span>
+        <span class="tissue-where" id="tissue-where">what this connects to</span>
+      </div>
+      <div class="tissue-graph" id="tissue-graph" role="img"
+           aria-label="what the focused item connects to"></div>
+      <div class="tissue-legend" id="tissue-legend" aria-label="the kinds — press one to isolate it"></div>
+      <div class="tissue-focus" id="tissue-focus"></div>
+      <div class="tissue-empty" id="tissue-empty" hidden></div>
+    </div>
+  </main>
+
   <!-- The settings. Every configurable surface: the knobs with their
        source, the provider and workload editors, the remembered rules
        as the third list, the cron jobs, the identity slot, and the env
@@ -1293,35 +1313,11 @@
     </div>
   </aside>
 
-  <!-- The tissue (U0/U11): the connective tissue rendered — the focused
-       object's neighborhood as a radial graph, the typed legend, and the
-       focus card. Permanent at >=1081px (U9); dropped below. Built by
-       app.js from /api/tissue; the pivot is the shell's one focus law. -->
-  <aside class="tissue" id="tissue" aria-label="connections — what this connects to">
-    <div class="tissue-head">
-      <span class="tissue-title">connections</span>
-      <span class="tissue-where" id="tissue-where">what this connects to</span>
-      <!-- The collapse door (U12): the column's own chevron. It rides the
-           same state the console switch sets — one state, two doors — so
-           collapsing is reachable where the column is, not only in the
-           console footer. -->
-      <button class="tissue-collapse" id="tissue-collapse" type="button" aria-pressed="true"
-              title="collapse the connections column" aria-label="collapse the connections column"></button>
-    </div>
-    <div class="tissue-graph" id="tissue-graph" role="img"
-         aria-label="what the focused item connects to"></div>
-    <div class="tissue-legend" id="tissue-legend"></div>
-    <div class="tissue-focus" id="tissue-focus"></div>
-    <div class="tissue-empty" id="tissue-empty" hidden></div>
-  </aside>
-
   <!-- The console (U12): a permanently visible control region, never a
        modal. Every control applies live to the real UI. The armada switch
        (U29) grows the graph and the Fleet lens; off leaves fleet whole. -->
   <footer class="console-bar" id="console-bar" aria-label="view controls">
     <span class="console-label">view</span>
-    <button class="console-ctl" id="ctl-connections" type="button" aria-pressed="true"
-            title="connections — show or hide the graph column">connections</button>
     <button class="console-ctl" id="ctl-labels" type="button" aria-pressed="true"
             title="labels — show or hide the graph labels">labels</button>
     <button class="console-ctl" id="ctl-motion" type="button" aria-pressed="true"
@@ -1335,13 +1331,7 @@
 
 </div>
 
-<!-- The connections column's way back (U12): when the column is away, a
-     slim tab holds the stage's right edge — the affordance never hides
-     with the pane it controls. Same state as the console switch and the
-     column's own chevron: one state, three doors. -->
-<button class="tissue-reveal" id="tissue-reveal" type="button"
-        title="expand the connections column" aria-label="expand the connections column"
-        aria-pressed="false"></button>
+
 
 <!-- The markdown engine and its sanitiser (R6): marked renders, DOMPurify
      cleans before the HTML touches the DOM. Both are served from the binary. -->
