@@ -112,11 +112,56 @@ initiated sessions that are just noise."*
 - This row is measured first in R2's pass (the owner named it), and its
   measurement is the population evidence the filter is built from.
 
-### R4 — the first surface after the move
+### R4 — the shared read-only strip retires
 
-- Chosen by the audit's own ranking after conversations: the surface with the
-  most noise and dead objects, with the skills card as the owner's named
-  example.
+- The audit found ONE builder putting four label+number cards — runs,
+  machines, skills, tools — on six surfaces (inbox, learning, calibration,
+  second brain, armada, intelligence), plus a duplicate of the same counts on
+  Intelligence's main column. The owner's example, system-wide.
+- Retired: `spineCards` and its five callers, and the memory capability
+  cards. The numbers stay where they are actionable (armada's map, the
+  board's plans, Intelligence's rail).
+- Measured after: inbox 4 → **0** cards, memory 4 → **0**; harness green.
+- Pins: no surface renders a label+number card with no press; the surfacing
+  cases that counted those cards are replaced by the surface's own pins.
+
+### R5 — stat strips become doors
+
+- Calibration's six numbers (512 rows, 0 judged, 0 fit cells, …), the
+  router's six (15 calls, 15 OK, 0 errors, 100% success, 0 tokens, judge),
+  memory's six (facts/live/protected/retired/hits/recalls): each becomes the
+  press that reveals its population (the chip pattern from connections).
+- Pins: each number's element is a press with a named effect; no numeric
+  strip with no press remains on those surfaces.
+
+### R6 — empty and loading states gain their head and their one press
+
+- Inbox: a bare "waiting" chip and a floating title → a page head, the
+  honest empty state, the one door.
+- Board: the "no approved plan" card names the rule and offers no press →
+  "open the plans folder" / "ask for a plan".
+- Learning and Second brain: "Still loading" at 5 s with no door → elapsed
+  time, retry, and the surface's invitation.
+- Pins: one per surface (empty state has a press; a loading state carries
+  elapsed and a retry).
+
+### R7 — the router's chains flatten and its crumb tells the truth
+
+- Nine nested chain rows inside a card → rows at one depth; the six numbers
+  become doors (R5); the `SETTINGS / advanced` crumb on an INTELLIGENCE page
+  is corrected (G6).
+- Pins: no nested card rows on the surface; the crumb's group equals the
+  rail region (intelligence for the router? it is an advanced page — the
+  ledger records where it truly lives).
+
+### R8 — the remaining per-surface passes
+
+- The audit's fix order: armada, calibration's report cards, delegation,
+  huddles, workspace history, vault, plugins, bots, learning, desk, board,
+  settings; each one row with its inventory, its fixes and its pins.
+- The drawer's connections tab renames to **work** (it carries the goal edge
+  and delegated work, not the graph); this amends G11's four-tab grammar and
+  is recorded in the gap ledger.
 
 ## Constraints
 

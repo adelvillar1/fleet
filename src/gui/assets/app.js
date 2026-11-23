@@ -5879,7 +5879,6 @@ import { node, svg, clip } from './core/dom.js';
     if (!el.inboxBody) return;
     var doc = face.inbox;
     el.inboxBody.textContent = '';
-    spineCards(el.inboxBody);
     if (!doc || refusals(doc)) {
       if (el.inboxEmpty) el.inboxEmpty.hidden = true;
       return;
@@ -6762,18 +6761,14 @@ import { node, svg, clip } from './core/dom.js';
     return el0;
   }
 
-  // P4: every lens projects the workspace spine as read-only cards — the
-  // runs, the machines, the capabilities — so no lens reads as a separate
-  // store. Perf-safe: it uses only what the spine already carries.
-  function spineCards(into) {
-    var sp = face.spine;
-    if (!sp || !into) return;
-    var cap = sp.intelligence || {};
-    [['runs', (sp.work || []).length], ['machines', (sp.instances || []).length],
-      ['skills', cap.skills], ['tools', cap.tools]].forEach(function (pair) {
-      into.appendChild(boardCard(3, pair[0], String(pair[1] == null ? 0 : pair[1]), null));
-    });
-  }
+  // P4's read-only spine cards retired (the surface pass, 2026-11-23).
+  // The strip put four label+number cards — runs, machines, skills, tools —
+  // on six surfaces (inbox, learning, calibration, second brain, armada,
+  // intelligence). The audit measured them: no press, no detail, the same
+  // four numbers page after page, and on Intelligence they duplicated the
+  // interactive rail beside them. A number is a door or it is noise; the
+  // counts live where they are actionable (armada's map, the board's plans,
+  // Intelligence's rail).
 
   // The surface announces itself once, above the cards: an eyebrow that
   // names the group, a title in the display voice, one plain sentence
@@ -9287,15 +9282,10 @@ import { node, svg, clip } from './core/dom.js';
       ]);
     el.memoryBoard.appendChild(surfaceHead('Intelligence', 'Intelligence',
       'Everything fleet knows and can do: what it remembers, its skills, its tools, and the chains they compose into.', instrument));
-    // P4: the spine's capability counts as read-only cards — the lens
-    // projects the workspace's own shape instead of a separate fetch.
-    var cap = face.spine && face.spine.intelligence;
-    if (cap) {
-      [['memories', cap.facts], ['skills', cap.skills], ['tools', cap.tools], ['workflows', cap.workflows]]
-        .forEach(function (pair) {
-          el.memoryBoard.appendChild(boardCard(3, pair[0], String(pair[1] == null ? 0 : pair[1]), null));
-        });
-    }
+    // The capability cards retired with the spine strip (the surface
+    // pass): the numbers sat above the interactive rail that already
+    // lists the same segments, and a skills card reading "460" with no
+    // door was the owner's own example of noise.
     el.memoryBoard.appendChild(surfaceStrip([
       [facts.length, 'facts'],
       [live.length, 'live'],
@@ -10199,7 +10189,6 @@ import { node, svg, clip } from './core/dom.js';
   function paintLearning() {
     if (!el.learningBoard) return;
     el.learningBoard.textContent = '';
-    spineCards(el.learningBoard);
     var read = face.learning;
     if (!read) {
       el.learningBoard.appendChild(surfaceHead('Learning', 'learning',
@@ -18254,7 +18243,6 @@ import { node, svg, clip } from './core/dom.js';
   function paintCalibration() {
     var read = face.calibration;
     el.calibrationBoard.textContent = '';
-    spineCards(el.calibrationBoard);
     if (!read) {
       el.calibrationBoard.appendChild(pageHead('System', 'Reviews',
         'Every decision, graded against what actually happened \u2014 and your word on each.',
@@ -20419,7 +20407,6 @@ import { node, svg, clip } from './core/dom.js';
     el.brainBoard.textContent = '';
     // Health is a lens over the machine: the spine's count cards ride above
     // the section, and the chosen check renders beneath them.
-    spineCards(el.brainBoard);
     var sections = healthSections();
     var picked = sections.filter(function (one) {
       return one.id === healthSectionId();
@@ -21283,7 +21270,6 @@ import { node, svg, clip } from './core/dom.js';
   function paintArmada() {
     var read = face.armada;
     el.armadaBoard.textContent = '';
-    spineCards(el.armadaBoard);
     // Paint-before-read: the loading card says the read has not landed;
     // it never invents a roster the server has not named.
     if (!read) {
