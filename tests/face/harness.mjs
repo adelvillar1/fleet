@@ -1571,18 +1571,6 @@ function boot(options) {
     URL,
     Intl,
     console,
-    // The document readers' own APIs (R7, R8): the zip inflates through
-    // DecompressionStream and the XML parses through DOMParser, so the
-    // harness supplies the same host objects a browser does.
-    DOMParser: XmlParser,
-    TextDecoder,
-    Blob,
-    DecompressionStream,
-    Response,
-    // The deck's frame builder base64s its bytes (R8): a browser has these
-    // on the window, and the vm context does not.
-    btoa: (text) => Buffer.from(String(text), 'binary').toString('base64'),
-    atob: (text) => Buffer.from(String(text), 'base64').toString('binary'),
     Date,
     Math,
     JSON,
@@ -1610,6 +1598,21 @@ function boot(options) {
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // The document readers' own APIs (R7, R8) are HOST objects handed into a
+  // vm context: Blob, DecompressionStream, Response, DOMParser, btoa. They
+  // are OPT-IN per boot. Injecting them into every one of the ~290 boots
+  // coincided with V8 mark-compact segfaults (KI-593: the crash report is
+  // GC root iteration); only the cases that render document bytes need
+  // them, so only those ask.
+  if (opts.engines) {
+    sandbox.TextDecoder = TextDecoder;
+    sandbox.Blob = Blob;
+    sandbox.DecompressionStream = DecompressionStream;
+    sandbox.Response = Response;
+    sandbox.DOMParser = XmlParser;
+    sandbox.btoa = (text) => Buffer.from(String(text), 'binary').toString('base64');
+    sandbox.atob = (text) => Buffer.from(String(text), 'base64').toString('binary');
+  }
   // The markdown engine (R6): marked is pure JS and runs here for real;
   // DOMPurify needs a real DOM, so this recorder hands its input back and
   // remembers it — the stripping itself is proven against the live face.
@@ -6086,7 +6089,7 @@ async function theDrawerOpensTheObjectItIs() {
 // LibreOffice reads it as a workbook, so it is not app-shaped XML only).
 async function theSheetRendersItsOwnForm() {
   const path = 'ledgers/release-ledger.xlsx';
-  const page = boot({ hash: '#/sessions/kind-sheet', documents: {
+  const page = boot({ hash: '#/sessions/kind-sheet', engines: true, documents: {
     sessions: {
       type: 'sessions', read_at: 'now', current: '',
       counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
@@ -6181,7 +6184,7 @@ async function theSheetRendersItsOwnForm() {
 // XML package ([Content_Types].xml missing).").
 async function theDeckFallsBackToTheOutlineByName() {
   const path = 'decks/broken-deck.pptx';
-  const page = boot({ hash: '#/sessions/kind-deck', documents: {
+  const page = boot({ hash: '#/sessions/kind-deck', engines: true, documents: {
     sessions: {
       type: 'sessions', read_at: 'now', current: '',
       counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
