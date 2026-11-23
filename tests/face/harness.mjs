@@ -43,6 +43,128 @@ const CSS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.css'), 'utf8');
 // webview-level drag handler is switched off, and no asset check can see
 // a Rust builder into the page it hands the drag to.
 const RUST_TAURI = fs.readFileSync(path.join(ROOT, 'src-tauri/src/lib.rs'), 'utf8');
+// The drawer's binary fixtures (R7, R8) and the deck engine's bundle: the
+// xlsx and pptx readers run for real in this harness (zip central
+// directory, DecompressionStream, an XML DOM), so the pins feed the
+// committed bytes rather than asserting against the source.
+const FIXTURE_SHEET = fs.readFileSync(path.join(ROOT, 'tests/face/fixtures/release-ledger.xlsx'));
+const FIXTURE_DECK = fs.readFileSync(path.join(ROOT, 'tests/face/fixtures/broken-deck.pptx'));
+const PPTXJS_UMD = fs.readFileSync(path.join(ROOT, 'src/gui/assets/vendor/pptxjs.umd.js'), 'utf8');
+
+// ---- the XML DOM the document readers parse with ----------------------
+// A real DOMParser is a browser API; the readers use exactly four of its
+// facts — getElementsByTagName, getElementsByTagNameNS (local name),
+// getAttribute and textContent — so the stub implements those generally
+// (entities, CDATA, self-closing tags) rather than pattern-matching the
+// fixtures. An XML parser is not a DOM: no HTML recovery, no namespaces
+// resolution, and a malformed document throws the way the real one does.
+const XML_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+function xmlDecode(text) {
+  return String(text).replace(/&(#x?[0-9a-fA-F]+|[a-z]+);/g, (whole, name) => {
+    if (name.charAt(0) === '#') {
+      const code = name.charAt(1) === 'x' || name.charAt(1) === 'X'
+        ? parseInt(name.slice(2), 16)
+        : parseInt(name.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+    }
+    return XML_ENTITIES[name] != null ? XML_ENTITIES[name] : whole;
+  });
+}
+
+class XmlNode {
+  constructor(name) {
+    this.tagName = name;
+    this.children = [];
+    this.attrs = {};
+    this.text = '';
+  }
+  get textContent() {
+    if (this.tagName === '#text') return this.text;
+    return this.children.map((child) => child.textContent).join('');
+  }
+  getAttribute(name) { return this.attrs[name] != null ? this.attrs[name] : null; }
+  get localName() {
+    const at = String(this.tagName).indexOf(':');
+    return at === -1 ? this.tagName : this.tagName.slice(at + 1);
+  }
+  descendants() {
+    const out = [];
+    const walk = (one) => {
+      one.children.forEach((child) => {
+        if (child.tagName === '#text') return;
+        out.push(child);
+        walk(child);
+      });
+    };
+    walk(this);
+    return out;
+  }
+  getElementsByTagName(name) {
+    return this.descendants().filter((one) => one.tagName === name);
+  }
+  getElementsByTagNameNS(_ns, name) {
+    return this.descendants().filter((one) => one.localName === name);
+  }
+}
+
+function parseXml(text) {
+  const document_ = new XmlNode('#document');
+  const stack = [document_];
+  const token = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!DOCTYPE[^>]*>|<!\[CDATA\[([\s\S]*?)\]\]>|<\/\s*([A-Za-z_][\w:.-]*)\s*>|<([A-Za-z_][\w:.-]*)((?:\s+[^\s=>/]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
+  let at = 0;
+  let match;
+  const textTo = (chunk) => {
+    if (!chunk) return;
+    const top = stack[stack.length - 1];
+    const node = new XmlNode('#text');
+    node.text = xmlDecode(chunk);
+    top.children.push(node);
+  };
+  while ((match = token.exec(text))) {
+    if (match.index > at) textTo(text.slice(at, match.index));
+    at = token.lastIndex;
+    if (match[1] != null) { textTo(match[1]); continue; }
+    if (match[2]) {
+      if (stack.length < 2) throw new Error('the XML closes a tag that is not open');
+      const open = stack.pop();
+      if (open.tagName !== match[2]) {
+        throw new Error('the XML is malformed: ' + open.tagName + ' closes as ' + match[2]);
+      }
+      continue;
+    }
+    if (match[3]) {
+      const node = new XmlNode(match[3]);
+      const attrRe = /([^\s=]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
+      let attr;
+      while ((attr = attrRe.exec(match[4] || ''))) {
+        node.attrs[attr[1]] = xmlDecode(attr[3] != null ? attr[3] : attr[4]);
+      }
+      stack[stack.length - 1].children.push(node);
+      if (!match[5]) stack.push(node);
+      continue;
+    }
+    // A comment, a processing instruction or a doctype says nothing.
+  }
+  if (at < text.length) textTo(text.slice(at));
+  if (stack.length !== 1) {
+    throw new Error('the XML is malformed: ' + stack[stack.length - 1].tagName + ' never closes');
+  }
+  return document_;
+}
+
+class XmlParser {
+  parseFromString(text) {
+    try {
+      return parseXml(text);
+    } catch (error) {
+      // A real DOMParser answers a <parsererror> document; the readers
+      // treat "no rows" as a failure, so an honest throw is equivalent
+      // and easier to read in a failing check.
+      throw error;
+    }
+  }
+}
+
 const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 const ruleBlock = (selector) => {
   const at = CSS.indexOf(selector + ' {');
@@ -1262,6 +1384,23 @@ function boot(options) {
           { type: 'lanes', ok: 0, total: 0, lanes: [] }),
       });
     }
+    // The binary documents the drawer renders (R7, R8): a case hands the
+    // committed fixture's bytes to the contained route, and the reader
+    // inflates them for real.
+    if (pathOnly === '/api/preview') {
+      const asked = new URL('http://x' + url).searchParams.get('path') || '';
+      const bytes = documents.previewBytes && documents.previewBytes[asked];
+      if (bytes) {
+        return Promise.resolve({
+          status: 200, ok: true,
+          arrayBuffer: () => Promise.resolve(bytes.buffer.slice(
+            bytes.byteOffset, bytes.byteOffset + bytes.byteLength)),
+        });
+      }
+    }
+    if (pathOnly === '/vendor/pptxjs.umd.js') {
+      return Promise.resolve({ status: 200, ok: true, text: () => Promise.resolve(PPTXJS_UMD) });
+    }
     return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
   };
 
@@ -1427,6 +1566,18 @@ function boot(options) {
     URL,
     Intl,
     console,
+    // The document readers' own APIs (R7, R8): the zip inflates through
+    // DecompressionStream and the XML parses through DOMParser, so the
+    // harness supplies the same host objects a browser does.
+    DOMParser: XmlParser,
+    TextDecoder,
+    Blob,
+    DecompressionStream,
+    Response,
+    // The deck's frame builder base64s its bytes (R8): a browser has these
+    // on the window, and the vm context does not.
+    btoa: (text) => Buffer.from(String(text), 'binary').toString('base64'),
+    atob: (text) => Buffer.from(String(text), 'base64').toString('binary'),
     Date,
     Math,
     JSON,
@@ -1665,6 +1816,13 @@ function check(name, ok, detail) {
   else failures.push(name + (detail ? ' — ' + detail : ''));
 }
 const flush = async (turns = 40) => { for (let i = 0; i < turns; i += 1) await Promise.resolve(); };
+// A document render awaits real streams (Blob → DecompressionStream →
+// Response), and Node's zlib runs on the event loop: microtasks alone
+// leave the promise pending forever. A browser takes real time to inflate
+// a workbook too, so the cases that render one wait the same way.
+const settle = async (rounds = 4) => {
+  for (let i = 0; i < rounds; i += 1) await new Promise((done) => setTimeout(done, 5));
+};
 
 // P1: a composer command, the way the owner runs one — typed into the one
 // field and taken by the slash parser. The `input` event is deliberately
@@ -5809,6 +5967,8 @@ async function theDrawerOpensTheObjectItIs() {
         language: 'rust', bytes: 21, text: 'fn main() {}' },
       'shots/x.png': { type: 'file', path: 'shots/x.png', name: 'x.png',
         language: 'png', bytes: 2048 },
+      'docs/brief.docx': { type: 'file', path: 'docs/brief.docx', name: 'brief.docx',
+        language: 'docx', bytes: 5120, text: null },
     },
   } });
   await flush();
@@ -5858,6 +6018,192 @@ async function theDrawerOpensTheObjectItIs() {
   check('KIND an image opens the rendered body', mode() === 'preview', mode());
   check('KIND the line reads the image\u2019s own size',
     page.text('pane-rel-what') === 'png \u00b7 2.0 kB', page.text('pane-rel-what'));
+
+  await openVia('docs/brief.docx');
+  check('KIND a docx opens the rendered body', mode() === 'preview', mode());
+  check('KIND the line reads the document\u2019s kind and size',
+    page.text('pane-rel-what') === 'docx \u00b7 5.0 kB', page.text('pane-rel-what'));
+}
+
+// R7: the committed workbook renders through the face's own reader — the
+// zip's central directory, styles.xml, the sheet's sparse cells — and the
+// assertions read the rendered table, not the source. The fixture is
+// tests/face/fixtures/release-ledger.xlsx (make-fixtures.mjs writes it;
+// LibreOffice reads it as a workbook, so it is not app-shaped XML only).
+async function theSheetRendersItsOwnForm() {
+  const path = 'ledgers/release-ledger.xlsx';
+  const page = boot({ hash: '#/sessions/kind-sheet', documents: {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('kind-sheet', 'completed', { title: 'the ledger was handed over' })],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked,
+      events: [{ type: 'message', role: 'owner', text: 'open the ledger' }],
+    }),
+    files: {
+      [path]: { type: 'file', path: path, name: 'release-ledger.xlsx',
+        language: 'xlsx', bytes: FIXTURE_SHEET.length, text: null },
+    },
+    previewBytes: { [path]: FIXTURE_SHEET },
+  } });
+  await flush();
+  page.open();
+  await flush(60);
+  page.push({ type: 'tool_call', tool: 'send_file', summary: path,
+    arguments: JSON.stringify({ path: path }) });
+  await flush(20);
+  page.push({ type: 'tool_result', tool: 'send_file', approved: true,
+    preview: 'handed over the ledger' });
+  await flush(40);
+  const chips = page.rows('.preview-chip')
+    .filter((one) => one.textContent.trim() === 'release-ledger.xlsx');
+  const chip = chips[chips.length - 1];
+  check('XLSXF the committed workbook opens through its receipt', !!chip, 'no chip');
+  if (chip) chip.click();
+  await flush(120);
+  await settle();
+
+  const cells = () => page.rows('.pane-data td');
+  const title = cells()[0];
+  check('XLSXF the merged title spans the sheet',
+    !!title && title.textContent === 'the release ledger' &&
+      title.getAttribute('colspan') === '4' && title.className.includes('bold'),
+    title ? title.textContent + ' / ' + title.getAttribute('colspan') + ' / ' + title.className : 'no cell');
+  const header = cells().slice(1, 5);
+  check('XLSXF the header keeps its weight',
+    header.length === 4 && header.every((td) => td.className.includes('bold')),
+    header.map((td) => td.className).join(' | '));
+  const dated = cells().find((td) => td.className.includes('date'));
+  check('XLSXF an Excel serial reads as its date',
+    !!dated && dated.textContent === '2026-11-20',
+    dated ? dated.textContent : 'no date cell');
+  const grouped = cells().find((td) => td.textContent === '41,208,112');
+  check('XLSXF a grouped number keeps its form and its alignment',
+    !!grouped && grouped.className.includes('num'),
+    grouped ? grouped.className : 'no grouped cell');
+  check('XLSXF a percentage keeps its form',
+    cells().some((td) => td.textContent === '12.5%'),
+    cells().map((td) => td.textContent).join(' | '));
+  check('XLSXF an inline string is not blank',
+    cells().some((td) => td.textContent === 'fleet-windows-x64.zip'),
+    cells().map((td) => td.textContent).join(' | '));
+  const cols = page.rows('.pane-xlsx col');
+  check('XLSXF the columns keep the widths the sheet declares',
+    cols.length === 4 && parseFloat(cols[0].style.width) > 7.4 &&
+      parseFloat(cols[0].style.width) < 7.5,
+    cols.map((col) => col.style.width).join(' | '));
+  check('XLSXF the pane says what it did and did not do',
+    page.text('pane-preview-body').includes('the sheet\u2019s own form') &&
+      page.text('pane-preview-body').includes('formulas are shown as their cached values') &&
+      page.text('pane-preview-body').includes('charts are not part of this preview'),
+    page.text('pane-preview-body').slice(0, 120));
+
+  // The second sheet carries 501 rows, so the cap has something to say.
+  const tabs = page.rows('.pane-xlsx-tab');
+  check('XLSXF the workbook\u2019s sheets are its tabs', tabs.length === 2,
+    tabs.map((tab) => tab.textContent).join(' | '));
+  if (tabs[1]) tabs[1].click();
+  await flush(120);
+  await settle();
+  check('XLSXF the row cap says so',
+    page.text('pane-preview-body').includes('the first 500 of 501 rows'),
+    page.text('pane-preview-body').slice(0, 120));
+  check('XLSXF the cap still renders 500 rows',
+    page.rows('.pane-data tr').length === 500,
+    String(page.rows('.pane-data tr').length));
+}
+
+// R8: the committed deck that cannot be parsed (tests/face/fixtures/
+// broken-deck.pptx — a zip that is not an Office Open XML package) mounts
+// in the sandboxed frame with the bundle and its bytes inlined; the
+// frame's own report decides — a refusal lands the text outline BY NAME
+// with the viewer's reason, a render leaves the slides alone. The viewer
+// itself runs only in a browser, which is why the frame speaks here
+// through fromFrame: the message contract, the nonce, the state tag and
+// the fallback are the face's. The reason used below is the one the live
+// face reported for these exact bytes ("The archive is not an Office Open
+// XML package ([Content_Types].xml missing).").
+async function theDeckFallsBackToTheOutlineByName() {
+  const path = 'decks/broken-deck.pptx';
+  const page = boot({ hash: '#/sessions/kind-deck', documents: {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('kind-deck', 'completed', { title: 'the deck was handed over' })],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked,
+      events: [{ type: 'message', role: 'owner', text: 'open the deck' }],
+    }),
+    files: {
+      [path]: { type: 'file', path: path, name: 'broken-deck.pptx',
+        language: 'pptx', bytes: FIXTURE_DECK.length, text: null },
+    },
+    previewBytes: { [path]: FIXTURE_DECK },
+  } });
+  await flush();
+  page.open();
+  await flush(60);
+  const openVia = async () => {
+    page.push({ type: 'tool_call', tool: 'send_file', summary: path,
+      arguments: JSON.stringify({ path: path }) });
+    await flush(20);
+    page.push({ type: 'tool_result', tool: 'send_file', approved: true,
+      preview: 'handed over the deck' });
+    await flush(40);
+    const chips = page.rows('.preview-chip')
+      .filter((one) => one.textContent.trim() === 'broken-deck.pptx');
+    const chip = chips[chips.length - 1];
+    check('PPTXF the committed deck opens through its receipt', !!chip, 'no chip');
+    if (chip) chip.click();
+    await flush(120);
+    await settle();
+  };
+
+  await openVia();
+  const frame = page.rows('.pane-doc-frame')[0];
+  const srcdoc = frame ? String(frame.srcdoc) : '';
+  check('PPTXF the deck mounts inside the sandboxed frame',
+    !!frame && frame.getAttribute('sandbox') === 'allow-scripts' &&
+      srcdoc.includes('new PPTXjs.PptxViewer("#slides"') &&
+      srcdoc.includes(FIXTURE_DECK.toString('base64')),
+    frame ? String(frame.getAttribute('sandbox')) + ' / ' + srcdoc.length : 'no frame');
+  check('PPTXF the viewer bundle is served from the face\u2019s own route',
+    page.calls.some((one) => one.url === '/vendor/pptxjs.umd.js'),
+    page.calls.map((one) => one.url).filter((one) => one.includes('vendor')).join(' | '));
+  const nonce = (srcdoc.match(/var N = "([^"]+)"/) || [])[1];
+  check('PPTXF the frame reports through its own nonce', !!nonce, String(nonce));
+
+  // The wrap the mount made: the fallback replaces the pane's contents, so
+  // the state tag is read on the mounted element (the state a browser
+  // shows while the outline is read) rather than on the outline's own.
+  const mounted = page.rows('.pane-pptx')[0];
+  const refused = 'The archive is not an Office Open XML package ([Content_Types].xml missing).';
+  page.fromFrame(page.frames.indexOf(frame), { nonce: nonce, type: 'pptx-failed',
+    reason: refused });
+  await flush(40);
+  await settle();
+  check('PPTXF a viewer that refuses lands the outline and names the reason',
+    !!mounted && mounted.dataset.state === 'failed' &&
+      page.text('pane-preview-body').includes('0 slides \u00b7 the text outline') &&
+      page.text('pane-preview-body').includes('the slide renderer reported: ' + refused) &&
+      page.text('pane-preview-body').includes('the deck itself did not render here'),
+    page.text('pane-preview-body').slice(0, 160));
+
+  // A second open, and the frame's other report: the slides stand and no
+  // outline is drawn over them.
+  await openVia();
+  const again = page.rows('.pane-doc-frame')[0];
+  const nonce2 = (String(again && again.srcdoc).match(/var N = "([^"]+)"/) || [])[1];
+  page.fromFrame(page.frames.indexOf(again), { nonce: nonce2, type: 'pptx-rendered' });
+  await flush(40);
+  const drawn = page.rows('.pane-pptx')[0];
+  check('PPTXF a rendered deck says so and draws no outline',
+    !!drawn && drawn.dataset.state === 'rendered' &&
+      !page.text('pane-preview-body').includes('the text outline'),
+    drawn ? drawn.dataset.state : 'no wrap');
 }
 
 // New mints a real conversation at the press (the owner's 2026-11-05
@@ -7975,34 +8321,18 @@ async function thePreviewRendersTheCommonFormats() {
   check('PV a binary document fails gracefully in the pane\u2019s own words',
     page.text('pane-preview-body').includes('would not render'),
     page.text('pane-preview-body').slice(0, 80));
-  // R8: the deck is drawn by the vendored viewer inside the sandboxed
-  // frame, and the text outline is the NAMED fallback. The stub cannot run
-  // the viewer, so the wiring and the vendor record are pinned here and the
-  // render was measured against the live face (a two-slide deck drew; a zip
-  // that is not a deck fell back to the outline with the viewer's reason).
+  // The render pins now live in their own cases (theSheetRendersItsOwnForm
+  // and theDeckFallsBackToTheOutlineByName feed the committed fixtures
+  // through the face's own reader); what stays here is the vendor record
+  // those cases rely on.
   const VENDOR_JSON = fs.readFileSync(
     path.join(ROOT, 'src/gui/assets/vendor/VENDOR.json'), 'utf8');
-  check('PPTXF the deck draws through the vendored viewer, the outline is the named fallback',
-    SRC.includes('new PPTXjs.PptxViewer(') &&
-      SRC.includes("'/vendor/pptxjs.umd.js'") &&
-      SRC.includes('pptxOutline(read, reason)') &&
-      SRC.includes('the slide renderer did not answer in time') &&
-      VENDOR_JSON.includes('PPTXjs') && VENDOR_JSON.includes('2.0.0') &&
+  check('PPTXF the viewer is vendored with its version, licence and route',
+    VENDOR_JSON.includes('PPTXjs') && VENDOR_JSON.includes('2.0.0') &&
       VENDOR_JSON.includes('MIT') &&
       RUST.includes('/vendor/pptxjs.umd.js') &&
       fs.existsSync(path.join(ROOT, 'src/gui/assets/vendor/pptxjs.LICENSE')),
-    'pptx viewer');
-  // R7: the sheet's own form. The stub DOM cannot inflate a zip, so the
-  // wiring is pinned from the source and the render itself was measured
-  // against the live face (a styled workbook: bold header, dates, %, $,
-  // a merged title, column widths, right-aligned numbers — all read back).
-  check('XLSXF the sheet renders its own form',
-    SRC.includes('function formatExcelNumber(') &&
-      SRC.includes("getElementsByTagName('mergeCell')") &&
-      SRC.includes("kind === 'inlineStr'") &&
-      SRC.includes("td.classList.add('date')") &&
-      SRC.includes('colgroup'),
-    'xlsx form');
+    'pptx vendor');
 
   // The Rust side's fences, read from the source: the credential
   // refusal, the allowlist-derived type, nosniff, attachment.
@@ -21786,6 +22116,8 @@ const cases = [
   ['MAP the rail is the work-kind map: Home, regions, dots, no state groups', theRailCarriesTheMap],
   ['MAP390 below 900px the map is the rail drawer', theMapIsTheRailDrawerBelowNineHundred],
   ['KIND the drawer opens the body the object is, with its relevance line', theDrawerOpensTheObjectItIs],
+  ['XLSXF the sheet renders its own form, from the committed workbook', theSheetRendersItsOwnForm],
+  ['PPTXF the deck falls back to the outline by name, from the committed deck', theDeckFallsBackToTheOutlineByName],
   ['MDK the drawer renders markdown through marked, sanitised', theDrawerRendersMarkdownThroughTheEngine],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
