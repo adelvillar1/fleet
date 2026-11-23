@@ -6484,6 +6484,27 @@ button.list-row {
 }
 
 .cfg-form:last-child { margin-bottom: 0; }
+
+/* Inside a card, a form group is a SECTION, not a second card (G1, the
+   surface pass): the vault/plugins/bots/settings forms were boxes inside
+   boxes — the "cards stacked on cards" the audit measured. The frame
+   stays where a form is the page's own unit; nested, the hairline does
+   the separating. */
+.board-card .cfg-form,
+.board-card .cfg-details {
+  margin: 0 0 14px;
+  padding: 12px 0 0;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  border-radius: 0;
+  background: none;
+}
+.board-card .cfg-form:first-child,
+.board-card .cfg-details:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.board-card .cfg-form:last-child { margin-bottom: 0; }
 .cfg-form-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 
 .cfg-details {

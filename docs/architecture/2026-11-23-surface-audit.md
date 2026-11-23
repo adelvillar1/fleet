@@ -74,6 +74,10 @@ cards, cards with no semantic press inside, nested cards).
   card is an object unit, never a box inside a box: the router's chain rows
   inside a card inside the page (9 nested) and the vault's form inside a
   card are flattened.
+- **G1 — one container depth (shipped).** The form groups were the nested
+  cards: `.cfg-form`/`.cfg-details` inside a board card were boxes in boxes.
+  Inside a card they are sections now; unparented forms keep their frame
+  (vault 2 → 0 nested; settings/plugins/bots 0).
 - **G2 — a card is a press or a host.** Every card either opens its object
   (whole-card press, `role=button`, cursor, keyboard) or contains presses.
   A card with neither is deleted — the read-only strip proved the point.

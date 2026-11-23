@@ -220,6 +220,15 @@ initiated sessions that are just noise."*
 - Pinned in the R10 case: the cursor rule, the keydown handler, and the
   learning column/head split.
 
+### R9 — G1 across the settings family (done)
+
+- The audit's nested-card counts were the form groups: `.cfg-form` and
+  `.cfg-details` are styled as cards (border, radius, page background), so
+  inside a board card they were boxes in boxes — the vault measured 2
+  nested. Scoped fix: a form group **inside** a card is a section (hairline
+  + spacing, no box); an unparented form keeps its frame. Measured after:
+  vault 2 → **0** nested, settings/plugins/bots 0. Pinned in the R10 case.
+
 ### R10 — the card grid holds: aligned, even, rails collapsed, PWA sizes
 
 - **Measured live** (probe face at 1440×900, each surface with the rail

@@ -9001,6 +9001,12 @@ async function theStrategyStepShowsItsPreview() {
         flatBot.includes('grid-template-columns: 280px minmax(0, 1fr) 300px;'),
       'bot breakpoints');
 
+    // G1: a form group inside a card is a section, not a second card —
+    // the vault/plugins/bots/settings nesting the audit measured.
+    check('R10 a form inside a card is a section, not a nested card',
+      flatCss.includes('.board-card .cfg-form, .board-card .cfg-details { margin: 0 0 14px; padding: 12px 0 0; border: 0; border-top: 1px solid var(--dsw-alias-hairline); border-radius: 0; background: none; }'),
+      'cfg nesting');
+
     // G5's other half: the cursor was missing on every div-button, and
     // seven of them had no keyboard at all. One rule, one listener.
     check('R10 every div-button shows a cursor and answers the keyboard',
