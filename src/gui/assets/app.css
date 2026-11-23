@@ -5572,6 +5572,18 @@ pre.drawer-code {
   outline: none;
 }
 
+/* A list row that IS a press (R9/G5): the button's own styling stood
+   down; the row's grid and states are the .list-row rules. */
+button.list-row {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
 /* A loading state's foot (R6): how long it has waited, and the retry. */
 .board-empty-foot {
   display: flex;

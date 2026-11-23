@@ -21089,7 +21089,12 @@ import { node, svg, clip } from './core/dom.js';
   /// dispatches has earned the hand (D49), and one that has not is
   /// observing. Registration buys neither.
   function armadaMapRow(instance) {
-    var row = node('div', 'list-row deploy-map-row');
+    // A real button: the row selects the dispatch target, so the keyboard
+    // reaches it and the cursor says so (G5 — the audit found zero
+    // pointer-cursor divs in the face; this was one of them).
+    var row = node('button', 'list-row deploy-map-row');
+    row.type = 'button';
+    row.setAttribute('aria-label', 'send dispatches to ' + instance.sid);
     row.dataset.sid = instance.sid;
     if (face.armadaSid === instance.sid) row.dataset.selected = 'true';
     // The row is a selection: the dispatch bar below sends to the row the
@@ -21291,10 +21296,16 @@ import { node, svg, clip } from './core/dom.js';
     var relay = (read && read.relay) || { conversations: 0, reads: 0 };
     var card = boardCard(12, 'the relay', 'what the paired device opened through it');
     card.classList.add('relay-traffic');
+    // The card's one press (R9): the pairing lives with the assistants, so
+    // the relay's traffic opens the page that owns the paired device.
+    var pairing = node('button', 'row-rewind', 'open the pairing');
+    pairing.type = 'button';
+    pairing.addEventListener('click', function () { window.location.hash = '#/bots'; });
     if (!relay.conversations) {
       card.appendChild(node('p', 'board-empty',
         'no conversation has ridden the relay yet \u2014 nothing has been opened ' +
         'through it since this face launched.'));
+      card.appendChild(pairing);
       return card;
     }
     var line = node('div', 'relay-line');
@@ -21304,6 +21315,7 @@ import { node, svg, clip } from './core/dom.js';
     card.appendChild(line);
     card.appendChild(node('p', 'relay-reads',
       String(relay.reads) + (relay.reads === 1 ? ' read carried it' : ' reads carried them')));
+    card.appendChild(pairing);
     return card;
   }
 
@@ -21466,6 +21478,19 @@ import { node, svg, clip } from './core/dom.js';
         ' \u00b7 ' + corpus.settles + ' settled sync' +
         (corpus.settles === 1 ? '' : 's')));
       corpusCard.appendChild(lineC);
+      // The one act a state card can carry honestly (R9): the remote is an
+      // address the owner copies into another home.
+      // The remote is captured as a VALUE: a later `var corpus` in this
+      // function reassigns the read's variable, and a closure over the
+      // variable would copy a DOM element's nonexistent `.remote`.
+      var remote = corpus.remote;
+      var copyRemote = node('button', 'row-rewind', 'copy the remote');
+      copyRemote.type = 'button';
+      copyRemote.addEventListener('click', function () {
+        if (navigator.clipboard) navigator.clipboard.writeText(remote).catch(function () { });
+        notice('the corpus remote is copied', remote);
+      });
+      corpusCard.appendChild(copyRemote);
     }
     el.armadaBoard.appendChild(corpusCard);
 

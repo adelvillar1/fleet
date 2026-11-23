@@ -199,6 +199,12 @@ initiated sessions that are just noise."*
 - Pins: the harness's head assertions read `.page-head` (the old class is
   gone); the per-surface rows pin their own composition.
 
+### R9 — armada (done)
+
+- The map's rows are real buttons (they were click-divs); the relay opens the
+  pairing; the corpus copies its remote; the empty states already explained
+  and stay. Pinned in the P6 armada case.
+
 ### R9 — the remaining per-surface passes
 
 - The audit's fix order: armada, calibration's report cards, delegation,

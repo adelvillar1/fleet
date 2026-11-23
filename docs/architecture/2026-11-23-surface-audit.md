@@ -258,6 +258,27 @@ cards, cards with no semantic press inside, nested cards).
 - **Should be:** rename the tab to **work** (what it carries); the other
   three are right; audit each tab's objects in its own pass.
 
+## 2026-11-23 — armada (R9's first pass)
+
+Measured, then classified against the bar — **a card without a press is a
+candidate, not a verdict**: the armada cards explain (state + why + what
+fills it), so they pass at explain level. What failed:
+
+- **The deployment-map rows were `div`s with click listeners** — mouse-only,
+  no role, no tabindex, no cursor (G5's exact defect). Now real buttons with
+  an aria-label; a press moves the dispatch target.
+- **The relay card** had counters and no door: it now opens the pairing
+  (`#/bots`), where the paired device lives.
+- **The corpus card** explained the shared mind and offered nothing: with a
+  remote it now copies it.
+- The empty states (no roster, no relay traffic, no corpus remote) already
+  name why and what fills them — kept.
+
+Pinned in the P6 armada case: rows are buttons, a row press moves the bar's
+target, the relay opens the assistants, the corpus copy writes the remote.
+Live: the pairing door lands on `#/bots`; this home has no roster or corpus
+remote, and both say so.
+
 ## The fix order
 
 1. **The read-only spine strip** — six surfaces, one shared builder: retired

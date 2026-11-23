@@ -21861,6 +21861,49 @@ async function p6ArmadaDrawsTheDeploymentMap() {
       relay.textContent.includes('conversations') &&
       relay.textContent.includes('9 reads carried them'),
     relay ? relay.textContent.slice(0, 160) : 'no relay card');
+
+  // R9: the surface's objects do jobs. The map rows are real buttons (the
+  // audit found them mouse-only divs), a press moves the dispatch target,
+  // and the relay opens the page that owns the pairing.
+  check('R9 the map rows are real presses, not click-divs',
+    !!a && a.name === 'button' && a.getAttribute('aria-label').includes('sid-a'),
+    a ? a.name + ' / ' + a.getAttribute('aria-label') : 'no row');
+  if (b) b.click();
+  await flush(80);
+  const bar2 = page.rows('.dispatch-bar')[0];
+  const picked = bar2 && bar2.querySelectorAll('select')[0];
+  check('R9 a row press moves the dispatch target',
+    !!picked && picked.value === 'sid-b' &&
+      /showing sid-b/.test(page.rows('[data-state="selected"]').map((n) => n.textContent).join(' | ')),
+    (picked ? picked.value : 'no select'));
+  const pairing = relay && relay.querySelectorAll('.row-rewind')
+    .filter((one) => one.textContent === 'open the pairing')[0];
+  check('R9 the relay card opens the pairing',
+    !!pairing, relay ? relay.textContent.slice(0, 120) : 'no relay card');
+  if (pairing) pairing.click();
+  await flush(40);
+  check('R9 the pairing press lands on the assistants',
+    page.window.location.hash === '#/bots', page.window.location.hash);
+
+  // The corpus card's one act: the remote is copied.
+  const withCorpus = boot({ hash: '#/armada', documents: {
+    armada: { type: 'armada', flagship: true,
+      relay: { conversations: 0, reads: 0 },
+      corpus: { remote: 'git@example.com:fleet/mind.git', corpus_ref: 'main',
+        last_revision: 'abcdef123456', settles: 2 },
+      instances: p6ArmadaFleet.instances },
+    state: (asked) => emptyState(asked),
+  } });
+  withCorpus.open();
+  await flush(120);
+  const copyRemote = withCorpus.rows('.row-rewind')
+    .filter((one) => one.textContent === 'copy the remote')[0];
+  check('R9 the corpus card copies its remote', !!copyRemote,
+    withCorpus.rows('.row-rewind').map((one) => one.textContent).join(' | '));
+  if (copyRemote) copyRemote.click();
+  check('R9 the copy press writes the remote',
+    withCorpus.clipboardWrites.includes('git@example.com:fleet/mind.git'),
+    JSON.stringify(withCorpus.clipboardWrites));
 }
 
 // The armada's refusal of a zero: an install with no roster carries no
