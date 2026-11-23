@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>U4 — the drawer in place</title>
+<link rel="stylesheet" href="../study.css">
+<script src="../map-shell.js" defer></script>
+</head>
+<body data-current="sessions" data-title="the drawer in place" data-rail="A">
+
+<div data-stage>
+  <div class="stage-inner">
+    <div class="s-head">
+      <div class="s-eyebrow">conversation</div>
+      <div class="s-title">ship the drawer grammar</div>
+      <div class="s-note">tower · working · turn 4 · the seat is not waiting</div>
+    </div>
+
+    <div class="turn owner">
+      <div class="who-line"><span class="chip accent">you</span><span>09:12</span></div>
+      <div class="prose"><p>the receipts landed — press the bridge path and show me what we changed.</p></div>
+    </div>
+
+    <div class="turn assistant">
+      <div class="who-line"><span class="tdisc">T</span><b>tower</b><span>routed · glm-4.7 · judged</span></div>
+      <div class="prose">
+        <p>The gate is green and the six assets are server-verified. The one pressed change is in the
+        file route&rsquo;s containment: the press now opens only what the route can serve.</p>
+      </div>
+      <div class="rcpt on"><span class="mark">▤</span><span class="name">bridge.rs</span><span>— the pane_path change</span><span class="go">open in the drawer ›</span></div>
+    </div>
+
+    <div class="turn owner">
+      <div class="who-line"><span class="chip accent">you</span><span>09:14</span></div>
+      <div class="prose"><p>and the desk claim&rsquo;s source press — same rule?</p></div>
+    </div>
+
+    <div class="turn assistant">
+      <div class="who-line"><span class="tdisc">T</span><b>tower</b><span>routed · glm-4.7 · judged</span></div>
+      <div class="prose">
+        <p>Same rule: the server resolves the claim&rsquo;s source the brief&rsquo;s way, then asks the pane&rsquo;s
+        own file route whether it can serve it. A source it cannot serve stays text.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<aside data-drawer class="drawer">
+  <div class="drawer-head">
+    <div><div class="drawer-kicker">code · pressed from the receipt</div><div class="drawer-title">bridge.rs</div></div>
+    <button class="drawer-close" aria-label="close">&times;</button>
+  </div>
+  <div class="drawer-tabs"><span class="drawer-tab on">read</span><span class="drawer-tab">act</span><span class="drawer-tab">connections</span><span class="drawer-tab">made here</span></div>
+  <div class="readmodes"><span class="rm on">code</span><span class="rm">document</span><span class="rm">preview</span><span class="by">chosen by kind</span></div>
+  <div class="drawer-body">
+    <p class="rel">Pressed from the run&rsquo;s receipt — <b>line 7714</b> is the change the reply named.</p>
+    <div class="breadcrumb">src <span>›</span> gui <span>›</span> <span class="here">bridge.rs</span><span style="margin-left:auto">2,420 lines · changed this turn</span></div>
+    <div class="codeview">
+      <div class="codeline"><span class="lineno">7709</span><span><span class="cm">/// The pane's file read.</span></span></div>
+      <div class="codeline"><span class="lineno">7710</span><span><span class="kw">pub async fn</span> file(&amp;<span class="kw">self</span>, asked: &amp;<span class="kw">str</span>)</span></div>
+      <div class="codeline"><span class="lineno">7711</span><span>    -&gt; Value {</span></div>
+      <div class="codeline hi"><span class="lineno">7714</span><span><span class="cm">// G16: the press's guard.</span></span></div>
+      <div class="codeline"><span class="lineno">7715</span><span><span class="kw">pub fn</span> openable_path(&amp;<span class="kw">self</span>, path: &amp;Path)</span></div>
+      <div class="codeline"><span class="lineno">7716</span><span>    -&gt; <span class="kw">Option</span>&lt;String&gt; {</span></div>
+      <div class="codeline"><span class="lineno">7717</span><span>    <span class="kw">let</span> root = <span class="kw">self</span>.cwd.canonicalize().ok()?;</span></div>
+      <div class="codeline"><span class="lineno">7718</span><span>    <span class="kw">let</span> candidate = path.canonicalize().ok()?;</span></div>
+      <div class="codeline"><span class="lineno">7719</span><span>    <span class="kw">if</span> !candidate.starts_with(&amp;root) {</span></div>
+      <div class="codeline"><span class="lineno">7720</span><span>        <span class="kw">return</span> <span class="kw">None</span>;</span></div>
+    </div>
+    <div class="kv" style="display:flex;gap:14px;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)">
+      <span>2 call sites</span><span>tests: 2 passed</span><span>last change 9m ago</span>
+    </div>
+  </div>
+  <div class="drawer-foot"><button class="btn sm primary">jump to the definition</button><button class="btn sm ghost">copy path</button></div>
+</aside>
+
+</body>
+</html>

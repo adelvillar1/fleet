@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The UX map study — the rail as a map, the drawer by object kind</title>
+<link rel="stylesheet" href="study.css">
+<script>
+  // The gallery's own theme switch, kept out of the screens' captures.
+  try { document.documentElement.dataset.theme =
+    new URLSearchParams(location.search).get('theme') ||
+    localStorage.getItem('fleet-theme-2') || 'night'; } catch (e) {}
+</script>
+</head>
+<body data-shell="off">
+<div style="max-width:1180px;margin:0 auto;padding:48px 24px 64px">
+
+  <div class="s-head" style="padding-bottom:10px">
+    <div class="s-eyebrow">the UX map study · 2026-11-22</div>
+    <div class="s-title" style="font-size:30px">The rail as a map, attention in the work, the drawer by object kind</div>
+    <div class="s-note" style="max-width:860px;margin-top:10px;font-size:13px">
+      Three rulings under test: the rail groups by the type of work (two placements, drawn so the
+      picture argues); attention consolidates into the inbox and the board, the rail keeps only the
+      door and a dot; the drawer chooses its read body by the object&rsquo;s kind. Six screens, four
+      themes available, measured at every viewport.
+    </div>
+    <div style="margin-top:12px;display:flex;gap:6px">
+      <button class="syschip" data-t="night">night</button>
+      <button class="syschip" data-t="day">day</button>
+      <button class="syschip" data-t="console">console</button>
+      <button class="syschip" data-t="contrast">contrast</button>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:20px">
+
+    <a class="card" href="screens/00-rail-map-a.html" style="text-decoration:none;color:inherit">
+      <div class="s-eyebrow">S1 · placement A</div>
+      <div class="s-title" style="font-size:18px">By the work it serves</div>
+      <div class="s-note" style="margin:6px 0 10px">Reviews under software, Desk under design.</div>
+      <img src="png/00-rail-map-a-night.png" alt="placement A, night" style="width:100%;border-radius:8px;border:1px solid var(--line)">
+    </a>
+
+    <a class="card" href="screens/01-rail-map-b.html" style="text-decoration:none;color:inherit">
+      <div class="s-eyebrow">S2 · placement B</div>
+      <div class="s-title" style="font-size:18px">By the nature of the evidence</div>
+      <div class="s-note" style="margin:6px 0 10px">Desk and Reviews together under knowledge.</div>
+      <img src="png/01-rail-map-b-night.png" alt="placement B, night" style="width:100%;border-radius:8px;border:1px solid var(--line)">
+    </a>
+
+    <a class="card" href="screens/02-drawer-matrix.html" style="text-decoration:none;color:inherit;grid-column:1 / -1">
+      <div class="s-eyebrow">S3 · the drawer matrix</div>
+      <div class="s-title" style="font-size:18px">The drawer decides by what the object is</div>
+      <div class="s-note" style="margin:6px 0 10px">Eight kinds, eight bodies, one grammar — code, document, file-in-tree, web, board, conversation, fact, deliverable.</div>
+      <img src="png/02-drawer-matrix-night.png" alt="the drawer matrix, night" style="width:100%;border-radius:8px;border:1px solid var(--line)">
+    </a>
+
+    <a class="card" href="screens/03-drawer-in-place.html" style="text-decoration:none;color:inherit">
+      <div class="s-eyebrow">S4 · in place</div>
+      <div class="s-title" style="font-size:18px">The drawer in a conversation</div>
+      <div class="s-note" style="margin:6px 0 10px">A pressed receipt opens the code body at the line that changed.</div>
+      <img src="png/03-drawer-in-place-night.png" alt="the drawer in place, night" style="width:100%;border-radius:8px;border:1px solid var(--line)">
+    </a>
+
+    <a class="card" href="screens/04-attention-consolidated.html" style="text-decoration:none;color:inherit">
+      <div class="s-eyebrow">S5 · the consolidation</div>
+      <div class="s-title" style="font-size:18px">One attention surface, not three</div>
+      <div class="s-note" style="margin:6px 0 10px">The inbox by the age of the hold; the board&rsquo;s needs-you lead; the rail with the door and dots.</div>
+      <img src="png/04-attention-consolidated-night.png" alt="attention consolidated, night" style="width:100%;border-radius:8px;border:1px solid var(--line)">
+    </a>
+
+    <a class="card" href="screens/05-map-phone.html" style="text-decoration:none;color:inherit;grid-column:1 / -1">
+      <div class="s-eyebrow">S6 · below 900px</div>
+      <div class="s-title" style="font-size:18px">The rail becomes a drawer — the map keeps its shape</div>
+      <div class="s-note" style="margin:6px 0 10px">390 full-width; 820 at the left edge, the work behind the scrim.</div>
+      <img src="png/05-map-phone-night.png" alt="the map on a phone and a pad, night" style="width:100%;border-radius:8px;border:1px solid var(--line)">
+    </a>
+  </div>
+
+  <div class="stage-note" style="margin-top:22px">
+    <div class="s-eyebrow">measured, both themes</div>
+    <div class="note-cols">
+      <div>
+        <p>Every screen was captured in WebKit at its viewport and audited in-page: zero horizontal
+        overflow, no text under the floor, and every text colour clears AA (4.5:1, or 3:1 for large
+        text and control glyphs) against its own painted ground. The audit found four real defects in
+        the shared mock sheet and they were fixed at the token, not the screen.</p>
+      </div>
+      <div>
+        <ul>
+          <li>night <b>muted</b> 4.21 → ≥4.5 (raised)</li>
+          <li>chips: tone mixed toward ink for the label</li>
+          <li>code line numbers and keywords raised</li>
+          <li>12 captures: 6 screens × night/day</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+<script>
+  var bar = Array.prototype.slice.call(document.querySelectorAll('[data-t]'));
+  function paint() {
+    bar.forEach(function (b) {
+      b.style.borderColor = b.dataset.t === document.documentElement.dataset.theme ? 'var(--accent)' : '';
+      b.style.color = b.dataset.t === document.documentElement.dataset.theme ? 'var(--accent-ink)' : '';
+    });
+  }
+  bar.forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.documentElement.dataset.theme = b.dataset.t;
+      try { localStorage.setItem('fleet-theme-2', b.dataset.t); } catch (e) {}
+      paint();
+    });
+  });
+  paint();
+</script>
+</body>
+</html>

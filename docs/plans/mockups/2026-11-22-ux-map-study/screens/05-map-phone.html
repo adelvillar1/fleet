@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>U6 — the map on a phone and a pad</title>
+<link rel="stylesheet" href="../study.css">
+<script src="../map-shell.js" defer></script>
+</head>
+<body data-shell="off">
+<div style="max-width:1320px;margin:0 auto;padding:54px 24px 40px">
+
+  <div class="s-head" style="padding-bottom:22px">
+    <div class="s-eyebrow">S6 · the map below 900px</div>
+    <div class="s-title" style="font-size:26px">The rail becomes a drawer — the map keeps its shape</div>
+    <div class="s-note" style="max-width:820px;margin-top:8px">
+      Below 900px the rail folds into a drawer, exactly as it does today — the map does not become a
+      list of nouns again. The door leads, the three regions keep their brackets, and the system strip
+      stays a foot. The phone opens the drawer full-width; the pad opens it at the left, the work
+      still visible behind the scrim.
+    </div>
+  </div>
+
+  <template id="map-markup">
+    <div class="rail-head"><span class="t">the map</span><span class="syschip">×</span></div>
+    <div class="map-scroll">
+      <a class="map-door" href="#"><span class="mark">▣</span><span class="label">the door</span><span class="count">2 held</span></a>
+      <div class="map-regions">
+        <section class="map-region">
+          <header><span class="t">software</span></header>
+          <a class="rail-row" href="#"><span>Conversations</span><span class="dot needs" style="margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--down)"></span></a>
+          <a class="rail-row" href="#"><span>Board</span><span class="count">3</span></a>
+          <a class="rail-row" href="#"><span>Reviews</span></a>
+          <a class="rail-row" href="#"><span>Fleet</span></a>
+        </section>
+        <section class="map-region">
+          <header><span class="t">design</span></header>
+          <a class="rail-row" href="#"><span>Design</span><span class="dot working" style="margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--warn)"></span></a>
+          <a class="rail-row" href="#"><span>Desk</span><span class="count">1</span></a>
+        </section>
+        <section class="map-region">
+          <header><span class="t">knowledge</span></header>
+          <a class="rail-row" href="#"><span>Intelligence</span></a>
+          <a class="rail-row" href="#"><span>Learning</span></a>
+        </section>
+      </div>
+      <div class="rail-sep"></div>
+      <div class="map-system"><div class="rail-label">system</div><div class="syschips">
+        <span class="syschip">Health</span><span class="syschip">Versions</span><span class="syschip">Secrets</span>
+        <span class="syschip">Plugins</span><span class="syschip">Assistants</span><span class="syschip">Settings</span>
+      </div></div>
+      <div class="rail-foot">night · expert off · ⌘K</div>
+    </div>
+  </template>
+
+  <div class="devices">
+    <div class="device">
+      <div class="screen" style="width:390px;height:844px">
+        <div class="dev-screen">
+          <div class="dev-bar"><button class="iconbtn">≡</button><span class="brand">fleet</span><span class="chip ok" style="margin-left:auto">home live</span></div>
+          <div class="dev-stage">
+            <div class="dev-card"><b>the drawer reads right on the phone</b><br>tower · working · 2m</div>
+            <div class="dev-card"><b>approve deploy.yml — held</b><br>kiri · needs you · 41m</div>
+            <div class="dev-card"><b>the pricing table run</b><br>kiri · needs approval · 2h</div>
+          </div>
+          <div class="dev-scrim"></div>
+          <div class="dev-drawer" data-map></div>
+        </div>
+      </div>
+      <div class="device-tag">390 × 844 — the drawer is the full width</div>
+    </div>
+
+    <div class="device">
+      <div class="screen" style="width:820px;height:700px">
+        <div class="dev-screen">
+          <div class="dev-bar"><button class="iconbtn">≡</button><span class="brand">fleet</span><span class="chip ok" style="margin-left:auto">home live</span></div>
+          <div class="dev-stage">
+            <div class="dev-card"><b>the drawer reads right on the phone</b><br>tower · working · 2m</div>
+            <div class="dev-card"><b>approve deploy.yml — held</b><br>kiri · needs you · 41m</div>
+            <div class="dev-card"><b>the pricing table run</b><br>kiri · needs approval · 2h</div>
+          </div>
+          <div class="dev-scrim"></div>
+          <div class="dev-drawer side" data-map></div>
+        </div>
+      </div>
+      <div class="device-tag">820 × 1180 (cut at 700) — the drawer keeps the left edge; the work stays behind</div>
+    </div>
+  </div>
+
+  <div class="stage-note" style="max-width:1000px;margin:26px auto 0">
+    <div class="s-eyebrow">what to judge</div>
+    <div class="note-cols">
+      <div>
+        <p><b>Does the map survive the fold?</b> The regions are named, so a drawer that is opened
+        once a session still teaches the map — a list of nine nouns does not.</p>
+        <p><b>Does the door still lead?</b> The held count is the first thing on the phone, where the
+        owner arrives with the least patience.</p>
+      </div>
+      <div>
+        <ul>
+          <li>390 — full width, one thumb</li>
+          <li>820 — left drawer, work behind</li>
+          <li>regions, not nouns</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+<script>
+  // Clone the one map markup into both device drawers: the phone and the
+  // pad show the same map, so they cannot drift apart in the study.
+  (function () {
+    var tpl = document.getElementById('map-markup');
+    document.querySelectorAll('[data-map]').forEach(function (host) {
+      host.appendChild(tpl.content.cloneNode(true));
+    });
+  })();
+</script>
+</body>
+</html>

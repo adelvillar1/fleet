@@ -1,0 +1,459 @@
+/* The UX map study — mockup edition. Reuses the redesign's token sheet
+   verbatim (one accent, the signal law, the four themes) and adds ONLY
+   the map rail's grammar, the drawer's object-kind bodies, and the
+   study's frames. No new colours; every value below reads a token. */
+
+@import url('../2026-11-22-harness-redesign/system.css');
+
+/* ---------- the map rail -------------------------------------------------
+   A region is geography, not a menu group: a bracketed spine with the
+   work kind named above its lanes. The door is attention's entrance — one
+   row, a held count, and never a region. */
+
+.rail.map { display: flex; flex-direction: column; }
+
+.map-door {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 40px;
+  margin: 0 0 12px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in oklab, var(--down) 26%, var(--line));
+  background: color-mix(in oklab, var(--down) 7%, var(--surface));
+  color: var(--ink);
+}
+.map-door:hover { background: color-mix(in oklab, var(--down) 11%, var(--surface)); }
+.map-door .mark { color: var(--down); width: 17px; height: 17px; flex: none; }
+.map-door .label { font-size: 13px; font-weight: 500; }
+.map-door .sub { font-size: 11px; color: var(--muted); }
+.map-door .count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--down) 18%, transparent);
+  color: var(--down);
+}
+
+.map-regions { display: flex; flex-direction: column; gap: 12px; }
+
+.map-region { position: relative; padding-left: 9px; }
+.map-region::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.map-region.here::before { background: color-mix(in oklab, var(--accent) 55%, transparent); }
+
+.map-region > header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 10px 6px;
+}
+.map-region > header .mark { width: 13px; height: 13px; color: var(--muted); flex: none; }
+.map-region > header .t {
+  font-family: var(--font-text);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  color: var(--muted);
+}
+.map-region > header .why {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.map-region .rail-row { height: 31px; }
+.map-region .rail-row .dot { width: 6px; height: 6px; border-radius: 50%; margin-left: auto; flex: none; }
+.map-region .rail-row .dot.needs { background: var(--down); }
+.map-region .rail-row .dot.working { background: var(--warn); }
+.map-region .rail-row .dot.quiet { background: var(--faint); }
+.map-region .rail-row .count + .dot { margin-left: 6px; }
+
+.map-system { margin-top: 4px; }
+.map-system .syschips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 10px 0; }
+.syschip {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ---------- the drawer's object-kind bodies ----------------------------- */
+
+.rel {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  border-left: 2px solid var(--accent);
+  padding-left: 9px;
+}
+.rel b { color: var(--ink); font-weight: 600; }
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.breadcrumb .here { color: var(--accent-ink); }
+
+.codeview {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 0;
+  overflow: hidden;
+}
+.codeline { display: flex; gap: 12px; padding: 0 12px; white-space: pre; }
+.lineno { width: 20px; text-align: right; color: var(--ink-soft); flex: none; }
+.codeview .kw { color: var(--accent-ink); }
+.codeview .str { color: var(--ok); }
+.codeview .cm { color: var(--muted); font-style: italic; }
+.codeview .codeline.hi .cm { color: var(--ink-soft); }
+.codeview .codeline.hi { background: color-mix(in oklab, var(--accent) 13%, transparent); }
+
+.tree { display: flex; flex-direction: column; gap: 1px; }
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 23px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.tree-row .glyph { width: 13px; color: var(--muted); flex: none; }
+.tree-row .ind { flex: none; }
+.tree-row.dim { color: var(--muted); }
+.tree-row.on { background: var(--accent-soft); color: var(--accent-ink); }
+.tree-row.on .glyph { color: var(--accent-ink); }
+
+.docview h1 {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+.docview .meta { font-family: var(--font-mono); font-size: 10px; color: var(--muted); margin-bottom: 10px; }
+.docview p { font-size: 12.5px; line-height: 1.65; color: var(--ink-soft); margin-bottom: 8px; }
+.docview h2 { font-size: 12.5px; font-weight: 600; color: var(--ink); margin: 10px 0 4px; }
+.docview blockquote {
+  border-left: 2px solid var(--line-strong);
+  padding-left: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 8px 0;
+}
+
+.webview { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.webview .chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  background: var(--page);
+  border-bottom: 1px solid var(--line);
+}
+.webview .chrome .dots { display: flex; gap: 4px; }
+.webview .chrome .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
+.webview .chrome .url {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+}
+.webview .page {
+  padding: 16px 14px;
+  background:
+    radial-gradient(120% 70% at 20% 0%, color-mix(in oklab, var(--accent) 20%, transparent), transparent 60%),
+    var(--page);
+}
+.webview .page h3 { font-family: var(--font-display); font-size: 15px; color: var(--ink); margin-bottom: 4px; }
+.webview .page p { font-size: 11px; line-height: 1.55; color: var(--ink-soft); margin-bottom: 10px; }
+.webview .page .cta {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.boardview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.boardview .col { background: var(--page); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.boardview .col h4 {
+  font-family: var(--font-text);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+.boardview .vcard {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 7px;
+  margin-bottom: 6px;
+}
+.boardview .vcard .t { font-size: 10.5px; font-weight: 500; color: var(--ink); }
+.boardview .vcard .s { font-family: var(--font-mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
+.boardview .vcard.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+
+.runview { display: flex; flex-direction: column; gap: 10px; }
+.runview .turn-you { align-self: flex-end; max-width: 85%; background: var(--accent-soft); color: var(--ink); border-radius: 10px 10px 3px 10px; padding: 7px 10px; font-size: 12px; line-height: 1.5; }
+.runview .turn-fleet { font-size: 12px; line-height: 1.55; color: var(--ink-soft); }
+.runview .turn-fleet .by { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.runview .turn-fleet .by .disc { width: 18px; height: 18px; border-radius: 50%; background: color-mix(in oklab, var(--accent) 22%, transparent); color: var(--accent-ink); display: grid; place-items: center; font-size: 10px; font-weight: 700; }
+.runview .turn-fleet .by .n { font-family: var(--font-text); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.runview .tool { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 11px; color: var(--ink-soft); }
+.runview .tool .name { font-family: var(--font-mono); color: var(--accent-ink); }
+
+.factview .basisrow { display: flex; align-items: center; gap: 6px; }
+.factview .sent {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  border-left: 2px solid var(--line-strong);
+  padding-left: 9px;
+}
+.factview .kv { display: flex; gap: 8px; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.factview .kv b { color: var(--ink-soft); font-weight: 500; }
+
+.deliv .stages { display: flex; align-items: center; gap: 0; }
+.deliv .stage { display: flex; align-items: center; gap: 5px; font-family: var(--font-text); font-size: 10px; color: var(--muted); }
+.deliv .stage i {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-style: normal;
+  font-size: 8.5px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+.deliv .stage.done i { border-color: var(--ok); color: var(--ok); }
+.deliv .stage.refused i { border-color: var(--down); color: var(--down); }
+.deliv .sep { flex: 1; height: 1px; background: var(--line); margin: 0 6px; min-width: 8px; }
+.deliv .claimrow { border-top: 1px solid var(--line); padding-top: 8px; display: flex; gap: 8px; align-items: flex-start; }
+.deliv .claimrow .txt { font-size: 11.5px; line-height: 1.5; color: var(--ink-soft); }
+.deliv .claimrow .sent { font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+
+/* ---------- the specimen sheet ----------------------------------------- */
+
+.spec-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.spec { background: var(--page); border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px; }
+.spec-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.spec-kicker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--accent-ink);
+}
+.spec-name { font-family: var(--font-display); font-size: 13px; font-weight: 600; color: var(--ink); }
+.spec-frame {
+  height: 392px;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.spec-frame .drawer { width: 100%; border-left: 0; box-shadow: none; }
+.spec-note { margin-top: 8px; font-size: 10.5px; line-height: 1.5; color: var(--muted); }
+
+/* ---------- the device frames (the map on a phone and a pad) ------------ */
+
+.devices { display: flex; gap: 26px; align-items: flex-start; justify-content: center; }
+.device { position: relative; }
+.device .screen {
+  position: relative;
+  border-radius: 26px;
+  border: 1px solid var(--line-strong);
+  background: var(--page);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+.device-tag {
+  margin-top: 8px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.dev-screen { display: flex; flex-direction: column; height: 100%; }
+.dev-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 52px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex: none;
+}
+.dev-bar .brand { font-family: var(--font-display); font-size: 15px; font-weight: 600; color: var(--ink); }
+.dev-stage { flex: 1; position: relative; background: var(--page); padding: 14px; }
+.dev-drawer {
+  position: absolute;
+  inset: 52px 0 0 0; /* below the device's own bar — the bar stays */
+  z-index: 3;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+}
+.dev-drawer .rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 14px 8px;
+  flex: none;
+}
+.dev-drawer .rail-head .t { font-family: var(--font-display); font-size: 16px; font-weight: 600; color: var(--ink); }
+.dev-drawer .map-scroll { flex: 1; overflow: hidden; padding: 0 12px 10px; display: flex; flex-direction: column; }
+.dev-scrim { position: absolute; inset: 52px 0 0 0; background: color-mix(in oklab, var(--page) 64%, transparent); z-index: 2; }
+
+@media (max-width: 900px) {
+  .spec-grid { grid-template-columns: minmax(0, 1fr); }
+  .devices { flex-direction: column; align-items: center; }
+}
+
+/* ---------- the study's surface bits (shared by the stage frames) ------- */
+
+.s-head { padding: 4px 0 14px; }
+.s-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  color: var(--accent-ink);
+  margin-bottom: 6px;
+}
+.s-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.s-note { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+
+.stage-note {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--r-md);
+  background: var(--raised);
+  box-shadow: var(--shadow-1);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.note-cols { display: grid; grid-template-columns: 1.25fr .75fr; gap: 18px; margin-top: 10px; }
+.note-cols p { font-size: 12.5px; line-height: 1.65; color: var(--ink-soft); margin-bottom: 8px; }
+.note-cols p:last-child { margin-bottom: 0; }
+.note-cols ul { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.75; color: var(--ink-soft); }
+
+.taskrow { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+.taskrow:first-of-type { border-top: 0; }
+.taskrow .who { font-family: var(--font-mono); font-size: 10px; color: var(--muted); min-width: 64px; text-transform: uppercase; letter-spacing: .05em; }
+.taskrow .what { color: var(--ink); }
+.taskrow .what small { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }
+.taskrow .age { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.taskrow .open { color: var(--accent-ink); font-size: 11px; white-space: nowrap; }
+.taskrow .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.taskrow .dot.needs { background: var(--down); }
+.taskrow .dot.working { background: var(--warn); }
+.two-up { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+
+/* the read body's mode switch — the kind chooses the default, the owner
+   overrides; a body with one natural form carries no switch at all. */
+.readmodes { display: flex; align-items: center; gap: 5px; padding: 0 20px; margin-top: 8px; }
+.rm {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rm.on { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.readmodes .by { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+
+/* S4's transcript receipts (the in-place frame) */
+.rcpt { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; font-size: 12px; color: var(--ink-soft); }
+.rcpt .name { font-family: var(--font-mono); font-size: 11px; color: var(--accent-ink); }
+.rcpt .go { margin-left: auto; font-size: 11px; color: var(--accent-ink); white-space: nowrap; }
+.rcpt.on { border-color: color-mix(in oklab, var(--accent) 40%, var(--line)); background: color-mix(in oklab, var(--accent) 7%, var(--surface)); }
+
+.dev-drawer.side { inset: 52px auto 0 0; width: 300px; border-right: 1px solid var(--line); box-shadow: var(--shadow-2); }
+.dev-stage .dev-card {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+.dev-stage .dev-card b { color: var(--ink); font-weight: 600; }
+.dev-drawer .map-scroll .rail-sep { margin: 10px 4px; }
+.dev-drawer .map-scroll .map-system { margin-top: auto; }
+.dev-drawer .rail-foot { padding-left: 6px; }
+
+/* The device frames' discs and any inherited micro initial read at 10px. */
+.turn .disc, .who-line .disc { font-size: 10px; }
+
+/* A conversation's author disc reads like the run's: bright accent, the
+   on-accent label the buttons already use (AA in both themes). */
+.tdisc {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--accent);
+  flex: none;
+}
