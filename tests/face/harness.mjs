@@ -5730,6 +5730,37 @@ async function theDelegationSurfaceLeadsWithTheBlockers() {
     page.window.location.hash === '#/sessions/run-x', page.window.location.hash);
 }
 
+// R3 (the surface pass): the conversations list carries human work only.
+// The document holds an owner session, a scheduled run and a delegated
+// child; the list draws the owner's alone, and the count names the same
+// population (the owner's rule: system-initiated sessions are noise).
+async function theConversationsListCarriesHumanWorkOnly() {
+  const page = boot({ width: 1440, hash: '#/sessions', documents: {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 1, earlier: 3, total: 3, yours: 1 },
+      sessions: [
+        row('owner-1', 'completed', { title: 'the owner conversation' }),
+        row('sched-1', 'completed', { title: 'the sweep ran', kind: 'scheduled', class: 'background' }),
+        row('del-1', 'completed', { title: 'the child run', kind: 'subagent', class: 'delegated' }),
+      ],
+    },
+    state: (asked) => emptyState(asked),
+    onboard: onboardDoc({ door: false }),
+  } });
+  page.open();
+  await flush(140);
+  const rows = page.rows('.work-row');
+  check('R3 the conversations list carries the owner\u2019s session only',
+    rows.length === 1 && rows[0].textContent.includes('the owner conversation'),
+    rows.map((r) => r.textContent.slice(0, 40)).join(' | '));
+  const said = page.text('work-head');
+  check('R3 the count names the same population',
+    said.includes('1 conversation') &&
+      !said.includes('3 conversation'),
+    said.slice(0, 80));
+}
+
 // The rail's map (the UX map study, 2026-11-23; placement B): Home leads
 // with the held count, three regions group the lanes by the kind of work,
 // the system strip carries machinery — and state is a dot on the lane, never
@@ -22598,6 +22629,7 @@ const cases = [
   ['R6 empty and loading states name their one press', theEmptyAndLoadingStatesOfferTheirDoor],
   ['R7 every surface head wears its place', theEyebrowWearsTheSurfacesPlace],
   ['R10 the card grid spans are all declared and collapse', theCardGridsSpansAreAllDeclared],
+  ['R3 the conversations list carries human work only', theConversationsListCarriesHumanWorkOnly],
   ['RESKIN an empty tissue names what fills it', anEmptyTissueNamesWhatFillsIt],
   ['INTEL the tools segment names the registry and its classes', theToolsSegmentNamesTheRegistryAndItsClasses],
   ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],

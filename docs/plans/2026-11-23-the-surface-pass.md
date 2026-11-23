@@ -1,5 +1,6 @@
 ---
-status: active
+status: completed
+completed: 2026-11-23
 created: 2026-11-23
 plan: the-surface-pass
 ---
@@ -282,6 +283,23 @@ with the fixes below landed and pinned:
 - The drawer's connections tab renames to **work** (it carries the goal edge
   and delegated work, not the graph); this amends G11's four-tab grammar and
   is recorded in the gap ledger.
+
+## Completion, 2026-11-23
+
+Every row is done and measured: R1 the connections page; R2 the audit
+(`docs/architecture/2026-11-23-surface-audit.md`); R3 the human-only
+conversations rule (it already held; now pinned); R4 the strip; R5 the
+stat doors; R6 the empty/loading states and the bridge's empty≠refused
+fix; R7 the router's chains and the crumb truth; R8 one head grammar and
+the token discipline; R9 every remaining surface classified with
+delegation's run cards opened and the drawer's tab renamed work; R10 the
+card grid, the rails-collapsed layouts, and the PWA's shell at four sizes.
+
+**Handed off, not dropped:** the router fold — calibration's routing
+section already renders the router's chain card, so the standalone page
+duplicates it (D3 of the redesign). It is a product decision of the size
+that takes a mockup and the `#/router` redirect; recorded here and in the
+audit, not guessed into code.
 
 ## Constraints
 
