@@ -1,5 +1,5 @@
 /* The UX map study's shell: the redesign's topbar, the MAP rail (three
-   work-kind regions + the door + a system foot), the stage, and an
+   work-kind regions + Home + a system foot), the stage, and an
    optional type-aware drawer. The rail model rides body[data-rail="A|B"];
    the theme rides ?theme= or localStorage, the redesign's own rule. */
 
@@ -54,8 +54,8 @@
   });
 
   // --- the map --------------------------------------------------------------
-  // The door is attention's entrance, not a region: one row, the held
-  // count. Then the three work-kind regions; the system strip at the foot.
+  // Home is attention's entrance, not a region: one row, the held count.
+  // Then the three work-kind regions; the system strip at the foot.
   function railHtml(model, current) {
     var lanes = model === 'B' ? placementB() : placementA();
     // The bracket marks the region that holds the current lane.
@@ -64,7 +64,7 @@
     });
     var h = '';
     h += '<a class="map-door' + (current === 'inbox' ? ' current' : '') + '" href="#">' +
-      I('inbox') + '<span class="label">the door</span>' +
+      I('home') + '<span class="label">Home</span>' +
       '<span class="count">2 held</span></a>';
     h += '<div class="map-regions">';
     lanes.forEach(function (region) {
@@ -178,6 +178,7 @@
       learning: '<path d="M12 3 2 8l10 5 10-5-10-5z"/><path d="M6 10.5V16c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5"/>',
       calibration: '<path d="M9 3h6M12 3v6"/><path d="M7 21a7 7 0 0 1 10 0"/><circle cx="12" cy="14" r="5"/>',
       inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5 5h14l3 7v7H2v-7l3-7z"/>',
+      home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>',
       health: '<path d="M3 12h4l2-6 4 12 2-6h6"/>',
       armada: '<circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M6.5 7.5 10.5 16M17.5 7.5 13.5 16M7 6h10"/>',
       design: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18c1.5 0 2-1 2-2s-1-1.6-1-2.6c0-1.2 1-2 2.4-2H18a3 3 0 0 0 3-3c0-4.5-4-8.4-9-8.4z"/>',

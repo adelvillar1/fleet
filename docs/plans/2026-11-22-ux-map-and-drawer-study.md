@@ -89,7 +89,10 @@ and the door's count.
 - S5 `04-attention-consolidated.html` — the inbox and the board carrying
   attention in the stage; the rail with the door count and light dots.
 - S6 `05-map-phone.html` — the map at 390 and 820: the rail as a drawer,
-  regions collapsible, the door at the top.
+  regions collapsible, Home at the top.
+- S7 `06-office-previews.html` — the drawer's preview as a human sees it:
+  docx, xlsx, pptx, image, PDF — each drawn as its renderer paints it, the
+  engine labelled, preview as the default body for documents and images.
 
 ## Acceptance criteria
 
@@ -110,6 +113,10 @@ and the door's count.
 - [x] The phone frame proves the map survives below 900px — S6 draws 390
       (full-width drawer) and 820 (left drawer, work behind the scrim), both
       with the regions named.
+- [x] The drawer previews the object as a human sees it — S7 draws the five
+      office/media types with their engines (docx-preview, the core xlsx reader
+      with its planned styles pass, PPTXjs 2.0.0, `<img>`, PDF.js), and the
+      viewer research is recorded in `docs/architecture/2026-11-23-document-viewers.md`.
 - [ ] The owner's gate: they pick A or B (or neither) and confirm or amend
       the drawer matrix.
 - [x] No implementation until that gate — this study touched only mockups
@@ -124,7 +131,7 @@ evidence is the design. Audit: an in-page pass per screen per theme —
 type floor; and WCAG contrast on every text node against the ground actually
 painted beneath it (canvas-resolved colours, AA 4.5:1, 3:1 for large text and
 control glyphs, `aria-hidden` decorative glyphs excluded, painted-image
-grounds skipped and counted). Result: **12/12 screens clean** — zero
+grounds skipped and counted). Result: **14/14 screens clean** — zero
 overflow, no text under 10px, zero contrast failures — after the fixes below.
 
 The audit found four real defects in the shared mock sheet, fixed at the
@@ -145,7 +152,8 @@ token rather than per-screen:
    comment to `--ink-soft` instead of dimming it under the wash.
 
 Two capture-time defects were also fixed: S3's code line overflowed its
-drawer by 7px (split), and one split line had duplicated its number. The
+drawer by 7px (split), and one split line had duplicated its number. S7's
+slide-number chrome sat at 8px/3.71 and was raised to the floor and AA. The
 shared sheet's fixes change the earlier gallery's harness where it shares
 those tokens (its captures predate the fix); the product's own tokens are the
 implementation themes, measured by the AA guard, and are untouched.
@@ -168,3 +176,35 @@ implementation themes, measured by the AA guard, and are untouched.
 - Per-screen in-page audit: `scrollWidth > clientWidth` on the page and each
   card; text under the floor; and the theme's own contrast arithmetic on
   every text colour read against its background.
+
+
+## Amendment, 2026-11-23 — the owner's read
+
+The owner's direction after the first presentation:
+
+> "I'm leaning towards B, on thing though I don't like the name 'The Door' it
+> just sounds weird, i prefer 'Home' with a home icon. The drawer needs to
+> include preview of the object itself rendered as a human would see it …
+> Do some deep research on viewers that can be embedded as plugins in fleet"
+
+Recorded and applied:
+
+- **B is the leading placement** — Desk and Reviews together under knowledge.
+  The gate stays open for the final call; S2 is marked the leading candidate in
+  the gallery.
+- **"The door" became Home**, with a home icon, in every screen. The row's job
+  is unchanged: attention's entrance with the held count, never a region.
+- **The drawer's preview is now the default body for documents and images** —
+  S7 draws docx, xlsx, pptx, image and PDF as their engines paint them. The
+  mode switch stays the override where a kind has a sibling body.
+- **Viewer research landed**: `docs/architecture/2026-11-23-document-viewers.md`.
+  Its verdicts, each measured against the sandbox: markdown → marked 18 (MIT,
+  0 deps, 53 KB) + the vendored DOMPurify; xlsx → keep the core reader and add
+  styles/merges/widths (no new dependency); pptx → vendor `@meshesha/pptxjs`
+  2.0.0 (MIT, 366 KB, fflate inlined) — **tested inside the exact sandbox
+  shape**: a two-slide 16:9 deck rendered with run-level type, a shape fill, an
+  image and slide backgrounds, from bytes in memory with no network. docx and
+  PDF keep their vendored engines. A viewer **cannot** be a plugin today: the
+  plugin bridge exposes twelve unparameterised read-only queries and no bytes,
+  and the sandboxed frame has no network — the note records the seam that would
+  change that and leaves it gated.
