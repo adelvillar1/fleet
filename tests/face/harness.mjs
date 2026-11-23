@@ -4061,14 +4061,21 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await pressRail(page);
 
 
-  // U44: workspace history folded behind Settings → Advanced. The rail
-  // must not claim it; the address still renders the surface below.
+  // The map (2026-11-23): machinery lives in the system strip, so Versions
+  // is a row there now — the deliberate supersession of U44's burial, and
+  // the surface still renders below.
   const historyLink = page.rows('.surfaces-link')
     .filter((link) => link.dataset.address === 'workspace-history');
-  check('the folded workspace history stays off the rail', historyLink.length === 0,
-    String(historyLink.length));
+  const historySeat = historyLink[0] && historyLink[0].closest('.surfaces-section');
+  check('the map files workspace history in the system strip',
+    historyLink.length === 1 && !!historySeat &&
+      historySeat.dataset.group === 'system',
+    historyLink.length + ' links, seat=' +
+      (historySeat ? historySeat.dataset.group : 'none'));
   const groups = page.rows('.surfaces-section');
-  check('the rail carries its lenses and the settings door', groups.length === 2,
+  check('the rail carries its four sections: three regions and the system strip',
+    groups.length === 4 &&
+      groups.map((one) => one.dataset.group).join(',') === 'software,design,knowledge,system',
     groups.map((one) => one.dataset.group).join(','));
   // The surface announces itself once, above the cards.
   const title = page.rows('.surface-title').map((n) => n.textContent.trim());
@@ -5532,13 +5539,12 @@ async function theDelegationSurfaceLeadsWithTheBlockers() {
     !!fold && fold.dataset.collapsed === 'true', fold ? fold.dataset.collapsed : 'no fold');
 }
 
-// RP7 (the relevance pass, 2026-11-22): the rail carries state groups —
-// needs-you, working — read off the one `needs_you` document, both
-// expanded, with the rest of the destinations left in their categories as
-// the idle inventory. The red proof runs BOTH ways: a surface with active
-// work is in its state group and NOT in a category, and a surface with
-// nothing is in its category and NOT in a state group.
-async function theRailCarriesStateGroups() {
+// The rail's map (the UX map study, 2026-11-23; placement B): Home leads
+// with the held count, three regions group the lanes by the kind of work,
+// the system strip carries machinery — and state is a dot on the lane, never
+// a group. This case replaces RP7's state-group pins, whose behaviour the
+// map deliberately retired.
+async function theRailCarriesTheMap() {
   const doc = {
     sessions: {
       type: 'sessions', read_at: 'now', current: '',
@@ -5557,43 +5563,110 @@ async function theRailCarriesStateGroups() {
       changed: { type: 'changed', bound: 6, rows: [] },
       sessions: [row('run-1', 'working', { title: 'skills the model can reach' })],
     },
+    // Home's count is the inbox queue's own total (inboxTotal reads this
+    // document) — one held row here.
+    inbox: { type: 'inbox', seats: [], onboarding: [], asks: [], cron: [],
+      doctor: [], held: [{ id: 'h1', title: 'the CI box' }] },
   };
   const page = boot({ width: 1440, hash: '#/sessions', documents: doc });
   await flush();
   page.open();
   await flush(200);
-  const sections = page.IDS['rail-tree'].find((one) =>
-    String(one.className || '').split(/\s+/).includes('surfaces-section'));
-  const stateOf = (surface) => {
-    const holder = sections.find((section) =>
-      section.find((one) => one.dataset && one.dataset.address === surface).length);
-    return holder ? (holder.dataset.state || holder.dataset.group || 'category') : 'missing';
+
+  const links = page.rows('.surfaces-link');
+  const home = links[0];
+  check('MAP Home leads the rail',
+    !!home && home.dataset.home === 'true' && home.dataset.address === 'inbox' &&
+      home.textContent.includes('Home'),
+    home ? home.textContent : 'no first link');
+  // Home's count is the inbox queue's own total, so it needs the queue read
+  // — a second boot ARRIVING at the inbox performs it (the inbox's own case
+  // pins the queue; this one pins the row's wording and unit).
+  const inboxPage = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  inboxPage.open();
+  await flush(200);
+  const inboxHome = inboxPage.rows('.surfaces-link')[0];
+  const inboxCount = inboxHome && inboxHome.find((one) =>
+    String(one.className || '').split(/\s+/).includes('surfaces-count'))[0];
+  check('MAP Home carries the queue\u2019s held count, in words',
+    !!inboxHome && inboxHome.dataset.home === 'true' &&
+      !!inboxCount && inboxCount.textContent === '1 held' && inboxCount.hidden !== true,
+    inboxHome ? 'row=' + inboxHome.textContent + ' count=' +
+      (inboxCount ? inboxCount.textContent : 'none') : 'no Home row');
+
+  // R1's pin: the rail lists exactly the map's addresses — Home, the three
+  // regions' lanes (armada off in this fixture) and the system strip. The
+  // addresses are ROUTES' own (they navigate), so a drift in the table is a
+  // red check, not a silent second registry.
+  const expected = ['board', 'bots', 'calibration', 'design', 'desk', 'inbox',
+    'learning', 'memory', 'plugins', 'second-brain', 'sessions', 'settings',
+    'vault', 'workspace-history'];
+  check('MAP the rail lists exactly the map\u2019s addresses',
+    links.map((one) => one.dataset.address).sort().join(',') === expected.join(','),
+    links.map((one) => one.dataset.address).sort().join(','));
+
+  const names = page.rows('.surfaces-group-name').map((one) => one.textContent);
+  check('MAP the regions are named in order, the system strip last',
+    names.join(',') === 'software,design,knowledge,system', names.join(','));
+
+  const sectionOf = (address) => {
+    const link = links.find((one) => one.dataset.address === address);
+    const seat = link && link.closest('.surfaces-section');
+    return seat ? seat.dataset.group : 'missing';
   };
-  check('RP7 the rail carries a needs-you group', stateOf('inbox') === 'needs',
-    'inbox is in ' + stateOf('inbox'));
-  check('RP7 the rail carries a working group', stateOf('sessions') === 'working',
-    'sessions is in ' + stateOf('sessions'));
-  // Both directions of the red proof: nothing with work drops into the
-  // idle inventory, and nothing idle is promoted into a state group.
-  check('RP7 a surface with work never drops into the idle inventory',
-    stateOf('board') !== 'needs' && stateOf('board') !== 'working' &&
-      stateOf('board') !== 'missing',
-    'board is in ' + stateOf('board'));
-  // Both state groups stand expanded.
-  const heads = sections.filter((section) =>
-    section.dataset.state === 'needs' || section.dataset.state === 'working')
-    .map((section) => section.find((one) =>
-      String(one.className || '').split(/\s+/).includes('surfaces-group'))[0]);
-  check('RP7 both state groups stand expanded',
-    heads.length === 2 && heads.every((head) => head && head.getAttribute('aria-expanded') === 'true'),
-    heads.map((head) => head && head.getAttribute('aria-expanded')).join(','));
-  // One press folds one — the group is a fold like every other, and the
-  // fold is remembered.
-  if (heads[0]) heads[0].click();
+  check('MAP every lane sits in its work kind',
+    sectionOf('sessions') === 'software' && sectionOf('board') === 'software' &&
+      sectionOf('design') === 'design' &&
+      sectionOf('memory') === 'knowledge' && sectionOf('learning') === 'knowledge' &&
+      sectionOf('desk') === 'knowledge' && sectionOf('calibration') === 'knowledge' &&
+      sectionOf('settings') === 'system' && sectionOf('vault') === 'system',
+    ['sessions', 'board', 'design', 'memory', 'learning', 'desk', 'calibration', 'settings', 'vault']
+      .map((a) => a + '=' + sectionOf(a)).join(' '));
+
+  const stateSections = page.rows('.surfaces-section')
+    .filter((one) => one.dataset.state === 'needs' || one.dataset.state === 'working');
+  check('MAP no attention group remains',
+    stateSections.length === 0 &&
+      !links.some((one) => one.parentNode && String(one.parentNode.dataset.group || '').includes('state:')),
+    stateSections.length + ' state sections');
+
+  const sessionsRow = links.find((one) => one.dataset.address === 'sessions');
+  const designRow = links.find((one) => one.dataset.address === 'design');
+  const dotOf = (row) => (row ? row.find((one) =>
+    String(one.className || '').split(/\s+/).includes('surfaces-dot'))[0] : null);
+  check('MAP a working lane carries its dot, a quiet lane carries none',
+    dotOf(sessionsRow) && dotOf(sessionsRow).dataset.state === 'working' &&
+      dotOf(sessionsRow).hidden !== true &&
+      dotOf(designRow) && dotOf(designRow).hidden === true,
+    'sessions=' + (dotOf(sessionsRow) ? dotOf(sessionsRow).dataset.state + '/' + dotOf(sessionsRow).hidden : 'none') +
+      ' design=' + (dotOf(designRow) ? dotOf(designRow).hidden : 'none'));
+
+  const software = page.rows('.surfaces-section')
+    .find((one) => one.dataset.group === 'software');
+  const currentLanes = links.filter((one) => one.getAttribute('aria-current') === 'page')
+    .map((one) => one.dataset.address);
+  check('MAP the current lane lights its region bracket',
+    !!software && software.dataset.current === 'true',
+    (software ? 'current=' + software.dataset.current : 'no section') +
+      ' hash=' + page.window.location.hash + ' lanes=' + currentLanes.join(','));
+
+  const softwareHead = page.rows('.surfaces-group')
+    .find((one) => one.closest('.surfaces-section') &&
+      one.closest('.surfaces-section').dataset.group === 'software');
+  // The fixture's counts doc says 1 need + 1 working: the sessions row shows
+  // 2 (its own arithmetic), so the region badge totals 2.
+  check('MAP the folded region still says what it holds',
+    !!softwareHead && softwareHead.textContent.includes('2'),
+    softwareHead ? softwareHead.textContent : 'no head');
+  if (softwareHead) softwareHead.click();
   await flush(60);
-  check('RP7 a state group folds and remembers',
-    String(page.window.localStorage.getItem('fleet-rail-folded') || '').includes('state:'),
-    String(page.window.localStorage.getItem('fleet-rail-folded')));
+  const folded = page.rows('.surfaces-section')
+    .find((one) => one.dataset.group === 'software');
+  check('MAP a region folds and remembers',
+    !!folded && folded.dataset.folded === 'true' &&
+      String(page.window.localStorage.getItem('fleet-rail-folded') || '').includes('software'),
+    folded ? 'folded=' + folded.dataset.folded : 'no section');
 }
 
 // New mints a real conversation at the press (the owner's 2026-11-05
@@ -6990,7 +7063,7 @@ async function theInboxCollectsEverythingWaiting() {
     String(rows.length));
   check('IB the badge is the queue\u2019s total',
     page.text('rail-inbox-count') === '5' ||
-      page.rows('.surfaces-count').some((c) => c.textContent === '5'),
+      page.rows('.surfaces-count').some((c) => c.textContent === '5' || c.textContent === '5 held'),
     page.rows('.surfaces-count').map((c) => c.textContent).join('|'));
   const seat = page.rows('.ib-row').find((r) => r.dataset.class === 'seat');
   check('IB the seat\u2019s verdict rides the row',
@@ -10341,14 +10414,15 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
 
   // The rail's glyph: the artboard mark, not the `dot` fallback a
   // missing icon silently degrades to.
-  // U44: design folded behind Settings → Advanced. The rail must not
-  // claim it; the address and the palette still open it (the stage check
-  // below proves the route renders).
+  // The map (2026-11-23): Design is a lane in its own region — the owner's
+  // grouping, superseding U44's fold. The stage check below still proves the
+  // route renders.
   const designLink = page.rows('.surfaces-link')
     .find((one) => one.dataset.address === 'design');
-  check('PM-D the folded design surface stays off the rail',
-    !designLink,
-    designLink ? 'design link still present' : 'no design link');
+  const designSeat = designLink && designLink.closest('.surfaces-section');
+  check('PM-D the design surface is the design region\u2019s lane',
+    !!designLink && !!designSeat && designSeat.dataset.group === 'design',
+    designLink ? 'seat=' + (designSeat ? designSeat.dataset.group : 'none') : 'no design link');
 
   // S0: the stage, the board picker, and the two frames on the world.
   check('PM-D the design stage renders',
@@ -12864,9 +12938,9 @@ async function theLearningRailCarriesTheFourSections() {
   const learningLink = page.IDS['rail-tree']
     .find((one) => one.dataset && one.dataset.address === 'learning')[0];
   const learningSection = learningLink ? learningLink.parentNode : null;
-  check('LEARN the rail row sits in the work group',
+  check('LEARN the rail row sits in the knowledge region',
     !!learningSection && learningSection.dataset &&
-      learningSection.dataset.group === 'workspace',
+      learningSection.dataset.group === 'knowledge',
     learningSection ? 'group=' + learningSection.dataset.group : 'no section');
 
   // The lesson pane: the plan's coarse view, the position, the holds.
@@ -15271,10 +15345,9 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
     await flush();
     const groups = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-group'));
-    // U44: the rail is one group of lenses, so one fold.
-    // U44: the lenses are one section; Settings (and installed plugins)
-    // are the second.
-    check('ICONS the rail carries two group controls', groups.length === 2,
+    // The map (2026-11-23): three region folds and the system strip — one
+    // control per section, and each remembers its own state.
+    check('ICONS the rail carries four group controls', groups.length === 4,
       'groups=' + groups.length);
     check('ICONS a group starts open',
       groups[0].getAttribute('aria-expanded') === 'true' &&
@@ -15283,7 +15356,7 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
     groups[0].click();
     await flush();
     const section = page.IDS['rail-tree'].find((one) =>
-      one.dataset && one.dataset.group === 'workspace')[0];
+      one.dataset && one.dataset.group === 'software')[0];
     check('ICONS a press folds the group',
       !!section && section.dataset.folded === 'true',
       section ? 'folded=' + section.dataset.folded : 'no section');
@@ -15293,12 +15366,12 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
       head.getAttribute('aria-expanded') === 'false',
       'expanded=' + head.getAttribute('aria-expanded'));
     check('ICONS the fold is remembered',
-      String(page.window.localStorage.getItem('fleet-rail-folded') || '').includes('workspace'),
+      String(page.window.localStorage.getItem('fleet-rail-folded') || '').includes('software'),
       'stored=' + page.window.localStorage.getItem('fleet-rail-folded'));
     head.click();
     await flush();
     const open = page.IDS['rail-tree'].find((one) =>
-      one.dataset && one.dataset.group === 'workspace')[0];
+      one.dataset && one.dataset.group === 'software')[0];
     check('ICONS a second press unfolds it',
       !!open && open.dataset.folded !== 'true',
       open ? 'folded=' + open.dataset.folded : 'no section');
@@ -15323,14 +15396,17 @@ async function everyIconKeyTheFaceAsksForIsDrawn() {
     // rail, so nothing findable was lost with the row. TEN was the
     // threads/archive consolidation (the owner's 2026-11-17 ruling); this
     // is the next subtraction, and the count is re-derived, not guessed.
-    check('ICONS the rail lists the destinations', links.length === 9,
+    // The map (2026-11-23): Home + software (sessions, board; armada off) +
+    // design + knowledge (memory, learning, desk, calibration) + the system
+    // strip (health, versions, secrets, plugins, assistants, settings) = 14.
+    check('ICONS the rail lists the destinations', links.length === 14,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 9,
+      shapes.every(Boolean) && new Set(shapes).size === 14,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
 
     // The owner's own report, on the rendered rail rather than in the
@@ -18630,9 +18706,10 @@ async function theExpertSwitchRevealsTheSubsystemNames() {
   const railed = () => page.rows('.surfaces-link').map((one) => one.dataset.address);
   check('EXP expert is off by default', page.body.dataset.expert !== 'on', page.body.dataset.expert);
   const plain = railed();
-  check('EXP the plain rail lists the lenses, not the census',
-    plain.includes('sessions') && !plain.includes('router') &&
-      !plain.includes('vault') && !plain.includes('workspace-history'),
+  check('EXP the plain rail lists the map, not the census',
+    plain.includes('sessions') && plain.includes('vault') &&
+      plain.includes('workspace-history') &&
+      !plain.includes('router') && !plain.includes('delegation'),
     plain.join(','));
   page.IDS['ctl-expert'].click();
   await flush();
@@ -18654,11 +18731,11 @@ async function theExpertSwitchRevealsTheSubsystemNames() {
     annotations.map((a) => a.textContent).join(','));
   const routerRow = page.rows('.surfaces-link')
     .find((one) => one.dataset.address === 'router');
-  const inAdvanced = routerRow &&
+  const inSystem = routerRow &&
     routerRow.closest('.surfaces-section') &&
-    routerRow.closest('.surfaces-section').dataset.group === 'advanced';
-  check('EXP a folded surface stands in its home group',
-    !!inAdvanced, 'the router row is not in the advanced section');
+    routerRow.closest('.surfaces-section').dataset.group === 'system';
+  check('EXP a folded surface stands in the system strip',
+    !!inSystem, 'the router row is not in the system section');
   page.IDS['ctl-expert'].click();
   await flush();
   check('EXP the switch turns it back off', page.body.dataset.expert === 'off', page.body.dataset.expert);
@@ -21477,7 +21554,7 @@ const cases = [
   ['RP4 the door is ordered by the age of the hold', theDoorIsOrderedByTheAgeOfTheHold],
   ['RP5 the board leads with change and divergence', theBoardLeadsWithChangeAndDivergence],
   ['RP6 delegation leads with the blockers', theDelegationSurfaceLeadsWithTheBlockers],
-  ['RP7 the rail carries needs-you, working and the idle inventory', theRailCarriesStateGroups],
+  ['MAP the rail is the work-kind map: Home, regions, dots, no state groups', theRailCarriesTheMap],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],

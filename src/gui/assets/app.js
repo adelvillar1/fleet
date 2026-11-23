@@ -356,6 +356,46 @@ import { node, svg, clip } from './core/dom.js';
     // row here would be a door to a section rather than to a surface.
   ];
 
+  // The rail's geography (the UX map study, 2026-11-22; placement B — the
+  // owner's leading read): three regions by the KIND OF WORK, Home for
+  // attention's entrance, and the system strip. Rows are ADDRESSES: the
+  // labels, marks, folds and labels stay the one vocabulary ROUTES and
+  // surfaceLabel carry, so every address keeps resolving (U47) — this table
+  // is the rail's view, never a second registry.
+  var RAIL_MAP = {
+    home: 'inbox',
+    regions: [
+      { id: 'software', name: 'software', rows: ['sessions', 'board', 'armada'] },
+      { id: 'design', name: 'design', rows: ['design'] },
+      { id: 'knowledge', name: 'knowledge', rows: ['memory', 'learning', 'desk', 'calibration'] }
+    ],
+    system: {
+      id: 'system', name: 'system',
+      rows: ['second-brain', 'workspace-history', 'vault', 'plugins', 'bots', 'settings']
+    }
+  };
+
+  /// The per-surface state the map paints as a dot and a count: needs and
+  /// working tallied from the one needs-you document, a surface never in
+  /// both (its strongest state wins — the relevance pass's rule, kept).
+  function railState() {
+    var doc = face.sessions && face.sessions.needs_you;
+    var needs = {}, working = {};
+    var tally = function (rows, into) {
+      (rows || []).forEach(function (row) {
+        if (row.surface) into[row.surface] = (into[row.surface] || 0) + 1;
+      });
+    };
+    if (doc) { tally(doc.rows, needs); tally(doc.working, working); }
+    return { needs: needs, working: working };
+  }
+
+  function railSurfaceState(state, address) {
+    if (state.needs[address]) return 'needs';
+    if (state.working[address]) return 'working';
+    return '';
+  }
+
   var FOLDED = {
     // `sessions` used to be here, folded under Settings → Advanced. It is a
     // rail lens now (the owner's 2026-11-14 ruling made the archive a
@@ -608,6 +648,13 @@ import { node, svg, clip } from './core/dom.js';
     inbox: [
       ['path', { d: 'M22 12h-6l-2 3h-4l-2-3H2' }],
       ['path', { d: 'M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z' }],
+    ],
+    // Home (the map study): the roof and the room — the held work's
+    // entrance, not a region.
+    home: [
+      ['path', { d: 'M4 11l8-7 8 7' }],
+      ['path', { d: 'M6.5 10v9.5h11V10' }],
+      ['path', { d: 'M10 19.5v-5h4v5' }]
     ],
     design: [
       ['rect', { x: 3.5, y: 4.5, width: 17, height: 15, rx: 2 }],
@@ -5542,6 +5589,9 @@ import { node, svg, clip } from './core/dom.js';
       .then(function (doc) {
         face.inbox = doc;
         paintInbox();
+        // Home's count is this document's total (the map study): repaint
+        // the rail when the queue lands, or the row keeps yesterday's count.
+        paintRailCounts();
       })
       .catch(function () { });
   }
@@ -13819,18 +13869,9 @@ import { node, svg, clip } from './core/dom.js';
         paintNeeds();
         paintChanged();
         paintConvHead();
-        // The rail's state groups are derived from THIS document (the
-        // relevance pass): a surface moves between needs-you, working and
-        // the idle inventory as the document says. Rebuilt only when the
-        // groups actually change, so a read that says the same thing does
-        // not repaint the rail under the owner's pointer.
-        var signature = stateGroups().map(function (group) {
-          return group.id + ':' + group.rows.map(function (row) { return row.surface; }).join(',');
-        }).join('|');
-        if (signature !== face.railStateSignature) {
-          face.railStateSignature = signature;
-          buildRail();
-        }
+        // The map's geography is static; this document only moves the dots
+        // and counts it feeds. Repaint them in place so a read never
+        // rebuilds the rail under the owner's pointer.
         paintRailCounts();
       })
       .catch(function () {
@@ -33953,33 +33994,6 @@ import { node, svg, clip } from './core/dom.js';
   // the rest. Both groups are read off the one `needs_you` document; the
   // page files a surface by the state the document gave it and asks
   // nothing else.
-  function stateGroups() {
-    var doc = face.sessions && face.sessions.needs_you;
-    if (!doc) return [];
-    var tally = function (rows) {
-      var out = [];
-      (rows || []).forEach(function (row) {
-        var surface = row.surface;
-        if (!surface) return;
-        var seen = null;
-        out.forEach(function (one) { if (one.surface === surface) seen = one; });
-        if (!seen) { seen = { surface: surface, count: 0 }; out.push(seen); }
-        seen.count += 1;
-      });
-      return out;
-    };
-    var needs = tally(doc.rows);
-    // A surface with a need is a NEED, never also "working": one surface
-    // files under the strongest state it carries.
-    var working = tally(doc.working).filter(function (one) {
-      return !needs.some(function (need) { return need.surface === one.surface; });
-    });
-    var groups = [];
-    if (needs.length) groups.push({ id: 'state:needs', name: 'needs you', tone: 'needs', rows: needs });
-    if (working.length) groups.push({ id: 'state:working', name: 'working', tone: 'working', rows: working });
-    return groups;
-  }
-
   /// The plain name of a surface, read from the same tables the rail and
   /// the palette already carry — one vocabulary, never a second.
   function surfaceLabel(address) {
@@ -34000,7 +34014,7 @@ import { node, svg, clip } from './core/dom.js';
   /// register is on, and the count its surface will paint. One builder for
   /// the state groups and the category groups, so a row cannot look like
   /// two different things depending on which group holds it.
-  function railLink(address, name) {
+  function railLink(address, name, iconName) {
     var link = node('button', 'surfaces-link');
     link.type = 'button';
     link.dataset.address = address;
@@ -34009,7 +34023,7 @@ import { node, svg, clip } from './core/dom.js';
     var isPlugin = (face.plugins || []).some(function (one) {
       return one.enabled && one.name === address;
     });
-    link.appendChild(icon(isPlugin ? 'plugin' : markFor(address), 'surfaces-icon'));
+    link.appendChild(icon(isPlugin ? 'plugin' : (iconName || markFor(address)), 'surfaces-icon'));
     link.appendChild(node('span', 'surfaces-label', name));
     if (EXPERT_NAMES[address]) {
       link.appendChild(node('span', 'surfaces-expert expert-only', EXPERT_NAMES[address]));
@@ -34018,6 +34032,14 @@ import { node, svg, clip } from './core/dom.js';
     count.dataset.count = address;
     count.hidden = true;
     link.appendChild(count);
+    // The state dot (the map): a lane says what it holds on itself, so the
+    // rail never needs attention groups again. Hidden until a state is
+    // painted — a quiet lane carries none, and the first paint must not
+    // show a row of dots.
+    var dot = node('span', 'surfaces-dot');
+    dot.setAttribute('aria-hidden', 'true');
+    dot.hidden = true;
+    link.appendChild(dot);
     link.addEventListener('click', function () {
       window.location.hash = '#/' + address;
       setMobileRail(false);
@@ -34025,106 +34047,83 @@ import { node, svg, clip } from './core/dom.js';
     return link;
   }
 
+  function railRegion(region, folded, state) {
+    var section = node('div', 'surfaces-section');
+    section.dataset.group = region.id;
+    section.dataset.region = 'true';
+    if (folded.indexOf(region.id) >= 0) section.dataset.folded = 'true';
+    var head = node('button', 'surfaces-group');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', String(section.dataset.folded !== 'true'));
+    head.appendChild(node('span', 'surfaces-group-chev')).appendChild(icon('chevron'));
+    head.appendChild(node('span', 'surfaces-group-name', region.name));
+    var badge = node('span', 'surfaces-group-needs');
+    badge.dataset.needs = region.id;
+    badge.hidden = true;
+    head.appendChild(badge);
+    head.addEventListener('click', function () {
+      setRailGroupFolded(region.id, section.dataset.folded !== 'true');
+      buildRail();
+      paintRailCounts();
+    });
+    section.appendChild(head);
+    region.rows.forEach(function (address) {
+      // U44: the fleet lens exists only where there is a fleet.
+      if (address === 'armada' && document.body.dataset.armada !== 'on') return;
+      var link = railLink(address, surfaceLabel(address));
+      var mark = railSurfaceState(state, address);
+      if (mark) link.dataset.state = mark;
+      section.appendChild(link);
+    });
+    return section;
+  }
+
   function buildRail() {
     el.railTree.textContent = '';
     var folded = railFoldedGroups();
-    // The state groups lead, expanded, and a surface they hold is NOT
-    // repeated in its category: the categories below are the idle
-    // inventory, and a surface with work must never drop into it.
-    var claimed = {};
-    stateGroups().forEach(function (group) {
-      var section = node('div', 'surfaces-section');
-      section.dataset.group = group.id;
-      section.dataset.state = group.tone;
-      if (folded.indexOf(group.id) >= 0) section.dataset.folded = 'true';
-      var head = node('button', 'surfaces-group');
-      head.type = 'button';
-      head.setAttribute('aria-expanded', String(section.dataset.folded !== 'true'));
-      head.appendChild(node('span', 'surfaces-group-chev')).appendChild(icon('chevron'));
-      head.appendChild(node('span', 'surfaces-group-name', group.name));
-      var badge = node('span', 'surfaces-group-needs', String(group.rows.length));
-      badge.dataset.needs = group.id;
-      head.appendChild(badge);
-      head.addEventListener('click', function () {
-        setRailGroupFolded(group.id, section.dataset.folded !== 'true');
-        buildRail();
-        paintRailCounts();
-      });
-      section.appendChild(head);
-      group.rows.forEach(function (row) {
-        claimed[row.surface] = true;
-        section.appendChild(railLink(row.surface, surfaceLabel(row.surface)));
-      });
-      el.railTree.appendChild(section);
+    var state = railState();
+    // Home leads: the entrance to held work, its count on the row. The
+    // press is the arrival (U13) — nothing opens by itself.
+    var home = railLink(RAIL_MAP.home, 'Home', 'home');
+    home.classList.add('surfaces-link-home');
+    home.dataset.home = 'true';
+    el.railTree.appendChild(home);
+    RAIL_MAP.regions.forEach(function (region) {
+      el.railTree.appendChild(railRegion(region, folded, state));
     });
-    GROUPS.forEach(function (group) {
-      var id = group[0], label = group[1], items = group[2].slice();
-      // The face plugins' entries join their declared group — the
-      // state read's enabled plugins, mounted where the manifest says
-      // (the plugin host plan's P1). A disabled plugin mounts nothing.
-      var known = GROUPS.map(function (one) { return one[0]; });
-      (face.plugins || []).forEach(function (plugin) {
-        if (!plugin.enabled) return;
-        // A plugin declared into a group the rail retired mounts in the
-        // rail's one group rather than vanishing (U44 folded the groups).
-        var home = known.indexOf(plugin.group) >= 0 ? plugin.group : 'advanced';
-        if (home !== id) return;
-        items.push([plugin.name, plugin.label]);
+    // The system strip: machinery and governance — never a work region. The
+    // expert census and installed plugins ride here (U44's one group, the
+    // rail's retired groups' rule).
+    var system = railRegion(RAIL_MAP.system, folded, state);
+    var present = {};
+    RAIL_MAP.system.rows.forEach(function (address) { present[address] = true; });
+    if (document.body.dataset.expert === 'on') {
+      ROUTES.forEach(function (route) {
+        var address = route[0], name = route[1];
+        if (present[address]) return;
+        // A folded surface stands in the section its FOLDED home names; the
+        // census is not a second tier, just more of the same list visible.
+        var seat = FOLDED[address] ? FOLDED[address][1] : null;
+        if (seat !== 'advanced') return;
+        present[address] = true;
+        system.appendChild(railLink(address, name));
       });
-      var section = node('div', 'surfaces-section');
-      section.dataset.group = id;
-      if (folded.indexOf(id) >= 0) section.dataset.folded = 'true';
-      // The label is the fold: a press puts the group's rows away, and the
-      // label keeps the count of what inside it needs the owner.
-      var head = node('button', 'surfaces-group');
-      head.type = 'button';
-      head.setAttribute('aria-expanded', String(section.dataset.folded !== 'true'));
-      head.appendChild(node('span', 'surfaces-group-chev')).appendChild(icon('chevron'));
-      head.appendChild(node('span', 'surfaces-group-name', label));
-      var needs = node('span', 'surfaces-group-needs');
-      needs.dataset.needs = id;
-      needs.hidden = true;
-      head.appendChild(needs);
-      head.addEventListener('click', function () {
-        setRailGroupFolded(id, section.dataset.folded !== 'true');
-        buildRail();
-        paintRailCounts();
-      });
-      section.appendChild(head);
-      // The expert census (2026-11-19): with the switch on, every route this
-      // build carries joins its home section — the folded surfaces are not
-      // gone, they are filed beside their group in the plain register. The
-      // census lists them once, deduplicated against the section's own rows.
-      if (document.body.dataset.expert === 'on') {
-        var present = {};
-        items.forEach(function (item) { present[item[0]] = true; });
-        ROUTES.forEach(function (route) {
-          var address = route[0], name = route[1];
-          if (present[address]) return;
-          // A folded surface's home GROUP is FOLDED's second element: the
-          // map's rows are [breadcrumb-group, section-id], and the section
-          // id is what a rail section is keyed by (`advanced`, not
-          // `settings`). A row stands in the section it belongs to, never
-          // in a second one — and the census is not a second tier: it is
-          // the same flat list, more of it visible.
-          var home = FOLDED[address] ? FOLDED[address][1] : null;
-          if (home !== id) return;
-          items.push([address, name]);
-          present[address] = true;
-        });
-      }
-      items.forEach(function (item) {
-        var address = item[0], name = item[1];
-        // U44: the fleet lens exists only where there is a fleet.
-        if (address === 'armada' && document.body.dataset.armada !== 'on') return;
-        // A surface the state groups already hold is not repeated here:
-        // these categories are the idle inventory, and a surface with
-        // active work must never drop into it.
-        if (claimed[address]) return;
-        section.appendChild(railLink(address, name));
-      });
-      el.railTree.appendChild(section);
+    }
+    (face.plugins || []).forEach(function (plugin) {
+      if (!plugin.enabled || present[plugin.name]) return;
+      present[plugin.name] = true;
+      system.appendChild(railLink(plugin.name, plugin.label));
     });
+    el.railTree.appendChild(system);
+    // The route may already be on a lane; light it (and its region) now
+    // rather than at the next navigation.
+    var which = (window.location.hash || '').replace(/^#\/?/, '').split('/')[0];
+    if (which) {
+      Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-link'), function (link) {
+        if (link.dataset.address === which) link.setAttribute('aria-current', 'page');
+      });
+      markRailRegions();
+    }
   }
 
   // Which surfaces are live today, and which are a later increment — the
@@ -34142,61 +34141,111 @@ import { node, svg, clip } from './core/dom.js';
   // affordance the navigation audit named, N3). The numbers are the
   // bridge's own owner-scoped counts — never a second derivation — and
   // the badge rides the link, so the click-through is the rail's own.
-  function paintRailCounts() {
-    if (!el.railTree) return;
-    var counts = face.sessions && face.sessions.counts;
-    var needs = counts ? counts.needs || 0 : 0;
-    var working = counts ? counts.working || 0 : 0;
-    var waiting = needs + working;
-    // The plugins entry counts its drafts: a proposal awaiting review
-    // is invisible from the rail otherwise (the plugins-ux plan's C5).
-    var drafts = (face.pluginProposals || []).length;
-    Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-count'), function (span) {
-      if (span.dataset.count === 'settings') {
-        // P6: the About row is gone, so the waiting release rides this
-        // row — the same `candidate` the receipt reads, named with the
-        // door it opens. A release outranks drafts: it is the one thing
-        // on the rail that expires.
-        var release = (face.settings && face.settings.update) || {};
-        var behind = release.candidate || '';
-        if (behind) {
-          span.hidden = false;
-          span.textContent = 'new';
-          span.title = behind + ' is available \u2014 open Settings \u2192 system to update';
-          return;
-        }
-        span.hidden = !drafts;
-        span.textContent = drafts ? String(drafts) : '';
-        span.title = drafts ? drafts + (drafts === 1 ? ' draft awaits review' : ' drafts await review') : '';
-        return;
-      }
-      if (span.dataset.count === 'inbox') {
-        var ibWaiting = inboxTotal(face.inbox);
-        span.hidden = !ibWaiting;
-        span.textContent = ibWaiting ? String(ibWaiting) : '';
-        span.title = ibWaiting
-          ? ibWaiting + (ibWaiting === 1 ? ' thing needs you' : ' things need you')
-          : '';
-        return;
-      }
-      if (span.dataset.count !== 'sessions') return;
-      span.hidden = !waiting;
-      span.textContent = waiting ? String(waiting) : '';
-      span.title = waiting
-        ? (needs
+  /// One surface's own count and why — the same arithmetic the row paints
+  /// and the region badge totals, so the two cannot disagree.
+  function railCountFor(address, state) {
+    if (address === 'sessions') {
+      var counts = face.sessions && face.sessions.counts;
+      var needs = counts ? counts.needs || 0 : 0;
+      var working = counts ? counts.working || 0 : 0;
+      var n = needs + working;
+      return {
+        n: n,
+        title: n ? (needs
           ? needs + (needs === 1 ? ' needs you' : ' need you') +
             (working ? ' \u00b7 ' + working + ' working' : '')
           : working + (working === 1 ? ' conversation working' : ' conversations working'))
-        : '';
+          : ''
+      };
+    }
+    var need = state.needs[address] || 0;
+    var run = state.working[address] || 0;
+    var total = need + run;
+    return {
+      n: total,
+      title: total ? (need
+        ? need + (need === 1 ? ' needs you' : ' need you') +
+          (run ? ' \u00b7 ' + run + ' working' : '')
+        : run + (run === 1 ? ' item working' : ' items working'))
+        : ''
+    };
+  }
+
+  function paintRailCounts() {
+    if (!el.railTree) return;
+    var state = railState();
+    var drafts = (face.pluginProposals || []).length;
+    var held = inboxTotal(face.inbox);
+    Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-link'), function (link) {
+      var span = link.querySelector('.surfaces-count');
+      if (span) {
+        if (link.dataset.home === 'true') {
+          // Home: the held count, said in words — the one number whose unit
+          // matters (the map study's Home row).
+          span.hidden = !held;
+          span.textContent = held ? held + ' held' : '';
+          span.title = held
+            ? held + (held === 1 ? ' thing needs you' : ' things need you')
+            : '';
+        } else if (span.dataset.count === 'settings') {
+          // P6: the About row is gone, so the waiting release rides this
+          // row — the same `candidate` the receipt reads. A release outranks
+          // drafts: it is the one thing on the rail that expires.
+          var release = (face.settings && face.settings.update) || {};
+          var behind = release.candidate || '';
+          if (behind) {
+            span.hidden = false;
+            span.textContent = 'new';
+            span.title = behind + ' is available \u2014 open Settings \u2192 system to update';
+          } else {
+            span.hidden = !drafts;
+            span.textContent = drafts ? String(drafts) : '';
+            span.title = drafts ? drafts + (drafts === 1 ? ' draft awaits review' : ' drafts await review') : '';
+          }
+        } else {
+          var own = railCountFor(link.dataset.address, state);
+          span.hidden = !own.n;
+          span.textContent = own.n ? String(own.n) : '';
+          span.title = own.title;
+        }
+      }
+      // The dot: state on the lane itself, never a second group.
+      var dot = link.querySelector('.surfaces-dot');
+      if (dot) {
+        var mark = railSurfaceState(state, link.dataset.address);
+        dot.hidden = !mark;
+        dot.dataset.state = mark;
+      }
     });
-    // A folded group still says what it holds: the work group counts the
-    // conversations waiting or working, the system group the drafts.
-    var perGroup = { workspace: waiting, advanced: drafts };
+    // A folded region still says what it holds: the sum of the same counts.
     Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-group-needs'), function (span) {
-      var held = perGroup[span.dataset.needs] || 0;
-      span.hidden = !held;
-      span.textContent = held ? String(held) : '';
-      span.title = held ? held + (held === 1 ? ' waiting here' : ' waiting here') : '';
+      var id = span.dataset.needs;
+      var region = null;
+      RAIL_MAP.regions.forEach(function (one) { if (one.id === id) region = one; });
+      if (!region && id === RAIL_MAP.system.id) region = RAIL_MAP.system;
+      if (!region) { span.hidden = true; return; }
+      var total = 0;
+      region.rows.forEach(function (address) {
+        if (address === 'armada' && document.body.dataset.armada !== 'on') return;
+        total += railCountFor(address, state).n;
+      });
+      span.hidden = !total;
+      span.textContent = total ? String(total) : '';
+      span.title = total ? total + ' waiting here' : '';
+    });
+  }
+
+  /// The bracket follows the current lane: one region lit, the rest quiet.
+  function markRailRegions() {
+    var root = el.railTree || el.rail;
+    if (!root) return;
+    Array.prototype.forEach.call(root.querySelectorAll('.surfaces-section[data-region="true"]'), function (section) {
+      var lit = false;
+      Array.prototype.forEach.call(section.querySelectorAll('.surfaces-link'), function (link) {
+        if (link.getAttribute('aria-current') === 'page') lit = true;
+      });
+      if (lit) section.dataset.current = 'true';
+      else section.removeAttribute('data-current');
     });
   }
 
@@ -34211,6 +34260,7 @@ import { node, svg, clip } from './core/dom.js';
         link.removeAttribute('aria-current');
       }
     });
+    markRailRegions();
     // The topbar says where you are in the same words the rail uses. The
     // browser tab follows, so a desk with three fleet windows open is
     // navigable by name rather than by address.

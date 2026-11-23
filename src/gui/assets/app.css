@@ -12619,3 +12619,66 @@ section.board-card > .board-head {
 }
 .relay-word { font-size: 12.5px; color: var(--muted); }
 .relay-reads { margin: 0; font-size: 11.5px; color: var(--muted); }
+
+/* --- the rail's map (the UX map study, 2026-11-22): Home leads, the
+   regions are geography — a bracketed spine per kind of work, the system
+   strip at the foot. State rides each lane as a dot; no attention groups. */
+
+.surfaces-link-home {
+  height: 40px;
+  margin-bottom: 10px;
+  border: 1px solid color-mix(in oklab, var(--dsw-alias-down) 26%, var(--dsw-alias-hairline));
+  background: color-mix(in oklab, var(--dsw-alias-down) 7%, var(--dsw-alias-surface));
+  color: var(--dsw-alias-ink);
+}
+.surfaces-link-home:hover {
+  background: color-mix(in oklab, var(--dsw-alias-down) 11%, var(--dsw-alias-surface));
+  color: var(--dsw-alias-ink);
+}
+.surfaces-link-home .surfaces-icon { color: var(--dsw-alias-down); }
+.surfaces-link-home .surfaces-count {
+  background: color-mix(in oklab, var(--dsw-alias-down) 18%, transparent);
+  color: var(--dsw-alias-down);
+  font-size: 11px;
+}
+.surfaces-link-home .surfaces-dot { display: none; }
+
+/* The bracket: a 2px spine per region, lit on the region that holds the
+   current lane. The rows keep their own left edge. */
+.surfaces-section[data-region="true"] { position: relative; padding-left: 9px; }
+.surfaces-section[data-region="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--dsw-alias-hairline);
+}
+.surfaces-section[data-region="true"][data-current="true"]::before {
+  background: color-mix(in oklab, var(--dsw-alias-accent) 55%, transparent);
+}
+/* The region header is a name, not a section title: tighter than the old
+   group heads and quieter than a row. */
+.surfaces-section[data-region="true"] > .surfaces-group {
+  min-height: 26px;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+
+.surfaces-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--dsw-alias-ink-tertiary);
+}
+.surfaces-dot[data-state="needs"] { background: var(--dsw-alias-down); }
+.surfaces-dot[data-state="working"] { background: var(--dsw-alias-warn); }
+.surfaces-dot[hidden] { display: none; }
+
+/* The system strip keeps the old group's separation from the work above. */
+.surfaces-section[data-group="system"] { margin-top: 16px; }
