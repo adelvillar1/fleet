@@ -8973,6 +8973,35 @@ async function theStrategyStepShowsItsPreview() {
   }
 
 
+  // R10: the card grid's contract — every span the face asks for has a
+  // column rule, every split span collapses to one column at its
+  // breakpoint, and the bot PWA keeps its split/lone-column story at its
+  // own breakpoint. (The live layout sweep measured every surface with the
+  // rail open and collapsed: no overflow, no holes, cards on grid.)
+  async function theCardGridsSpansAreAllDeclared() {
+    const used = new Set();
+    for (const m of SRC.matchAll(/boardCard\((\d+)/g)) used.add(m[1]);
+    const missing = [...used].filter((n) => n !== '12' &&
+      !CSS.includes('.board-card[data-span="' + n + '"]'));
+    check('R10 every card span the face asks for has a column rule',
+      missing.length === 0, 'missing=' + missing.join(',') + ' used=' + [...used].join(','));
+
+    const flatCss = flat(CSS);
+    check('R10 the split spans collapse at their own breakpoints',
+      flatCss.includes('.board-card[data-span="7"], .board-card[data-span="5"], .board-card[data-span="6"] { grid-column: span 12; }') &&
+        flatCss.includes('.board-card[data-span="8"], .board-card[data-span="4"] { grid-column: span 12; }'),
+      'collapse rules');
+
+    // The bot PWA: the iPad split appears at its own breakpoint, and the
+    // form stays fluid inside the phone width (measured live at 390/820/
+    // 844/1180: no horizontal overflow).
+    const flatBot = flat(BOT);
+    check('R10 the bot PWA keeps its split and its fluid phone form',
+      flatBot.includes('min-width: 1024px') &&
+        flatBot.includes('grid-template-columns: 280px minmax(0, 1fr) 300px;'),
+      'bot breakpoints');
+  }
+
   // R7/G6: every surface with a page head wears its place — the eyebrow
   // is the crumb's group, in the rail's own word. One word, one home: a
   // page whose crumb says system and whose eyebrow says Intelligence is
@@ -22524,6 +22553,7 @@ const cases = [
   ['SURF the connections page draws its graph, drills in place and isolates a kind', theTissuePaintsTheGraphAndPivots],
   ['R6 empty and loading states name their one press', theEmptyAndLoadingStatesOfferTheirDoor],
   ['R7 every surface head wears its place', theEyebrowWearsTheSurfacesPlace],
+  ['R10 the card grid spans are all declared and collapse', theCardGridsSpansAreAllDeclared],
   ['RESKIN an empty tissue names what fills it', anEmptyTissueNamesWhatFillsIt],
   ['INTEL the tools segment names the registry and its classes', theToolsSegmentNamesTheRegistryAndItsClasses],
   ['INTEL an undeclared graph names itself', anUnworkflowsHomeSaysSoByName],

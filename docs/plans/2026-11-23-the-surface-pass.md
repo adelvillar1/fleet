@@ -205,6 +205,30 @@ initiated sessions that are just noise."*
   pairing; the corpus copies its remote; the empty states already explained
   and stay. Pinned in the P6 armada case.
 
+### R10 — the card grid holds: aligned, even, rails collapsed, PWA sizes
+
+- **Measured live** (probe face at 1440×900, each surface with the rail
+  **open and collapsed**): 15 surfaces — no horizontal overflow, no row
+  holes, every `data-span` card on a column start (one learning-shell
+  artifact: its card sits inside the work-column shell, not the board grid;
+  visually aligned, noted not chased).
+- **Defect found and fixed:** `boardCard(6)` — used twice — had **no column
+  rule at all**, so pairs meant to sit side by side stacked as two
+  full-width cards. The half rule now exists and collapses at ≤1180 with
+  the other split spans. New pin: `R10 the card grid spans are all declared
+  and collapse` (every span the source asks for has a rule; the collapse
+  lists; the bot PWA's split breakpoint).
+- **PWA:** the shell/pair page measured clean at all four viewports —
+  390×844, 844×390, 820×1180, 1180×820: no overflow, no element wider than
+  the viewport, the form fluid (342 → 420 centred). **Gap, named:** the
+  paired views (inbox, conversation, iPad split) need a device token; the
+  probe face's bot pair API rejected the CLI's code (403 — that code is the
+  relay's, not the bot face's), so those views were not re-measured live in
+  this pass. `bot.css` is unchanged by this pass, so the earlier 390/820
+  viewport evidence stands. Next action: pair through the relay
+  (`fleet pair` → open the printed URL) and capture the four viewports, or
+  add structural per-viewport pins to the bot harness.
+
 ### R9 — the remaining per-surface passes
 
 - The audit's fix order: armada, calibration's report cards, delegation,

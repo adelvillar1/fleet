@@ -4548,6 +4548,9 @@ pre.drawer-code {
 
 .board-card[data-span="7"] { grid-column: span 7; }
 .board-card[data-span="5"] { grid-column: span 5; }
+/* The halves: boardCard(6) had no rule at all, so a pair meant to sit
+   side by side stacked as two full-width cards (the surface pass, R10). */
+.board-card[data-span="6"] { grid-column: span 6; }
 
 .board-head {
   display: flex;
@@ -7474,7 +7477,8 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   body[data-rail="icons"] .surfaces-toggle-mark { transform: none; }
 
   .stage-board { padding: 22px 18px 44px; }
-  .board-card[data-span="7"], .board-card[data-span="5"] { grid-column: span 12; }
+  .board-card[data-span="7"], .board-card[data-span="5"],
+  .board-card[data-span="6"] { grid-column: span 12; }
   .donut { flex-direction: column; align-items: flex-start; gap: 14px; }
   .donut svg { align-self: center; }
 
