@@ -12682,3 +12682,29 @@ section.board-card > .board-head {
 
 /* The system strip keeps the old group's separation from the work above. */
 .surfaces-section[data-group="system"] { margin-top: 16px; }
+
+/* --- the drawer's relevance line (the UX map study): the object's kind and
+   size, from the read itself, and the one press that changes the body. */
+.pane-rel {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 2px 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.pane-rel[hidden] { display: none; }
+.pane-rel-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-rel-press {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-accent-deep);
+  font: inherit;
+  cursor: pointer;
+}
+.pane-rel-press:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }
+.pane-rel-press[hidden] { display: none; }

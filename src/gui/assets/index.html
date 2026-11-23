@@ -1156,6 +1156,13 @@
       <button class="read-mode" id="read-mode-preview" type="button">preview</button>
       <button class="read-mode" id="read-mode-web" type="button">web</button>
     </div>
+    <!-- The object's relevance (the UX map study): what this object is and
+         the one press it suggests. Painted from the read itself; absent for
+         objects whose state already rides another element. -->
+    <div class="pane-rel" id="pane-rel" hidden>
+      <span class="pane-rel-what" id="pane-rel-what"></span>
+      <button class="pane-rel-press" id="pane-rel-press" type="button" hidden></button>
+    </div>
 
 <!-- The pane: the working directory, beside the surface rather than in
      it. The tree explores, the viewer reads the actual code, and the

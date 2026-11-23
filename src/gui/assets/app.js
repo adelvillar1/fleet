@@ -1115,6 +1115,9 @@ import { node, svg, clip } from './core/dom.js';
     readModePreview: document.getElementById('read-mode-preview'),
     readModeWeb: document.getElementById('read-mode-web'),
     paneContext: document.getElementById('pane-context'),
+    paneRel: document.getElementById('pane-rel'),
+    paneRelWhat: document.getElementById('pane-rel-what'),
+    paneRelPress: document.getElementById('pane-rel-press'),
     commands: document.getElementById('commands'),
     paneClose: document.getElementById('pane-close'),
     paneTree: document.getElementById('pane-tree'),
@@ -32546,12 +32549,26 @@ import { node, svg, clip } from './core/dom.js';
   // One file, in the viewer and in the preview. The viewer shows the
   // actual code with its line numbers; the preview renders it when it is
   // a deliverable — markdown today, and text for everything else.
+  // The object decides its read body (the UX map study, 2026-11-23): the
+  // kind table over the language the file read already returns. The mode
+  // switch still overrides for the object in hand; the default is not
+  // persisted across opens, because the next object is a different kind.
+  var KIND_MODE = {
+    markdown: 'preview', csv: 'preview', tsv: 'preview',
+    png: 'preview', jpeg: 'preview', gif: 'preview', webp: 'preview',
+    svg: 'preview', pdf: 'preview', docx: 'preview', pptx: 'preview',
+    xlsx: 'preview', drawio: 'preview'
+  };
+  function kindMode(language) { return KIND_MODE[language] || 'code'; }
+
   function openFile(asked) {
     return paneGet('/api/file?path=' + encodeURIComponent(asked))
       .then(function (doc) {
         face.file = doc;
+        // The kind picks the body; the switch is the per-object override.
+        if (face.paneTab !== 'read') showPaneTab('read', false);
+        showReadMode(kindMode(doc && doc.language), false);
         paintFile();
-        if (face.paneTab === 'preview') paintPreview();
       })
       .catch(function () { });
   }
@@ -33819,6 +33836,37 @@ import { node, svg, clip } from './core/dom.js';
     run: 'act', work: 'connections', receipts: 'made'
   };
 
+  // The object's relevance line (the UX map study, 2026-11-23): what the
+  // read in hand IS — its kind and size, from the read itself — and the
+  // sibling body one press away. Objects whose state already rides another
+  // element (a conversation's head and act tab; a fact's or a deliverable's
+  // own surface) draw no second line here: the gap ledger records that
+  // decision rather than inventing a line for them.
+  function paintReadRelevance() {
+    if (!el.paneRel) return;
+    var show = face.paneTab === 'read' && face.file && !(face.file.refused || []).length;
+    el.paneRel.hidden = !show;
+    if (!show) return;
+    var doc = face.file;
+    var bits = [];
+    if (doc.language) bits.push(doc.language);
+    if (doc.bytes != null) bits.push(bytes(doc.bytes));
+    if (doc.truncated) bits.push('cut');
+    el.paneRelWhat.textContent = bits.join(' \u00b7 ');
+    var mode = face.readMode;
+    if (mode !== 'preview' && mode !== 'code') {
+      el.paneRelPress.hidden = true;
+      return;
+    }
+    var other = mode === 'preview' ? 'code' : 'preview';
+    el.paneRelPress.hidden = false;
+    el.paneRelPress.textContent = 'read as ' + other;
+    el.paneRelPress.title = other === 'preview'
+      ? 'render the object the way a human reads it'
+      : 'read the object as source';
+    // Bound once where the mode buttons are wired; this only labels it.
+  }
+
   function showReadMode(mode, remember) {
     if (READ_MODES.indexOf(mode) < 0) mode = 'document';
     face.readMode = mode;
@@ -33840,6 +33888,7 @@ import { node, svg, clip } from './core/dom.js';
     else if (mode === 'code') paintTree();
     else if (mode === 'preview') paintPreview();
     else paintWeb();
+    paintReadRelevance();
     if (remember !== false && face.paneTab === 'read') {
       try { window.localStorage.setItem('fleet-pane-read', mode); } catch (error) { }
     }
@@ -35488,6 +35537,14 @@ import { node, svg, clip } from './core/dom.js';
   }
   if (el.readModeWeb) {
     el.readModeWeb.addEventListener('click', function () { showReadMode('web'); });
+  }
+  if (el.paneRelPress) {
+    // The relevance line's one press: swap between the object's two file
+    // bodies. The label is the painter's; the action is stable.
+    el.paneRelPress.addEventListener('click', function () {
+      if (face.readMode === 'preview') showReadMode('code', false);
+      else if (face.readMode === 'code') showReadMode('preview', false);
+    });
   }
 
   buildRail();

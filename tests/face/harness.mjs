@@ -5678,6 +5678,81 @@ async function theRailCarriesTheMap() {
     folded ? 'folded=' + folded.dataset.folded : 'no section');
 }
 
+// The drawer opens the object it is (the UX map study, 2026-11-23): a kind
+// table over the language the file read returns — code files and trees in
+// the code body, markdown and every binary document in the rendered body —
+// with the mode switch as the per-object override, never a default that
+// leaks into the next object. The read body also opens with its relevance
+// line: what the object is, and the sibling body one press away.
+async function theDrawerOpensTheObjectItIs() {
+  const page = boot({ hash: '#/sessions/kind-1', documents: {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('kind-1', 'completed', { title: 'a run that handed over files' })],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked,
+      events: [{ type: 'message', role: 'owner', text: 'open the files' }],
+    }),
+    files: {
+      'notes/b.md': { type: 'file', path: 'notes/b.md', name: 'b.md',
+        language: 'markdown', bytes: 4, text: '# hi' },
+      'src/a.rs': { type: 'file', path: 'src/a.rs', name: 'a.rs',
+        language: 'rust', bytes: 21, text: 'fn main() {}' },
+      'shots/x.png': { type: 'file', path: 'shots/x.png', name: 'x.png',
+        language: 'png', bytes: 2048 },
+    },
+  } });
+  await flush();
+  page.open();
+  await flush(60);
+
+  const mode = () => ['document', 'code', 'preview', 'web']
+    .filter((m) => page.IDS['read-mode-' + m] &&
+      page.IDS['read-mode-' + m].classList.contains('on'))
+    .join(',');
+  const openVia = async (path) => {
+    page.push({ type: 'tool_call', tool: 'send_file', summary: path,
+      arguments: JSON.stringify({ path: path }) });
+    await flush(20);
+    page.push({ type: 'tool_result', tool: 'send_file', approved: true,
+      preview: 'handed over ' + path });
+    await flush(40);
+    const chips = page.rows('.preview-chip')
+      .filter((one) => one.textContent.trim() === path.split('/').pop());
+    const chip = chips[chips.length - 1];
+    check('KIND the ' + path + ' chip opens the file', !!chip, 'no chip');
+    if (chip) chip.click();
+    await flush(40);
+  };
+
+  await openVia('notes/b.md');
+  check('KIND markdown opens the rendered body', mode() === 'preview', mode());
+  check('KIND the line names the kind and the size',
+    page.text('pane-rel-what') === 'markdown \u00b7 4 B',
+    page.text('pane-rel-what'));
+  const press = page.IDS['pane-rel-press'];
+  check('KIND the line suggests the sibling body',
+    !!press && press.hidden !== true && press.textContent === 'read as code',
+    press ? String(press.hidden) + ' / ' + press.textContent : 'no press');
+  press.click();
+  await flush(40);
+  check('KIND the press overrides the body for this object',
+    mode() === 'code' && page.IDS['pane-rel-press'].textContent === 'read as preview',
+    mode() + ' / ' + page.IDS['pane-rel-press'].textContent);
+
+  await openVia('src/a.rs');
+  check('KIND a code file opens the code body', mode() === 'code', mode());
+  check('KIND the override did not leak into the next object',
+    page.text('pane-rel-what') === 'rust \u00b7 21 B', page.text('pane-rel-what'));
+
+  await openVia('shots/x.png');
+  check('KIND an image opens the rendered body', mode() === 'preview', mode());
+  check('KIND the line reads the image\u2019s own size',
+    page.text('pane-rel-what') === 'png \u00b7 2.0 kB', page.text('pane-rel-what'));
+}
+
 // New mints a real conversation at the press (the owner's 2026-11-05
 // ruling, replacing N2's create-then-send): the log exists before any
 // words, so the send that follows can only name this conversation —
@@ -21564,6 +21639,7 @@ const cases = [
   ['RP5 the board leads with change and divergence', theBoardLeadsWithChangeAndDivergence],
   ['RP6 delegation leads with the blockers', theDelegationSurfaceLeadsWithTheBlockers],
   ['MAP the rail is the work-kind map: Home, regions, dots, no state groups', theRailCarriesTheMap],
+  ['KIND the drawer opens the body the object is, with its relevance line', theDrawerOpensTheObjectItIs],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],
