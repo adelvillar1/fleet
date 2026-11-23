@@ -93,6 +93,14 @@ const ASSETS: &[Asset] = &[
         stamp: Stamp::None,
     },
     Asset {
+        path: "src/gui/assets/vendor/marked.umd.js",
+        stamp: Stamp::None,
+    },
+    Asset {
+        path: "src/gui/assets/vendor/marked.LICENSE",
+        stamp: Stamp::None,
+    },
+    Asset {
         path: "src/gui/assets/vendor/pdf.min.mjs",
         stamp: Stamp::None,
     },

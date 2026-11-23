@@ -1343,6 +1343,10 @@
         title="expand the connections column" aria-label="expand the connections column"
         aria-pressed="false"></button>
 
+<!-- The markdown engine and its sanitiser (R6): marked renders, DOMPurify
+     cleans before the HTML touches the DOM. Both are served from the binary. -->
+<script src="/vendor/purify.min.js"></script>
+<script src="/vendor/marked.umd.js"></script>
 <script type="module" src="/vendor/boopface/boopface-lite.js"></script>
 <script type="module" src="/app.js"></script>
 <script>

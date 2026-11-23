@@ -36,6 +36,7 @@ const RUST = fs.readFileSync(path.join(ROOT, 'src/gui/bridge.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/remote/listener.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/gui/mod.rs'), 'utf8');
 const BOTJS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/bot.js'), 'utf8');
+const MARKED_UMD = fs.readFileSync(path.join(ROOT, 'src/gui/assets/vendor/marked.umd.js'), 'utf8');
 const BOT = fs.readFileSync(path.join(ROOT, 'src/gui/assets/bot.css'), 'utf8');
 const CSS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.css'), 'utf8');
 // The desktop shell's own source: the window builder is the one place a
@@ -1453,6 +1454,17 @@ function boot(options) {
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // The markdown engine (R6): marked is pure JS and runs here for real;
+  // DOMPurify needs a real DOM, so this recorder hands its input back and
+  // remembers it — the stripping itself is proven against the live face.
+  vm.runInContext(MARKED_UMD, sandbox, { filename: 'marked.umd.js' });
+  window_.marked = sandbox.marked;
+  window_.DOMPurify = {
+    sanitize: function (html) {
+      window_.__sanitized = html;
+      return html;
+    }
+  };
   vm.runInContext(SRC, sandbox, { filename: 'app.js' });
 
   return {
@@ -5678,6 +5690,79 @@ async function theRailCarriesTheMap() {
     folded ? 'folded=' + folded.dataset.folded : 'no section');
 }
 
+// R6: the drawer's markdown body is marked's render, cleaned by DOMPurify.
+// marked runs for real in this sandbox (pure JS); the sanitiser is a
+// recorder here because it needs a real DOM — the live probe proves the
+// stripping, this proves the wiring and the parser's output.
+async function theDrawerRendersMarkdownThroughTheEngine() {
+  const mdText = [
+    '# The brief',
+    '',
+    'A line with **bold** and `code`.',
+    '',
+    '1. first',
+    '2. second',
+    '',
+    '- one',
+    '  - nested',
+    '',
+    '> a quote',
+    '',
+    '| a | b |',
+    '|---|---|',
+    '| 1 | 2 |',
+    '',
+    '![shot](shot.png)',
+    '',
+    '```sh',
+    'fleet release',
+    '```',
+    '',
+    '<script>window.__pwned = 1</script>',
+    '<img src="x.png" onerror="window.__pwned = 2">',
+    ''
+  ].join('\n');
+  const page = boot({ hash: '#/sessions/md-1', documents: {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('md-1', 'completed', { title: 'a run that wrote a brief' })],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked,
+      events: [{ type: 'message', role: 'owner', text: 'open the brief' }],
+    }),
+    files: {
+      'docs/brief.md': { type: 'file', path: 'docs/brief.md', name: 'brief.md',
+        language: 'markdown', bytes: 512, text: mdText },
+    },
+  } });
+  await flush();
+  page.open();
+  await flush(60);
+  page.push({ type: 'tool_call', tool: 'send_file', summary: 'the brief',
+    arguments: JSON.stringify({ path: 'docs/brief.md' }) });
+  await flush(20);
+  page.push({ type: 'tool_result', tool: 'send_file', approved: true,
+    preview: 'handed over docs/brief.md' });
+  await flush(40);
+  const chips = page.rows('.preview-chip')
+    .filter((one) => one.textContent.trim() === 'brief.md');
+  check('MDK the brief chip opens the file', chips.length === 1, String(chips.length));
+  if (chips[0]) chips[0].click();
+  await flush(60);
+
+  const clean = String(page.window.__sanitized || '');
+  check('MDK the sanitiser was handed the engine\u2019s own HTML',
+    clean.indexOf('<h1>') !== -1 && clean.indexOf('<ol>') !== -1 &&
+      clean.indexOf('<blockquote>') !== -1 && clean.indexOf('<table>') !== -1 &&
+      clean.indexOf('<pre>') !== -1 && clean.indexOf('<img') !== -1,
+    clean.slice(0, 120));
+  check('MDK the untrusted payload reached the sanitiser, not the DOM directly',
+    clean.indexOf('<script>') !== -1 && /onerror=/.test(clean),
+    clean.slice(-160));
+}
+
 // The drawer opens the object it is (the UX map study, 2026-11-23): a kind
 // table over the language the file read returns — code files and trees in
 // the code body, markdown and every binary document in the rendered body —
@@ -7833,14 +7918,24 @@ async function thePreviewRendersTheCommonFormats() {
     String(cells.length));
 
   await open('notes.md');
+  // R6: the preview is marked's render now. The stub's innerHTML does not
+  // parse children, so the render is judged from the sanitised HTML the
+  // engine produced — semantic tags, not the old md-* classes.
+  const renderedMd = String(page.window.__sanitized || '');
   check('PV the markdown table renders',
-    page.rows('.md-table').length === 1 &&
-      page.rows('.md-table .md-td').length === 2,
-    String(page.rows('.md-table .md-td').length));
-  check('PV a script in a markdown file stays text',
-    page.rows('.md script, .md iframe, .md img').length === 0 &&
-      /<script>alert\(1\)/.test(page.text('pane-preview-body')),
-    page.text('pane-preview-body').slice(-60));
+    /<table>/.test(renderedMd) && /<td>1<\/td>/.test(renderedMd) &&
+      /<td>2<\/td>/.test(renderedMd),
+    renderedMd.slice(0, 120));
+  check('PV the preview hands the document\u2019s HTML to the sanitiser',
+    /<script>alert\(1\)/.test(String(page.window.__sanitized || '')),
+    String(page.window.__sanitized || '').slice(-60));
+  // The R6 contract: no sanitiser, no rendered markdown — the source is
+  // shown instead of trusting the parser's output.
+  delete page.window.DOMPurify;
+  await open('notes.md');
+  check('PV no sanitiser, no rendered markdown',
+    page.text('pane-preview-body').includes('markdown engine is not loaded'),
+    page.text('pane-preview-body').slice(-80));
 
   await open('doc.json');
   check('PV the json renders as a tree',
@@ -21640,6 +21735,7 @@ const cases = [
   ['RP6 delegation leads with the blockers', theDelegationSurfaceLeadsWithTheBlockers],
   ['MAP the rail is the work-kind map: Home, regions, dots, no state groups', theRailCarriesTheMap],
   ['KIND the drawer opens the body the object is, with its relevance line', theDrawerOpensTheObjectItIs],
+  ['MDK the drawer renders markdown through marked, sanitised', theDrawerRendersMarkdownThroughTheEngine],
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],

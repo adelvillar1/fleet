@@ -100,6 +100,17 @@
       "license": "MIT (the license does not transfer the BoopFace name or the character identity - fleet vendors the software, presents its own personas, and never names the upstream character in product copy)",
       "vendored": "2026-11-22",
       "reason": "The persona faces (the harness redesign A1-A5): expressive robot faces for the roster, tinted from the token chain at runtime. The lite graph ships - every expression, no skins (D8: skins stay off; the painters in the full build are not vendored)."
+    },
+    {
+      "file": "marked.umd.js",
+      "name": "marked",
+      "version": "18.2.1",
+      "upstream": "https://github.com/markedjs/marked",
+      "download": "https://unpkg.com/marked@18.2.1/lib/marked.umd.js",
+      "sha256": "bb95d4c15f1289f78486eaacebf3bb18688475ed58a040ef762ed49337090542",
+      "license": "MIT",
+      "vendored": "2026-11-23",
+      "reason": "Markdown rendering (the UX map study's R6): the preview renders CommonMark/GFM the hand-rolled parser only approximated. Its output is HTML, so it is sanitised by the vendored DOMPurify before it touches the DOM; a build without the sanitiser refuses the render."
     }
   ]
 }

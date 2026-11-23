@@ -32809,7 +32809,7 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
     if (language === 'markdown') {
-      el.panePreview.appendChild(markdown(String(read.text || '')));
+      renderMarkdown(read);
       return;
     }
     if (language === 'csv' || language === 'tsv') {
@@ -32822,6 +32822,48 @@ import { node, svg, clip } from './core/dom.js';
     }
     var plain = node('pre', 'pane-plain', read.text || '');
     el.panePreview.appendChild(plain);
+  }
+
+  // The drawer's markdown body (the UX map study, R6): marked renders the
+  // CommonMark/GFM the transcript's DOM-building parser only approximated —
+  // ordered lists, blockquotes, images, nesting — and DOMPurify cleans the
+  // HTML before it touches the DOM. No sanitiser, no render: the source is
+  // shown instead of trusting the parser's output.
+  function renderMarkdown(read) {
+    var wrap = node('div', 'md md-doc');
+    var text = String(read && read.text != null ? read.text : '');
+    if (!window.marked || !window.DOMPurify) {
+      wrap.appendChild(node('p', 'pane-empty',
+        'the markdown engine is not loaded \u2014 showing the source instead'));
+      wrap.appendChild(node('pre', 'pane-plain', text));
+      el.panePreview.appendChild(wrap);
+      return;
+    }
+    try {
+      wrap.innerHTML = window.DOMPurify.sanitize(window.marked.parse(text), {
+        USE_PROFILES: { html: true }
+      });
+      // A document's relative images belong to its own folder, and the
+      // preview route is the one that serves bytes: resolve them there so
+      // the pictures render as the author placed them.
+      var base = String(read.path || '').split('/').slice(0, -1).join('/');
+      var imgs = wrap.querySelectorAll ? wrap.querySelectorAll('img') : [];
+      Array.prototype.forEach.call(imgs, function (img) {
+        var src = img.getAttribute('src') || '';
+        if (/^(https?:|data:)/i.test(src)) return;
+        var joined = base ? base + '/' + src : src;
+        var parts = [];
+        joined.split('/').forEach(function (part) {
+          if (part === '..') parts.pop();
+          else if (part !== '.' && part !== '') parts.push(part);
+        });
+        img.setAttribute('src', previewUrl(parts.join('/')));
+      });
+    } catch (error) {
+      wrap.textContent = text;
+      wrap.appendChild(node('p', 'pane-empty', 'the document would not render as markdown'));
+    }
+    el.panePreview.appendChild(wrap);
   }
 
   function renderBinaryPreview(read, language) {
@@ -33310,15 +33352,11 @@ import { node, svg, clip } from './core/dom.js';
     if (fence) out.appendChild(node('pre', 'md-code', fence.join('\n')));
     flushPara();
     flushList();
-    // The sanitizer pass: the renderer builds nodes with textContent
-    // and never innerHTML, but its own defense is one layer — the
-    // serialization round-trip through DOMPurify is the second, and it
-    // is the one that survives a renderer's mistake.
-    if (window.DOMPurify) {
-      var clean = node('div', 'md');
-      clean.innerHTML = window.DOMPurify.sanitize(out.innerHTML);
-      return clean;
-    }
+    // No sanitizer round-trip here: this renderer builds nodes with
+    // textContent and never innerHTML, and a serialization pass would now
+    // (the library is loaded for the preview) re-parse the output and drop
+    // the listeners its path buttons carry. DOMPurify guards the one path
+    // that takes HTML — the preview's marked output.
     return out;
   }
 

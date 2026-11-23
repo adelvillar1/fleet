@@ -78,6 +78,12 @@ pub(crate) const DOM: &str = include_str!("assets/core/dom.js");
 /// the provenance: versions, upstream URLs, SHA-256s, licenses). Served
 /// from the face's own origin, never a CDN at render time.
 pub(crate) const VENDOR_PURIFY: &str = include_str!("assets/vendor/purify.min.js");
+pub(crate) const VENDOR_MARKED: &str = include_str!("assets/vendor/marked.umd.js");
+pub(crate) const VENDOR_MARKED_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-marked.umd.js.gz"));
+pub(crate) const VENDOR_MARKED_LICENSE: &str = include_str!("assets/vendor/marked.LICENSE");
+pub(crate) const VENDOR_MARKED_LICENSE_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/vendor-marked.LICENSE.gz"));
 pub(crate) const VENDOR_PDF: &str = include_str!("assets/vendor/pdf.min.mjs");
 pub(crate) const VENDOR_PDF_WORKER: &str = include_str!("assets/vendor/pdf.worker.min.mjs");
 pub(crate) const VENDOR_DOCX: &str = include_str!("assets/vendor/docx-preview.min.js");
@@ -290,6 +296,12 @@ pub(crate) const GZIP_ASSETS: &[(&str, &str, &[u8])] = &[
     ("/manifest.webmanifest", MANIFEST, MANIFEST_GZ),
     ("/sw.js", WORKER_STAMPED, WORKER_GZ),
     ("/vendor/purify.min.js", VENDOR_PURIFY, VENDOR_PURIFY_GZ),
+    ("/vendor/marked.umd.js", VENDOR_MARKED, VENDOR_MARKED_GZ),
+    (
+        "/vendor/marked.LICENSE",
+        VENDOR_MARKED_LICENSE,
+        VENDOR_MARKED_LICENSE_GZ,
+    ),
     ("/vendor/pdf.min.mjs", VENDOR_PDF, VENDOR_PDF_GZ),
     (
         "/vendor/pdf.worker.min.mjs",
@@ -648,6 +660,22 @@ async fn serve_connection(
             write_reply(
                 &mut stream,
                 versioned_asset("text/javascript; charset=utf-8", VENDOR_PURIFY)
+                    .negotiated(&request),
+            )
+            .await
+        }
+        ("GET", "/vendor/marked.umd.js") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_MARKED)
+                    .negotiated(&request),
+            )
+            .await
+        }
+        ("GET", "/vendor/marked.LICENSE") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("text/plain; charset=utf-8", VENDOR_MARKED_LICENSE)
                     .negotiated(&request),
             )
             .await
