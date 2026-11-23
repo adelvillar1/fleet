@@ -5384,14 +5384,6 @@ pre.drawer-code {
    that carry rows are full-bleed — their header and rows own the padding,
    so a row's hairline runs the card's width the way a ledger's does. */
 
-.surface-head {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 292px;
-  align-items: end;
-  gap: 24px;
-  padding: 2px 0 4px;
-}
 
 
 /* The settings board's own answer line (settings-ux U1): the last write's
@@ -5441,18 +5433,9 @@ pre.drawer-code {
 }
 .cfg-error[hidden] { display: none; }
 .settings-status-detail { color: var(--dsw-alias-ink-tertiary); }
-.surface-main .page-eyebrow { margin: 0 0 8px; }
-
-.surface-title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: var(--title-surface);
-  font-weight: 600;
-  line-height: 1.02;
-  letter-spacing: -0.035em;
-}
-
 .surface-tool {
+  width: 292px;
+  max-width: 100%;
   border: var(--card-hairline);
   border-radius: 8px;
   background: var(--card-bg);
@@ -5753,14 +5736,12 @@ pre.drawer-code {
 .brain-method-empty { margin: 0; color: var(--dsw-alias-ink-tertiary); font-size: 12px; }
 
 @media (max-width: 1180px) {
-  .surface-head { grid-template-columns: minmax(0, 1fr) 250px; }
   .atlas-row { grid-template-columns: minmax(130px, 1.1fr) 84px 42px 48px minmax(0, 1.5fr); }
 }
 
 @media (max-width: 900px) {
   .board-card[data-span="8"],
   .board-card[data-span="4"] { grid-column: span 12; }
-  .surface-head { grid-template-columns: minmax(0, 1fr); align-items: start; }
   .surface-tool { max-width: 420px; }
   .brain-method { grid-template-columns: minmax(0, 1fr); gap: 18px; }
 }
@@ -11311,7 +11292,7 @@ body[data-expert="on"] .plain-only { display: none; }
   border-radius: 8px;
   background: var(--raise);
   border: 1px solid var(--line2);
-  box-shadow: 0 10px 24px -14px rgb(0 0 0 / 45%);
+  box-shadow: var(--shadow-2);
   pointer-events: none;
 }
 .tissue-hover[data-below] { transform: translate(-50%, 12px); }

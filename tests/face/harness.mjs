@@ -4248,7 +4248,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
       groups.map((one) => one.dataset.group).join(',') === 'software,design,knowledge,system',
     groups.map((one) => one.dataset.group).join(','));
   // The surface announces itself once, above the cards.
-  const title = page.rows('.surface-title').map((n) => n.textContent.trim());
+  const title = page.rows('.page-title').map((n) => n.textContent.trim());
   check('the section names itself workspace history', title.includes('Workspace history'), title.join(' | '));
   // The tree: a band per layer, a leaf for the commit, the fork node
   // at the branch's actual base, and the dashed graft from the leaf a
@@ -4691,7 +4691,7 @@ async function theArmadaSectionDrawsTheRosterItRead() {
   check('the fleet lens waits for the armada switch', fleetLink.length === 0,
     String(fleetLink.length));
   // The surface announces itself once, above the cards.
-  const title = page.rows('.surface-title').map((n) => n.textContent.trim());
+  const title = page.rows('.page-title').map((n) => n.textContent.trim());
   check('the section names itself armada', title.includes('Armada'), title.join(' | '));
   // The roster board: both instances, the calibrated one's measured
   // percentage, and the fresh one's un-calibrated marker.

@@ -271,3 +271,34 @@ cards, cards with no semantic press inside, nested cards).
    own row, its mockup where the grammar changes, and its pins.
 6. **The drawer tab rename** (connections → work) with the plan's G11
    amendment recorded in the gap ledger.
+
+## Design-system conformance (measured 2026-11-23)
+
+The system's contract is `docs/plans/2026-11-22-harness-redesign.md` (D1–D7:
+Indigo Studio tokens, one accent, the elevation law, one head, rail | stage |
+drawer) with the tokens in `app.css` (`--dsw-alias-*`, `--shadow-1/2/3`) and
+the component builders (`answerHead`, `surfaceStrip`, `surfaceInstrument`,
+`boardCard`, `section-rail`).
+
+**Measured baseline, and what changed in this pass:**
+
+| Check | Baseline | Now |
+|---|---|---|
+| Raw colours outside the token blocks (CSS) | 1 (`rgb(0 0 0 / 45%)` on the connections hover card) | **0** |
+| Raw box-shadows outside the elevation tokens | 1 (the same rule) | **0** (the tokens, `none`, and focus-ring states only) |
+| Inline style colours on every surface | 0 | 0 |
+| Page heads per surface | **3 grammars**: `surfaceHead` (22 sites, `surface-head`/`surface-title`), `answerHead`/`pageHead` (4 sites), and the health page's own header | **one** — `surfaceHead` is now an adapter onto `answerHead`, and the health page folded in; measured live: memory, armada, calibration, router each paint exactly one `.page-head`. The health page's **loading** path still paints none (R6). |
+| Section rails | 10 of 19 surfaces | unchanged; a surface with sections must use `.section-rail` (per-surface rows) |
+| Card language | `.board-card` on 13 surfaces; bespoke containers on desk/learning (`div.column`), design (`design-body`), delegation/router/vault/plugins (`div.board` only) | unchanged; each surface's row brings it onto the card grammar |
+| Type ladder | 4–10 distinct font sizes per surface | unchanged; the per-surface rows reduce to the ladder (U46's floor; display/body/mono) |
+
+**The rule, added to every surface row:**
+
+- A surface renders **one** `page-head` (`answerHead`), one `.section-rail`
+  when it has sections, and `.board-card` units at one container depth.
+- No raw colour, shadow, radius or font-size outside the tokens/ladder; a
+  new value needs a token first.
+- The head carries eyebrow · title · sentence · (instrument); the instrument
+  is `surfaceInstrument`, never a hand-built box.
+- The design system is not a coat of paint applied at the end: a surface is
+  not done until it renders through the system's builders.

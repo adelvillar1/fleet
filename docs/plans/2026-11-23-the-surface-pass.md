@@ -154,7 +154,22 @@ initiated sessions that are just noise."*
   rail region (intelligence for the router? it is an advanced page — the
   ledger records where it truly lives).
 
-### R8 — the remaining per-surface passes
+### R8 — the design-system conformance row
+
+- The contract (D1–D7 of the redesign) is one Indigo Studio token chain, one
+  accent, the elevation law, one head grammar, and the shared builders. The
+  audit measured three head grammars, bespoke containers on seven surfaces,
+  a 4–10 size spread per surface, and one raw colour/shadow pair.
+- Done in this row: **one head** (`surfaceHead` folded onto `answerHead`,
+  the health page's own header folded in), the one raw shadow tokenized.
+  Zero raw colours outside the token blocks, zero inline colours.
+- Carried into every surface row: one `page-head`, one `.section-rail` where
+  sections exist, `.board-card` units at one depth, the type ladder, no new
+  raw values without a token first.
+- Pins: the harness's head assertions read `.page-head` (the old class is
+  gone); the per-surface rows pin their own composition.
+
+### R9 — the remaining per-surface passes
 
 - The audit's fix order: armada, calibration's report cards, delegation,
   huddles, workspace history, vault, plugins, bots, learning, desk, board,

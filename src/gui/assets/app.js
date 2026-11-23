@@ -8445,13 +8445,13 @@ import { node, svg, clip } from './core/dom.js';
     });
   }
 
+  // One head grammar (the surface pass, 2026-11-23): this builder used to
+  // render its own `surface-head`/`surface-title` classes, splitting the
+  // design system's head into two grammars — 22 surfaces on one, the
+  // contract's `answerHead` on the other. It is now an adapter: same
+  // signature, the one grammar's markup.
   function surfaceHead(eyebrow, title, note, instrument) {
-    var head = node('header', 'surface-head');
-    var main = node('div', 'surface-main');
-    main.appendChild(node('p', 'page-eyebrow', eyebrow));
-    main.appendChild(node('h1', 'surface-title', title));
-    main.appendChild(node('p', 'page-note', note));
-    head.appendChild(main);
+    var head = answerHead({ eyebrow: eyebrow, title: title, sentence: note });
     if (instrument) head.appendChild(instrument);
     return head;
   }
@@ -19547,15 +19547,13 @@ import { node, svg, clip } from './core/dom.js';
   ];
 
   function brainHead(read) {
-    var head = node('header', 'surface-head');
-    var main = node('div', 'surface-main');
-    main.appendChild(node('p', 'page-eyebrow', 'Knowledge'));
-    main.appendChild(node('h1', 'surface-title', 'Second brain'));
-    main.appendChild(node('p', 'page-note',
+    // The one head grammar (the surface pass): this page built its own
+    // header with the old classes; it renders through the shared builder
+    // with the same words and its instrument beside the head.
+    var head = surfaceHead('Knowledge', 'Second brain',
       'The project landscape, read as an atlas: every project\u2019s six-week pulse and the ' +
-      'one line its last session left behind, with the decisions that need a person kept beside them.'));
-    head.appendChild(main);
-    head.appendChild(brainTool(read));
+      'one line its last session left behind, with the decisions that need a person kept beside them.',
+      brainTool(read));
     return head;
   }
 
