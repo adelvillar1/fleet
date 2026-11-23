@@ -472,6 +472,15 @@
         ' days carry a project yet. Rows written before routes named their session are counted in the bucket strip as they appear.');
       return;
     }
+    if (!projects.length && unclaimed.length) {
+      // The transition: the window's rows were written before routes named
+      // their session, so every call is in a bucket. The strip below says
+      // why; this line says what will change.
+      var waiting = el('p', 'foot',
+        'No project cards yet \u2014 the route rows in this window were written before routes named their session. New runs land here as they come.');
+      waiting.style.marginBottom = '14px';
+      cards.appendChild(waiting);
+    }
     projects.forEach(function (project) { cards.appendChild(projectCard(project, num(doc.window_days))); });
 
     if (unclaimed.length) {

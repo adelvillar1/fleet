@@ -1,12 +1,17 @@
 # Session Recap — 2026-11-23: the surface pass, an empty ledger, and two releases
 
-**Summary.** One day, two releases. **v0.9.2** (`3a9b9cb3`) shipped the rail-as-map
-and the drawer's bodies at the session's start. **v0.9.3** (`bb070183`) closes the
-day with the surface pass finished (R1–R10), routing folded into Reviews (D3), the
-known-issues ledger driven from seven open to **zero**, the face harness moved to
-Node 26 (the V8 segfault's real fix), and a new tokens-by-project instrument built
-end to end from an approved mockup. Gate: **2,824 Rust tests**, the face harness
-**2,007 checks across 290 cases** on Node 26.11.1.
+**Summary.** One day, **three releases**. **v0.9.2** (`3a9b9cb3`) shipped the
+rail-as-map and the drawer's bodies at the session's start. **v0.9.3** (`bb070183`)
+closed the day with the surface pass finished (R1–R10), routing folded into
+Reviews (D3), the known-issues ledger driven from seven open to **zero**, the face
+harness moved to Node 26 (the V8 segfault's real fix), and a new tokens-by-project
+instrument built end to end from an approved mockup. **v0.9.4** (`e2d26d41`)
+followed within the hour, after the owner reported the conversations list still
+showing non-human sessions and the tokens plugin missing: **every session is now
+tagged to a user or the system at birth**, the classifier under the old logs was
+tightened against the real archive, the plugin is installed, and the deployed face
+answers 0.9.4. Gate: **2,826 Rust tests**, the face harness **2,007 checks across
+290 cases** on Node 26.11.1.
 
 ---
 
@@ -17,6 +22,10 @@ end to end from an approved mockup. Gate: **2,824 Rust tests**, the face harness
   body (code, tree, markdown, xlsx, pptx via the sandboxed vendored renderers);
   the four themes re-derived into Indigo Studio. Its changelog section is the
   full list.
+- **v0.9.4 — ownership at birth, and the harness's traffic out of the list**
+  (`e2d26d41`, tag pushed to both remotes, gate green on a detached worktree;
+  assets: `fleet_0.9.4_aarch64.dmg`, the CLI tarball, the raw CLI feed artifact,
+  the signed updater + `.sig`, `latest.json` naming 0.9.4, cli sha `b6831fd5e4a5`).
 - **v0.9.3 — the surface pass, the empty ledger, Node 26, tokens** (`bb070183`,
   tag pushed to gitea **and** github; the gated four-leg gate ran on a detached
   worktree of the tag's commit before the tag existed). Assets: `fleet_0.9.3_aarch64.dmg`
@@ -24,6 +33,62 @@ end to end from an approved mockup. Gate: **2,824 Rust tests**, the face harness
   artifact `fleet-aarch64-apple-darwin` (43.2 MB), the signed updater
   `fleet.app.tar.gz` + `.sig`, and `latest.json` — the feed names 0.9.3 and its
   cli row's sha256 begins `3741e03f0914`.
+
+## The v0.9.4 hotfix — ownership at birth
+
+The owner's report (same evening): *"conversations is still showing session that
+were not human initiated"*, *"the token accounting plugin is not installed"*, and
+then the ruling behind both: *"a session should be tagged to a user or system, some
+sort of ownership needs to be there, this is critical when you onboard more
+users."*
+
+**Why it was still showing:** the deployed face was **0.9.2** — the human-only
+filter (R3) and the tokens plugin's `projects` key both landed after that tag. The
+fix was not live. But measuring the live archive showed a second layer: of the 120
+rows in the window, 80 were classed "yours" and ~29 of those were verbatim harness
+probes (`Reply with exactly…`, `Take one screenshot with computer_use…`,
+`Append one line reading…`), which the text classifier did not catch.
+
+**The structural fix (the owner's ruling):** `Start.initiator` — `{kind:
+user|system, id}` written at birth. The human surfaces (the face's conversations,
+the TUI chat, breakout rooms, lessons) write `user` with the identity (`owner`
+until a multi-user face supplies the authenticated id); scheduled runs, delegated
+children and probes (`fleet run --probe`) write `system`. `work_class` reads the
+tag **before any text rule**: a user's terse message stays theirs, and a
+system-started run with a work-shaped message is never the owner's. A log written
+before the field carries none, and the reader says so rather than inventing one.
+The `id` is the slot multi-user onboarding filters on.
+
+**The legacy fallback, tightened against the real archive:** the machinery matcher
+now catches the shapes the archive actually carries (verbatim-reply instructions,
+the computer_use/screenshot probes, "list the files using the list_dir tool",
+"create the file … containing exactly", "append one line reading",
+"do not call any tools", "run the shell command"/"run pwd", "probe:", "say hello" /
+"Say ok."). Measured on the live window: **29 probe rows hidden, zero human rows
+lost** — 80 "yours" → 50, nothing newly shown. The rule still needs a directive
+opener *and* the harness vocabulary, so "list the conversations by age", "take a
+look at the health rail", "create a plan…", "do a deep dive on the composer" and
+the owner's warmups stay named; the known limits (a task-shaped statement about a
+fixture such as `sample-board`, a bare shell command with no harness word) are in
+the test.
+
+**Pins:** the birth tag on every constructor (user for `create`/persona/room/lesson,
+system for scheduled/subagent/probe); the summary carries it; an old log's Start
+decodes with none; the class reads user → yours and system → background; the
+legacy verbatim probe still classes `probe`; the bridge's sidecar-mark test now
+uses a text-ambiguous probe, because the text-clear ones need no mark.
+
+**The deploy, once:** the binary replaced at `~/.fleet/bin/fleet` (0.9.4), the
+tokens bundle installed into the home and enabled, the LaunchAgent
+`com.fleet.gui` restarted with `kickstart -k`. Live: `/api/version` 0.9.4; the
+sessions window 88 rows — **48 yours**, 40 background; the plugin answers
+`cache` with `projects` (today one `unattributed` bucket: 6 models, 370 calls —
+the route rows written before the tag; project cards appear as new runs land).
+The installed bundle's transition line says exactly that.
+
+**A deploy lesson:** an in-place `cp` over the running binary's path kills the
+next exec of it (SIGKILL 137 — macOS refuses the modified inode the face still
+maps). Replace by **rename** (`rm` + `mv`), never by overwriting.
 
 ## The surface pass, finished (plan completed)
 
@@ -101,11 +166,11 @@ method and per-surface audit in `docs/architecture/2026-11-23-surface-audit.md`:
 
 ## Numbers
 
-- `cargo test`: **2,824 passed / 0 failed**; fmt, clippy (`-D warnings`) and the
+- `cargo test`: **2,826 passed / 0 failed**; fmt, clippy (`-D warnings`) and the
   release build clean.
 - Face harness: 2,007 checks across 290 cases, on Node 26.11.1.
 - Ledger: 593 rows, **0 open**.
-- One day's commits: 42 (from v0.9.2's cut through v0.9.3's).
+- One day's commits: 45 (from v0.9.2's cut through v0.9.4's).
 
 ## Doc updates
 
@@ -151,7 +216,8 @@ method and per-surface audit in `docs/architecture/2026-11-23-surface-audit.md`:
 
 ## Next steps
 
-- Deploy v0.9.3 to the app when the owner wants it (quit → rm → cp → re-sign →
-  open); the release assets are the source. Nothing was relaunched to verify.
+- **Multi-user**: the initiator's `id` is the slot; the face's authentication must
+  supply it (human surfaces currently record `owner`), and the sessions document's
+  `yours` count and the rail filter become per-viewer rather than per-home.
 - Decide the two 2026-10-29 drafts (close, resume, or cancel).
 - Optional: report the v25 V8 crash upstream with the 290-context reproducer.
