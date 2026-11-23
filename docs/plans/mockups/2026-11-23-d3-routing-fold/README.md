@@ -59,6 +59,26 @@ scorecard, the counterfactual replay, and every op section — untouched.
    The eyebrow names the region, the title the lens — the surface pass's own
    rule (R7). *Confirm.*
 
+## Gated 2026-11-23 — the owner's answers
+
+1. **Routing first** — it is the rail's first row and the page's landing.
+2. **Silent** — `#/router` is a `replaceState` onto
+   `#/calibration/routing`: no history entry, no notice.
+3. **The day controls merge** — confirmed; the surface's own instrument
+   (the day before/after, the gate review) is the day's control.
+4. **The wording stands** — the palette's row is **Routing** with the hint
+   *"a section of reviews"*.
+5. **The head** — **KNOWLEDGE / Reviews**; routing is the section.
+
+Implemented as drawn in `feat(reviews): routing is Reviews' first section
+(D3)` — the section carries the live decision, the declared chain, cost ×
+quality, the workload mix and the day's route rows; the standalone page,
+its panel and its renderer retired; the strip follows the selected section
+(the router's numbers over routing, the graded cells over the gate). The
+section's total row count now skips a builder that draws nothing for an
+empty day, and a section that cannot paint names it where the owner is
+looking — both found while landing the fold.
+
 ## On approval, the implementation is small and named
 
 - `#/router` folds to `#/calibration/routing` (the redirect); the Router

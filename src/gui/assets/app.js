@@ -1189,7 +1189,6 @@ import { node, svg, clip } from './core/dom.js';
     paneReceipts: document.getElementById('pane-receipts'),
     actions: document.getElementById('actions'),
     panelChat: document.getElementById('panel-chat'),
-    panelRouter: document.getElementById('panel-router'),
     panelDelegation: document.getElementById('panel-delegation'),
     panelLearning: document.getElementById('panel-learning'),
     panelMemory: document.getElementById('panel-memory'),
@@ -1296,7 +1295,6 @@ import { node, svg, clip } from './core/dom.js';
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
-    routerBoard: document.getElementById('router-board'),
     delegationBoard: document.getElementById('delegation-board'),
     memoryBoard: document.getElementById('memory-board'),
     learningBoard: document.getElementById('learning-board'),
@@ -4230,11 +4228,10 @@ import { node, svg, clip } from './core/dom.js';
     paintQueue();
     paintProcess();
     paintGutter();
-    // The router's live decision is the run's own `routed` event, so it
-    // is repainted with the stream rather than waiting for the board's
-    // clock. The rest of that panel is the board's read and does not move
-    // on an event.
-    if (face.panel === 'router') paintRouter();
+    // The live decision is the run's own `routed` event, so it repaints
+    // with the stream rather than waiting for a board's clock — it lives in
+    // Reviews' routing section now (D3).
+    if (face.panel === 'calibration') paintCalibration();
   }
 
   function paintFacts() {
@@ -7056,11 +7053,16 @@ import { node, svg, clip } from './core/dom.js';
     }
     gates.appendChild(pin);
     var payg = node('div', 'gate');
-    payg.dataset.state = read.payg.allowed ? 'on' : 'off';
+    // The reserve is a reading the document may not carry (a partial read,
+    // a fixture): absent is "not reported", never a crash or a false off.
+    var reserve = read.payg && read.payg.allowed;
+    payg.dataset.state = reserve ? 'on' : 'off';
     payg.appendChild(node('span', 'gate-dot'));
-    payg.appendChild(node('span', null, read.payg.allowed
+    payg.appendChild(node('span', null, reserve
       ? 'payg may serve \u2014 a chain names it'
-      : 'payg may not serve \u2014 ' + (read.payg.providers.join(', ') || 'nothing') + ' is the reserve'));
+      : read.payg
+        ? 'payg may not serve \u2014 ' + ((read.payg.providers || []).join(', ') || 'nothing') + ' is the reserve'
+        : 'payg state not reported by this read'));
     gates.appendChild(payg);
     var judge = node('div', 'gate');
     judge.dataset.state = read.judge.lane ? 'on' : 'off';
@@ -7474,102 +7476,6 @@ import { node, svg, clip } from './core/dom.js';
     return el0;
   }
 
-  function paintRouter() {
-    var read = face.router;
-    el.routerBoard.textContent = '';
-    if (!read) {
-      el.routerBoard.appendChild(surfaceHead('Advanced', 'Router',
-        'Where this run\u2019s work went, what it tried first, and what the day has served.', null));
-      // A first read that refused names its refusal: the loading card is
-      // for a read still in flight, and a refusal that leaves it up reads
-      // as a board that never arrives (KI-422's other half).
-      if (face.routerRefused && face.routerRefused.length) {
-        var failed = boardCard(12, 'the read did not land', null, null);
-        failed.appendChild(node('p', 'board-empty',
-          sentence('router', 'refused', face.routerRefused)));
-        el.routerBoard.appendChild(failed);
-      } else {
-        var waiting = boardCard(12, 'reading', null, null);
-        waiting.appendChild(node('p', 'board-empty', sentence('router', 'loading')));
-        el.routerBoard.appendChild(waiting);
-      }
-      el.routerBoard.appendChild(decisionCard());
-      return;
-    }
-    if (face.routerRefused && face.routerRefused.length) {
-      // The read that just failed, named beside the board it could not
-      // replace: the numbers on screen are the last good ones.
-      var stale = boardCard(12, 'the read did not land', null, null);
-      stale.appendChild(node('p', 'board-empty',
-        sentence('router', 'refused', face.routerRefused) +
-        ' \u2014 the board below is the last read that landed.'));
-      el.routerBoard.appendChild(stale);
-    }
-    var tiers = read.tiers || [];
-    var totals = read.totals || {};
-    var errors = totals.errors || 0;
-    // The document's rate is already a percentage (the bridge divides by
-    // the calls it counted), so the strip takes it as it comes — the ×100
-    // here printed the live console's "10000% SUCCESS" (KI-422's second
-    // find) while the ledger tile beside it read 100%.
-    var rate = totals.success_rate == null ? '\u2014' : Math.round(totals.success_rate) + '%';
-    var instrument = surfaceInstrument('the router', read.pin || 'no pin',
-      'judge ' + (read.judge ? read.judge.lane : '\u2014') + ' \u00b7 ' + tiers.length + ' tier chains',
-      [
-        {
-          label: 'ask sys1 for a judgment',
-          run: function () {
-            ask('use the judgment service to review today\u2019s routing decisions and report the fit');
-          }
-        },
-        {
-          label: 'open settings',
-          run: function () { window.location.hash = '#/settings'; }
-        }
-      ]);
-    el.routerBoard.appendChild(surfaceHead('Advanced', 'Router',
-      'Where this run\u2019s work went, what it tried first, and what the day has served.', instrument));
-    el.routerBoard.appendChild(surfaceStrip([
-      [totals.calls || 0, 'calls today', null, function () {
-        window.location.hash = '#/calibration/routing';
-      }],
-      [totals.ok || 0, 'ok'],
-      [errors, 'errors', errors ? 'down' : null],
-      [rate, 'success'],
-      [totals.total_tokens || 0, 'tokens'],
-      [read.judge ? read.judge.lane : '\u2014', 'judge']
-    ], read.pin ? 'pinned to ' + read.pin : 'no pin'));
-    // P7's selected sentence: the pin is this surface's selection — the
-    // model the run's calls are sent to, or the judge that picks per call.
-    el.routerBoard.appendChild(selectedLine('router', { pin: read.pin }));
-
-    var left = node('div', 'surface-column');
-    left.appendChild(decisionCard());
-    left.appendChild(chainCard(read));
-    left.appendChild(rowsCard(read));
-    el.routerBoard.appendChild(left);
-
-    // The ledger's tiles read the totals, the scatter grades the day's
-    // models on the rail, and the hour column chart and the model donut
-    // retired (P4): a day's shape is the rows' own trail now, and the
-    // scatter's grade per (model × workload) says what the mix never
-    // could.
-    var rail = [
-      scatterCard(read),
-      mixSplitCard(read),
-      cacheCard(read)
-    ];
-    var guidance = guidanceCard(read);
-    if (guidance) rail.push(guidance);
-    el.routerBoard.appendChild(surfaceRail(rail));
-
-    if (read.refused && read.refused.length) {
-      var refused = boardCard(12, 'reads that did not land', 'the board\u2019s read');
-      refused.appendChild(node('p', 'board-empty', read.refused.join(' \u00b7 ')));
-      el.routerBoard.appendChild(refused);
-    }
-  }
-
   // The board's read is a document, not a derivation: it is fetched, and
   // it is refreshed while the panel is showing because a day's ledger
   // moves without the log saying anything.
@@ -7589,12 +7495,12 @@ import { node, svg, clip } from './core/dom.js';
         var said = refusals(doc);
         if (said) {
           face.routerRefused = said;
-          if (face.panel === 'router') paintRouter();
+          if (face.panel === 'calibration') paintCalibration();
           return;
         }
         face.routerRefused = null;
         face.router = doc;
-        if (face.panel === 'router') paintRouter();
+        if (face.panel === 'calibration') paintCalibration();
       })
       .catch(function () { });
   }
@@ -9338,7 +9244,7 @@ import { node, svg, clip } from './core/dom.js';
       count: chosen.badge,
       total: (read.facts || []).length
     }));
-    chosen.paint().forEach(function (card) { body.appendChild(card); });
+    chosen.paint().forEach(function (card) { if (card) body.appendChild(card); });
     el.memoryBoard.appendChild(body);
   }
 
@@ -12705,7 +12611,6 @@ import { node, svg, clip } from './core/dom.js';
       case 'desk': paintDesk(); break;
       case 'learning': paintLearning(); break;
       case 'calibration': paintCalibration(); break;
-      case 'router': paintRouter(); break;
       case 'delegation': paintDelegation(); break;
       case 'bots': paintBots(); break;
       case 'sessions': paintSessions(); break;
@@ -18226,15 +18131,10 @@ import { node, svg, clip } from './core/dom.js';
     var raw = (window.location.hash || '').replace(/^#\/?/, '').split('?')[0];
     var parts = raw.split('/');
     if (parts[0] === 'calibration' && parts[1]) return decodeURIComponent(parts[1]);
-    try {
-      var stored = window.localStorage.getItem('fleet-calibration-section');
-      if (stored) return stored;
-    } catch (error) { }
-    return 'the-gate';
-  }
-
-  function rememberCalibrationSection(id) {
-    try { window.localStorage.setItem('fleet-calibration-section', id); } catch (error) { }
+    // D3: Reviews opens on routing — the section's first, and the landing
+    // when nothing names one. The old remembered section (the gate) no
+    // longer decides where an owner arrives.
+    return 'routing';
   }
 
   var CALIBRATION_OPS = [
@@ -18265,7 +18165,31 @@ import { node, svg, clip } from './core/dom.js';
   /// section — the rail says what the day held, not what it might.
   function calibrationSections(read) {
     var stream = read.stream || {};
+    // D3: routing is Reviews' FIRST section and the page's landing. The
+    // standalone Router page retired into it, whole: the live decision, the
+    // declared chain, cost × quality, the workload mix and the day's route
+    // rows — every builder the old page used, here.
     var sections = [{
+      id: 'routing', name: 'routing', icon: 'router',
+      badge: face.router && face.router.totals ? (face.router.totals.calls || 0) : null,
+      badgeTitle: 'the live routing decision, the chains and the day\u2019s route rows',
+      paint: function () {
+        var cards = [decisionCard()];
+        if (face.router && !refusals(face.router)) {
+          cards.push(chainCard(face.router));
+          cards.push(scatterCard(face.router));
+          cards.push(mixSplitCard(face.router));
+          cards.push(rowsCard(face.router));
+        } else if (face.router || face.routerRefused) {
+          var refused = boardCard(12, 'reads that did not land', 'the board\u2019s read');
+          refused.appendChild(node('p', 'board-empty',
+            (face.router ? refusals(face.router) : face.routerRefused || []).join(' \u00b7 ')));
+          cards.push(refused);
+        }
+        return cards;
+      }
+    }];
+    sections.push({
       id: 'the-gate', name: 'the gate', icon: 'gate',
       badge: (read.cells || []).length, badgeTitle: (read.cells || []).length + ' fit cells',
       // P6: the day's gate, then the two questions the gate cannot answer
@@ -18273,18 +18197,6 @@ import { node, svg, clip } from './core/dom.js';
       // different floor would have done to the same decisions.
       paint: function () {
         return [calibrationGate(read), graderScorecard(read), counterfactualCard(read)];
-      }
-    }];
-    // Routing lives in Reviews too (the project-centered workspace plan):
-    // the live decision and the tier chains, beside the graded stream —
-    // the Routing surface's own cards, reached without leaving the lens.
-    sections.push({
-      id: 'routing', name: 'routing', icon: 'router',
-      badge: null, badgeTitle: 'the live routing decision and the tier chains',
-      paint: function () {
-        var cards = [decisionCard()];
-        if (face.router && !refusals(face.router)) cards.push(chainCard(face.router));
-        return cards;
       }
     });
     CALIBRATION_OPS.forEach(function (named) {
@@ -18318,7 +18230,6 @@ import { node, svg, clip } from './core/dom.js';
       folded: !!face.calibrationRailFolded,
       store: 'fleet-calibration-rail',
       onPick: function (id) {
-        rememberCalibrationSection(id);
         var day = calibrationDay();
         window.location.hash = '#/calibration/' + id + (day ? '?day=' + day : '');
         paintCalibration();
@@ -18349,15 +18260,30 @@ import { node, svg, clip } from './core/dom.js';
       || sections[0];
     var body = node('div', 'section-body');
     body.dataset.section = chosen.id;
-    var cards = chosen.paint();
+    var cards;
+    try {
+      cards = chosen.paint();
+    } catch (error) {
+      // A section that cannot paint names it where the owner is looking —
+      // never a blank body that reads as an empty day.
+      var failed = boardCard(12, 'the section did not paint', null, null);
+      failed.appendChild(node('p', 'board-empty',
+        'section \u201c' + chosen.name + '\u201d could not be drawn: ' +
+        ((error && error.message) || error)));
+      console.error('CAL SECTION FAIL', chosen.id, error && error.stack || error);
+      cards = [failed];
+    }
     var sectionRows = cards.reduce(function (sum, card) {
-      return sum + (card.querySelectorAll ? card.querySelectorAll('.cfg-item, .list-row').length : 0);
+      // A section may return no card for an empty day (the scatter, the
+      // rows); the count must skip the hole rather than dereference it.
+      return sum + (card && card.querySelectorAll
+        ? card.querySelectorAll('.cfg-item, .list-row').length : 0);
     }, 0);
     body.appendChild(selectedLine('calibration', {
       section: chosen.name, rows: sectionRows,
       total: read.rows_read, day: read.day
     }));
-    cards.forEach(function (card) { body.appendChild(card); });
+    cards.forEach(function (card) { if (card) body.appendChild(card); });
     el.calibrationBoard.appendChild(body);
   }
 
@@ -18365,7 +18291,7 @@ import { node, svg, clip } from './core/dom.js';
     var read = face.calibration;
     el.calibrationBoard.textContent = '';
     if (!read) {
-      el.calibrationBoard.appendChild(pageHead('System', 'Reviews',
+      el.calibrationBoard.appendChild(pageHead('Knowledge', 'Reviews',
         'Every decision, graded against what actually happened \u2014 and your word on each.',
         null));
       var waiting = boardCard(12, 'reading', null, null);
@@ -18380,7 +18306,7 @@ import { node, svg, clip } from './core/dom.js';
       return;
     }
     if (!read.rows_read) {
-      el.calibrationBoard.appendChild(surfaceHead('Knowledge', 'Calibration',
+      el.calibrationBoard.appendChild(surfaceHead('Knowledge', 'Reviews',
         'The day\u2019s stream, the judged quality of what served, and the gate that decides ' +
         'whether the failover may learn from it.', null));
       el.calibrationBoard.appendChild(node('p', 'board-empty',
@@ -18416,28 +18342,45 @@ import { node, svg, clip } from './core/dom.js';
           }
         }
       ]);
-    el.calibrationBoard.appendChild(surfaceHead('Knowledge', 'Calibration',
+    el.calibrationBoard.appendChild(surfaceHead('Knowledge', 'Reviews',
       'The day\u2019s stream, the judged quality of what served, and the gate that decides whether the failover may learn from it.',
       instrument));
     // The strip's doors (R5): the route-row numbers open the routing
     // section; the fit and gate numbers open the gate. Each destination
     // is the section that actually shows that population.
     var toSection = function (id) {
-      rememberCalibrationSection(id);
       window.location.hash = '#/calibration/' + id;
       paintCalibration();
     };
-    el.calibrationBoard.appendChild(surfaceStrip([
-      [read.rows_read, 'rows, the day\u2019s last ' + read.cap, null,
-        function () { toSection('routing'); }],
-      [judged, 'judged', null, function () { toSection('routing'); }],
-      [cells.length, 'fit cells', null, function () { toSection('the-gate'); }],
-      [fit, 'fit', fit ? 'live' : null, function () { toSection('the-gate'); }],
-      [informing, 'informing the failover', null,
-        function () { toSection('the-gate'); }],
-      [read.gate && read.gate.informs_failover ? 'on' : 'off', 'failover gate', null,
-        function () { toSection('the-gate'); }]
-    ], read.day + (day ? ' \u00b7 a past day, the hash\u2019s own' : ' \u00b7 today')));
+    // ONE strip per surface, and it follows the section it sits over (D3,
+    // the gated mock): routing's numbers are the router's own day — calls,
+    // ok, errors, success, tokens, judge — each a door back to the section;
+    // the gate's numbers are the day's graded cells.
+    var showingRouting = calibrationSectionId() === 'routing';
+    var rt = (face.router && face.router.totals) || {};
+    var rtErrors = rt.errors || 0;
+    var rtRate = rt.success_rate == null ? '\u2014' : Math.round(rt.success_rate) + '%';
+    el.calibrationBoard.appendChild(showingRouting
+      ? surfaceStrip([
+        [rt.calls || 0, 'calls today', null, function () { toSection('routing'); }],
+        [rt.ok || 0, 'ok', null, function () { toSection('routing'); }],
+        [rtErrors, 'errors', rtErrors ? 'down' : null, function () { toSection('routing'); }],
+        [rtRate, 'success', null, function () { toSection('routing'); }],
+        [rt.total_tokens || 0, 'tokens', null, function () { toSection('routing'); }],
+        [face.router && face.router.judge ? face.router.judge.lane : '\u2014', 'judge', null,
+          function () { toSection('routing'); }]
+      ], read.day + (day ? ' \u00b7 a past day, the hash\u2019s own' : ' \u00b7 today'))
+      : surfaceStrip([
+        [read.rows_read, 'rows, the day\u2019s last ' + read.cap, null,
+          function () { toSection('routing'); }],
+        [judged, 'judged', null, function () { toSection('routing'); }],
+        [cells.length, 'fit cells', null, function () { toSection('the-gate'); }],
+        [fit, 'fit', fit ? 'live' : null, function () { toSection('the-gate'); }],
+        [informing, 'informing the failover', null,
+          function () { toSection('the-gate'); }],
+        [read.gate && read.gate.informs_failover ? 'on' : 'off', 'failover gate', null,
+          function () { toSection('the-gate'); }]
+      ], read.day + (day ? ' \u00b7 a past day, the hash\u2019s own' : ' \u00b7 today')));
     paintCalibrationRail(read);
     paintCalibrationSection(calibrationSectionId());
   }
@@ -20544,7 +20487,7 @@ import { node, svg, clip } from './core/dom.js';
     })[0] || sections[0];
     var body = node('div', 'section-body');
     body.dataset.section = picked.id;
-    picked.paint().forEach(function (card) { body.appendChild(card); });
+    picked.paint().forEach(function (card) { if (card) body.appendChild(card); });
     el.brainBoard.appendChild(body);
   }
 
@@ -32224,6 +32167,17 @@ import { node, svg, clip } from './core/dom.js';
     .concat(['bundle', 'later']);
 
   function showRoute() {
+    // D3 (the surface pass, owner-gated 2026-11-23): Routing is Reviews'
+    // FIRST section; the standalone page retires. The fold is silent — a
+    // replace, no history entry, no notice — and the address becomes the
+    // one that names the place truthfully.
+    if ((window.location.hash || '').replace(/^#\/?/, '').split('/')[0] === 'router') {
+      try { window.history.replaceState(null, '', '#/calibration/routing'); } catch (error) { }
+      if (face.panel !== 'calibration' || !face.calibration) {
+        // fall through to the dispatch below, which reads the calibration
+        // palette from the corrected hash
+      }
+    }
     var addr = parseAddress();
     var parts = addr.parts;
     var which = addr.lens;
@@ -32383,7 +32337,6 @@ import { node, svg, clip } from './core/dom.js';
       // then refreshes in the background.
       connections: function () { paintTissue(); readTissue(false); },
       board: function () { paintBoard(); readBoard(true).then(paintBoard); },
-      router: function () { paintRouter(); readRouter(true).then(paintRouter); },
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
       memory: function () {
         paintMemory();
@@ -34828,7 +34781,8 @@ import { node, svg, clip } from './core/dom.js';
           // Whether the surface is live is on the row, not hidden: a later
           // increment says so here rather than opening to a surprise.
           row.appendChild(node('span', 'palette-row-hint',
-            BUILT.indexOf(item[0]) === -1 ? 'later' : 'open'));
+            item[0] === 'router' ? 'a section of reviews'
+              : BUILT.indexOf(item[0]) === -1 ? 'later' : 'open'));
         }
         row.addEventListener('click', function () { choosePalette(item[0]); });
         if (!first) first = row;

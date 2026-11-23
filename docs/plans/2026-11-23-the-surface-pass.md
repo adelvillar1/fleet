@@ -295,13 +295,16 @@ the token discipline; R9 every remaining surface classified with
 delegation's run cards opened and the drawer's tab renamed work; R10 the
 card grid, the rails-collapsed layouts, and the PWA's shell at four sizes.
 
-**Handed off with its mockup, awaiting the owner's gate:** the router fold —
-calibration's routing section already renders the router's chain card, so
-the standalone page duplicates it (D3 of the redesign). The mockup is
-`docs/plans/mockups/2026-11-23-d3-routing-fold/` (Reviews with routing
-first; both themes at 1440, the 820 composition; measured, no overflow),
-and the README carries the five decision points with recommendations. No
-code until the gate settles them.
+**The router fold is DONE (D3), gated and implemented.** The owner's five
+answers (routing first; the fold silent; the day controls merged; the
+palette's wording kept; the head KNOWLEDGE / Reviews) are recorded in
+`docs/plans/mockups/2026-11-23-d3-routing-fold/README.md`. Shipped: routing
+is Reviews' first rail section and its landing; the routing section carries
+the live decision, the declared chain, cost × quality, the workload mix and
+the day's route rows; the strip follows the section (the router's day
+numbers over routing, the graded cells over the gate); `#/router` folds
+silently; the standalone panel, renderer and four-sentence set retired;
+the palette row reads *"a section of reviews"*.
 
 ## Constraints
 

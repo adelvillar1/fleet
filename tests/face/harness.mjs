@@ -2243,9 +2243,13 @@ async function theHealthCardNamesWhatIsDownAndTheRepair() {
 
 async function aRoutedEventPaintsTheLiveDecisionWithItsFacts() {
   const page = boot({
-    hash: '#/router',
+    hash: '#/calibration/routing',
     documents: {
+      router: { type: 'router', read_at: 'now', refused: [], judge: { lane: 'sys1' },
+        totals: { calls: 0 }, tiers: [], recent: [], workloads: [], scatter: [] },
+      calibration: calibrationStub(),
       state: (asked) => ({ ...emptyState(asked), session: asked }),
+      onboard: onboardDoc({ door: false }),
     },
   });
   await flush();
@@ -2261,7 +2265,7 @@ async function aRoutedEventPaintsTheLiveDecisionWithItsFacts() {
     execution: { label: 'sequential', confidence: 0.91 },
   });
   await flush();
-  const board = page.text('router-board');
+  const board = page.text('calibration-board');
   check('KI-510 the live decision names its model', /step-3\.7-flash/.test(board), board.slice(0, 300));
   check('KI-510 the facts carry the workload row', /workload/.test(board) &&
     /standard_code/.test(board), board.slice(0, 300));
@@ -8803,6 +8807,15 @@ async function theStrategyStepShowsItsPreview() {
   }
 
 
+// D3 (the surface pass, owner-gated 2026-11-23): the router's cards live in
+// Reviews' routing section now, so the cases that exercise them boot that
+// section with the minimal calibration read the surface paints from.
+const calibrationStub = () => ({
+  type: 'calibration', read_at: 'now', day: '2026-10-30', cap: 512, rows_read: 64,
+  gate: { informs_failover: true, name: 'calibration.informs_failover' },
+  fit_rule: { rows: 8, span: 0.3 }, cells: [], stream: {},
+});
+
   // KI-422: a successful read carries `refused: []`, and an empty array is
   // truthy in JS — so a reader that tests the key calls every good document
   // a refusal. The router board did exactly that and never left its
@@ -8831,16 +8844,17 @@ async function theStrategyStepShowsItsPreview() {
       ],
     };
     const page = boot({
-      hash: '#/router',
+      hash: '#/calibration/routing',
       documents: {
         router: routerDoc,
+        calibration: calibrationStub(),
         state: (asked) => emptyState(asked),
         onboard: onboardDoc({ door: false }),
       },
     });
     page.open();
     await flush(120);
-    const board = page.IDS['router-board'];
+    const board = page.IDS['calibration-board'];
     const text = String(board.textContent);
     check('KI-422 a good router read paints the board',
       text.indexOf('has not landed yet') === -1 && text.indexOf('14') !== -1,
@@ -8853,16 +8867,17 @@ async function theStrategyStepShowsItsPreview() {
 
     // The refusal path still names the read that failed, beside the board.
     const refusedPage = boot({
-      hash: '#/router',
+      hash: '#/calibration/routing',
       documents: {
         router: { ...routerDoc, refused: ['the day\u2019s stream could not be read'] },
+        calibration: calibrationStub(),
         state: (asked) => emptyState(asked),
         onboard: onboardDoc({ door: false }),
       },
     });
     refusedPage.open();
     await flush(120);
-    const refusedText = String(refusedPage.IDS['router-board'].textContent);
+    const refusedText = String(refusedPage.IDS['calibration-board'].textContent);
     check('KI-422 a refused router read is named',
       refusedText.indexOf('could not be read') !== -1,
       refusedText.slice(0, 160));
@@ -8905,16 +8920,17 @@ async function theStrategyStepShowsItsPreview() {
       ],
     };
     const page = boot({
-      hash: '#/router',
+      hash: '#/calibration/routing',
       documents: {
         router: routerDoc,
+        calibration: calibrationStub(),
         state: (asked) => emptyState(asked),
         onboard: onboardDoc({ door: false }),
       },
     });
     page.open();
     await flush(120);
-    const text = String(page.IDS['router-board'].textContent);
+    const text = String(page.IDS['calibration-board'].textContent);
     // The graded point renders its cell's own figures: the wrong-rate
     // it was judged at and the cost per correct call the cell reports.
     check('P4 the scatter plots the graded point at its cell\u2019s own rate',
@@ -8975,16 +8991,17 @@ async function theStrategyStepShowsItsPreview() {
       scatter: [],
     };
     const page = boot({
-      hash: '#/router',
+      hash: '#/calibration/routing',
       documents: {
         router: routerDoc,
+        calibration: calibrationStub(),
         state: (asked) => emptyState(asked),
         onboard: onboardDoc({ door: false }),
       },
     });
     page.open();
     await flush(120);
-    const board = page.IDS['router-board'];
+    const board = page.IDS['calibration-board'];
     check('P4 the hour column chart retired',
       page.rows('.chart-col').length === 0 &&
         String(board.textContent).indexOf('by the hour') === -1,
@@ -8998,17 +9015,15 @@ async function theStrategyStepShowsItsPreview() {
       page.rows('.rrow').length === 2 && page.rows('.filter-chip').length === 0,
       'rows: ' + page.rows('.rrow').length + ' chips: ' + page.rows('.filter-chip').length);
 
-    // R7: the address tells the truth. The router is an advanced page; the
-    // crumb names it by its own plain name (it used to read "SETTINGS /
-    // advanced" and never name the page), and the eyebrow agrees with the
-    // crumb's group instead of saying "Intelligence" over an advanced page.
-    check('R7 the router\u2019s crumb names its place and its page',
-      page.text('crumb-group') === 'advanced' &&
-        page.text('crumb-page') === 'Routing',
+    // D3: the router's cards are a section of Reviews now; the address
+    // tells that truth (knowledge / reviews, eyebrow Knowledge).
+    check('R7 the routing section\u2019s crumb names Reviews',
+      page.text('crumb-group') === 'knowledge' &&
+        page.text('crumb-page') === 'reviews',
       page.text('crumb-group') + ' / ' + page.text('crumb-page'));
-    check('R7 the router\u2019s eyebrow agrees with its place',
+    check('R7 the routing section\u2019s eyebrow agrees with its place',
       page.rows('.page-head .page-eyebrow').length === 1 &&
-        page.rows('.page-head .page-eyebrow')[0].textContent === 'Advanced',
+        page.rows('.page-head .page-eyebrow')[0].textContent === 'Knowledge',
       page.rows('.page-head .page-eyebrow').map((e) => e.textContent).join(' | '));
 
     // R7: the chain rows are rows, not cards inside the card (one
@@ -9088,7 +9103,7 @@ async function theStrategyStepShowsItsPreview() {
     const cases = [
       ['memory', 'Knowledge'], ['learning', 'Knowledge'],
       ['calibration', 'Knowledge'], ['workspace-history', 'System'],
-      ['router', 'Advanced'], ['delegation', 'Advanced'],
+      ['delegation', 'Advanced'],
     ];
     for (const [route, expected] of cases) {
       const page = boot({
@@ -14406,24 +14421,47 @@ async function theCalibrationRailCarriesTheGateAndTheDay() {
   await flush();
   page.open();
   await flush(80);
+  check('D3 Reviews is the page\u2019s title, routing its first section',
+    page.rows('.page-head .page-title')[0].textContent === 'Reviews',
+    page.rows('.page-head .page-title').map((t) => t.textContent).join(' | '));
 
   // The rail: the gate first, then the ops the day carries — the four
   // the surface used to drop among them. An op with no rows renders no
   // section.
   const railRows = page.rows('.section-rail-row');
   const railText = railRows.map((row) => row.textContent);
-  check('CAL the rail leads with the gate and carries the day\u2019s ops',
+  check('CAL the rail leads with routing (D3), the gate second, then the day\u2019s ops',
     railRows.length === 7 &&
-      railText[0].includes('the gate') &&
-      railText.some((t) => t.includes('routing')) &&
+      railText[0].includes('routing') &&
+      railText[1].includes('the gate') &&
       railText.some((t) => t.includes('delegations')) &&
       railText.some((t) => t.includes('embed timings')) &&
       railText.some((t) => t.includes('lifecycles')) &&
       !railText.some((t) => t.includes('turns')),
     railText.join(' | '));
-  check('CAL one section renders at a time',
+  check('CAL one section renders at a time, and Reviews lands on routing',
     page.rows('.section-body').length === 1 &&
-      page.rows('.section-body')[0].dataset.section === 'the-gate',
+      page.rows('.section-body')[0].dataset.section === 'routing',
+    page.rows('.section-body').map((b) => b.dataset.section).join(','));
+
+  // D3: #/router folds silently onto this section — a replace, no notice,
+  // and the standalone page is gone.
+  const folded = bootCalibration('#/router');
+  await flush();
+  folded.open();
+  await flush(140);
+  check('D3 #/router folds silently onto Reviews\u2019 routing section',
+    folded.window.location.hash === '#/calibration/routing' &&
+      folded.IDS['panel-calibration'].hidden === false &&
+      !folded.IDS['panel-router'],
+    folded.window.location.hash);
+
+  // The gate's own checks below select its section (D3 changes the landing,
+  // not the gate).
+  page.hash('#/calibration/the-gate');
+  await flush(80);
+  check('CAL the gate section carries the gate',
+    page.rows('.section-body')[0].dataset.section === 'the-gate',
     page.rows('.section-body').map((b) => b.dataset.section).join(','));
 
   // The gate section: the cells as one-line rows with the fit badge and
@@ -20986,39 +21024,27 @@ async function p7BotsNamesItsFourSentences() {
     selected.text('bots-board').slice(0, 160));
 }
 
-async function p7RouterNamesItsFourSentences() {
+async function p7RoutingSectionNamesItsRefusal() {
+  // D3 retired the standalone page, and its four-sentence set with it; the
+  // section still owes an honest refusal — that one state is pinned here.
   const blank = {
     type: 'router', read_at: 'now', refused: [],
     cache: { entries: 0, keyed: false, workloads: [] }, guidance: [],
-    hours: [], judge: { default_workload: 'quick', lane: 'sys1' },
+    judge: { default_workload: 'quick', lane: 'sys1' },
     judged: { cached: 0, errors: 0, fresh: 0 }, models: [],
-    payg: { allowed: true, providers: [] },
-    pin: null, recent: [], tiers: [], totals: { calls: 0 }, workloads: [],
+    payg: { allowed: true, providers: [] }, pin: null, recent: [], tiers: [],
+    totals: { calls: 0 }, workloads: [], scatter: [],
   };
-  const loading = boot({ hash: '#/router', documents: { router: blank } });
-  check('P7 router loading names the live decision it does not wait for',
-    /Still loading. The live decision below/.test(loading.text('router-board')),
-    loading.text('router-board').slice(0, 140));
-
-  const refused = boot({ hash: '#/router',
-    documents: { router: { ...blank, refused: ['the ledger is not readable'] } } });
-  await flush(); refused.open(); await flush(80);
-  check('P7 router refusal names what refused',
-    /the ledger is not readable/.test(refused.text('router-board')),
-    refused.text('router-board').slice(0, 160));
-
-  const empty = boot({ hash: '#/router', documents: { router: blank } });
-  await flush(); empty.open(); await flush(80);
-  check('P7 router empty names where the rows will come from',
-    /No route rows today/.test(empty.text('router-board')),
-    empty.text('router-board').slice(0, 160));
-
-  const pinned = boot({ hash: '#/router',
-    documents: { router: { ...blank, pin: 'anthropic/claude' } } });
-  await flush(); pinned.open(); await flush(80);
-  const said = pinned.rows('[data-state="selected"]').map((one) => one.textContent).join(' | ');
-  check('P7 router selected names the pin it is sending calls to',
-    /pinned to anthropic\/claude/.test(said), said.slice(0, 160));
+  const refused = boot({ hash: '#/calibration/routing', documents: {
+    router: { ...blank, refused: ['the ledger is not readable'] },
+    calibration: calibrationStub(),
+    state: (asked) => emptyState(asked),
+    onboard: onboardDoc({ door: false }),
+  } });
+  await flush(); refused.open(); await flush(120);
+  check('P7 the routing section names what refused',
+    /the ledger is not readable/.test(refused.text('calibration-board')),
+    refused.text('calibration-board').slice(0, 160));
 }
 
 async function p7DelegationNamesItsFourSentences() {
@@ -21721,7 +21747,7 @@ function p6CalibrationDoc(extra) {
 }
 
 async function p6CalibrationScorecardPerOp() {
-  const page = boot({ hash: '#/calibration', documents: {
+  const page = boot({ hash: '#/calibration/the-gate', documents: {
     calibration: p6CalibrationDoc(), state: (asked) => emptyState(asked),
   } });
   await flush(); page.open(); await flush(160);
@@ -21756,7 +21782,7 @@ async function p6CalibrationScorecardPerOp() {
 }
 
 async function p6CalibrationCounterfactualNamesEveryFlip() {
-  const page = boot({ hash: '#/calibration', documents: {
+  const page = boot({ hash: '#/calibration/the-gate', documents: {
     calibration: p6CalibrationDoc(), state: (asked) => emptyState(asked),
   } });
   await flush(); page.open(); await flush(160);
@@ -21817,7 +21843,7 @@ async function p6CalibrationCounterfactualRefusesAnEmptyWindow() {
   doc.replay = { floor: 0.5, default_workload: 'quick', span: 7, per_day: 200,
     days: [], rows: [],
     refused: ['no judged route row in the seven days ending 2026-11-21 under /tmp/logs'] };
-  const page = boot({ hash: '#/calibration', documents: {
+  const page = boot({ hash: '#/calibration/the-gate', documents: {
     calibration: doc, state: (asked) => emptyState(asked),
   } });
   await flush(); page.open(); await flush(160);
@@ -21856,7 +21882,7 @@ async function p6CalibrationNamesItsFourSentences() {
       empty.text('calibration-board')),
     empty.text('calibration-board').slice(0, 200));
 
-  const selected = boot({ hash: '#/calibration', documents: {
+  const selected = boot({ hash: '#/calibration/the-gate', documents: {
     calibration: p6CalibrationDoc(), state: (asked) => emptyState(asked),
   } });
   await flush(); selected.open(); await flush(160);
@@ -22666,7 +22692,7 @@ const cases = [
   ['P7 desk names its four sentences', p7DeskNamesItsFourSentences],
   ['P7 huddles names its four sentences', p7HuddlesNamesItsFourSentences],
   ['P7 bots names its four sentences', p7BotsNamesItsFourSentences],
-  ['P7 router names its four sentences', p7RouterNamesItsFourSentences],
+  ['P7 the routing section names its refusal', p7RoutingSectionNamesItsRefusal],
   ['P7 delegation names its four sentences', p7DelegationNamesItsFourSentences],
   ['P7 memory names its four sentences', p7MemoryNamesItsFourSentences],
   ['P6 settings opens on five postures', p6SettingsOpensOnFivePostures],

@@ -234,15 +234,16 @@ cards, cards with no semantic press inside, nested cards).
 - **Should be:** kept as the reference form grammar; audit only its labels
   and grouping.
 
-### Router
+### Router — now Reviews' first section (D3, gated and shipped)
 - **Purpose:** where the work went, what it tried first, what the day served.
 - **Today:** six stat numbers (15 calls, 15 OK, 0 errors, 100% success, 0
   tokens, sys1 judge) with no press; "the declared chain" card holding nine
   nested chain rows; a floating instrument (ask sys1, open settings); the
   crumb `SETTINGS / advanced` contradicts the eyebrow `INTELLIGENCE`.
-- **Should be:** the chains flattened to rows; the six numbers doors; the
-  crumb fixed; the model chips keep their copy press (they work and are
-  keyboard-reachable — the one good nested unit).
+- **Shipped:** the chains are rows inside the card; the numbers are doors;
+  the crumb reads `knowledge / reviews`; the section is the page's landing
+  and `#/router` folds onto it silently; the model chips keep their copy
+  press. The mockup is `docs/plans/mockups/2026-11-23-d3-routing-fold/`.
 
 ### Delegation / helpers
 - **Purpose:** the helpers a task can be given to.
