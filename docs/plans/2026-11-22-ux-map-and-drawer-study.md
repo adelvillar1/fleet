@@ -1,5 +1,6 @@
 ---
-status: active
+status: completed
+completed: 2026-11-23
 created: 2026-11-22
 plan: ux-map-and-drawer-study
 ---
@@ -117,8 +118,10 @@ and the door's count.
       office/media types with their engines (docx-preview, the core xlsx reader
       with its planned styles pass, PPTXjs 2.0.0, `<img>`, PDF.js), and the
       viewer research is recorded in `docs/architecture/2026-11-23-document-viewers.md`.
-- [ ] The owner's gate: they pick A or B (or neither) and confirm or amend
-      the drawer matrix.
+- [x] The owner's gate: B is the leading placement ("I'm leaning towards B"),
+      Home replaces the door, and the drawer previews the object as a human
+      sees it (S7). The implementation plan is
+      `docs/plans/2026-11-23-rail-map-and-drawer-bodies.md`.
 - [x] No implementation until that gate — this study touched only mockups
       and the mock sheet's tokens; no product code.
 
