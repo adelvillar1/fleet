@@ -270,6 +270,13 @@ pub(crate) fn names_no_subject(text: &str) -> bool {
     if line.is_empty() {
         return true;
     }
+    // A first line that opens by naming itself a probe is one: the shape
+    // the harness writes when it checks a read ("probe: does a new
+    // conversation create").
+    let unquoted = line.trim_start_matches(['"', '\'', '`', '(']).trim_start();
+    if unquoted.starts_with("probe:") || unquoted.starts_with("probe -") {
+        return true;
+    }
     // A question names what it asks about — but only a question the
     // OWNER is asking. A `?` inside a tool argument is the machinery
     // talking: "Call the vision tool ... with question='Are they the same
@@ -278,9 +285,17 @@ pub(crate) fn names_no_subject(text: &str) -> bool {
     //
     // So the directive test runs first: an opener about the machinery is
     // a direction about the machinery whatever punctuation it carries.
+    // The verification shapes the live archive actually carries (2026-11-23,
+    // measured over the owner's home: 80 "yours" rows, ~29 of them verbatim
+    // probes): "List the files ... using the list_dir tool", "Take one
+    // screenshot with computer_use", "Create the file ... containing exactly",
+    // "Append one line reading ...", "Do not call any tools". Each of these
+    // openers is a directive only when the machinery vocabulary follows —
+    // "list the conversations by age" and "take a look at the rail" name
+    // their work and stay named.
     const DIRECTIVE: &[&str] = &[
         "call", "use", "run", "invoke", "reply", "respond", "say", "print", "delegate", "repeat",
-        "send", "execute",
+        "send", "execute", "list", "take", "do", "create", "append", "overwrite",
     ];
     let opener = line
         .trim_start_matches(|c: char| !c.is_alphanumeric() && c != '\'')
@@ -306,9 +321,23 @@ pub(crate) fn names_no_subject(text: &str) -> bool {
         "send_file",
         "deck",
         "skill",
-        "exactly once",
+        // "exactly", not only "exactly once": the archive's most common
+        // probe is the verbatim-reply instruction, and "Reply with exactly:
+        // UPGRADED OK" was slipping through as a subject.
+        "exactly",
         "single word",
         "one word",
+        "the word",
+        "reply with",
+        "shell command",
+        "line reading",
+        // The smoke-test greetings: "say hello", "say hello in three words",
+        // "Say ok." — no human opens a conversation to find it later.
+        "say hello",
+        "say ok",
+        // A shell builtin in a directive is a check, not a task. The cost is
+        // named in the test: "run pwd and tell me what is wrong" is hidden.
+        "pwd",
         "follow what it says",
     ];
     if !MACHINERY.iter().any(|word| line.contains(word)) {
@@ -1359,17 +1388,36 @@ mod tests {
             "Call send_file with path docs/README-placeholder.md and note x",
             "use the skill harness-orientation and follow what it says",
             "Delegate this to a subagent. The subagent's entire task: call write_file",
+            // The live archive's verbatim probes (2026-11-23), each one a row
+            // the owner saw in the conversations list under v0.9.2/0.9.3.
+            "Reply with exactly: UPGRADED OK",
+            "Reply with exactly the word: ok",
+            "Reply with exactly this token and nothing else: fleet-calib-ok",
+            "reply with: first queued",
+            "Say ok.",
+            "say hello",
+            "say hello in three words",
+            "run the shell command: ls",
+            "run these two shell commands, one after the other: echo alpha, then echo beta",
+            "run pwd and then run ls -1 | head -3, and report both outputs. Then say done",
+            "List the files in the current directory using the list_dir tool, then stop.",
+            "Do not call any tools. Reply with exactly: fleet native shell verified.",
+            "Take one screenshot with computer_use and report the saved path.",
+            "Create the file ib-proof.txt containing exactly: the inbox proof",
+            "Append one line reading `bot dogfood 2026-10-28: the persona face is live`",
+            "Overwrite the file tmp/bot-dogfood.md entirely with write_file",
+            "probe: does a new conversation create",
         ] {
             assert!(names_no_subject(opener), "{opener}");
         }
         // A KNOWN LIMIT, named rather than papered over: a bare shell
-        // command that mentions no tool ("run pwd and then run ls") is
-        // not caught, because the rule needs the harness vocabulary and
-        // shell builtins are open-ended. Widening the list to every
-        // command name would start skipping real instructions, which is
-        // the worse failure — a row named by a command beats a row named
-        // by nothing.
-        assert!(!names_no_subject("run pwd and then run ls -1 | head -3"));
+        // command with no harness word and no builtin in the list ("run ls
+        // and tell me") is not caught. The cost of catching every command
+        // name is hiding real instructions — a row named by a command beats
+        // a row named by nothing. "pwd" is in the list because the archive's
+        // checks open with it; the trade it costs is stated here: "run pwd
+        // and tell me what is wrong" would be hidden.
+        assert!(!names_no_subject("run ls and tell me what you see"));
         // A subject is KEPT, including instructions that happen to open
         // with a directive verb — the guard that keeps real work named.
         for kept in [
@@ -1381,6 +1429,19 @@ mod tests {
             "what do you mean no vision tool if the router even has a vision workload?",
             // The machinery word is here, but the opener is not a directive.
             "the tool is broken and I cannot tell why",
+            // The widened openers, each without machinery vocabulary: these
+            // are the owner's own work and stay named.
+            "list the conversations by age and tell me which is oldest",
+            "take a look at the health rail, it still looks wrong",
+            "create a plan to address all open ki ledger issues",
+            "append the weekly summary to my notes",
+            "do a deep dive on the composer",
+            // The owner's warmups are human, whatever the word looks like.
+            "let's do a session warmup",
+            "session warmup",
+            // A fixture-shaped probe is still a subject when nothing in the
+            // rule names it; this test records the residue honestly.
+            "The board `sample-board` holds 2 frames:",
         ] {
             assert!(!names_no_subject(kept), "{kept}");
         }

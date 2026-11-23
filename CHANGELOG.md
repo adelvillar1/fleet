@@ -12,6 +12,30 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.9.4 — 2026-11-23
+
+**The conversations list drops the harness's own traffic.** A hotfix for the
+surface pass's R3: the human-only filter was right, but the classifier beneath it
+treated verbatim probes as subjects — so the list still held the smoke tests. The
+machinery matcher is tightened against this home's real archive (120 rows in the
+window): **29 probe sessions hidden, zero human rows lost** — 80 "yours" → 50,
+nothing newly shown. The shapes now caught are the ones the archive actually
+carries: `Reply with exactly…`, `Take one screenshot with computer_use…`,
+`Append one line reading…`, `List the files … using the list_dir tool`,
+`Create the file … containing exactly`, `Do not call any tools`, `run pwd…`,
+`probe: …`, `say hello`/`Say ok.`
+
+The rule stays conservative by construction — an opener must be a directive *and*
+the harness vocabulary must follow — so "list the conversations by age", "take a
+look at the health rail", "create a plan to address all open KI issues", "do a
+deep dive on the composer", "Use only this supplied corpus…" and the owner's
+warmups stay named. The known limits are in the test: a task-shaped statement
+about fixture data (`sample-board`) names no imperative and stays; a bare shell
+command with no harness word stays.
+
+Gate: fmt, clippy and the release build clean; `cargo test` 2,824 passed / 0
+failed; the face harness on Node 26.
+
 ## v0.9.3 — 2026-11-23
 
 **The surface pass, finished — and the ledger emptied.** Twenty-eight commits

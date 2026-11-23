@@ -23697,10 +23697,13 @@ slug: the-draft
         let home = std::env::temp_dir().join(format!("fleet-gui-probe-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a temp home");
-        // A probe born with the kind, and a kind-less log marked in the
-        // sidecar — the two ways verification traffic exists. Both
-        // classify `probe`, both stay out of the owner's counts, and
-        // both stay in the document: the archive keeps the whole truth.
+        // A probe born with the kind, and a kind-less log whose TEXT is
+        // ambiguous — a task-shaped sentence no verbatim-probe rule could
+        // catch — which the sidecar marks. The two ways verification
+        // traffic exists now that text-clear probes ("reply with
+        // exactly…") are classified by their own words: both classify
+        // `probe`, both stay out of the owner's counts, and both stay in
+        // the document: the archive keeps the whole truth.
         let mut born = crate::session::Session::create_probe(&home, "deepseek-flash").unwrap();
         born.record(&crate::session::Record::User {
             content: "say the single word: ok".into(),
@@ -23716,7 +23719,10 @@ slug: the-draft
         let mut legacy = crate::session::Session::create(&home, "deepseek-flash").unwrap();
         legacy
             .record(&crate::session::Record::User {
-                content: "reply with exactly this text and nothing else: ROUTER OK".into(),
+                // Task-shaped on purpose: no directive opener, so the text
+                // rules cannot class it — the sidecar is the only way the
+                // archive learns it was a check.
+                content: "The board `sample-board` holds 2 frames: confirm the count".into(),
             })
             .unwrap();
         let legacy_id = legacy.id().to_string();
