@@ -1,5 +1,12 @@
 # Fleet
 
+> **Fleet is wound down (2026-11-24).** The repository is kept as a public
+> record, not maintained. The parts that proved worth keeping were carried into
+> DeepSeek Harness bundles — see `dsh-salvage` (Gitea `admin/dsh-salvage`):
+> lanes over MCP, hygiene, the memory substrate, the decisions stream, skill
+> selection, the second-brain panel, the credential vault, and the native app.
+> History is preserved; no further releases are planned.
+
 **A coding agent whose work you can verify.** Most agents ask you to trust a
 black box: they guess a number, forget your context, change themselves
 silently, and sound more confident the bigger the model gets. Fleet takes
