@@ -13,6 +13,56 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.9.6 — 2026-11-24
+
+**Two chats were showing `no project` while their folder was on file, and a
+tool call in flight read as interrupted the moment you looked away.** Both
+were the face holding a fact and the record around it not carrying it.
+
+- **The folder a chat works in is recorded at birth.** The conversations list
+  groups by the log's `workspace`, and `Session::open_new` wrote the
+  *process's* working directory there. Launched from inside a project the two
+  agreed by luck; the desktop app runs with cwd `/`, so every chat it served
+  was born projectless — `/` is not a project, and the list said so. On this
+  home, every `initiator: user` start record carried `workspace: "/"` while
+  `sessions-workdirs.json` had the real folder for the same chat. The owner's
+  chosen folder now wins at birth (`Session::create_in`, and the run thread
+  reads the run's own folder), and the cwd stays only as the fallback for a
+  caller that names no folder — the CLI and the TUI, which genuinely work
+  where they were started.
+- **The pre-existing logs are repaired.** `scripts/repair_session_workspace.py`
+  rewrites only the `workspace` value of a `start` record, only when it is
+  null, `/`, or a path that no longer exists, and only to the folder
+  `sessions-workdirs.json` already has for that chat. It never invents a
+  project, keeps a `.pre-repair` copy, and writes atomically. Ten sessions on
+  this home were repaired, two of them the owner's.
+- **A tool call in flight is not interrupted because the page looked away.**
+  Returning to a conversation replays the log, whose last record during a call
+  is the `tool_call` with no result yet; the unpaired-call sweep (KI-485,
+  written for a log cut off by a stop or a crash) resolved that row
+  `interrupted` unconditionally. It ran while the run was alive, and
+  `summarizeTurn` hides the finished rows of a folded turn — so on return the
+  in-flight call was the only tool row still visible and the only one wearing
+  the wrong mark. The same replay closed the process card "the run was
+  interrupted". Both now carry the gate `state.running`, the bridge's own flag
+  set at dispatch and cleared at the end: a live run keeps its row running and
+  the live result closes it, and a dead run still gets KI-485's sweep.
+
+A face-harness case drives the return path twice and asserts the row reads
+running both times and never `interrupted`; driven against the pre-fix asset
+first, it failed reproducing the owner's words verbatim (`0s · interrupted`,
+`not run · refused · interrupted`). KI-485's own case still passes, so both
+verdicts are pinned from one shape.
+
+Also in this cut: the documentation audit that corrected every count the docs
+had outgrown (README's "nine lenses" against fifteen rail rows,
+`FUNCTIONAL-SPECIFICATIONS`' "fourteen destinations", five lanes against six,
+eight built-ins against eleven, a module reference covering 54 of 103
+modules), regenerated both Archify diagrams from a pin 345 commits stale, and
+closed the mechanism gap behind it — `src/drift.rs` can now register a
+collection's length, and `scripts/doc_truth.py` reads every statement the docs
+publish against the code's own and fails on any that drifted.
+
 ## v0.9.5 — 2026-11-24
 
 **The New control no longer hides the list it was pressed from.** The owner
