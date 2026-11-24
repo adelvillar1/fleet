@@ -80,7 +80,10 @@ pub(crate) const MODULES: &[(&str, &str)] = &[
     ("graph.rs", include_str!("graph.rs")),
     ("graph/tests.rs", include_str!("graph/tests.rs")),
     ("gui/bridge.rs", include_str!("gui/bridge.rs")),
-    ("gui/face_declarations.rs", include_str!("gui/face_declarations.rs")),
+    (
+        "gui/face_declarations.rs",
+        include_str!("gui/face_declarations.rs"),
+    ),
     ("gui/mod.rs", include_str!("gui/mod.rs")),
     ("gui/related.rs", include_str!("gui/related.rs")),
     ("gui/server.rs", include_str!("gui/server.rs")),

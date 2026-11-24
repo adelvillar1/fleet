@@ -910,8 +910,24 @@ impl Bridge {
     /// record, so the work list can show the conversation the owner just
     /// made — and the next run, posted with this id, writes into it.
     pub fn new_session(&self) -> Result<String, String> {
-        let created = session::Session::create(&self.home, &self.model)
-            .map_err(|error| format!("could not create a conversation: {error}"))?;
+        // The folder this conversation will work in is known BEFORE the log
+        // exists — it is the pending key the owner set on the welcome — and
+        // the log is the record the archive groups by. Reading it ahead of
+        // the create is the fix for the 2026-11-24 report: the create used
+        // to write the process cwd, which is `/` under the desktop app, so
+        // a chat with a folder on file still read `no project`.
+        let folder = {
+            let state = lock(&self.state);
+            state.effective_folder("")
+        };
+        let born = match folder.as_deref() {
+            Some(folder) => {
+                let path = std::path::PathBuf::from(folder);
+                session::Session::create_in(&self.home, &self.model, Some(&path))
+            }
+            None => session::Session::create(&self.home, &self.model),
+        };
+        let created = born.map_err(|error| format!("could not create a conversation: {error}"))?;
         let id = created.id().to_string();
         // The launch keys move with the first real conversation, exactly
         // as they moved when the thread named it: a folder chosen on the
@@ -16341,6 +16357,26 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                     // practice session, born with the
                                     // role whose overlay the run rides.
                                     // An empty kind is an ordinary run.
+                                    // The folder this run works in is the
+                                    // run's own `folder`, resolved by the
+                                    // dispatch; the launch's when the run
+                                    // names none. Reading it here, at the
+                                    // birth, is what puts the chat in the
+                                    // right project group — the create used
+                                    // to record the process cwd, which is `/`
+                                    // under the desktop app (the owner's
+                                    // 2026-11-24 report).
+                                    let born_in = {
+                                        let state = lock(&state);
+                                        folder
+                                            .clone()
+                                            .filter(|path| path.is_dir())
+                                            .or_else(|| {
+                                                state
+                                                    .effective_folder("")
+                                                    .map(std::path::PathBuf::from)
+                                            })
+                                    };
                                     let born = match &learning {
                                         Some((kind, role)) if !kind.is_empty() => {
                                             let personas = if role.is_empty() {
@@ -16348,9 +16384,18 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                             } else {
                                                 Some(vec![role.clone()])
                                             };
-                                            Session::create_lesson(&home, &model, kind, personas)
+                                            Session::create_lesson(
+                                                &home,
+                                                &model,
+                                                kind,
+                                                personas,
+                                            )
                                         }
-                                        _ => Session::create(&home, &model),
+                                        _ => Session::create_in(
+                                            &home,
+                                            &model,
+                                            born_in.as_deref(),
+                                        ),
                                     };
                                     match born {
                                     Ok(fresh) => {

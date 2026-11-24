@@ -836,6 +836,24 @@ pub fn start_personas(home: &Path, session: &str) -> Option<Vec<String>> {
     )
 }
 
+/// The facts a new log's `start` record carries.
+///
+/// One struct rather than eight positional arguments: a birth is a bundle of
+/// facts that are always supplied together, and the compiler cannot help a
+/// caller who swaps `parent` and `principal`. `workspace` is the folder the
+/// session belongs to — the run's own when it has one, the process cwd only
+/// as the fallback (the owner's 2026-11-24 report: the desktop app's cwd is
+/// `/`, so a chat with a folder on file still grouped under `no project`).
+struct Birth<'a> {
+    model: &'a str,
+    kind: Option<&'a str>,
+    parent: Option<&'a str>,
+    personas: Option<Vec<String>>,
+    principal: Option<&'a str>,
+    initiator: Initiator,
+    workspace: Option<&'a Path>,
+}
+
 impl Session {
     /// Create a new session under `sessions_dir(home)`, writing the `start`
     /// record. The id is a UTC stamp plus a uniqueness suffix from the
@@ -844,12 +862,38 @@ impl Session {
         let dir = crate::home::ensure_sessions_dir(home)?;
         Session::open_new(
             &dir,
-            model,
-            None,
-            None,
-            None,
-            None,
-            Initiator::user(OWNER_ACTOR),
+            Birth {
+                model,
+                kind: None,
+                parent: None,
+                personas: None,
+                principal: None,
+                initiator: Initiator::user(OWNER_ACTOR),
+                workspace: None,
+            },
+        )
+    }
+
+    /// [`Session::create`], born in the folder the owner chose.
+    ///
+    /// The face knows a chat's working folder at the moment it creates the
+    /// conversation — `sessions-workdirs.json` is keyed by the chat it
+    /// serves — and the log is the record the archive groups by. Passing the
+    /// folder here is what stops a chat from reading `no project` while its
+    /// own folder is on file (the owner's report, 2026-11-24).
+    pub fn create_in(home: &Path, model: &str, workspace: Option<&Path>) -> io::Result<Session> {
+        let dir = crate::home::ensure_sessions_dir(home)?;
+        Session::open_new(
+            &dir,
+            Birth {
+                model,
+                kind: None,
+                parent: None,
+                personas: None,
+                principal: None,
+                initiator: Initiator::user(OWNER_ACTOR),
+                workspace,
+            },
         )
     }
 
@@ -865,12 +909,15 @@ impl Session {
         let dir = crate::home::ensure_sessions_dir(home)?;
         Session::open_new(
             &dir,
-            model,
-            None,
-            None,
-            personas,
-            None,
-            Initiator::user(OWNER_ACTOR),
+            Birth {
+                model,
+                kind: None,
+                parent: None,
+                personas,
+                principal: None,
+                initiator: Initiator::user(OWNER_ACTOR),
+                workspace: None,
+            },
         )
     }
 
@@ -888,12 +935,15 @@ impl Session {
         let dir = crate::home::ensure_sessions_dir(home)?;
         Session::open_new(
             &dir,
-            model,
-            None,
-            Some(parent),
-            personas,
-            None,
-            Initiator::user(OWNER_ACTOR),
+            Birth {
+                model,
+                kind: None,
+                parent: Some(parent),
+                personas,
+                principal: None,
+                initiator: Initiator::user(OWNER_ACTOR),
+                workspace: None,
+            },
         )
     }
 
@@ -915,12 +965,15 @@ impl Session {
         let dir = crate::home::ensure_sessions_dir(home)?;
         Session::open_new(
             &dir,
-            model,
-            Some(SUBAGENT_KIND),
-            Some(parent),
-            None,
-            principal,
-            Initiator::system(),
+            Birth {
+                model,
+                kind: Some(SUBAGENT_KIND),
+                parent: Some(parent),
+                personas: None,
+                principal,
+                initiator: Initiator::system(),
+                workspace: None,
+            },
         )
     }
 
@@ -936,12 +989,15 @@ impl Session {
         let dir = crate::home::ensure_sessions_dir(home)?;
         Session::open_new(
             &dir,
-            model,
-            Some(SCHEDULED_KIND),
-            None,
-            None,
-            None,
-            Initiator::system(),
+            Birth {
+                model,
+                kind: Some(SCHEDULED_KIND),
+                parent: None,
+                personas: None,
+                principal: None,
+                initiator: Initiator::system(),
+                workspace: None,
+            },
         )
     }
 
@@ -955,12 +1011,15 @@ impl Session {
         let dir = crate::home::ensure_sessions_dir(home)?;
         Session::open_new(
             &dir,
-            model,
-            Some(PROBE_KIND),
-            None,
-            None,
-            None,
-            Initiator::system(),
+            Birth {
+                model,
+                kind: Some(PROBE_KIND),
+                parent: None,
+                personas: None,
+                principal: None,
+                initiator: Initiator::system(),
+                workspace: None,
+            },
         )
     }
 
@@ -979,26 +1038,30 @@ impl Session {
         let dir = crate::home::ensure_sessions_dir(home)?;
         Session::open_new(
             &dir,
-            model,
-            Some(kind),
-            None,
-            personas,
-            None,
-            Initiator::user(OWNER_ACTOR),
+            Birth {
+                model,
+                kind: Some(kind),
+                parent: None,
+                personas,
+                principal: None,
+                initiator: Initiator::user(OWNER_ACTOR),
+                workspace: None,
+            },
         )
     }
 
     /// The one place a log is created: the id, the file, and the `start`
     /// record.
-    fn open_new(
-        dir: &Path,
-        model: &str,
-        kind: Option<&str>,
-        parent: Option<&str>,
-        personas: Option<Vec<String>>,
-        principal: Option<&str>,
-        initiator: Initiator,
-    ) -> io::Result<Session> {
+    fn open_new(dir: &Path, birth: Birth<'_>) -> io::Result<Session> {
+        let Birth {
+            model,
+            kind,
+            parent,
+            personas,
+            principal,
+            initiator,
+            workspace,
+        } = birth;
         let id = format!(
             "{}-{:06x}",
             compact_utc_stamp(SystemTime::now())?,
@@ -1016,15 +1079,31 @@ impl Session {
         };
         let created = iso_utc_stamp(SystemTime::now())?;
         // The project this session belongs to, recorded at the one moment
-        // it is unambiguous: the process's own working directory when the
-        // log is created. A resumed session keeps the project it was born
-        // in, which is what makes the archive groupable by project rather
-        // than by wherever the owner happened to resume from. A process
-        // whose directory has been deleted records none — an absent field
-        // reads as "no project recorded", never as a corrupt log.
-        let workspace = std::env::current_dir()
-            .ok()
-            .map(|dir| dir.display().to_string());
+        // it is unambiguous: when the log is created. A resumed session
+        // keeps the project it was born in, which is what makes the archive
+        // groupable by project rather than by wherever the owner happened to
+        // resume from.
+        //
+        // The caller's folder wins. That is the fix for the defect the owner
+        // reported on 2026-11-24: two chats had `/Users/.../fleet` recorded
+        // as their working folder in the face's `sessions-workdirs.json` and
+        // still grouped under `no project`, because this line read the
+        // *process's* directory instead. Run from inside a project the two
+        // agreed by luck and the bug was invisible; the desktop app runs with
+        // cwd `/`, so every chat it served was born projectless. The owner's
+        // chosen folder and the session's fact were known at the same moment
+        // and only one of them reached the log.
+        //
+        // The cwd stays as the fallback for a caller that names no folder —
+        // the CLI and the TUI, which genuinely work where they were started.
+        // A process whose directory has been deleted records none, and an
+        // absent field reads as "no project recorded", never as a corrupt
+        // log.
+        let workspace = workspace.map(|dir| dir.display().to_string()).or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|dir| dir.display().to_string())
+        });
         session.record(&Record::Start {
             v: SESSION_FORMAT_VERSION,
             model: model.to_string(),
@@ -2697,6 +2776,69 @@ mod tests {
         let listed = list(&home).unwrap();
         assert_eq!(listed.len(), 1, "{listed:?}");
         assert_eq!(listed[0].workspace.as_deref(), Some(expected.as_str()));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// The owner's report, 2026-11-24: two chats had
+    /// `/Users/.../fleet` recorded as their working folder and still
+    /// grouped under `no project`, because the log recorded the *process*
+    /// cwd — `/` under the desktop app — instead of the folder the owner
+    /// chose.
+    ///
+    /// This drives the real creator: the folder is passed in while the
+    /// process cwd is somewhere else entirely, and the start record must
+    /// name the folder. It fails against the code before the fix, which is
+    /// the only thing that makes it a regression test.
+    #[test]
+    fn a_log_born_in_a_chosen_folder_records_that_folder_not_the_process_cwd() {
+        let home = temp_home("chosen-workspace");
+        let chosen = home.join("the-project");
+        std::fs::create_dir_all(&chosen).unwrap();
+
+        let session = Session::create_in(&home, "deepseek-flash", Some(&chosen)).unwrap();
+        let records = replay(session.path()).unwrap();
+
+        let recorded = match &records[0] {
+            Record::Start {
+                workspace: Some(workspace),
+                ..
+            } => workspace.clone(),
+            other => panic!("the start record names no workspace: {other:?}"),
+        };
+        assert_eq!(recorded, chosen.display().to_string());
+        // The distinction the bug turned on: the chosen folder is NOT the
+        // process cwd, so a reader can tell the two apart.
+        let cwd = std::env::current_dir().unwrap().display().to_string();
+        if chosen.display().to_string() != cwd {
+            assert_ne!(
+                recorded, cwd,
+                "the log recorded the process cwd, not the folder"
+            );
+        }
+
+        // And the archive groups by it, which is what the face paints.
+        let listed = list(&home).unwrap();
+        assert_eq!(listed[0].workspace.as_deref(), Some(recorded.as_str()));
+        assert!(
+            !listed[0].workspace_inferred,
+            "a chosen folder is a recorded fact, never an inference"
+        );
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// The honest-empty half: a caller that names no folder keeps the cwd
+    /// fallback, so the CLI and the TUI — which genuinely work where they
+    /// were started — are unchanged.
+    #[test]
+    fn a_log_born_with_no_chosen_folder_still_falls_back_to_the_process_cwd() {
+        let home = temp_home("no-chosen-workspace");
+        let session = Session::create_in(&home, "deepseek-flash", None).unwrap();
+        let expected = std::env::current_dir().unwrap().display().to_string();
+        let records = replay(session.path()).unwrap();
+        assert!(
+            matches!(&records[0], Record::Start { workspace: Some(w), .. } if *w == expected),
+            "{records:?}"
+        );
         fs::remove_dir_all(&home).ok();
     }
 
