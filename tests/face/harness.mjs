@@ -17442,6 +17442,72 @@ async function aFinishedRunSettlesItsOrphanedToolCalls() {
     after.map((r) => r.textContent.slice(0, 80)).join(' | '));
 }
 
+// The owner's report, 2026-11-24: "when a bash command is running in a
+// conversation and you switch to a different page and go back the bash
+// command shows as interrupted."
+//
+// The replay is what a return runs, and the replay always re-reads the
+// log's last `tool_call` — so the unpaired-call sweep (KI-485) fired on a
+// call that was still ALIVE and marked it interrupted. The gate is the
+// bridge's own `running` flag. This is KI-485's live twin: same orphan
+// shape, opposite verdict, because the run is not over.
+async function aLiveToolCallSurvivesReturningToTheConversation() {
+  const events = [
+    { type: 'message', role: 'owner', text: 'run the slow job' },
+    { type: 'turn', turn: 1 },
+    { type: 'tool_call', tool: 'bash', summary: 'a long build',
+      arguments: '{"command":"cargo test --all"}' },
+  ];
+  const page = boot({
+    hash: '#/sessions/live-return',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, yours: 1, total: 1 },
+        sessions: [row('live-return', 'working', { title: 'the live build' })],
+      },
+      // The run IS in flight: the bridge sets `running` at dispatch and
+      // clears it at the end, so this is the fact the gate reads.
+      state: (asked) => ({ ...emptyState(asked), session: asked, events, running: true }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+
+  const rows = page.rows('.card-row.tool');
+  check('LIVE the in-flight call landed as a row', rows.length === 1, String(rows.length));
+  check('LIVE the in-flight call is still running, not interrupted',
+    rows.length === 1 && rows[0].dataset.status === 'running',
+    rows.length ? String(rows[0].dataset.status) : 'no row');
+  check('LIVE the in-flight call does NOT wear the interrupted resolution',
+    rows.length === 1 && !rows[0].textContent.includes('interrupted'),
+    rows.length ? rows[0].textContent.slice(0, 120) : 'no row');
+
+  // Leaving the page and coming back is another replay: the same state
+  // document, the same in-flight call. It must survive the second visit
+  // exactly as it survived the first.
+  page.hash('#/board');
+  await flush();
+  page.hash('#/sessions/live-return');
+  await flush();
+  const after = page.rows('.card-row.tool');
+  check('LIVE the call is still running after leaving and returning',
+    after.length === 1 && after[0].dataset.status === 'running',
+    after.length ? String(after[0].dataset.status) : 'no row');
+  check('LIVE returning did not mark the live call interrupted',
+    after.length === 1 && !after[0].textContent.includes('interrupted'),
+    after.length ? after[0].textContent.slice(0, 120) : 'no row');
+
+  // And when the call finally lands, the live result closes the row.
+  page.push({ type: 'tool_result', tool: 'bash', approved: true, preview: 'test result: ok' });
+  await flush();
+  const settled = page.rows('.card-row.tool');
+  check('LIVE the live result closes the row when it lands',
+    settled.length === 1 && settled[0].dataset.status === 'ok',
+    settled.length ? String(settled[0].dataset.status) : 'no row');
+}
+
 // The multi-session plan's C1/C3: when the resource contract refuses a run
 // for want of capacity, the face paints a named, courteous queued card —
 // the reconsider-or-queue words — and clears the running flag so the
@@ -22769,6 +22835,7 @@ const cases = [
   ['C6 the About pane says the feed has not been asked yet', theAboutPaneSaysTheFeedHasNotBeenAsked],
   ['C6 a failed check paints the refusal', aFailedCheckPaintsTheRefusal],
   ['KI-485 a log cut off at a tool call does not replay as running', anInterruptedToolCallReplaysAsInterrupted],
+  ['LIVE a tool call in flight survives leaving and returning to the conversation', aLiveToolCallSurvivesReturningToTheConversation],
   ['KI-485 a finished run settles its orphaned tool calls', aFinishedRunSettlesItsOrphanedToolCalls],
   ['C0 the health card names what is down and the repair', theHealthCardNamesWhatIsDownAndTheRepair],
   ['KI-510 a routed event paints the live decision with its facts', aRoutedEventPaintsTheLiveDecisionWithItsFacts],

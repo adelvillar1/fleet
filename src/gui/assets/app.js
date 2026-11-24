@@ -12238,12 +12238,27 @@ import { node, svg, clip } from './core/dom.js';
     // Ns…" forever and the strip above it pulses "in flight" — a run
     // that exists only because the page loaded. The KI-423 closure the
     // run card already paints, now for the tool rows too (KI-485).
-    face.pending.slice().forEach(function (unpaired) {
-      resolveTool({ type: 'tool_result',
-        tool: unpaired.el.dataset.tool || '',
-        approved: false,
-        resolution: 'interrupted' });
-    });
+    //
+    // NEVER while the run is live (the owner's 2026-11-24 report: "when a
+    // bash command is running and you switch to a different page and go
+    // back the bash command shows as interrupted"). The replay is what a
+    // return to the conversation runs, and it always replays the last
+    // `tool_call` — so an unconditional sweep marked the call in flight as
+    // interrupted, and it read that way until the command finally ended.
+    // A long call is exactly when the mark is most wrong. `state.running`
+    // is the bridge's own flag, set at dispatch and cleared at the end, so
+    // it answers "is this call still alive" without the page guessing: a
+    // live run keeps its row running and the live `tool_result` closes it;
+    // a dead run (a stop, a crash, a restart) still gets the sweep above,
+    // which is the case KI-485 exists for.
+    if (!state.running) {
+      face.pending.slice().forEach(function (unpaired) {
+        resolveTool({ type: 'tool_result',
+          tool: unpaired.el.dataset.tool || '',
+          approved: false,
+          resolution: 'interrupted' });
+      });
+    }
     // The folds a live run applied survive the rebuild: the rows are
     // new, the state is the same — restored, never invented (R7).
     Object.keys(face.turnFolded).forEach(function (turn) {
@@ -12260,8 +12275,14 @@ import { node, svg, clip } from './core/dom.js';
     // send behind a run in a different conversation — which is exactly
     // the 2026-11-05 regression the REG cases pin. The mint wins until
     // the first send.
-    face.running = face.minted ? false : !!state.running;
-    if (face.process && !face.running && face.process.active) {
+    // A live run keeps its card (`state.running` is the bridge's flag, set
+    // at dispatch and cleared at the end); only a run the log shows as
+    // over — no end record and nothing driving — is the interrupted one.
+    // The gate matters for the same reason the tool sweep's does: arriving
+    // back at a conversation must not declare in-flight work dead.
+    var liveRun = face.minted ? false : !!state.running;
+    face.running = liveRun;
+    if (face.process && !face.running && face.process.active && !state.running) {
       face.process.active = false;
       face.process.ended = Date.now();
       face.process.stop = 'interrupted';
