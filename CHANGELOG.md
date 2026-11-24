@@ -15,23 +15,24 @@ answers `GET /api/version` so the owner asks the face what it is.
 
 ## v0.9.5 — 2026-11-24
 
-**The work list stops hiding conversations behind a fold.** The owner read a
-session as gone — the list said "11 conversations" while one row was on screen
-and the other ten sat under a closed `earlier`, the documentation session among
-them. Nothing was lost; the list was collapsing a backlog nobody asked it to
-collapse.
+**The New control no longer hides the list it was pressed from.** The owner
+minted a conversation and the list on screen went from eleven rows to one: the
+mint put a live band above the archive, the relevance pass folded the archive
+beneath it, and the session the owner had been reading — the documentation
+one — disappeared behind a closed `earlier`. Nothing was lost; the press was
+folding it away.
 
-- **The idle band starts open.** `idleOpen` returned `!hasAbove`, so the moment
-  anything was live — an approval, a run — the owner's whole archive folded
-  shut. The head counts the archive, so the list now shows it; a press still
-  folds it and that press is remembered (`fleet-work-idle`).
-- **A New press no longer buries the list.** Minting a conversation puts a live
-  band above the archive, which collapsed it: the New control answered by
-  hiding the very list it was pressed from. The press now reveals the list for
-  that visit (`face.revealWork`), and the owner's own fold clears the reveal.
-- Verified by driving the shipped function through its four cases (nothing
-  saved / nothing above / owner-collapsed / owner-opened), and by the screenshot
-  that recorded the defect before the change.
+- **The press reveals the list.** A New press sets `face.revealWork`, and the
+  idle band opens for that paint even when a live band sits above it. The
+  owner's own fold clears the reveal, so their answer always wins.
+- **The fold below the decisions stands** (unchanged, and asserted by the face
+  harness as C1): with something live above it the idle remainder still starts
+  folded. That is the ruling — the fold is the list's way of leading with the
+  decisions. This release only stops an explicit New press from being the thing
+  that triggers it.
+
+Reported from the owner's screen: "all I know is that my docs session is gone
+from the view." It was behind the fold, not gone.
 
 ## v0.9.4 — 2026-11-23
 

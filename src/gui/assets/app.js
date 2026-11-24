@@ -17100,14 +17100,7 @@ import { node, svg, clip } from './core/dom.js';
     } catch (error) { saved = null; }
     if (saved === 'open') return true;
     if (saved === 'collapsed') return false;
-    // Default open. A fold that starts closed puts the owner's whole
-    // backlog behind a caret they never asked for: the screenshot that
-    // settled this showed "11 conversations", one row on screen, and the
-    // other ten under a closed "earlier" — the documentation session
-    // among them, read by its owner as gone. The head counts the archive,
-    // so the list must show it; a press still folds it away, and that
-    // press is remembered.
-    return true;
+    return !hasAbove;
   }
 
   function setIdleOpen(open) {
