@@ -103,9 +103,8 @@ logs. ([docs/features/](docs/features/))
 ### One productive front end
 
 Fleet is not a chat window you visit — it is meant to be the place your work
-lives. The 0.8 shell is one workspace, not twenty panels: nine lenses
-(threads, archive, board, desk, intelligence, learning, reviews, inbox,
-health) project one work-object spine — a task links to its conversation,
+lives. The shell is one workspace, not twenty panels: fifteen rail rows in
+four regions project one work-object spine — a task links to its conversation,
 its deliverable, the bot that did it, and the lesson it taught — one shared
 focus that a pivot re-projects into the lens it names, and the inspector
 rides beside it as a drawer: the run, the receipts of what the conversation
@@ -216,7 +215,7 @@ out of the gate, so the org inherits its admin layer already working. The full
 direction is
 [docs/architecture/2026-11-11-armada-direction.md](docs/architecture/2026-11-11-armada-direction.md).
 
-Fleet is **beta** (0.8.x). The owner's bar is the reliable execution of a
+Fleet is **beta** (0.9.x). The owner's bar is the reliable execution of a
 whole project, and the shakeout is the work mode until then.
 
 ## A look

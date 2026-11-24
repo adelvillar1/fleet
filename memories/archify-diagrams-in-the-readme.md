@@ -43,8 +43,16 @@ Candidates live under `.archify/<type>-<slug>-<stamp>/candidate.json`,
 which is a tracked `.gitignore` rule (`/.archify/`, commit `4448d4e`).
 
 **Delivery:** the 2026-11-02 originals shipped as `de2d42b` (12
-components, 7 participants). The 2026-11-16 refresh pins `d4ad779` (the
-0.8.9 cut plus the cache-record correction): four tracked artifacts —
+components, 7 participants). The 2026-11-16 refresh pinned `d4ad779`.
+**Refreshed 2026-11-23** to `5b239078` after the documentation audit found
+both diagrams 345 commits stale: every `SRC` badge was still in-bounds and
+had stopped landing on the code it claimed. Both were re-pointed badge by
+badge against HEAD (each label's symbol re-found by grep, never guessed),
+re-finalized, and re-shot — and the turn diagram's subtitle lost its
+`0.8.9`, because a version in a picture goes stale exactly like a count in
+prose. The lag is now a check, not a hope: `python3 scripts/doc_truth.py`
+fails any diagram pinned more than `DIAGRAM_LAG_LIMIT` (25) commits behind
+HEAD. Four tracked artifacts —
 `docs/architecture/{fleet-architecture,fleet-turn}.html` (~750 KB each,
 self-contained) and `docs/images/{architecture-fleet,process-turn}.png`.
 The architecture PNG is a **header-and-stage crop** (1980x1320) because a
@@ -53,13 +61,20 @@ list and the full page 2077 px tall; the turn PNG is the full page
 (2880x3184).
 
 **How to apply:** author the candidate, finalize once, then copy the HTML
-over `docs/architecture/` and shoot the PNG. The capture path used since
-the playwright `tmp/diagram-shoot.js` disappeared: `obscura serve
---allow-file-access --allow-private-network`, then a CDP script on the
-browser socket (`Target.createTarget` + `Target.attachToTarget` with
-`flatten: true`), `Emulation.setDeviceMetricsOverride` at 1440 wide and
-`deviceScaleFactor: 2`, `Page.captureScreenshot`. The stage is a 960 px
-column at 1440; `magick -crop` trims to the title and stage.
+over `docs/architecture/` and shoot the PNG. **The capture path, as it
+actually worked on 2026-11-23:** `tmp/diagram-shoot.js` drives
+`playwright-core` from `~/.hermes/hermes-agent/node_modules` with the
+installed Chromium headless shell —
+`~/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell`
+(the `-1234` path in older notes does not exist on this machine; check
+`ls ~/Library/Caches/ms-playwright` first). It loads the artifact over
+`file://`, sets `deviceScaleFactor: 2` at 1440 wide, and takes
+`fullPage: true`. Then resize to 1980 wide and crop the title + stage with
+`magick`: architecture `-crop 1980x1180+0+0` (the stage ends just past the
+legend; the four preview cards below it are page chrome, not the diagram),
+sequence `-crop 1980x1420+0+0`. Read the crop back with `vision` before
+copying it over `docs/images/` — the crop that is one row short clips the
+legend and looks fine at a glance.
 
 **Gotchas learned:**
 - Architecture `connections` take no `role` field (workflow edges do).

@@ -12,11 +12,14 @@ The owner works solo on this repo and its sibling repos. There is no
 team, no staging surface, no hosted deployment: `master` is the only
 branch and it pushes to `origin/master`. The repo is **fleet** — the
 native Rust harness for the whole Fleet-of-Ones ecosystem, past alpha
-0.2.0. Its current shape (45 modules, the five vendored lanes, routing,
-memory, delegation, calibration, the TUI) is mapped in `CLAUDE.md`'s
-"Where to find things" block, with the deeper survey in
-`docs/architecture/deep-dive-2026-10-15.md` and the sibling repos in
-`docs/architecture/ecosystem.md`.
+0.2.0. Its current shape — the agent core, the six vendored lanes,
+routing, memory, delegation, calibration, the TUI and the browser face —
+is mapped in `CLAUDE.md`'s "Where to find things" block, with the deeper
+survey in `docs/architecture/deep-dive-2026-11-20-fleet-state.md` and the
+sibling repos in `docs/architecture/ecosystem.md`. Do not carry a module
+or line count from any document: ask the tree, or run
+`python3 scripts/doc_truth.py`, which reports every doc's published
+count against the code's own.
 
 The owner reasons in rulings and plans. When the owner states a fact,
 act on it — verify the implementation, not the stated fact. When the
@@ -118,7 +121,7 @@ TECHNICAL-DOCUMENTATION.md    crate contract, environment contract, module refer
 FUNCTIONAL-SPECIFICATIONS.md  command reference, run behavior, TUI modes, error vocabulary
 memories/                     the fact corpus; .archive/ holds what the cycle forgot;
                               .recall-index.json is generated, gitignored
-services/                     the five vendored Python lane cores, with VENDOR.json
+services/                     the six vendored Python lane cores, with VENDOR.json (plus `documents/`, a local extractor)
 tests/integration.rs          the end-to-end suite over the mock API and mock MCP server
 ```
 
@@ -170,7 +173,7 @@ defect; a plan names the ones it fixes.
   pins it in `<FLEET_HOME>/routing.json`. A session log's `start` record
   names the CLI default — the calibration route row names what actually
   served.
-- **The lanes are local.** The five vendored lane cores launch over
+- **The lanes are local.** The six vendored lane cores launch over
   fleet's own MCP stdio client; the embeddings that serve recall are
   probed at `127.0.0.1:8901` and degrade to keyword-only, by design,
   when absent. Neither state is an error.

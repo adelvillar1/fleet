@@ -1,21 +1,31 @@
 # The surfaces: what each is for, and why
 
 A read of the browser face as a user meets it, taken live on
-2026-10-21 against every destination in the rail — eleven then;
-**workspace history** joined the knowledge group when the LayerFS
-instrument landed, making twelve, the design canvas makes
-thirteen, the huddles room makes fourteen, and the learning surface
-makes fifteen. This is the what and
-the why of each surface — the terms the README and the functional
-specification should speak. The how stays in the code.
+2026-10-21 against every destination in the rail — eleven then — and
+re-derived since: **fifteen rail rows today**, and this document is the
+narrative of each one, including surfaces the rail has since folded under
+Settings (the router, delegation, vault, plugins, bots, workspace history,
+huddles and skills keep their addresses and stay readable; the rail does
+not list them). This is the what and the why of each surface — the terms
+the README and the functional specification should speak. The how stays in
+the code.
+
+The rail's own count is not this document's to keep: it is read from the
+face's declaration (`RAIL_MAP` in `src/gui/assets/app.js`) and checked by
+`python3 scripts/doc_truth.py`. This document names fifteen because that is
+what the rail painted when it was last read; the checker is what makes the
+number true.
 
 ## The shape every surface shares
 
-The destinations, in four groups — **work** (conversation, inbox,
-design, sessions, huddles, desk, learning), **intelligence** (router,
-delegation), **knowledge** (memory, skills, second brain, workspace
-history), **system** (bots, vault, settings, calibration, plugins) —
-one flat level, reachable from the rail or the ⌘K palette by name.
+The destinations, in four regions as the rail paints them — **software**
+(conversations, board, armada), **design** (design), **knowledge**
+(connections, intelligence, learning, desk, reviews) — and the **system**
+drawer (health, workspace history, vault, plugins, bots, settings) —
+one flat level, reachable from the rail or the ⌘K palette by name. The
+earlier four-group taxonomy (work / intelligence / knowledge / system) is
+kept below as the vocabulary this document reads each surface in; the
+regions above are the ones the face actually draws.
 Every
 destination is built from the same grammar:
 

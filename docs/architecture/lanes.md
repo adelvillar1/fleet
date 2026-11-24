@@ -1,7 +1,7 @@
 # The lanes: what decides, what measures, what indexes, what renders, and what speaks
 
-Why Fleet is built around five specialized model services and one
-composition of them, and why the language model is the last component
+Why Fleet is built around six specialized services and one composition of
+them, and why the language model is the last component
 to speak rather than the only one that ever runs.
 
 ## The goal
@@ -9,16 +9,17 @@ to speak rather than the only one that ever runs.
 An LLM is one component, not the harness. Every piece of work Fleet
 accepts goes to the component that can actually do it: a **decision** to
 the models that decide, a **measurement** to the models that compute it,
-a **similarity** to geometry, a **render** to generators, and the
+a **similarity** to geometry, a **render** to generators, a **page** to the
+browser that can actually load it, and the
 **speaking** — turning evidence into words the owner can act on — to the
-language model, which is the only one of the five that has any business
+language model, which is the only one of the six that has any business
 generating language.
 
 The house sentence says it: *sys1 judges what the work says, sdm1 scores
 what the work measures, sem1 indexes what the work looks like, gen1
 renders it.* The language model is not in that sentence on purpose.
 
-## The five lanes
+## The six lanes
 
 | Lane | Owns | Returns | Why it beats the LLM there |
 |---|---|---|---|
@@ -26,7 +27,8 @@ renders it.* The language model is not in that sentence on purpose.
 | **sdm1** — tabular | a number from rows: classification or regression over a table | a **computed score with an interval** | arithmetic is not generated; "LLMs do not do math" is the whole reason this lane exists |
 | **sem1** — embeddings | similarity and recall: which fact, which skill, which session means this | **vectors in, vectors out — never verdicts** | geometry is exact and fast; asking a model to rank by meaning is asking it to guess |
 | **gen1** — media | images the gates judge, and the judging of images against a brief | pixels, and a verdict on pixels | a model asked to reason about a picture *described in words* misses the artifact; one that sees it does not |
-| **blend1** — grounded composition | the end-to-end ask that composes all three siblings under one answer | an answer whose reasoning **stands on computed facts** | it is the proof of the whole claim, below |
+| **browser** — the page | loading a real page, reading its text, and screenshotting it (`browser_navigate`, `browser_read`, `browser_screenshot`) | the page's own bytes, and an image of what rendered | a model asked what a page says answers from its weights; obscura loads the page and returns what it found |
+| **blend1** — grounded composition | the end-to-end ask that composes the judgment, embedding and tabular siblings under one answer | an answer whose reasoning **stands on computed facts** | it is the proof of the whole claim, below |
 
 ### Where the owner meets them
 
@@ -41,8 +43,12 @@ delegations, and behind the Router board's "ask sys1 for a judgment."
 sem1 is behind memory's recall, the skills search, and the sessions
 ranking — the numbers on the Memory surface are its work. sdm1 and gen1
 are behind the composed ask and the document path — the places a number
-or a picture is the answer. blend1 is the lane the `composed` workload
-targets: the grounding provider for work that needs facts before prose.
+or a picture is the answer. **browser** is behind every claim about a live
+page: the engine order is the owner's 2026-11-18 ruling (obscura first,
+Chrome only when the home's settings choose it, a hosted provider as the
+fourth door), so a page's contents are read from the page rather than
+recalled from a model. blend1 is the lane the `composed` workload targets:
+the grounding provider for work that needs facts before prose.
 
 ## How the lanes control hallucinations
 

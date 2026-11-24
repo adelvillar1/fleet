@@ -50,15 +50,33 @@ before its work started.)
 
 ## Today's state
 
-**Read the numbers, do not trust them here.** This section carried
-"45 modules (~70k lines)", "2,357 passed", and "0.6.26". Measured
-2026-11-20: **139 module files, 261,880 lines in `src/`, 2,300 test
-attributes, 2,648 tests passing, 0.8.22**. Every one of those numbers was
-wrong by a factor when read — the section is a month old and the repo
-roughly quadrupled. The durable facts are below; the counts come from the
-commands listed there, not from this paragraph.
+**This section does not publish counts.** It used to, and every round of
+them was wrong by the time a session read it: "45 modules (~70k lines)",
+then "139 module files, 261,880 lines", each true when written and false
+within weeks. Measured 2026-11-23, the crate was **154 `.rs` files,
+288,334 lines, 103 top-level modules, 2,455 test attributes** at `0.9.4`
+— and that sentence will be wrong too, which is the point: a count in
+prose is a snapshot, and this file is read as if it were current.
 
-- In-repo and green: `cargo test` → 2,357 passed, 4 ignored at the 0.6.26 cut; the gate runs whole locally — `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`, all four exit 0 (rustfmt and clippy were installed 2026-10-15, closing KI-007, and the first full clippy pass landed clean). The crate is 45 modules (~70k lines): the agent core, the five vendored lanes over the hand-rolled MCP client, multi-provider routing with the sys1 judgment and failover, the git-tracked memory substrate with six-channel recall, session-archive recall, skills, delegation to depth 2 with the dependency graph and cron, the calibration stream with its judge/delegate/explain beats and the eval corpus, the settings writer, and the ratatui TUI. The 2026-10-15 sessions landed the deep dive, its six-phase findings plan, and the dogfooding viability fixes (`docs/plans/2026-10-15-dogfooding-viability-fixes.md`: the bash wall-clock bound, the approval gate's label-blind class checks, the routing record's name, the consolidation fold's honesty, the torn-tail tolerance). 2026-10-16 landed the owner's own-home ruling (`docs/plans/2026-10-16-own-home-credentials.md`): credentials resolve from the process environment and `<FLEET_HOME>/.env` only, with the DeepSeek Harness credential-store leg and its helpers removed outright. 2026-10-16 also landed the router ruling (`docs/plans/2026-10-16-fleet-routes-through-its-own-router.md`): Fleet routes through the in-process `route::select` it owns — the `agnostic-router-kit` is the precursor, not a dependency, and its roster entry is gone entirely; the router board reads Fleet's own calibration rows and dials nothing.
+The numbers live where they are produced. Ask the tree:
+
+```sh
+grep -m1 '^version' Cargo.toml                       # the version
+find src -name '*.rs' | wc -l                        # module files
+find src -name '*.rs' -print0 | xargs -0 cat | wc -l # lines in src/
+ls src/*.rs | wc -l                                  # top-level modules
+grep -rho '#\[test\]\|#\[tokio::test\]' src | wc -l  # test attributes
+cargo test 2>&1 | tail -3                            # the run's own footer
+python3 scripts/doc_truth.py                         # the doc claims vs the code
+```
+
+`python3 scripts/doc_truth.py` is the standing check: it compares the
+documents' published counts to the code's own and names every one that
+drifted. `fleet drift` reports the same numbers the registry can produce.
+A doc that states a count is registered in `src/drift.rs` or in that
+script, or it is not guarded and will rot.
+
+- In-repo and green: the gate runs whole locally — `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`, all four exit 0 (rustfmt and clippy were installed 2026-10-15, closing KI-007, and the first full clippy pass landed clean). The crate spans the agent core, the six vendored lanes over the hand-rolled MCP client, multi-provider routing with the sys1 judgment and failover, the git-tracked memory substrate with six-channel recall, session-archive recall, skills, delegation to depth 2 with the dependency graph and cron, the calibration stream with its judge/delegate/explain beats and the eval corpus, the settings writer, and the ratatui TUI. The 2026-10-15 sessions landed the deep dive, its six-phase findings plan, and the dogfooding viability fixes (`docs/plans/2026-10-15-dogfooding-viability-fixes.md`: the bash wall-clock bound, the approval gate's label-blind class checks, the routing record's name, the consolidation fold's honesty, the torn-tail tolerance). 2026-10-16 landed the owner's own-home ruling (`docs/plans/2026-10-16-own-home-credentials.md`): credentials resolve from the process environment and `<FLEET_HOME>/.env` only, with the DeepSeek Harness credential-store leg and its helpers removed outright. 2026-10-16 also landed the router ruling (`docs/plans/2026-10-16-fleet-routes-through-its-own-router.md`): Fleet routes through the in-process `route::select` it owns — the `agnostic-router-kit` is the precursor, not a dependency, and its roster entry is gone entirely; the router board reads Fleet's own calibration rows and dials nothing.
 - Environmental blockers, none of them code:
   - **CI is red by budget.** GitHub Actions minutes are exhausted; jobs never dispatch (job record: `runner_id: 0`, zero steps, ~3s). Until the budget resets, the gate must be run locally on every **code** change (hard rule 2 scopes it: docs-only pushes skip it).
   - **DeepSeek is funded, and it is the pay-as-you-go reserve** — owner-confirmed 2026-10-15 (the earlier 402 was transient; KI-008 records it): the account has balance, and the roster walks the other candidates first. Since the owner's 2026-10-21 ruling it is **every walk's failover tail**: no workload targets it, but the router appends `deepseek/deepseek-flash` as the last entry of every order it builds (judged, fallback, pinned, side-routes), so it serves only after every routed candidate has failed — and the decision row names it when it does (`served by the failover tail`). The `allow_api_models` gate keeps it out like every hosted model. The live-API e2e stays `#[ignore]`d by default and can run on demand with the key set.
@@ -87,7 +105,7 @@ src/cli.rs              argument parsing, help text, usage errors
 src/api.rs              DeepSeek chat-completions client (ureq), streaming, typed errors
 src/boards.rs           the three read-only boards: Fleet's own routing state, the second-brain's derived state files, git facts per project
 src/agent.rs            the tool loop, approvals, turn cap, progress reporting
-src/tools.rs            the eight built-ins, schemas and validation, alias resolution, output capping
+src/tools.rs            the eleven built-ins, schemas and validation, alias resolution, output capping
 src/fileops.rs          window reads, atomic writes, the anchored edit and its diff
 src/tool_advisor.rs     the session scan and the build/fix/adopt/retire advice
 src/tool_audit.rs       one session's tool rates: validity, classes, p95, recovery, resolutions
@@ -118,7 +136,7 @@ src/delegate.rs         the delegation judgment beat: `fleet delegate` grades a 
 src/graph.rs            the dependency graph: scores, gates, critical path, fact-based verification
 src/cron.rs             scheduled runs: the job store, the five-field parser, catch-up, `fleet cron`
 src/judge.rs            the routing judgment beat: `fleet judge` grades a day's decisions through sys1
-src/eval.rs             the eval corpus: 20 fixed scenarios, graded headless against the mock
+src/eval.rs             the eval corpus: 22 fixed scenarios, graded headless against the mock
 src/improve.rs          self-maintenance: gated proposals, `fleet improve apply/undo`
 src/explain.rs          the explanation beat: `fleet explain` over blend1, eval-only and batch-only
 src/settings.rs         one writer over config.json / routing.json / fleet.env; the CLI and TUI settings surfaces
@@ -127,7 +145,7 @@ src/tui/                the ratatui surface: app.rs state, events.rs keys, ui.rs
 src/bin/mock-server.rs  the scripted mock API the integration tests drive
 src/bin/mock-mcp.rs     the scripted fake MCP stdio server the integration tests drive
 memories/               the repo's own fact corpus: one markdown file per fact; the recall-count bump and the lifecycle stamps are its runtime edits
-services/               the five vendored Python lane cores with VENDOR.json; services/README.md documents the launch
+services/               the six vendored Python lane cores with VENDOR.json, plus `documents/` (a local extractor, not a lane); services/README.md documents the launch
 scripts/cache-sweep.sh  the recap step's sweep: stale target/debug artifacts pruned by age (7d), a 15 GiB tiered backstop, target/release never touched
 scripts/daily-maintenance.sh  the machine's daily upkeep (LaunchAgent local.fleet-maintenance, 09:20): the sweep, tmp/ entries older than 14d retired, the memories/ churn committed under chore(memories), untracked top-level orphans NAMED in ~/Library/Logs/fleet-maintenance.log and never deleted
 scripts/repo-hygiene.sh  the projects-wide habit (daily-maintenance leg 5): stale repos' regenerable artifact dirs pruned by a CLOSED list (21d commit + 14d mtime guards), loose objects packed weekly, `--report` answers the machine-wide survey, unknowns NAMED in ~/Library/Logs/repo-hygiene.log and never deleted
@@ -135,7 +153,7 @@ tests/integration.rs    end-to-end tests: parser, client, tool loop, log, real s
 docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice records + dashboards record inherited from the fork)
 docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
 docs/known-issues.md    the ledger: every error/warning encountered, with evidence
-docs/architecture/      deep-dive-2026-10-15.md (current state), overview.md (slice-1 snapshot), ecosystem.md (the repos Fleet absorbs), surfaces.md (the what and why of all eleven destinations), lanes.md (why five specialized services stand between the owner and the LLM), tool-surface.md (the model's tools, the gap, and the 2026 build order), structure-guards.md (the cross-cutting guards: socket scans, surface bounds, row discipline)
+docs/architecture/      deep-dive-2026-10-15.md (current state), overview.md (slice-1 snapshot), ecosystem.md (the repos Fleet absorbs), surfaces.md (the what and why of every destination), lanes.md (why six specialized services stand between the owner and the LLM), tool-surface.md (the model's tools, the gap, and the 2026 build order), structure-guards.md (the cross-cutting guards: socket scans, surface bounds, row discipline)
 docs/images/            the surface screenshots the README and the functional spec render
 README.md                the product's front door: the arc, what ships, what is next (product-manager register)
 TECHNICAL-DOCUMENTATION.md   the system of record: interface contracts, environments, runbooks, verification, risk, sequencing (technical-program-manager register)

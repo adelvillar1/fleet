@@ -123,7 +123,7 @@ upstream core needs the same task to survive a re-vendor.
 
 ## The advisor
 
-`fleet tools` lists the eight built-ins. `fleet tools scan --sessions N`
+`fleet tools` lists the eleven built-ins. `fleet tools scan --sessions N`
 reads the most recent N session logs and counts, per name: calls,
 errors, denials, alias recoveries, unknown names, repeated
 (name, arguments) calls, `tool_search` results that found nothing, and

@@ -875,14 +875,103 @@ server-side only (the `/v1` routes carry no CORS header). The attach
 route is `POST /api/attach`; the browser never sees the key or the upload
 token.
 
+### Every other module
+
+The reference above covers the core loop as the 2026-10-15 survey grouped
+it. These are the remaining top-level modules, each row taken from the
+module's own doc comment — the sentence its author wrote to introduce it.
+Together with the sections above they cover every `.rs` file directly
+under `src/`.
+
+| Module | Responsibility |
+|---|---|
+| `anomalies.rs` | The stream's own anomaly pass (the usage-in-calibration plan's Increment B): a deterministic pre-pass over a day's calibration rows that names what the day did unusually, in the row vocabulary, with the evidence and no spend. |
+| `apply_patch.rs` | A content-anchored patch, applied file by file. |
+| `cache_report.rs` | The cache instrument: what each model's prompt cache actually saved. |
+| `canvas.rs` | The design canvas's document and its transforms. |
+| `capabilities.rs` | The capability layer: the model names what it wants done, the capability layer names the lane that does it. |
+| `cards.rs` | The house card width: one number, one home. |
+| `cleanup.rs` | The cleanup a release cut or a deployment runs. |
+| `contract.rs` | The run loop's half of the resource contract (the plan's C3): admit before the first turn, measure at the turn boundary, and stop with the numbers in the transcript when the run outgrows its own budget. |
+| `corpus.rs` | The shared corpus sync — armada's distributed mind (L4). |
+| `dictate.rs` | Dictation: the microphone, transcribed by hex. |
+| `documents.rs` | Local document extraction: the cheap half of the attachment path. |
+| `drift.rs` | The drift registry: every bound Fleet states in more than one place, in one place, so a change that invalidates one is named instead of found. |
+| `engine.rs` | The browser engine: which one this host has, and whether it is current. |
+| `experiments.rs` | Experimentation over refusal (the owner's rule 8): a destructive- flagged bash command in a git repo runs in an isolated clone first, and the outcome — status plus diff — rides the tool result. |
+| `extract.rs` | The extraction leg: reading structured facts out of unstructured text on sys1's own hosted models (the plan is `docs/plans/2026-10-19-sys1-extraction-leg.md`; re-pointed 2026-10-25 by owner ruling — the Cloudflare Clairic client was the wrong vendor for a capability the tier's own vendor already serves, and the wrong shape does not stay). |
+| `filelock.rs` | An exclusive advisory lock on one file's writes, released on drop. |
+| `fileops.rs` | File primitives shared by the read and edit tools: a bounded window with line numbers, an atomic write, and a content-anchored edit that refuses an ambiguous target. |
+| `footprint.rs` | Resource awareness: what fleet is holding right now, and whether that is responsible. |
+| `footprint_history.rs` | The environment's history, read once and read the same way everywhere. |
+| `generate.rs` | The hosted small-model text leg: one bounded call to blend1's `generate` tool. |
+| `health.rs` | The health probes: what is down, since when, and the repair. |
+| `identity.rs` | Fleet's identity: the install-id and the principal — armada's bedrock (L1). |
+| `journal.rs` | The event journal — armada's durable, total-ordered bedrock (L2). |
+| `kanzo.rs` | The kanzo lane: the owner's intent backlog, read and answered over kanzo's own MCP server. |
+| `keepalive.rs` | Orphaned keep-alive processes: the `tail -f /dev/null` population. |
+| `laya.rs` | The learning seam: the owner's confirmed judgments teach Laya's Learner. |
+| `lesson.rs` | The learning loop (the LearnHarness design): the lesson session kind, the prober and the probe loop (the measure half), and the records on the substrate. |
+| `lib.rs` | Fleet's library face: the DeepSeek API client, the tool set, the agent loop, session logs, command parsing, the MCP stdio client with its lane registry, the git-tracked memory substrate with hybrid retrieval, the self-maintenance loop's gated proposals, the three read-only boards over the machine's own sources, the explanation beat over the blend1 lane, the delegation judgment beat over the same stream, the dependency graph that schedules delegated work, the project's canonical identifier vocabulary, the TUI, and the doctor's checks. |
+| `lifecycle.rs` | The tool lifecycle: measure, then disable what the evidence says is idle — and only disable, never delete. |
+| `mcp_meta.rs` | MCP resources and prompts, as two tools. |
+| `mcp_registry.rs` | The MCP server registry: the fleet home's `mcp.json`, the file that carries the MCP servers the owner configured — imported from another harness's config or written by hand — beside the vendored lanes. |
+| `onboard.rs` | The guided onboarding: one sequence, narrated over the registries. |
+| `perception.rs` | Nace Perception through sys1 — the lane that holds the credential. |
+| `plan_graph.rs` | The plan-tied graph: one graph per plan document, generated only from an approved plan. |
+| `processes.rs` | The background process registry: what `run_in_background` started, controllable by id. |
+| `recall.rs` | `recall`: the harness's own holdings, read on demand. |
+| `recall_graph.rs` | The recall graph: one bounded hop over the edges the substrate already declares and the retriever has never walked. |
+| `repo_map.rs` | A token-budgeted map of a repository: the files worth knowing, ranked by how much the rest of the tree refers to them, with their top-level definitions. |
+| `search.rs` | The search primitives: a capped `grep` and a mtime-ordered `glob`. |
+| `security.rs` | The security substrate — armada's authorization layer (L3). |
+| `shellpath.rs` | The owner's shell environment, for a process that was not started by one. |
+| `testcensus.rs` | The census: every module file the crate compiles, in one checked table. |
+| `testsupport.rs` | Test support: the primitives that make a test hermetic. |
+| `tool_advisor.rs` | The tool advisor: what the sessions actually asked for, and what that says about the tool set. |
+| `tool_audit.rs` | The tool audit: one session's tool calls measured, not described. |
+| `tool_coverage.rs` | The owner-intent coverage pass: which tools the archive's owner turns *should* have reached and did not. |
+| `tool_router.rs` | Tool selection as a decision plus geometry. |
+| `tuios.rs` | tuios in the armada map: what the owner's multiplexer carries. |
+| `update.rs` | The self-update channels: one release feed, two consumers. |
+| `verify.rs` | The fact-gate: three machine-checkable gates, run outside the graph, feeding `mark_verified`. |
+| `web.rs` | The pane's web tab: fetch a page, extract what is readable, render it. |
+| `web_cache.rs` | The web lane's answer cache: identical calls within a TTL are answered from the home's `web-cache.json` instead of the lane, so a development loop does not pay TinyFish for the same question twice. |
+| `work_brief.rs` | The work brief: what the leader's route judgment is handed instead of the literal goal line. |
+| `workspace.rs` | The work-object graph (armada L7): the connective tissue between the four stores fleet already has — the thread (a session), the deliverable (a desk project), the lesson (a learning session's memory facts), the bot (a role) — plus the one object fleet lacked, the **task**. |
+
+Modules in subdirectories (`src/gui/`, `src/tui/`, `src/delegate/`,
+`src/judge/`, `src/explain/`, `src/graph/`, `src/armada/`, `src/onboard/`,
+`src/plugins/`, `src/remote/`, `src/channels/`, `src/nomenclature/`,
+`src/bin/`) are described by their directory's own module doc; the count
+of both is read from the tree, never stated here.
+
 ## Known documentation gaps
 
 | Area | Status | Likely source |
 |---|---|---|
 | `docs/features/settings.md` | Covered by `docs/features/gui.md`'s "The configuration surface" section | `src/settings.rs`, `src/cli.rs`, `src/tui/app.rs`, `docs/architecture/deep-dive-2026-10-15.md` |
 | `docs/architecture/ecosystem.md` routing rows | Dated in places | `docs/plans/2026-10-16-fleet-routes-through-its-own-router.md`, `src/route.rs` |
-| `services/README.md` lane count | Corrected in code; doc wording should be re-verified | `src/lanes.rs`, `fleet doctor` |
+| `services/README.md` lane count | **Closed 2026-11-23.** The doc now names all six vendored lanes and separates `documents/`, which is not a lane. Held by `src/drift.rs`'s `lanes` row and `scripts/doc_truth.py` | `src/lanes.rs`, `services/README.md` |
 
 These gaps are noted here as missing coverage, not as defects in code. When
 this file falls out of sync with the sources above, prefer fixing the source
 module doc or feature doc and then re-aggregating this file.
+
+**Counting claims are guarded, not trusted.** The 2026-11-23 audit found
+this file and four others stating counts the code had outgrown. Every
+number a document publishes about the code is now registered in one of two
+places, and a change that invalidates one fails a check instead of being
+found by a later reader:
+
+- `src/drift.rs` — the crate's own registry, reported by `fleet drift` and
+  asserted by its tests. It carries the counts the crate can produce
+  (`builtin_tools`, `declarable_tools`, `lanes`, `rail_rows`, `face_routes`,
+  `eval_scenarios`) beside the bounds it already held.
+- `scripts/doc_truth.py` — the documentation side: it reads each named doc
+  statement, compares it to the code's own value, and exits non-zero naming
+  every one that drifted. A statement whose pattern no longer matches is a
+  failure, not a skip.
+
+A doc that states a count and is in neither place is unguarded, and will
+rot. Adding a claim means adding it to one of the two.

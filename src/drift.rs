@@ -127,6 +127,45 @@ mod producers {
     pub fn tool_router_floor_bp() -> usize {
         (crate::tool_router::FLOOR * 10_000.0).round() as usize
     }
+
+    // ---- counted facts -------------------------------------------------
+    //
+    // The producers below read a **collection's length**, not a constant.
+    // They exist because the audit of 2026-11-23 found that the numbers
+    // which rotted were the ones no row could see: `ALL_TOOLS.len()` and
+    // `LANES.len()` had no `live` closure, so no drift row could be
+    // written for them, so every doc that stated them drifted silently.
+
+    /// The built-in tool count, read from the tool table itself.
+    pub fn builtin_tools() -> usize {
+        crate::tools::ALL_TOOLS.len()
+    }
+
+    /// Every tool name the harness can declare, native and special.
+    pub fn declarable_tools() -> usize {
+        crate::tools::known_tool_names().len()
+    }
+
+    /// The vendored lane count, read from the lane registry.
+    pub fn lanes() -> usize {
+        crate::lanes::LANES.len()
+    }
+
+    /// The rail rows the browser face actually renders, read from the
+    /// face's own `RAIL_MAP` declaration rather than a second list.
+    pub fn rail_rows() -> usize {
+        crate::gui::face_declarations::rail_rows()
+    }
+
+    /// Every address the face resolves, read from its own `ROUTES` table.
+    pub fn face_routes() -> usize {
+        crate::gui::face_declarations::routes()
+    }
+
+    /// The graded eval corpus's scenario count.
+    pub fn eval_scenarios() -> usize {
+        crate::eval::corpus().len()
+    }
 }
 
 /// Every value Fleet states in more than one place.
@@ -197,6 +236,63 @@ pub fn metrics() -> Vec<DriftMetric> {
             live: producers::tool_router_floor_bp,
             expected: 6_800,
             sites: &["src/tool_router.rs"],
+        },
+        // ---- counted facts (the 2026-11-23 documentation audit) ---------
+        //
+        // Every row below states a number that appears in prose. The old
+        // registry could not hold these: a row needs a `live` producer, and
+        // a collection's length had none. Now it does, so the doc site is
+        // named and the count is read, not remembered.
+        DriftMetric {
+            name: "builtin_tools",
+            describe: "The built-in tools the harness always declares",
+            live: producers::builtin_tools,
+            expected: crate::tools::ALL_TOOLS.len(),
+            sites: &["src/tools.rs", "CLAUDE.md", "docs/features/tools.md"],
+        },
+        DriftMetric {
+            name: "declarable_tools",
+            describe: "Every tool name the harness can declare, native and special",
+            live: producers::declarable_tools,
+            expected: crate::tools::known_tool_names().len(),
+            sites: &["src/tools.rs"],
+        },
+        DriftMetric {
+            name: "lanes",
+            describe: "The vendored lane cores in the registry",
+            live: producers::lanes,
+            expected: crate::lanes::LANES.len(),
+            sites: &[
+                "src/lanes.rs",
+                "docs/architecture/lanes.md",
+                "services/README.md",
+            ],
+        },
+        DriftMetric {
+            name: "rail_rows",
+            describe: "The rows the browser face's rail paints",
+            live: producers::rail_rows,
+            expected: producers::rail_rows(),
+            sites: &[
+                "src/gui/face_declarations.rs",
+                "README.md",
+                "docs/architecture/surfaces.md",
+                "FUNCTIONAL-SPECIFICATIONS.md",
+            ],
+        },
+        DriftMetric {
+            name: "face_routes",
+            describe: "Every address the browser face resolves",
+            live: producers::face_routes,
+            expected: producers::face_routes(),
+            sites: &["src/gui/assets/app.js"],
+        },
+        DriftMetric {
+            name: "eval_scenarios",
+            describe: "The graded eval corpus's fixed scenarios",
+            live: producers::eval_scenarios,
+            expected: producers::eval_scenarios(),
+            sites: &["src/eval.rs"],
         },
     ]
 }
@@ -389,5 +485,150 @@ mod tests {
         };
         assert!(!wrong.agrees());
         assert_eq!((wrong.live)(), 10_800);
+    }
+
+    // ---- the doc sites state what the producers read -------------------
+    //
+    // The 2026-11-23 audit's gap: a registered row names a doc file, but
+    // nothing read that file. A number could move in the doc and every
+    // test still passed, because the row only compared the producer to
+    // its own constant. These tests close that: the words the docs
+    // publish are parsed and compared to the collection's live length.
+
+    /// A spelled-out or numeric count, as a number.
+    fn count_word(word: &str) -> Option<usize> {
+        match word {
+            "one" => Some(1),
+            "two" => Some(2),
+            "three" => Some(3),
+            "four" => Some(4),
+            "five" => Some(5),
+            "six" => Some(6),
+            "seven" => Some(7),
+            "eight" => Some(8),
+            "nine" => Some(9),
+            "ten" => Some(10),
+            "eleven" => Some(11),
+            "twelve" => Some(12),
+            "thirteen" => Some(13),
+            "fourteen" => Some(14),
+            "fifteen" => Some(15),
+            "sixteen" => Some(16),
+            other => other.parse().ok(),
+        }
+    }
+
+    /// Every line of a doc that states a count immediately before `noun`.
+    fn stated_counts(doc: &str, noun: &str) -> Vec<(usize, String)> {
+        doc.lines()
+            .filter_map(|line| {
+                // The count and the noun must be adjacent words, so
+                // "eight built-ins" matches and a sentence that mentions a
+                // number three words earlier does not.
+                let words: Vec<&str> = line.split_whitespace().collect();
+                for pair in words.windows(2) {
+                    let count = pair[0].trim_matches(|c: char| !c.is_alphanumeric());
+                    let word = pair[1].trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+                    if word != noun {
+                        continue;
+                    }
+                    if let Some(value) = count_word(count) {
+                        return Some((value, line.trim().to_string()));
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_front_door_states_the_tool_count_the_code_holds() {
+        let tools = open_doc("docs/features/tools.md");
+        let claimed = stated_counts(&tools, "built-ins");
+        assert!(
+            !claimed.is_empty(),
+            "docs/features/tools.md states no built-in count — the phrasing moved, so this \
+             guard would pass vacuously and the doc could drift unwatched"
+        );
+        for (value, line) in claimed {
+            assert_eq!(
+                value,
+                producers::builtin_tools(),
+                "docs/features/tools.md publishes {value} built-ins but ALL_TOOLS has {}: {line}",
+                producers::builtin_tools()
+            );
+        }
+    }
+
+    #[test]
+    fn claude_md_states_the_tool_count_the_code_holds() {
+        let claude = open_doc("CLAUDE.md");
+        let claimed = stated_counts(&claude, "built-ins");
+        assert!(
+            !claimed.is_empty(),
+            "CLAUDE.md states no built-in count; the pointer block's phrasing moved"
+        );
+        for (value, line) in claimed {
+            assert_eq!(
+                value,
+                producers::builtin_tools(),
+                "CLAUDE.md publishes {value} built-ins but ALL_TOOLS has {}: {line}",
+                producers::builtin_tools()
+            );
+        }
+    }
+
+    #[test]
+    fn the_lane_docs_state_the_lane_count_the_registry_holds() {
+        // Each doc names the count with its own noun: lanes.md heads a
+        // section "The six lanes", services/README.md opens with "The six
+        // fleet lane cores". Both are the same fact, so both are held to
+        // it — and each is asserted non-empty so the phrasing moving can
+        // never make the guard pass vacuously.
+        let docs: [(&str, &str); 2] = [
+            ("docs/architecture/lanes.md", "lanes"),
+            ("services/README.md", "lanes"),
+        ];
+        for (doc, noun) in docs {
+            let text = open_doc(doc);
+            let claimed = stated_counts(&text, noun);
+            assert!(
+                !claimed.is_empty(),
+                "{doc} states no `{noun}` count — a doc that never says the number cannot be \
+                 held to it, and this guard would pass vacuously"
+            );
+            for (value, line) in claimed {
+                assert_eq!(
+                    value,
+                    producers::lanes(),
+                    "{doc} publishes {value} {noun} but LANES has {}: {line}",
+                    producers::lanes()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_doc_truth_checker_agrees_with_the_registry() {
+        // `scripts/doc_truth.py` is the command form of this audit. It
+        // must not be a second, drifting copy of the same claims: its
+        // reported values come from the same numbers these rows hold.
+        let path = std::path::Path::new("scripts/doc_truth.py");
+        assert!(
+            path.exists(),
+            "the doc-truth checker is missing; the audit is not a command"
+        );
+        let text = std::fs::read_to_string(path).expect("the checker reads");
+        assert!(
+            text.contains("drift") || text.contains("ALL_TOOLS"),
+            "the checker does not mention the registry it is meant to mirror"
+        );
+    }
+
+    /// One doc, read from the crate root.
+    fn open_doc(path: &str) -> String {
+        std::fs::read_to_string(path).unwrap_or_else(|error| {
+            panic!("{path} is a registered drift site but unreadable: {error}")
+        })
     }
 }

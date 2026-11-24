@@ -33,6 +33,7 @@
 //! same core, and this module adds a third rather than replacing one.
 
 pub mod bridge;
+pub mod face_declarations;
 pub mod related;
 pub mod server;
 pub mod spine;

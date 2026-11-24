@@ -2,8 +2,9 @@
 
 All notable changes to fleet land here, one section per release, written at
 cut time. The repo was born 2026-10-12; this changelog starts at v0.4.0 with
-the first release — everything before it is `git log` (492 commits, each one
-through the local gate).
+the first release — everything before it is `git log` (ask it: `git rev-list
+--count v0.4.0`; the number moves and this line does not, which is why it is
+not written here). Every commit before that point went through the local gate.
 
 **The beta epoch ended with 0.5.1** — the owner retired the suffix when
 asking for diligent version numbering. From here: every user-facing change

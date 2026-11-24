@@ -1,10 +1,12 @@
 # Fleet services
 
-The five fleet lane cores — [sys1](sys1/) (judgment), [sdm1](sdm1/) (tabular),
-[sem1](sem1/) (embeddings), [gen1](gen1/) (media), and [blend1](blend1/)
-(the composed lane: one grounded `ask` over the specialized legs, with
-the web leg and the escalation legs beside it) — vendored from the
-deepseek-harness fork's `services/` tree (same author, Apache-2.0).
+These six lanes — [sys1](sys1/) (judgment), [sdm1](sdm1/) (tabular),
+[sem1](sem1/) (embeddings), [gen1](gen1/) (media), [browser](browser/) (the
+page: obscura first, Chrome only when the home's settings choose it), and
+[blend1](blend1/) (the composed lane: one grounded `ask` over the
+specialized legs, with the web leg and the escalation legs beside it) —
+vendored from the deepseek-harness fork's `services/` tree (same author,
+Apache-2.0).
 blend1's own upstream is the owner's `~/Projects/blend1` (see its
 `VENDOR.json`). Each
 carries a `VENDOR.json` recording the upstream pin and the provenance of this
@@ -36,6 +38,7 @@ Concretely, from this repository's root:
 | sdm1 | `SDM1_PYTHONPATH=src python3 -u service/mcp_server.py` | `sdm1_classify`, `sdm1_health` |
 | sem1 | `SEM1_PYTHONPATH=src python3 -u service/mcp_server.py` | `sem1_embed`, `sem1_probe`, `sem1_index`, `sem1_search` |
 | gen1 | `GEN1_PYTHONPATH=src python3 -u service/mcp_server.py` | `gen1_imagine` |
+| browser | `BROWSER_PYTHONPATH=src python3 -u service/mcp_server.py` | `browser_navigate`, `browser_read`, `browser_screenshot` (plus obscura's own tools when obscura is the engine) |
 | blend1 | `BLEND1_PYTHONPATH=src python3 -u service/mcp_server.py` | `ask`, `web`, `doctor`, `search`, `refresh`, `seed` |
 
 Each child speaks newline-delimited JSON-RPC 2.0 (MCP protocol version
@@ -102,6 +105,17 @@ until the lane exists:
   environment.
 - **gen1**: offline TTS (kokoro) and the image providers need their venvs
   and weights; `gen1 doctor` in the upstream repo reports what is present.
+
+## Not lanes: `documents`
+
+`services/documents/` is deliberately **not** a lane and declares no
+`VENDOR.json`. It is a local document extractor — one file in, one JSON
+object out, no network and no key — used by the composer's attachment path
+(`read_document`), and it is driven in-process rather than over MCP. It sits
+under `services/` because it is a vendored service core in every other
+respect: stdlib-only Python, launched by Fleet, documented by its own
+[README](documents/README.md). `src/lanes.rs` does not list it, so
+`fleet lanes` neither probes it nor claims it as health.
 
 ## Vendoring discipline
 

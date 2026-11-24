@@ -25,7 +25,7 @@ services decide, measure, index, and render before it
 
 ## The surfaces
 
-Fourteen destinations in four groups, one flat level, reachable from the
+Fifteen destinations in four regions, one flat level, reachable from the
 rail or the ⌘K palette. Every destination shares the grammar: a
 one-sentence purpose, an identity card with **ask** buttons, a strip of
 counts, a column of substance, and a rail of secondary reads. The ask

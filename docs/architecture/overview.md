@@ -1,10 +1,15 @@
 # Fleet crate architecture
 
-> **Stale snapshot.** This document describes the slice-1 crate (four
-> tools, four lanes, no router, no memory, no TUI settings). The
-> application is now 45 modules and ~70k lines. The current-state
-> survey is [deep-dive-2026-10-15.md](deep-dive-2026-10-15.md); the
-> sections below remain accurate for the cores they name.
+> **Stale snapshot — historical only.** This document describes the
+> slice-1 crate (four tools, four lanes, no router, no memory, no TUI
+> settings). It is kept because it is the clearest statement of the
+> original shape, not because its counts are current: the crate outgrew
+> it many releases ago, and this file states no live number on purpose.
+> For the current state, read `CLAUDE.md`'s pointer block and
+> [deep-dive-2026-11-20-fleet-state.md](deep-dive-2026-11-20-fleet-state.md),
+> or ask the tree: `python3 scripts/doc_truth.py` reports every
+> documentation count against the code's own.
+> The sections below remain accurate for the **cores** they name.
 
 The whole binary is Rust across the modules below; dependencies are `ureq` (HTTP), `ratatui`/`crossterm` (TUI), `tokio` (async runtime, child processes), `serde`/`serde_json` — everything else is std.
 
