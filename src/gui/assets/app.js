@@ -17100,7 +17100,14 @@ import { node, svg, clip } from './core/dom.js';
     } catch (error) { saved = null; }
     if (saved === 'open') return true;
     if (saved === 'collapsed') return false;
-    return !hasAbove;
+    // Default open. A fold that starts closed puts the owner's whole
+    // backlog behind a caret they never asked for: the screenshot that
+    // settled this showed "11 conversations", one row on screen, and the
+    // other ten under a closed "earlier" — the documentation session
+    // among them, read by its owner as gone. The head counts the archive,
+    // so the list must show it; a press still folds it away, and that
+    // press is remembered.
+    return true;
   }
 
   function setIdleOpen(open) {
@@ -17329,6 +17336,15 @@ import { node, svg, clip } from './core/dom.js';
     // which folds.
     var BAND_WORDS = { 0: ['needs you', 'needs'], 1: ['working', 'working'] };
     var above = false;
+    // A press is the owner asking to SEE their conversations. Minting one
+    // puts a rank-1 band above the archive, which collapsed it — so the
+    // New control answered by hiding the very list it was pressed from,
+    // and the conversation the owner had been reading was still there,
+    // simply folded under "earlier". One press reveals the whole list for
+    // as long as this page is lived on; the owner's own fold still wins
+    // from the next paint they ask for.
+    var revealedByPress = !!face.revealWork;
+    face.revealWork = false;
     bands.forEach(function (band) {
       var words = BAND_WORDS[band.rank];
       if (words) {
@@ -17345,7 +17361,7 @@ import { node, svg, clip } from './core/dom.js';
       // their own conversations is the failure this pass exists to fix.
       // The owner's own press is remembered (`fleet-work-idle`), the work
       // column's fold idiom.
-      var idle = idleOpen(above);
+      var idle = idleOpen(above) || revealedByPress;
       var rows = band.rows;
       var idleHead = node('button', 'work-group work-group-fold');
       idleHead.type = 'button';
@@ -17357,6 +17373,9 @@ import { node, svg, clip } from './core/dom.js';
       idleHead.appendChild(node('span', 'work-group-why', String(groupCount('earlier', rows))));
       idleHead.addEventListener('click', function () {
         setIdleOpen(!idleOpen(above));
+        // The owner's own answer replaces a press's reveal outright: a
+        // press that opened the fold must not survive their closing it.
+        face.revealWork = false;
         paintWork();
       });
       el.workList.appendChild(idleHead);
@@ -17952,6 +17971,10 @@ import { node, svg, clip } from './core/dom.js';
     // The intent flag first: the detach swaps the drafts under the
     // pending key, and swapDraft reads the flag to pick that key.
     face.pendingNew = true;
+    // This press asks to see the conversations, so the list it came from
+    // stays whole: the mint below puts a live band above the archive, and
+    // without this the archive folded the moment the press landed.
+    face.revealWork = true;
     detachToWelcome();
     // The route is what paints the welcome, so the arrival must find the
     // stored key already gone: the detach below clears it, but the
